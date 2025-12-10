@@ -36,7 +36,7 @@ public class JwtService : IJwtService
             new Claim(JwtRegisteredClaimNames.Sub, user.UserId),
             new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
             new Claim("displayName", user.DisplayName),
-            new Claim(ClaimTypes.Role, user.Role.ToString()),
+            new Claim("role", user.Role.ToString()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
@@ -63,6 +63,9 @@ public class JwtService : IJwtService
         try
         {
             var tokenHandler = new JwtSecurityTokenHandler();
+            // 禁用默认的 claim 类型映射，保持原始 JWT claim 名称
+            tokenHandler.MapInboundClaims = false;
+            
             var key = Encoding.UTF8.GetBytes(_secret);
 
             var validationParameters = new TokenValidationParameters
@@ -81,7 +84,7 @@ public class JwtService : IJwtService
             
             var userId = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
             var username = principal.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value;
-            var roleStr = principal.FindFirst(ClaimTypes.Role)?.Value;
+            var roleStr = principal.FindFirst("role")?.Value;
             
             Enum.TryParse<UserRole>(roleStr, out var role);
 
