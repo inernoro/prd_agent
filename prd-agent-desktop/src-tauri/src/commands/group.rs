@@ -37,7 +37,7 @@ pub async fn create_group(
         prd_document_id,
         group_name,
     };
-    
+
     client.post("/groups", &request).await
 }
 
@@ -51,7 +51,7 @@ pub async fn join_group(
         invite_code,
         user_role,
     };
-    
+
     client.post("/groups/join", &request).await
 }
 
@@ -60,5 +60,4 @@ pub async fn get_groups() -> Result<ApiResponse<Vec<GroupInfo>>, String> {
     let client = ApiClient::new();
     client.get("/groups").await
 }
-
 

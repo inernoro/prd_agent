@@ -1,6 +1,6 @@
+use futures::StreamExt;
 use serde::Serialize;
 use tauri::{command, AppHandle, Emitter};
-use futures::StreamExt;
 
 use crate::models::{ApiResponse, GuideControlResponse, SessionInfo, SwitchRoleResponse};
 use crate::services::ApiClient;
@@ -40,8 +40,10 @@ pub async fn switch_role(
 ) -> Result<ApiResponse<SwitchRoleResponse>, String> {
     let client = ApiClient::new();
     let request = SwitchRoleRequest { role };
-    
-    client.put(&format!("/sessions/{}/role", session_id), &request).await
+
+    client
+        .put(&format!("/sessions/{}/role", session_id), &request)
+        .await
 }
 
 #[command]
@@ -85,10 +87,13 @@ pub async fn send_message(
                 }
             }
             Err(e) => {
-                let _ = app.emit("error", serde_json::json!({
-                    "code": "STREAM_ERROR",
-                    "message": format!("Stream error: {}", e)
-                }));
+                let _ = app.emit(
+                    "error",
+                    serde_json::json!({
+                        "code": "STREAM_ERROR",
+                        "message": format!("Stream error: {}", e)
+                    }),
+                );
                 break;
             }
         }
@@ -137,10 +142,13 @@ pub async fn start_guide(
                 }
             }
             Err(e) => {
-                let _ = app.emit("error", serde_json::json!({
-                    "code": "STREAM_ERROR",
-                    "message": format!("Stream error: {}", e)
-                }));
+                let _ = app.emit(
+                    "error",
+                    serde_json::json!({
+                        "code": "STREAM_ERROR",
+                        "message": format!("Stream error: {}", e)
+                    }),
+                );
                 break;
             }
         }
@@ -157,7 +165,8 @@ pub async fn control_guide(
 ) -> Result<ApiResponse<GuideControlResponse>, String> {
     let client = ApiClient::new();
     let request = GuideControlRequest { action, step };
-    
-    client.post(&format!("/sessions/{}/guide/control", session_id), &request).await
-}
 
+    client
+        .post(&format!("/sessions/{}/guide/control", session_id), &request)
+        .await
+}

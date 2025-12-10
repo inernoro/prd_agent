@@ -1,6 +1,6 @@
 mod commands;
-mod services;
 mod models;
+mod services;
 
 use tauri::Manager;
 
@@ -34,5 +34,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-
