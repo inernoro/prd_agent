@@ -26,12 +26,12 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: windows
-          # macOS Intel
-          - platform: macos-13
+          # macOS Intel (cross-compile on ARM runner)
+          - platform: macos-15
             target: x86_64-apple-darwin
             artifact_name: macos-intel
           # macOS Apple Silicon
-          - platform: macos-latest
+          - platform: macos-15
             target: aarch64-apple-darwin
             artifact_name: macos-arm64
           # Linux
