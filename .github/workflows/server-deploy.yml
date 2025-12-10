@@ -86,6 +86,19 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-admin-deploy-${{ hashFiles('prd-agent-admin/pnpm-lock.yaml', 'prd-agent-admin/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-admin-deploy-
+
       - name: Install dependencies
         working-directory: prd-agent-admin
         run: pnpm install

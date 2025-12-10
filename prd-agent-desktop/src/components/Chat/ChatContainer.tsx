@@ -8,12 +8,12 @@ import GuidePanel from '../Guide/GuidePanel';
 
 export default function ChatContainer() {
   const { mode } = useSessionStore();
-  const { addMessage, appendStreamingContent, startStreaming, stopStreaming } = useMessageStore();
+  const { appendStreamingContent, startStreaming, stopStreaming } = useMessageStore();
 
   useEffect(() => {
     // 监听消息流事件
     const unlistenMessage = listen<{ type: string; content?: string; messageId?: string }>('message-chunk', (event) => {
-      const { type, content, messageId } = event.payload;
+      const { type, content } = event.payload;
       
       if (type === 'start') {
         startStreaming();

@@ -20,7 +20,7 @@ export default function LoginPage() {
     username: '',
     password: '',
     inviteCode: '',
-    role: 'DEV' as const,
+    role: 'DEV' as 'PM' | 'DEV' | 'QA',
     displayName: '',
   });
 
