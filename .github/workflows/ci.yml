@@ -185,6 +185,9 @@ jobs:
       - name: Type check frontend
         run: pnpm tsc --noEmit
 
+      - name: Build frontend
+        run: pnpm build
+
       - name: Check Rust
         working-directory: prd-agent-desktop/src-tauri
         run: cargo check
