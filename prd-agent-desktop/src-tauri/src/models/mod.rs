@@ -83,6 +83,7 @@ pub struct GuideControlResponse {
     pub status: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamEvent {
     #[serde(rename = "type")]
@@ -92,4 +93,3 @@ pub struct StreamEvent {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
 }
-

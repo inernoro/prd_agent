@@ -24,7 +24,8 @@ public class MarkdownParser : IMarkdownParser
     public ParsedPrd Parse(string content)
     {
         var document = Markdig.Markdown.Parse(content, _pipeline);
-        var lines = content.Split('\n');
+        // 统一处理 Windows(\r\n) 和 Unix(\n) 换行符
+        var lines = content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
         
         var title = ExtractTitle(document, lines);
         var sections = ExtractSections(lines);
