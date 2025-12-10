@@ -85,12 +85,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: prd-agent-admin/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: prd-agent-admin
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: Build
         working-directory: prd-agent-admin
