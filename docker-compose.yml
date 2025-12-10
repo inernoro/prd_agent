@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:8.0
+    container_name: prdagent-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: prdagent
+    networks:
+      - prdagent-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: prdagent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - prdagent-network
+
+  api:
+    build:
+      context: ./PrdAgent.Server
+      dockerfile: Dockerfile
+    container_name: prdagent-api
+    ports:
+      - "5000:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__DatabaseName=prdagent
+      - Redis__ConnectionString=redis:6379
+      - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
+      - Jwt__Issuer=prdagent
+      - Session__TimeoutMinutes=30
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - prdagent-network
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  prdagent-network:
+    driver: bridge
+

@@ -1,0 +1,162 @@
+import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { useAuthStore } from '../../stores/authStore';
+import { ApiResponse, User } from '../../types';
+
+interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  user: User;
+}
+
+export default function LoginPage() {
+  const { login } = useAuthStore();
+  const [isLogin, setIsLogin] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  
+  const [form, setForm] = useState({
+    username: '',
+    password: '',
+    inviteCode: '',
+    role: 'DEV' as const,
+    displayName: '',
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      if (isLogin) {
+        const response = await invoke<ApiResponse<LoginResponse>>('login', {
+          username: form.username,
+          password: form.password,
+        });
+
+        if (response.success && response.data) {
+          login(response.data.user, response.data.accessToken);
+        } else {
+          setError(response.error?.message || '登录失败');
+        }
+      } else {
+        const response = await invoke<ApiResponse<{ userId: string }>>('register', {
+          username: form.username,
+          password: form.password,
+          inviteCode: form.inviteCode,
+          role: form.role,
+          displayName: form.displayName || undefined,
+        });
+
+        if (response.success) {
+          setIsLogin(true);
+          setError('');
+          alert('注册成功，请登录');
+        } else {
+          setError(response.error?.message || '注册失败');
+        }
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      <div className="w-full max-w-md p-8 bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/20">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-gradient-to-r from-cyan-400 to-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span className="text-white font-bold text-2xl">P</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white">PRD Agent</h1>
+          <p className="text-white/60 text-sm mt-2">智能PRD解读助手</p>
+        </div>
+
+        <div className="flex mb-6">
+          <button
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${isLogin ? 'text-white border-b-2 border-cyan-400' : 'text-white/50'}`}
+            onClick={() => setIsLogin(true)}
+          >
+            登录
+          </button>
+          <button
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${!isLogin ? 'text-white border-b-2 border-cyan-400' : 'text-white/50'}`}
+            onClick={() => setIsLogin(false)}
+          >
+            注册
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="text"
+            placeholder="用户名"
+            value={form.username}
+            onChange={(e) => setForm({ ...form, username: e.target.value })}
+            className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+            required
+          />
+          
+          <input
+            type="password"
+            placeholder="密码"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+            required
+          />
+
+          {!isLogin && (
+            <>
+              <input
+                type="text"
+                placeholder="邀请码"
+                value={form.inviteCode}
+                onChange={(e) => setForm({ ...form, inviteCode: e.target.value })}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+                required
+              />
+              
+              <select
+                value={form.role}
+                onChange={(e) => setForm({ ...form, role: e.target.value as 'PM' | 'DEV' | 'QA' })}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-cyan-400 transition-colors"
+              >
+                <option value="PM" className="bg-slate-800">产品经理</option>
+                <option value="DEV" className="bg-slate-800">开发工程师</option>
+                <option value="QA" className="bg-slate-800">测试工程师</option>
+              </select>
+
+              <input
+                type="text"
+                placeholder="显示名称（可选）"
+                value={form.displayName}
+                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+              />
+            </>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {loading ? '请稍候...' : isLogin ? '登录' : '注册'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
