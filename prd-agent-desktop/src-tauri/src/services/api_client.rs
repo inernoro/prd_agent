@@ -27,6 +27,7 @@ impl ApiClient {
         *auth = Some(token);
     }
 
+    #[allow(dead_code)]
     pub fn clear_token() {
         let mut auth = AUTH_TOKEN.write().unwrap();
         *auth = None;
@@ -114,4 +115,3 @@ impl Default for ApiClient {
         Self::new()
     }
 }
-

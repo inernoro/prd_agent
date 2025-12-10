@@ -78,8 +78,7 @@ pub async fn send_message(
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
                 for line in text.lines() {
-                    if line.starts_with("data: ") {
-                        let data = &line[6..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
                             let _ = app.emit("message-chunk", event);
                         }
@@ -103,11 +102,7 @@ pub async fn send_message(
 }
 
 #[command]
-pub async fn start_guide(
-    app: AppHandle,
-    session_id: String,
-    role: String,
-) -> Result<(), String> {
+pub async fn start_guide(app: AppHandle, session_id: String, role: String) -> Result<(), String> {
     let url = format!(
         "{}/api/v1/sessions/{}/guide/start",
         std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:5000".to_string()),
@@ -133,8 +128,7 @@ pub async fn start_guide(
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
                 for line in text.lines() {
-                    if line.starts_with("data: ") {
-                        let data = &line[6..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
                             let _ = app.emit("guide-chunk", event);
                         }

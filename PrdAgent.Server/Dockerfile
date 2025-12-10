@@ -21,3 +21,4 @@ COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "PrdAgent.Api.dll"]
 
 
+
