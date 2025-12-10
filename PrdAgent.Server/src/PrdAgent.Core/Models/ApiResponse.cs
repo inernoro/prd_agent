@@ -53,6 +53,8 @@ public static class ErrorCodes
     public const string USERNAME_EXISTS = "USERNAME_EXISTS";
     public const string INVALID_INVITE_CODE = "INVALID_INVITE_CODE";
     public const string ACCOUNT_DISABLED = "ACCOUNT_DISABLED";
+    public const string ACCOUNT_LOCKED = "ACCOUNT_LOCKED";
+    public const string WEAK_PASSWORD = "WEAK_PASSWORD";
     public const string UNAUTHORIZED = "UNAUTHORIZED";
     public const string PERMISSION_DENIED = "PERMISSION_DENIED";
     

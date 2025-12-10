@@ -113,32 +113,27 @@ public class OpenAIClient : ILLMClient
             if (data == "[DONE]")
                 break;
 
-            try
-            {
-                var eventData = JsonSerializer.Deserialize<OpenAIStreamEvent>(data);
+            var eventData = TryParseEvent(data);
+            if (eventData == null)
+                continue;
                 
-                if (eventData?.Choices?.Length > 0)
+            if (eventData.Choices?.Length > 0)
+            {
+                var delta = eventData.Choices[0].Delta;
+                if (!string.IsNullOrEmpty(delta?.Content))
                 {
-                    var delta = eventData.Choices[0].Delta;
-                    if (!string.IsNullOrEmpty(delta?.Content))
+                    yield return new LLMStreamChunk
                     {
-                        yield return new LLMStreamChunk
-                        {
-                            Type = "delta",
-                            Content = delta.Content
-                        };
-                    }
-                }
-
-                if (eventData?.Usage != null)
-                {
-                    inputTokens = eventData.Usage.PromptTokens;
-                    outputTokens = eventData.Usage.CompletionTokens;
+                        Type = "delta",
+                        Content = delta.Content
+                    };
                 }
             }
-            catch
+
+            if (eventData.Usage != null)
             {
-                // Skip malformed events
+                inputTokens = eventData.Usage.PromptTokens;
+                outputTokens = eventData.Usage.CompletionTokens;
             }
         }
 
@@ -148,6 +143,18 @@ public class OpenAIClient : ILLMClient
             InputTokens = inputTokens,
             OutputTokens = outputTokens
         };
+    }
+
+    private static OpenAIStreamEvent? TryParseEvent(string data)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<OpenAIStreamEvent>(data);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private object BuildMessageContent(LLMMessage message)

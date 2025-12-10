@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PrdAgent.Core.Interfaces;
 using StackExchange.Redis;
 
 namespace PrdAgent.Infrastructure.Cache;
@@ -6,7 +7,7 @@ namespace PrdAgent.Infrastructure.Cache;
 /// <summary>
 /// Redis缓存管理器
 /// </summary>
-public class RedisCacheManager : IDisposable
+public class RedisCacheManager : ICacheManager, IDisposable
 {
     private readonly ConnectionMultiplexer _redis;
     private readonly IDatabase _db;
@@ -88,19 +89,3 @@ public class RedisCacheManager : IDisposable
         _redis.Dispose();
     }
 }
-
-/// <summary>
-/// 缓存键前缀
-/// </summary>
-public static class CacheKeys
-{
-    public const string Session = "session:";
-    public const string Document = "document:";
-    public const string ChatHistory = "chat:history:";
-    public const string UserSession = "user:session:";
-    
-    public static string ForSession(string sessionId) => $"{Session}{sessionId}";
-    public static string ForDocument(string documentId) => $"{Document}{documentId}";
-    public static string ForChatHistory(string sessionId) => $"{ChatHistory}{sessionId}";
-}
-

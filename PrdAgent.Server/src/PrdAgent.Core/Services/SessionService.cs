@@ -1,6 +1,5 @@
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Cache;
 
 namespace PrdAgent.Core.Services;
 
@@ -9,10 +8,10 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class SessionService : ISessionService
 {
-    private readonly RedisCacheManager _cache;
+    private readonly ICacheManager _cache;
     private readonly TimeSpan _sessionTimeout;
 
-    public SessionService(RedisCacheManager cache, int timeoutMinutes = 30)
+    public SessionService(ICacheManager cache, int timeoutMinutes = 30)
     {
         _cache = cache;
         _sessionTimeout = TimeSpan.FromMinutes(timeoutMinutes);
@@ -119,4 +118,3 @@ public class SessionService : ISessionService
         await _cache.SetAsync(key, session, _sessionTimeout);
     }
 }
-

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -15,15 +16,27 @@ public class GapsController : ControllerBase
 {
     private readonly IGapDetectionService _gapService;
     private readonly IUserService _userService;
+    private readonly IDocumentService _documentService;
+    private readonly IGroupService _groupService;
+    private readonly ILLMClient _llmClient;
+    private readonly IPromptManager _promptManager;
     private readonly ILogger<GapsController> _logger;
 
     public GapsController(
         IGapDetectionService gapService,
         IUserService userService,
+        IDocumentService documentService,
+        IGroupService groupService,
+        ILLMClient llmClient,
+        IPromptManager promptManager,
         ILogger<GapsController> logger)
     {
         _gapService = gapService;
         _userService = userService;
+        _documentService = documentService;
+        _groupService = groupService;
+        _llmClient = llmClient;
+        _promptManager = promptManager;
         _logger = logger;
     }
 
@@ -70,6 +83,61 @@ public class GapsController : ControllerBase
         };
 
         return Ok(ApiResponse<GapListResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 生成缺口汇总报告
+    /// </summary>
+    [HttpPost("summary-report")]
+    [ProducesResponseType(typeof(ApiResponse<GapSummaryResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GenerateSummaryReport(
+        string groupId,
+        CancellationToken cancellationToken)
+    {
+        // 获取群组和文档
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("GROUP_NOT_FOUND", "群组不存在"));
+        }
+
+        var document = await _documentService.GetByIdAsync(group.PrdDocumentId);
+        if (document == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "文档不存在或已过期"));
+        }
+
+        // 获取所有缺口
+        var gaps = await _gapService.GetGapsAsync(groupId);
+        if (gaps.Count == 0)
+        {
+            return Ok(ApiResponse<GapSummaryResponse>.Ok(new GapSummaryResponse
+            {
+                TotalGaps = 0,
+                Report = "暂无内容缺口记录"
+            }));
+        }
+
+        // 使用AI生成报告
+        var detector = new AIGapDetector(_llmClient, _promptManager);
+        var report = await detector.GenerateSummaryReportAsync(
+            document.RawContent, 
+            gaps, 
+            cancellationToken);
+
+        var response = new GapSummaryResponse
+        {
+            TotalGaps = gaps.Count,
+            PendingCount = gaps.Count(g => g.Status == GapStatus.Pending),
+            ResolvedCount = gaps.Count(g => g.Status == GapStatus.Resolved),
+            IgnoredCount = gaps.Count(g => g.Status == GapStatus.Ignored),
+            ByType = gaps.GroupBy(g => g.GapType)
+                .ToDictionary(g => g.Key.ToString(), g => g.Count()),
+            Report = report,
+            GeneratedAt = DateTime.UtcNow
+        };
+
+        return Ok(ApiResponse<GapSummaryResponse>.Ok(response));
     }
 
     /// <summary>
@@ -121,6 +189,35 @@ public class GapsController : ControllerBase
         var count = await _gapService.GetPendingCountAsync(groupId);
         return Ok(ApiResponse<int>.Ok(count));
     }
+
+    /// <summary>
+    /// 获取缺口统计
+    /// </summary>
+    [HttpGet("stats")]
+    [ProducesResponseType(typeof(ApiResponse<GapStatsResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetStats(string groupId)
+    {
+        var gaps = await _gapService.GetGapsAsync(groupId);
+
+        var response = new GapStatsResponse
+        {
+            TotalGaps = gaps.Count,
+            PendingCount = gaps.Count(g => g.Status == GapStatus.Pending),
+            ResolvedCount = gaps.Count(g => g.Status == GapStatus.Resolved),
+            IgnoredCount = gaps.Count(g => g.Status == GapStatus.Ignored),
+            ByType = gaps.GroupBy(g => g.GapType)
+                .ToDictionary(g => g.Key.ToString(), g => g.Count()),
+            RecentGaps = gaps.OrderByDescending(g => g.AskedAt).Take(5).Select(g => new RecentGapInfo
+            {
+                GapId = g.GapId,
+                Question = g.Question.Length > 100 ? g.Question[..100] + "..." : g.Question,
+                GapType = g.GapType.ToString(),
+                AskedAt = g.AskedAt
+            }).ToList()
+        };
+
+        return Ok(ApiResponse<GapStatsResponse>.Ok(response));
+    }
 }
 
 // 响应模型
@@ -155,3 +252,31 @@ public class UpdateGapStatusRequest
     public GapStatus Status { get; set; }
 }
 
+public class GapSummaryResponse
+{
+    public int TotalGaps { get; set; }
+    public int PendingCount { get; set; }
+    public int ResolvedCount { get; set; }
+    public int IgnoredCount { get; set; }
+    public Dictionary<string, int> ByType { get; set; } = new();
+    public string Report { get; set; } = string.Empty;
+    public DateTime GeneratedAt { get; set; }
+}
+
+public class GapStatsResponse
+{
+    public int TotalGaps { get; set; }
+    public int PendingCount { get; set; }
+    public int ResolvedCount { get; set; }
+    public int IgnoredCount { get; set; }
+    public Dictionary<string, int> ByType { get; set; } = new();
+    public List<RecentGapInfo> RecentGaps { get; set; } = new();
+}
+
+public class RecentGapInfo
+{
+    public string GapId { get; set; } = string.Empty;
+    public string Question { get; set; } = string.Empty;
+    public string GapType { get; set; } = string.Empty;
+    public DateTime AskedAt { get; set; }
+}

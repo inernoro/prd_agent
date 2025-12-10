@@ -7,7 +7,9 @@ using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Cache;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.Markdown;
 using PrdAgent.Infrastructure.Prompts;
+using PrdAgent.Infrastructure.Repositories;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -57,7 +59,7 @@ builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDat
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);
-builder.Services.AddSingleton(new RedisCacheManager(redisConnectionString, sessionTimeout));
+builder.Services.AddSingleton<ICacheManager>(new RedisCacheManager(redisConnectionString, sessionTimeout));
 
 // 配置JWT认证
 var jwtSecret = builder.Configuration["Jwt:Secret"] 
@@ -96,8 +98,9 @@ builder.Services.AddCors(options =>
     });
 });
 
-// 注册 Prompt Manager
-builder.Services.AddSingleton<PromptManager>();
+// 注册基础设施服务
+builder.Services.AddSingleton<IMarkdownParser, MarkdownParser>();
+builder.Services.AddSingleton<IPromptManager, PromptManager>();
 
 // 注册 JWT 服务
 var jwtExpirationHours = builder.Configuration.GetValue<int>("Jwt:ExpirationHours", 24);
@@ -105,42 +108,94 @@ builder.Services.AddSingleton<IJwtService>(sp =>
     new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtExpirationHours));
 
 // 注册 LLM 客户端
-builder.Services.AddHttpClient<ILLMClient, ClaudeClient>((sp, client) =>
+var llmApiKey = builder.Configuration["LLM:ClaudeApiKey"] ?? "";
+var llmModel = builder.Configuration["LLM:Model"] ?? "claude-3-5-sonnet-20241022";
+
+builder.Services.AddHttpClient<ILLMClient, ClaudeClient>()
+    .ConfigureHttpClient(client =>
+    {
+        client.BaseAddress = new Uri("https://api.anthropic.com/");
+        client.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
+        client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+    });
+
+builder.Services.AddScoped<ILLMClient>(sp =>
 {
-    var apiKey = builder.Configuration["LLM:ClaudeApiKey"] ?? "";
-    var model = builder.Configuration["LLM:Model"] ?? "claude-3-5-sonnet-20241022";
-    return new ClaudeClient(client, apiKey, model);
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var httpClient = httpClientFactory.CreateClient(nameof(ClaudeClient));
+    return new ClaudeClient(httpClient, llmApiKey, llmModel);
+});
+
+// 注册仓储
+builder.Services.AddScoped<IUserRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new UserRepository(db.Users);
+});
+
+builder.Services.AddScoped<IInviteCodeRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new InviteCodeRepository(db.InviteCodes);
+});
+
+builder.Services.AddScoped<IGroupRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new GroupRepository(db.Groups);
+});
+
+builder.Services.AddScoped<IGroupMemberRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new GroupMemberRepository(db.GroupMembers);
+});
+
+builder.Services.AddScoped<IContentGapRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new ContentGapRepository(db.ContentGaps);
+});
+
+// 注册登录尝试服务
+builder.Services.AddSingleton<ILoginAttemptService>(sp =>
+{
+    var cache = sp.GetRequiredService<ICacheManager>();
+    return new LoginAttemptService(cache, maxAttempts: 5, lockoutMinutes: 15, attemptWindowMinutes: 30);
 });
 
 // 注册核心服务
 builder.Services.AddScoped<IUserService>(sp =>
 {
-    var db = sp.GetRequiredService<MongoDbContext>();
-    return new UserService(db.Users, db.InviteCodes);
+    var userRepo = sp.GetRequiredService<IUserRepository>();
+    var inviteCodeRepo = sp.GetRequiredService<IInviteCodeRepository>();
+    return new UserService(userRepo, inviteCodeRepo);
 });
 
 builder.Services.AddScoped<IDocumentService>(sp =>
 {
-    var cache = sp.GetRequiredService<RedisCacheManager>();
-    return new DocumentService(cache);
+    var cache = sp.GetRequiredService<ICacheManager>();
+    var parser = sp.GetRequiredService<IMarkdownParser>();
+    return new DocumentService(cache, parser);
 });
 
 builder.Services.AddScoped<ISessionService>(sp =>
 {
-    var cache = sp.GetRequiredService<RedisCacheManager>();
+    var cache = sp.GetRequiredService<ICacheManager>();
     return new SessionService(cache, sessionTimeout);
 });
 
 builder.Services.AddScoped<IGroupService>(sp =>
 {
-    var db = sp.GetRequiredService<MongoDbContext>();
-    return new GroupService(db.Groups, db.GroupMembers);
+    var groupRepo = sp.GetRequiredService<IGroupRepository>();
+    var memberRepo = sp.GetRequiredService<IGroupMemberRepository>();
+    return new GroupService(groupRepo, memberRepo);
 });
 
 builder.Services.AddScoped<IGapDetectionService>(sp =>
 {
-    var db = sp.GetRequiredService<MongoDbContext>();
-    return new GapDetectionService(db.ContentGaps);
+    var gapRepo = sp.GetRequiredService<IContentGapRepository>();
+    return new GapDetectionService(gapRepo);
 });
 
 builder.Services.AddScoped<IChatService>(sp =>
@@ -148,8 +203,8 @@ builder.Services.AddScoped<IChatService>(sp =>
     var llmClient = sp.GetRequiredService<ILLMClient>();
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
-    var cache = sp.GetRequiredService<RedisCacheManager>();
-    var promptManager = sp.GetRequiredService<PromptManager>();
+    var cache = sp.GetRequiredService<ICacheManager>();
+    var promptManager = sp.GetRequiredService<IPromptManager>();
     var userService = sp.GetRequiredService<IUserService>();
     return new ChatService(llmClient, sessionService, documentService, cache, promptManager, userService);
 });
@@ -159,11 +214,49 @@ builder.Services.AddScoped<IGuideService>(sp =>
     var llmClient = sp.GetRequiredService<ILLMClient>();
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
-    var promptManager = sp.GetRequiredService<PromptManager>();
+    var promptManager = sp.GetRequiredService<IPromptManager>();
     return new GuideService(llmClient, sessionService, documentService, promptManager);
 });
 
+// 注册引导进度仓储
+builder.Services.AddScoped<IGuideProgressRepository>(sp =>
+{
+    var cache = sp.GetRequiredService<ICacheManager>();
+    return new GuideProgressRepository(cache);
+});
+
+// 注册在线状态服务
+builder.Services.AddScoped<IOnlineStatusService>(sp =>
+{
+    var cache = sp.GetRequiredService<ICacheManager>();
+    var userService = sp.GetRequiredService<IUserService>();
+    return new OnlineStatusService(cache, userService);
+});
+
+// 注册Token用量服务
+builder.Services.AddScoped<ITokenUsageService>(sp =>
+{
+    var cache = sp.GetRequiredService<ICacheManager>();
+    return new TokenUsageService(cache);
+});
+
+// 注册缺口通知服务
+builder.Services.AddScoped<IGapNotificationService>(sp =>
+{
+    var cache = sp.GetRequiredService<ICacheManager>();
+    var groupService = sp.GetRequiredService<IGroupService>();
+    return new GapNotificationService(cache, groupService);
+});
+
 var app = builder.Build();
+
+// 初始化数据库（创建管理员账号和初始邀请码）
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+    var initializer = new DatabaseInitializer(db);
+    await initializer.InitializeAsync();
+}
 
 // 配置中间件
 if (app.Environment.IsDevelopment())
@@ -189,4 +282,3 @@ app.MapGet("/health", () => Results.Ok(new
 }));
 
 app.Run();
-
