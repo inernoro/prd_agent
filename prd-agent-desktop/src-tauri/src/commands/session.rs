@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{command, AppHandle, Emitter};
 use futures::StreamExt;
 
