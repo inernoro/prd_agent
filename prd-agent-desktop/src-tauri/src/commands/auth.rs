@@ -69,3 +69,4 @@ pub async fn register(
     client.post("/auth/register", &request).await
 }
 
+

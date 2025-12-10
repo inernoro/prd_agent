@@ -46,3 +46,4 @@ public class SenderInfo
     public UserRole Role { get; set; }
 }
 
+
