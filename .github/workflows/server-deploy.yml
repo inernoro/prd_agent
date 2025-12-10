@@ -1,0 +1,128 @@
+name: Server Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'PrdAgent.Server/**'
+      - '.github/workflows/server-deploy.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/prdagent-server
+
+jobs:
+  # 构建并推送 Docker 镜像
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./PrdAgent.Server
+          file: ./PrdAgent.Server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  # 构建并推送管理后台静态文件
+  build-admin:
+    name: Build Admin Dashboard
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: prd-agent-admin/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: prd-agent-admin
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: prd-agent-admin
+        run: pnpm build
+        env:
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL || '/api' }}
+
+      - name: Upload admin build
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-dist
+          path: prd-agent-admin/dist
+          retention-days: 30
+
+  # 部署通知（可选）
+  notify:
+    name: Deployment Notification
+    needs: [build-and-push, build-admin]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Notify success
+        if: needs.build-and-push.result == 'success'
+        run: |
+          echo "🚀 Deployment successful!"
+          echo "Image: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "Digest: ${{ needs.build-and-push.outputs.image_digest }}"
+
+      - name: Notify failure
+        if: needs.build-and-push.result == 'failure'
+        run: |
+          echo "❌ Deployment failed!"
+          exit 1
+
