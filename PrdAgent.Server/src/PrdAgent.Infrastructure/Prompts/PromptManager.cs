@@ -1,3 +1,4 @@
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.Prompts;
@@ -5,7 +6,7 @@ namespace PrdAgent.Infrastructure.Prompts;
 /// <summary>
 /// Prompt模板管理器
 /// </summary>
-public class PromptManager
+public class PromptManager : IPromptManager
 {
     private readonly Dictionary<UserRole, string> _rolePrompts;
     private readonly Dictionary<UserRole, List<GuideOutlineItem>> _guideOutlines;
@@ -36,17 +37,41 @@ public class PromptManager
     public string BuildSystemPrompt(UserRole role, string prdContent)
     {
         var rolePrompt = GetRolePrompt(role);
-        return $@"{rolePrompt}
+        return rolePrompt + @"
 
 ---
 
 # PRD文档内容
 
-{prdContent}
+" + prdContent + @"
 
 ---
 
-请基于上述PRD文档内容回答用户问题。如果问题涉及文档中未提及的内容，请明确告知"文档中未找到相关信息"。";
+请基于上述PRD文档内容回答用户问题。如果问题涉及文档中未提及的内容，请明确告知文档中未找到相关信息。";
+    }
+
+    /// <summary>构建缺口检测Prompt</summary>
+    public string BuildGapDetectionPrompt(string prdContent, string question)
+    {
+        return @"你是一位资深产品经理，正在分析PRD文档的完整性。
+
+# PRD文档内容
+" + prdContent + @"
+
+# 用户问题
+" + question + @"
+
+# 分析任务
+请判断这个问题在PRD文档中是否有明确的答案。如果没有，请：
+1. 指出这属于哪种类型的内容缺失（功能定义不明确/边界条件缺失/异常处理未说明/其他）
+2. 建议补充的内容方向
+
+请用JSON格式返回分析结果：
+{
+  ""hasAnswer"": true或false,
+  ""gapType"": ""UNCLEAR"" 或 ""MISSING"" 或 ""CONFLICT"" 或 ""OTHER"",
+  ""suggestion"": ""建议内容""
+}";
     }
 
     private Dictionary<UserRole, string> InitializeRolePrompts()
@@ -70,7 +95,7 @@ public class PromptManager
 
 # 回答风格
 - 使用业务语言，避免过度技术化
-- 多解释"为什么"，而不仅是"是什么"
+- 多解释为什么，而不仅是是什么
 - 用具体案例和场景辅助说明
 - 主动提及可能的风险和权衡
 
@@ -97,7 +122,7 @@ public class PromptManager
 
 # 回答风格
 - 使用精确的技术语言
-- 关注"怎么实现"和"实现细节"
+- 关注怎么实现和实现细节
 - 用伪代码、数据结构辅助说明
 - 主动指出可能的技术风险和坑点
 
@@ -124,7 +149,7 @@ public class PromptManager
 
 # 回答风格
 - 注重完备性和边界覆盖
-- 关注"怎么验证"和"预期结果"
+- 关注怎么验证和预期结果
 - 用测试用例格式辅助说明
 - 主动提出可能遗漏的测试场景
 
@@ -180,14 +205,3 @@ public class PromptManager
         };
     }
 }
-
-/// <summary>
-/// 引导大纲项（重新定义以避免循环引用）
-/// </summary>
-public class GuideOutlineItem
-{
-    public int Step { get; set; }
-    public string Title { get; set; } = string.Empty;
-    public string PromptTemplate { get; set; } = string.Empty;
-}
-

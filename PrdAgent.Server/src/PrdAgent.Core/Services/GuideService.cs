@@ -1,7 +1,6 @@
 using System.Runtime.CompilerServices;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Prompts;
 
 namespace PrdAgent.Core.Services;
 
@@ -13,14 +12,14 @@ public class GuideService : IGuideService
     private readonly ILLMClient _llmClient;
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
-    private readonly PromptManager _promptManager;
+    private readonly IPromptManager _promptManager;
     private const int TotalSteps = 6;
 
     public GuideService(
         ILLMClient llmClient,
         ISessionService sessionService,
         IDocumentService documentService,
-        PromptManager promptManager)
+        IPromptManager promptManager)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
@@ -200,15 +199,8 @@ public class GuideService : IGuideService
         };
     }
 
-    public List<Core.Interfaces.GuideOutlineItem> GetOutline(UserRole role)
+    public List<GuideOutlineItem> GetOutline(UserRole role)
     {
-        var prompts = _promptManager.GetGuideOutline(role);
-        return prompts.Select(p => new Core.Interfaces.GuideOutlineItem
-        {
-            Step = p.Step,
-            Title = p.Title,
-            PromptTemplate = p.PromptTemplate
-        }).ToList();
+        return _promptManager.GetGuideOutline(role);
     }
 }
-

@@ -1,8 +1,6 @@
 using System.Runtime.CompilerServices;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Cache;
-using PrdAgent.Infrastructure.Prompts;
 
 namespace PrdAgent.Core.Services;
 
@@ -14,16 +12,16 @@ public class ChatService : IChatService
     private readonly ILLMClient _llmClient;
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
-    private readonly RedisCacheManager _cache;
-    private readonly PromptManager _promptManager;
+    private readonly ICacheManager _cache;
+    private readonly IPromptManager _promptManager;
     private readonly IUserService _userService;
 
     public ChatService(
         ILLMClient llmClient,
         ISessionService sessionService,
         IDocumentService documentService,
-        RedisCacheManager cache,
-        PromptManager promptManager,
+        ICacheManager cache,
+        IPromptManager promptManager,
         IUserService userService)
     {
         _llmClient = llmClient;
@@ -220,4 +218,3 @@ public class ChatService : IChatService
         await _cache.SetAsync(key, history);
     }
 }
-

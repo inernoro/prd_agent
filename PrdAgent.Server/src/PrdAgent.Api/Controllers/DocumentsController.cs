@@ -4,6 +4,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -17,7 +18,6 @@ public class DocumentsController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly ISessionService _sessionService;
     private readonly ILogger<DocumentsController> _logger;
-    private const int MaxDocumentSize = 10 * 1024 * 1024; // 10MB
 
     public DocumentsController(
         IDocumentService documentService,
@@ -38,21 +38,19 @@ public class DocumentsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status413PayloadTooLarge)]
     public async Task<IActionResult> Upload([FromBody] UploadDocumentRequest request)
     {
-        // 验证内容
-        if (string.IsNullOrWhiteSpace(request.Content))
+        // 综合验证：内容、大小、格式、Token数
+        var validationResult = DocumentValidator.Validate(request.Content);
+        if (!validationResult.IsValid)
         {
-            return BadRequest(ApiResponse<object>.Fail(
-                ErrorCodes.CONTENT_EMPTY, 
-                "文档内容不能为空"));
-        }
+            var statusCode = validationResult.ErrorCode switch
+            {
+                "DOCUMENT_TOO_LARGE" => StatusCodes.Status413PayloadTooLarge,
+                _ => StatusCodes.Status400BadRequest
+            };
 
-        // 验证大小
-        if (request.Content.Length > MaxDocumentSize)
-        {
-            return StatusCode(StatusCodes.Status413PayloadTooLarge,
-                ApiResponse<object>.Fail(
-                    ErrorCodes.DOCUMENT_TOO_LARGE, 
-                    "文档超出大小限制（最大10MB）"));
+            return StatusCode(statusCode, ApiResponse<object>.Fail(
+                validationResult.ErrorCode!,
+                validationResult.ErrorMessage!));
         }
 
         try
@@ -79,8 +77,8 @@ public class DocumentsController : ControllerBase
                 }
             };
 
-            _logger.LogInformation("Document uploaded: {Title}, Tokens: {Tokens}", 
-                parsed.Title, parsed.TokenEstimate);
+            _logger.LogInformation("Document uploaded: {Title}, Chars: {Chars}, Tokens: {Tokens}", 
+                parsed.Title, parsed.CharCount, parsed.TokenEstimate);
 
             return Ok(ApiResponse<UploadDocumentResponse>.Ok(response));
         }
@@ -88,6 +86,31 @@ public class DocumentsController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+    }
+
+    /// <summary>
+    /// 验证文档（不保存）
+    /// </summary>
+    [HttpPost("validate")]
+    [ProducesResponseType(typeof(ApiResponse<DocumentValidationResponse>), StatusCodes.Status200OK)]
+    public IActionResult ValidateDocument([FromBody] UploadDocumentRequest request)
+    {
+        var validationResult = DocumentValidator.Validate(request.Content);
+
+        var response = new DocumentValidationResponse
+        {
+            IsValid = validationResult.IsValid,
+            ErrorCode = validationResult.ErrorCode,
+            ErrorMessage = validationResult.ErrorMessage,
+            EstimatedTokens = validationResult.IsValid 
+                ? validationResult.EstimatedTokens 
+                : DocumentValidator.EstimateTokens(request.Content),
+            MaxTokens = DocumentValidator.MaxTokens,
+            CharCount = request.Content?.Length ?? 0,
+            MaxSizeBytes = DocumentValidator.MaxDocumentSize
+        };
+
+        return Ok(ApiResponse<DocumentValidationResponse>.Ok(response));
     }
 
     /// <summary>
@@ -120,3 +143,16 @@ public class DocumentsController : ControllerBase
     }
 }
 
+/// <summary>
+/// 文档验证响应
+/// </summary>
+public class DocumentValidationResponse
+{
+    public bool IsValid { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorMessage { get; set; }
+    public int EstimatedTokens { get; set; }
+    public int MaxTokens { get; set; }
+    public int CharCount { get; set; }
+    public int MaxSizeBytes { get; set; }
+}

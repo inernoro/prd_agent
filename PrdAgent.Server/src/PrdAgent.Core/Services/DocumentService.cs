@@ -1,7 +1,5 @@
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Cache;
-using PrdAgent.Infrastructure.Markdown;
 
 namespace PrdAgent.Core.Services;
 
@@ -10,13 +8,13 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class DocumentService : IDocumentService
 {
-    private readonly RedisCacheManager _cache;
-    private readonly MarkdownParser _parser;
+    private readonly ICacheManager _cache;
+    private readonly IMarkdownParser _parser;
 
-    public DocumentService(RedisCacheManager cache)
+    public DocumentService(ICacheManager cache, IMarkdownParser parser)
     {
         _cache = cache;
-        _parser = new MarkdownParser();
+        _parser = parser;
     }
 
     public Task<ParsedPrd> ParseAsync(string content)
@@ -48,4 +46,3 @@ public class DocumentService : IDocumentService
         return _parser.EstimateTokens(content);
     }
 }
-

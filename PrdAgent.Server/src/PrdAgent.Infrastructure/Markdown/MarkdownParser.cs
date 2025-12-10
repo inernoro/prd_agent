@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Markdig;
 using Markdig.Syntax;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.Markdown;
@@ -8,7 +9,7 @@ namespace PrdAgent.Infrastructure.Markdown;
 /// <summary>
 /// Markdown解析器
 /// </summary>
-public class MarkdownParser
+public class MarkdownParser : IMarkdownParser
 {
     private readonly MarkdownPipeline _pipeline;
 
@@ -157,4 +158,3 @@ public class MarkdownParser
         return (int)(chineseCount * 1.5 + otherCount * 0.25);
     }
 }
-

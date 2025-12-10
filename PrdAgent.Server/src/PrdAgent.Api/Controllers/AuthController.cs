@@ -3,6 +3,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -15,15 +16,18 @@ public class AuthController : ControllerBase
 {
     private readonly IUserService _userService;
     private readonly IJwtService _jwtService;
+    private readonly ILoginAttemptService _loginAttemptService;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         IUserService userService, 
         IJwtService jwtService,
+        ILoginAttemptService loginAttemptService,
         ILogger<AuthController> logger)
     {
         _userService = userService;
         _jwtService = jwtService;
+        _loginAttemptService = loginAttemptService;
         _logger = logger;
     }
 
@@ -37,6 +41,15 @@ public class AuthController : ControllerBase
     {
         try
         {
+            // 验证密码强度
+            var passwordError = PasswordValidator.Validate(request.Password);
+            if (passwordError != null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.WEAK_PASSWORD, 
+                    passwordError));
+            }
+
             // 验证邀请码
             var isValid = await _userService.ValidateInviteCodeAsync(request.InviteCode);
             if (!isValid)
@@ -80,12 +93,28 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
+        // 检查是否被锁定
+        if (await _loginAttemptService.IsLockedAsync(request.Username))
+        {
+            var remainingSeconds = await _loginAttemptService.GetLockoutRemainingSecondsAsync(request.Username);
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                ApiResponse<object>.Fail(
+                    ErrorCodes.ACCOUNT_LOCKED,
+                    $"账号已被锁定，请在 {remainingSeconds} 秒后重试"));
+        }
+
         var user = await _userService.ValidateCredentialsAsync(request.Username, request.Password);
         
         if (user == null)
         {
+            // 记录失败尝试
+            await _loginAttemptService.RecordFailedAttemptAsync(request.Username);
+            
+            _logger.LogWarning("Failed login attempt for user: {Username}", request.Username);
+            
             return Unauthorized(ApiResponse<object>.Fail(
                 ErrorCodes.INVALID_CREDENTIALS, 
                 "用户名或密码错误"));
@@ -96,6 +125,9 @@ public class AuthController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, 
                 ApiResponse<object>.Fail(ErrorCodes.ACCOUNT_DISABLED, "账号已被禁用"));
         }
+
+        // 登录成功，重置失败次数
+        await _loginAttemptService.ResetAttemptsAsync(request.Username);
 
         // 更新最后登录时间
         await _userService.UpdateLastLoginAsync(user.UserId);
@@ -123,6 +155,33 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// 验证密码强度
+    /// </summary>
+    [HttpPost("validate-password")]
+    [ProducesResponseType(typeof(ApiResponse<PasswordValidationResponse>), StatusCodes.Status200OK)]
+    public IActionResult ValidatePassword([FromBody] ValidatePasswordRequest request)
+    {
+        var error = PasswordValidator.Validate(request.Password);
+        var score = PasswordValidator.GetStrengthScore(request.Password);
+
+        var response = new PasswordValidationResponse
+        {
+            IsValid = error == null,
+            Message = error,
+            StrengthScore = score,
+            StrengthLevel = score switch
+            {
+                >= 80 => "strong",
+                >= 60 => "medium",
+                >= 40 => "weak",
+                _ => "very_weak"
+            }
+        };
+
+        return Ok(ApiResponse<PasswordValidationResponse>.Ok(response));
+    }
+
+    /// <summary>
     /// 刷新令牌
     /// </summary>
     [HttpPost("refresh")]
@@ -137,3 +196,21 @@ public class AuthController : ControllerBase
     }
 }
 
+/// <summary>
+/// 密码验证请求
+/// </summary>
+public class ValidatePasswordRequest
+{
+    public string Password { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 密码验证响应
+/// </summary>
+public class PasswordValidationResponse
+{
+    public bool IsValid { get; set; }
+    public string? Message { get; set; }
+    public int StrengthScore { get; set; }
+    public string StrengthLevel { get; set; } = string.Empty;
+}

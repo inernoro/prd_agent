@@ -1,4 +1,3 @@
-using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
@@ -9,13 +8,13 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class UserService : IUserService
 {
-    private readonly IMongoCollection<User> _users;
-    private readonly IMongoCollection<InviteCode> _inviteCodes;
+    private readonly IUserRepository _userRepository;
+    private readonly IInviteCodeRepository _inviteCodeRepository;
 
-    public UserService(IMongoCollection<User> users, IMongoCollection<InviteCode> inviteCodes)
+    public UserService(IUserRepository userRepository, IInviteCodeRepository inviteCodeRepository)
     {
-        _users = users;
-        _inviteCodes = inviteCodes;
+        _userRepository = userRepository;
+        _inviteCodeRepository = inviteCodeRepository;
     }
 
     public async Task<User> RegisterAsync(
@@ -26,7 +25,7 @@ public class UserService : IUserService
         string? displayName = null)
     {
         // 验证邀请码
-        var invite = await _inviteCodes.Find(c => c.Code == inviteCode && !c.IsUsed).FirstOrDefaultAsync();
+        var invite = await _inviteCodeRepository.GetValidCodeAsync(inviteCode);
         if (invite == null)
         {
             throw new ArgumentException("邀请码无效或已使用");
@@ -49,15 +48,10 @@ public class UserService : IUserService
             Status = UserStatus.Active
         };
 
-        await _users.InsertOneAsync(user);
+        await _userRepository.InsertAsync(user);
 
         // 标记邀请码已使用
-        await _inviteCodes.UpdateOneAsync(
-            c => c.Code == inviteCode,
-            Builders<InviteCode>.Update
-                .Set(c => c.IsUsed, true)
-                .Set(c => c.UsedBy, user.UserId)
-                .Set(c => c.UsedAt, DateTime.UtcNow));
+        await _inviteCodeRepository.MarkAsUsedAsync(inviteCode, user.UserId);
 
         return user;
     }
@@ -79,32 +73,23 @@ public class UserService : IUserService
 
     public async Task<User?> GetByIdAsync(string userId)
     {
-        return await _users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        return await _userRepository.GetByIdAsync(userId);
     }
 
     public async Task<User?> GetByUsernameAsync(string username)
     {
-        return await _users.Find(u => u.Username == username).FirstOrDefaultAsync();
+        return await _userRepository.GetByUsernameAsync(username);
     }
 
     public async Task UpdateLastLoginAsync(string userId)
     {
-        await _users.UpdateOneAsync(
-            u => u.UserId == userId,
-            Builders<User>.Update.Set(u => u.LastLoginAt, DateTime.UtcNow));
+        await _userRepository.UpdateLastLoginAsync(userId);
     }
 
     public async Task<bool> ValidateInviteCodeAsync(string inviteCode)
     {
-        var invite = await _inviteCodes.Find(c => c.Code == inviteCode && !c.IsUsed).FirstOrDefaultAsync();
-        if (invite == null)
-            return false;
-
-        // 检查是否过期
-        if (invite.ExpiresAt.HasValue && invite.ExpiresAt.Value < DateTime.UtcNow)
-            return false;
-
-        return true;
+        var invite = await _inviteCodeRepository.GetValidCodeAsync(inviteCode);
+        return invite != null;
     }
 
     public async Task<string> CreateInviteCodeAsync(string creatorId)
@@ -118,22 +103,7 @@ public class UserService : IUserService
             ExpiresAt = DateTime.UtcNow.AddDays(7) // 7天有效期
         };
 
-        await _inviteCodes.InsertOneAsync(inviteCode);
+        await _inviteCodeRepository.InsertAsync(inviteCode);
         return code;
     }
 }
-
-/// <summary>
-/// 邀请码实体
-/// </summary>
-public class InviteCode
-{
-    public string Code { get; set; } = string.Empty;
-    public string CreatorId { get; set; } = string.Empty;
-    public bool IsUsed { get; set; }
-    public string? UsedBy { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? UsedAt { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-}
-
