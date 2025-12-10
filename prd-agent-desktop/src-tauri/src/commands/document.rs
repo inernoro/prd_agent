@@ -10,10 +10,12 @@ struct UploadDocumentRequest {
 }
 
 #[command]
-pub async fn upload_document(content: String) -> Result<ApiResponse<UploadDocumentResponse>, String> {
+pub async fn upload_document(
+    content: String,
+) -> Result<ApiResponse<UploadDocumentResponse>, String> {
     let client = ApiClient::new();
     let request = UploadDocumentRequest { content };
-    
+
     client.post("/documents", &request).await
 }
 
@@ -22,4 +24,3 @@ pub async fn get_document(document_id: String) -> Result<ApiResponse<DocumentInf
     let client = ApiClient::new();
     client.get(&format!("/documents/{}", document_id)).await
 }
-

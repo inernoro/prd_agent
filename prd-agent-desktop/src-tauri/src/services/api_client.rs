@@ -42,9 +42,9 @@ impl ApiClient {
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
-        
+
         let mut request = self.client.get(&url);
-        
+
         if let Some(token) = Self::get_token() {
             request = request.header("Authorization", format!("Bearer {}", token));
         }
@@ -66,9 +66,9 @@ impl ApiClient {
         body: &B,
     ) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
-        
+
         let mut request = self.client.post(&url).json(body);
-        
+
         if let Some(token) = Self::get_token() {
             request = request.header("Authorization", format!("Bearer {}", token));
         }
@@ -90,9 +90,9 @@ impl ApiClient {
         body: &B,
     ) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
-        
+
         let mut request = self.client.put(&url).json(body);
-        
+
         if let Some(token) = Self::get_token() {
             request = request.header("Authorization", format!("Bearer {}", token));
         }
@@ -114,5 +114,4 @@ impl Default for ApiClient {
         Self::new()
     }
 }
-
 

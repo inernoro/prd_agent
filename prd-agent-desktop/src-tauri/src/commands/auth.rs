@@ -36,16 +36,16 @@ pub async fn login(
 ) -> Result<ApiResponse<LoginResponse>, String> {
     let client = ApiClient::new();
     let request = LoginRequest { username, password };
-    
+
     let response: ApiResponse<LoginResponse> = client.post("/auth/login", &request).await?;
-    
+
     // 保存token
     if response.success {
         if let Some(ref data) = response.data {
             ApiClient::set_token(data.access_token.clone());
         }
     }
-    
+
     Ok(response)
 }
 
@@ -65,8 +65,7 @@ pub async fn register(
         role,
         display_name,
     };
-    
+
     client.post("/auth/register", &request).await
 }
-
 
