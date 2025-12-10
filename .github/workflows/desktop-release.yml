@@ -58,10 +58,36 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-desktop-release-${{ hashFiles('prd-agent-desktop/pnpm-lock.yaml', 'prd-agent-desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-desktop-release-
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            prd-agent-desktop/src-tauri/target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('prd-agent-desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       # Linux 依赖
       - name: Install Linux dependencies

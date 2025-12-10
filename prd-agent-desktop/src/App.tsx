@@ -9,7 +9,7 @@ import LoginPage from './components/Auth/LoginPage';
 
 function App() {
   const { isAuthenticated } = useAuthStore();
-  const { sessionId, documentLoaded } = useSessionStore();
+  const { documentLoaded } = useSessionStore();
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {

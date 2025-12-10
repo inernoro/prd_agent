@@ -12,9 +12,38 @@ env:
   PNPM_VERSION: '9'
 
 jobs:
+  # 检测变更的路径
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      admin: ${{ steps.filter.outputs.admin }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Path filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            server:
+              - 'PrdAgent.Server/**'
+              - '.github/workflows/ci.yml'
+            admin:
+              - 'prd-agent-admin/**'
+              - '.github/workflows/ci.yml'
+            desktop:
+              - 'prd-agent-desktop/**'
+              - '.github/workflows/ci.yml'
+
   # 后端服务构建和测试
   server-build:
     name: Server Build & Test
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -29,6 +58,14 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/**.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
       - name: Restore dependencies
         run: dotnet restore PrdAgent.sln
 
@@ -41,6 +78,8 @@ jobs:
   # Web 管理后台构建
   admin-build:
     name: Admin Dashboard Build
+    needs: changes
+    if: needs.changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,13 +104,13 @@ jobs:
         run: |
           echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
-      - name: Setup pnpm cache
+      - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-admin-${{ hashFiles('prd-agent-admin/pnpm-lock.yaml', 'prd-agent-admin/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+            ${{ runner.os }}-pnpm-admin-
 
       - name: Install dependencies
         run: pnpm install
@@ -85,6 +124,8 @@ jobs:
   # 桌面客户端构建检查（不打包）
   desktop-check:
     name: Desktop Client Check
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -109,16 +150,29 @@ jobs:
         run: |
           echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
-      - name: Setup pnpm cache
+      - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-desktop-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-desktop-${{ hashFiles('prd-agent-desktop/pnpm-lock.yaml', 'prd-agent-desktop/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-desktop-
+            ${{ runner.os }}-pnpm-desktop-
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            prd-agent-desktop/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('prd-agent-desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Install system dependencies (Linux)
         run: |
@@ -143,3 +197,32 @@ jobs:
         working-directory: prd-agent-desktop/src-tauri
         run: cargo clippy -- -D warnings
 
+  # CI 状态汇总（用于 branch protection）
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [changes, server-build, admin-build, desktop-check]
+    if: always()
+    steps:
+      - name: Check CI status
+        run: |
+          echo "Changes detected:"
+          echo "  Server: ${{ needs.changes.outputs.server }}"
+          echo "  Admin: ${{ needs.changes.outputs.admin }}"
+          echo "  Desktop: ${{ needs.changes.outputs.desktop }}"
+          
+          # 检查需要运行的 job 是否成功
+          server_ok="${{ needs.changes.outputs.server != 'true' || needs.server-build.result == 'success' }}"
+          admin_ok="${{ needs.changes.outputs.admin != 'true' || needs.admin-build.result == 'success' }}"
+          desktop_ok="${{ needs.changes.outputs.desktop != 'true' || needs.desktop-check.result == 'success' }}"
+          
+          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" ]]; then
+            echo "✅ All required checks passed!"
+            exit 0
+          else
+            echo "❌ Some checks failed"
+            echo "  Server: ${{ needs.server-build.result }}"
+            echo "  Admin: ${{ needs.admin-build.result }}"
+            echo "  Desktop: ${{ needs.desktop-check.result }}"
+            exit 1
+          fi
