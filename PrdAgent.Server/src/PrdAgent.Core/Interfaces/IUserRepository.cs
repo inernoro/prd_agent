@@ -24,3 +24,4 @@ public interface IInviteCodeRepository
     Task MarkAsUsedAsync(string code, string usedBy);
 }
 
+

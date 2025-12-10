@@ -42,3 +42,4 @@ switch ($Platform) {
 Write-Host "`nBuild completed!" -ForegroundColor Green
 Write-Host "Output: prd-agent-desktop/src-tauri/target/release/bundle/" -ForegroundColor Cyan
 
+

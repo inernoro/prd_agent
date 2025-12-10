@@ -61,3 +61,4 @@ pub async fn get_groups() -> Result<ApiResponse<Vec<GroupInfo>>, String> {
     client.get("/groups").await
 }
 
+

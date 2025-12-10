@@ -10,3 +10,4 @@ public class GuideOutlineItem
     public string PromptTemplate { get; set; } = string.Empty;
 }
 
+

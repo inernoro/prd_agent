@@ -45,3 +45,4 @@ public class GroupMessageRequest
     public List<string>? AttachmentIds { get; set; }
 }
 
+

@@ -38,3 +38,4 @@ public class GuideProgress
     public bool IsCompleted { get; set; }
 }
 
+

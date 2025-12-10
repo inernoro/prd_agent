@@ -35,3 +35,4 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+

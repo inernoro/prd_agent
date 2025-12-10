@@ -166,3 +166,4 @@ public class GapAnalysisResult
     public string? Suggestion { get; set; }
 }
 
+

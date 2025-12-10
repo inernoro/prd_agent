@@ -17,3 +17,4 @@ public interface IPromptManager
     string BuildGapDetectionPrompt(string prdContent, string question);
 }
 
+
