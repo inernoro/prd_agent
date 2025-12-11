@@ -5,7 +5,7 @@ services:
     image: mongo:8.0
     container_name: prdagent-mongodb
     ports:
-      - "27017:27017"
+      - "18081:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
@@ -17,7 +17,7 @@ services:
     image: redis:7-alpine
     container_name: prdagent-redis
     ports:
-      - "6379:6379"
+      - "18082:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -31,7 +31,7 @@ services:
     #   dockerfile: Dockerfile
     container_name: prdagent-api
     ports:
-      - "5000:80"
+      - "18080:80"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - MongoDB__ConnectionString=mongodb://mongodb:27017
