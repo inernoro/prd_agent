@@ -1,27 +1,7 @@
 import { useEffect, useState } from 'react';
-import {
-  Card,
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  InputNumber,
-  Select,
-  Switch,
-  Tag,
-  Space,
-  message,
-  Popconfirm,
-} from 'antd';
+import { Card, Table, Button, Modal, Form, Input, InputNumber, Select, Switch, Tag, Space, message, Popconfirm } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined } from '@ant-design/icons';
-import {
-  getLLMConfigs,
-  createLLMConfig,
-  updateLLMConfig,
-  deleteLLMConfig,
-  activateLLMConfig,
-} from '../services/api';
+import { getLLMConfigs, createLLMConfig, updateLLMConfig, deleteLLMConfig, activateLLMConfig } from '../services/api';
 
 interface LLMConfig {
   id: string;
@@ -101,10 +81,7 @@ export default function LLMConfigPage() {
 
   const openEditModal = (config: LLMConfig) => {
     setEditingConfig(config);
-    form.setFieldsValue({
-      ...config,
-      apiKey: '', // 不回显API Key
-    });
+    form.setFieldsValue({ ...config, apiKey: '' });
     setModalVisible(true);
   };
 
@@ -114,35 +91,21 @@ export default function LLMConfigPage() {
       dataIndex: 'provider',
       key: 'provider',
       render: (provider: string, record: LLMConfig) => (
-        <div>
+        <div className="flex items-center gap-2">
           <span className="font-medium">{provider}</span>
-          {record.isActive && (
-            <Tag color="green" className="ml-2">默认</Tag>
-          )}
+          {record.isActive && <Tag color="green">默认</Tag>}
         </div>
       ),
     },
-    {
-      title: '模型',
-      dataIndex: 'model',
-      key: 'model',
-    },
+    { title: '模型', dataIndex: 'model', key: 'model' },
     {
       title: 'API Key',
       dataIndex: 'apiKeyMasked',
       key: 'apiKeyMasked',
-      render: (key: string) => <code className="text-xs">{key}</code>,
+      render: (key: string) => <code className="text-xs text-cyan-400">{key}</code>,
     },
-    {
-      title: 'Max Tokens',
-      dataIndex: 'maxTokens',
-      key: 'maxTokens',
-    },
-    {
-      title: 'Temperature',
-      dataIndex: 'temperature',
-      key: 'temperature',
-    },
+    { title: 'Max Tokens', dataIndex: 'maxTokens', key: 'maxTokens' },
+    { title: 'Temperature', dataIndex: 'temperature', key: 'temperature' },
     {
       title: '限流',
       dataIndex: 'rateLimitPerMinute',
@@ -155,28 +118,15 @@ export default function LLMConfigPage() {
       render: (_: any, record: LLMConfig) => (
         <Space>
           {!record.isActive && (
-            <Button
-              size="small"
-              icon={<CheckOutlined />}
-              onClick={() => handleActivate(record.id)}
-            >
+            <Button size="small" icon={<CheckOutlined />} onClick={() => handleActivate(record.id)}>
               设为默认
             </Button>
           )}
-          <Button
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => openEditModal(record)}
-          >
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)}>
             编辑
           </Button>
-          <Popconfirm
-            title="确定要删除此配置吗？"
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
+          <Popconfirm title="确定要删除此配置吗？" onConfirm={() => handleDelete(record.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
         </Space>
       ),
@@ -186,7 +136,7 @@ export default function LLMConfigPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">LLM配置</h1>
+        <h1 className="text-2xl font-bold">LLM配置</h1>
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -201,13 +151,7 @@ export default function LLMConfigPage() {
       </div>
 
       <Card>
-        <Table
-          columns={columns}
-          dataSource={configs}
-          rowKey="id"
-          loading={loading}
-          pagination={false}
-        />
+        <Table columns={columns} dataSource={configs} rowKey="id" loading={loading} pagination={false} />
       </Card>
 
       <Modal
@@ -234,30 +178,18 @@ export default function LLMConfigPage() {
             isActive: false,
           }}
         >
-          <Form.Item
-            name="provider"
-            label="服务商"
-            rules={[{ required: true }]}
-          >
+          <Form.Item name="provider" label="服务商" rules={[{ required: true }]}>
             <Select>
               <Select.Option value="Claude">Claude</Select.Option>
               <Select.Option value="OpenAI">OpenAI</Select.Option>
             </Select>
           </Form.Item>
 
-          <Form.Item
-            name="model"
-            label="模型名称"
-            rules={[{ required: true }]}
-          >
+          <Form.Item name="model" label="模型名称" rules={[{ required: true }]}>
             <Input placeholder="如 claude-3-5-sonnet-20241022" />
           </Form.Item>
 
-          <Form.Item
-            name="apiKey"
-            label="API Key"
-            rules={[{ required: !editingConfig }]}
-          >
+          <Form.Item name="apiKey" label="API Key" rules={[{ required: !editingConfig }]}>
             <Input.Password placeholder={editingConfig ? '留空则保持原有Key' : '输入API Key'} />
           </Form.Item>
 
@@ -269,15 +201,12 @@ export default function LLMConfigPage() {
             <Form.Item name="maxTokens" label="Max Tokens">
               <InputNumber min={1} max={100000} className="w-full" />
             </Form.Item>
-
             <Form.Item name="temperature" label="Temperature">
               <InputNumber min={0} max={2} step={0.1} className="w-full" />
             </Form.Item>
-
             <Form.Item name="topP" label="Top P">
               <InputNumber min={0} max={1} step={0.05} className="w-full" />
             </Form.Item>
-
             <Form.Item name="rateLimitPerMinute" label="限流（每分钟）">
               <InputNumber min={1} max={1000} className="w-full" />
             </Form.Item>
@@ -297,6 +226,3 @@ export default function LLMConfigPage() {
     </div>
   );
 }
-
-
-

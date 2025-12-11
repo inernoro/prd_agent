@@ -20,8 +20,8 @@ public class RateLimitMiddleware
     public RateLimitMiddleware(
         RequestDelegate next, 
         ILogger<RateLimitMiddleware> logger,
-        int maxRequestsPerMinute = 60,
-        int maxConcurrentRequests = 10)
+        int maxRequestsPerMinute = 300,
+        int maxConcurrentRequests = 50)
     {
         _next = next;
         _logger = logger;

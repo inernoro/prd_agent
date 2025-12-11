@@ -73,6 +73,59 @@ export const getActiveGroups = (limit?: number) =>
 export const getGapStats = () =>
   api.get('/admin/stats/gap-stats');
 
+// ========== Platform APIs ==========
+export const getPlatforms = () =>
+  api.get('/platforms');
+
+export const getPlatform = (id: string) =>
+  api.get(`/platforms/${id}`);
+
+export const createPlatform = (data: Record<string, unknown>) =>
+  api.post('/platforms', data);
+
+export const updatePlatform = (id: string, data: Record<string, unknown>) =>
+  api.put(`/platforms/${id}`, data);
+
+export const deletePlatform = (id: string) =>
+  api.delete(`/platforms/${id}`);
+
+export const getPlatformModels = (id: string) =>
+  api.get(`/platforms/${id}/models`);
+
+export const getAvailableModels = (id: string) =>
+  api.get(`/platforms/${id}/available-models`);
+
+// ========== Model APIs ==========
+export const getModels = () =>
+  api.get('/config/models');
+
+export const getModel = (id: string) =>
+  api.get(`/config/models/${id}`);
+
+export const createModel = (data: Record<string, unknown>) =>
+  api.post('/config/models', data);
+
+export const updateModel = (id: string, data: Record<string, unknown>) =>
+  api.put(`/config/models/${id}`, data);
+
+export const deleteModel = (id: string) =>
+  api.delete(`/config/models/${id}`);
+
+export const testModel = (id: string) =>
+  api.post(`/config/models/${id}/test`);
+
+export const updateModelPriorities = (updates: Array<{ id: string; priority: number }>) =>
+  api.put('/config/models/priorities', updates);
+
+export const setMainModel = (modelId: string) =>
+  api.put('/config/main-model', { modelId });
+
+export const getMainModel = () =>
+  api.get('/config/main-model');
+
+export const batchAddModelsFromPlatform = (platformId: string, models: Array<{ modelName: string; displayName?: string; group?: string }>) =>
+  api.post('/config/models/batch-from-platform', { platformId, models });
+
 export default api;
 
 

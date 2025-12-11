@@ -34,25 +34,27 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-      <Card className="w-96 shadow-2xl" bordered={false}>
+    <div className="h-screen flex items-center justify-center animated-bg">
+      <Card className="w-96" bordered={false}>
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-r from-cyan-400 to-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <div 
+            className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+            style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+          >
             <span className="text-white font-bold text-2xl">P</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-800">PRD Agent</h1>
-          <p className="text-gray-500 text-sm mt-1">管理后台</p>
+          <h1 className="text-2xl font-bold text-white">PRD Agent</h1>
+          <p className="text-gray-400 text-sm mt-1">管理后台</p>
         </div>
 
-        <Form onFinish={handleSubmit} layout="vertical">
+        <Form onFinish={handleSubmit} layout="vertical" size="large">
           <Form.Item
             name="username"
             rules={[{ required: true, message: '请输入用户名' }]}
           >
             <Input
-              prefix={<UserOutlined className="text-gray-400" />}
+              prefix={<UserOutlined />}
               placeholder="用户名"
-              size="large"
             />
           </Form.Item>
 
@@ -61,9 +63,8 @@ export default function LoginPage() {
             rules={[{ required: true, message: '请输入密码' }]}
           >
             <Input.Password
-              prefix={<LockOutlined className="text-gray-400" />}
+              prefix={<LockOutlined />}
               placeholder="密码"
-              size="large"
             />
           </Form.Item>
 
@@ -71,7 +72,6 @@ export default function LoginPage() {
             <Button
               type="primary"
               htmlType="submit"
-              size="large"
               block
               loading={loading}
             >
@@ -83,6 +83,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
-
-

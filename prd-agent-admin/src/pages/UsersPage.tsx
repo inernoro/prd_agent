@@ -1,14 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  Table,
-  Card,
-  Input,
-  Select,
-  Button,
-  Modal,
-  message,
-  InputNumber,
-} from 'antd';
+import { Table, Card, Input, Select, Button, Modal, message, InputNumber } from 'antd';
 import { SearchOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons';
 import { getUsers, updateUserStatus, updateUserRole, generateInviteCodes } from '../services/api';
 import dayjs from 'dayjs';
@@ -106,7 +97,7 @@ export default function UsersPage() {
       render: (text: string, record: User) => (
         <div>
           <div className="font-medium">{text}</div>
-          <div className="text-xs text-gray-400">{record.displayName}</div>
+          <div className="text-xs text-gray-500">{record.displayName}</div>
         </div>
       ),
     },
@@ -161,18 +152,14 @@ export default function UsersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">用户管理</h1>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setInviteModalVisible(true)}
-        >
+        <h1 className="text-2xl font-bold">用户管理</h1>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setInviteModalVisible(true)}>
           生成邀请码
         </Button>
       </div>
 
       <Card>
-        <div className="flex gap-4 mb-4">
+        <div className="flex gap-4 mb-4 flex-wrap">
           <Input
             placeholder="搜索用户名或昵称"
             prefix={<SearchOutlined />}
@@ -245,16 +232,9 @@ export default function UsersPage() {
           {inviteCodes.length > 0 && (
             <div className="space-y-2">
               {inviteCodes.map((code) => (
-                <div
-                  key={code}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <code className="text-sm font-mono">{code}</code>
-                  <Button
-                    size="small"
-                    icon={<CopyOutlined />}
-                    onClick={() => copyToClipboard(code)}
-                  >
+                <div key={code} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                  <code className="text-sm font-mono text-cyan-400">{code}</code>
+                  <Button size="small" icon={<CopyOutlined />} onClick={() => copyToClipboard(code)}>
                     复制
                   </Button>
                 </div>
@@ -266,4 +246,3 @@ export default function UsersPage() {
     </div>
   );
 }
-

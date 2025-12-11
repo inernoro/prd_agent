@@ -1,3 +1,30 @@
+/* 基础变量 - Grok 极致黑白风格 */
+:root {
+  --color-bg-base: #141414; /* 用户指定的主体背景色 */
+  --color-bg-sider: #000000; /* 侧边栏保持纯黑 */
+  --color-bg-card: #141414;
+  --color-bg-elevated: #1f1f1f;
+  
+  /* 主色调：极简白 */
+  --color-primary: #ffffff; 
+  --color-primary-hover: #cccccc;
+  
+  /* 辅助色 */
+  --color-secondary: #666666;
+  --color-accent: #ffffff;
+  
+  --text-primary: #ffffff;
+  --text-secondary: #888888;
+  --text-muted: #444444;
+  
+  --card-border: #262626; /* 稍微提亮线条，确保在 #141414 上可见 */
+  --card-border-hover: #444444;
+  
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+}
+
+/* 基础样式重置 */
 * {
   margin: 0;
   padding: 0;
@@ -6,38 +33,715 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg-base) !important;
+  overflow: hidden;
 }
 
 #root {
   height: 100%;
+  width: 100%;
 }
 
-/* Ant Design 样式覆盖 */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 布局去色 - 区分侧边栏和内容区 */
+.ant-layout {
+  background: var(--color-bg-base) !important;
+}
+
 .ant-layout-sider {
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+  background: var(--color-bg-sider) !important;
+  border-right: 1px solid var(--card-border) !important;
 }
 
+.ant-layout-header {
+  background: var(--color-bg-base) !important; /* 头部跟随内容区颜色 */
+  border-bottom: none !important;
+  height: 56px !important;
+  padding: 0 24px !important;
+  line-height: 56px !important;
+}
+
+.ant-layout-content {
+  background: var(--color-bg-base) !important;
+}
+
+/* 优化大标题字体 */
+h1.text-2xl {
+  font-size: 20px !important; /* 调小字号 */
+  font-weight: 500 !important;
+  letter-spacing: -0.5px;
+}
+
+/* 内容区域 - 移除卡片背景 */
+.glass {
+  background: transparent !important;
+  border: none !important; /* 移除外框 */
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important; /* 移除内边距，让内容顶格或自行控制 */
+}
+
+/* 统计卡片 - 极简线框 */
+.stat-card {
+  border: 1px solid var(--card-border);
+  background: transparent;
+  padding: 24px;
+  transition: border-color 0.2s;
+}
+
+.stat-card:hover {
+  border-color: var(--card-border-hover);
+}
+
+/* 覆盖 Antd Card */
+.ant-card {
+  background: transparent !important;
+  border: 1px solid var(--card-border) !important;
+  border-radius: 4px !important; /* 极小圆角 */
+}
+
+.ant-card-head {
+  border-bottom: 1px solid var(--card-border) !important;
+}
+
+/* 去除 Logo 渐变 */
+.logo-box {
+  background: transparent !important;
+  border: 1px solid var(--text-primary) !important;
+  color: var(--text-primary) !important;
+}
+
+/* 选中菜单项 - Grok 风格：深灰背景块，无白条 */
+.ant-menu-dark .ant-menu-item-selected {
+  background: #262626 !important; /* 明显的深灰色背景 */
+  color: #ffffff !important;
+  font-weight: 500;
+  border-radius: 8px !important; /* 明显的圆角 */
+  margin-left: 8px !important;
+  margin-right: 8px !important;
+  width: calc(100% - 16px) !important;
+}
+
+/* 移除之前的伪元素白条 */
+.ant-menu-dark .ant-menu-item-selected::before {
+  display: none !important;
+}
+
+/* 菜单项悬停 */
+.ant-menu-dark .ant-menu-item:hover {
+  background: #1a1a1a !important; /* 悬停时稍微亮一点的黑 */
+  color: #fff !important;
+  border-radius: 8px !important;
+  margin-left: 8px !important;
+  margin-right: 8px !important;
+  width: calc(100% - 16px) !important;
+}
+
+/* 菜单容器内边距调整 */
+.ant-menu-dark .ant-menu-item {
+  margin: 4px 0 !important;
+  padding-left: 12px !important; /* 调整文字间距 */
+  width: 100% !important; /* 默认宽度 */
+}
+
+/* 按钮 - 线框风格 */
+.ant-btn-primary {
+  background: #fff !important;
+  color: #000 !important;
+  border: 1px solid #fff !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+.ant-btn-primary:hover {
+  background: #000 !important;
+  color: #fff !important;
+}
+
+/* 默认按钮 */
+.ant-btn-default {
+  background: transparent !important;
+  border: 1px solid #333 !important;
+  color: #888 !important;
+  border-radius: 4px !important;
+}
+
+.ant-btn-default:hover {
+  border-color: #fff !important;
+  color: #fff !important;
+}
+
+/* 图表容器 */
+.chart-container {
+  border: 1px solid var(--card-border);
+  padding: 24px;
+}
+
+/* 布局工具类 */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.flex-1 { flex: 1; }
+.flex-wrap { flex-wrap: wrap; }
+
+/* 间距工具类 */
+.m-4 { margin: 16px; }
+.m-6 { margin: 24px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-4 { margin-bottom: 16px; }
+.mb-6 { margin-bottom: 24px; }
+.mb-8 { margin-bottom: 32px; }
+.mt-4 { margin-top: 16px; }
+.ml-2 { margin-left: 8px; }
+.p-3 { padding: 12px; }
+.p-4 { padding: 16px; }
+.p-6 { padding: 24px; }
+.px-3 { padding-left: 12px; padding-right: 12px; }
+.px-4 { padding-left: 16px; padding-right: 16px; }
+.py-1 { padding-top: 4px; padding-bottom: 4px; }
+.py-4 { padding-top: 16px; padding-bottom: 16px; }
+
+/* 尺寸工具类 */
+.w-9 { width: 36px; }
+.h-9 { height: 36px; }
+.w-16 { width: 64px; }
+.h-16 { height: 64px; }
+.h-64 { height: 256px; }
+.h-screen { height: 100vh; }
+.w-96 { width: 384px; }
+.w-full { width: 100%; }
+
+/* 文字工具类 */
+.text-center { text-align: center; }
+.text-xs { font-size: 12px; }
+.text-sm { font-size: 14px; }
+.text-lg { font-size: 18px; }
+.text-2xl { font-size: 24px; }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+.font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+
+/* 颜色工具类 - 极简黑白 */
+.text-white { color: #ffffff; }
+.text-gray-300 { color: #cccccc; }
+.text-gray-400 { color: #888888; }
+.text-gray-500 { color: #444444; }
+
+/* 所有的彩色全部重置为白色/灰色，除了状态指示 */
+.text-cyan-400, .text-cyan-500,
+.text-purple-400, .text-purple-500,
+.text-amber-400, .text-emerald-400 {
+  color: #ffffff;
+}
+
+.bg-white\/5 { background: rgba(255, 255, 255, 0.05); }
+.bg-white\/10 { background: rgba(255, 255, 255, 0.1); }
+
+/* 边框工具类 */
+.rounded-lg { border-radius: 8px; }
+.rounded-xl { border-radius: 12px; }
+.rounded-2xl { border-radius: 24px; }
+.border { border: 1px solid; }
+.border-white\/10 { border-color: var(--card-border); }
+.border-b { border-bottom: 1px solid; }
+
+/* 其他工具类 */
+.overflow-auto { overflow: auto; }
+.cursor-pointer { cursor: pointer; }
+.transition-colors { transition: color 0.2s, background-color 0.2s, border-color 0.2s, box-shadow 0.2s; }
+.space-y-2 > * + * { margin-top: 8px; }
+.whitespace-nowrap { white-space: nowrap; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* hover 效果 */
+.hover\:text-white:hover { color: white; }
+.hover\:bg-white\/10:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* ========== Ant Design 样式覆盖 ========== */
+
+/* 侧边栏 */
+.ant-layout-sider {
+  background: var(--color-bg-base) !important;
+  border-right: 1px solid var(--card-border) !important;
+  position: relative !important;
+}
+
+.ant-layout-sider-children {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 确保侧边栏内部容器占满高度 */
+.ant-layout-sider-children > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 头部 */
+.ant-layout-header {
+  background: var(--color-bg-base) !important;
+  border-bottom: none !important;
+}
+
+/* 卡片 - 纯黑，仅留极细边框 */
+.ant-card {
+  background: transparent !important;
+  border: 1px solid var(--card-border) !important;
+  border-radius: var(--radius-lg) !important;
+}
+
+.ant-card-head {
+  border-bottom: 1px solid var(--card-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-card-head-title {
+  color: var(--text-primary) !important;
+  font-weight: 500 !important;
+}
+
+.ant-card-body {
+  color: var(--text-primary) !important;
+}
+
+/* 弹窗 */
+.ant-modal-content {
+  background: #0a0a0a !important;
+  border: 1px solid var(--card-border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: 0 0 0 1px #333 !important;
+}
+
+.ant-modal-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--card-border) !important;
+}
+
+.ant-modal-title {
+  color: var(--text-primary) !important;
+  font-weight: 600 !important;
+}
+
+.ant-modal-close-x {
+  color: var(--text-secondary) !important;
+}
+
+/* 下拉菜单 */
+.ant-select-dropdown,
+.ant-dropdown-menu {
+  background: #0a0a0a !important;
+  border: 1px solid var(--card-border) !important;
+  border-radius: 12px !important;
+}
+
+.ant-select-item {
+  color: var(--text-secondary) !important;
+  border-radius: 8px !important;
+  margin: 2px 4px !important;
+}
+
+.ant-select-item-option-selected {
+  background: #222 !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+
+.ant-select-item-option-active {
+  background: #1a1a1a !important;
+}
+
+/* 主按钮 - 极简白 */
+.ant-btn-primary {
+  background: #fff !important;
+  color: #000 !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 20px !important;
+  font-weight: 600 !important;
+  padding: 0 20px !important;
+}
+
+.ant-btn-primary:hover {
+  background: #e5e5e5 !important;
+  color: #000 !important;
+  transform: none !important;
+}
+
+/* 默认按钮 */
+.ant-btn-default {
+  background: transparent !important;
+  border: 1px solid #333 !important;
+  color: #fff !important;
+  border-radius: 20px !important;
+}
+
+.ant-btn-default:hover {
+  background: #111 !important;
+  border-color: #666 !important;
+  color: #fff !important;
+}
+
+/* 菜单 */
 .ant-menu-dark {
   background: transparent !important;
 }
 
-.ant-card {
+.ant-menu-dark .ant-menu-item {
+  color: var(--text-secondary) !important;
+  margin: 4px 8px !important;
   border-radius: 12px !important;
+  font-weight: 500 !important;
 }
 
-.ant-statistic-title {
-  color: #64748b !important;
+.ant-menu-dark .ant-menu-item:hover {
+  background: #111 !important;
+  color: #fff !important;
 }
 
-.stat-card {
-  transition: transform 0.2s, box-shadow 0.2s;
+.ant-menu-dark .ant-menu-item-selected {
+  background: #222 !important;
+  color: #fff !important;
 }
 
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+.ant-menu-dark .ant-menu-item-selected::after {
+  display: none !important;
 }
 
+/* 表格 */
+.ant-table {
+  background: transparent !important;
+}
 
+.ant-table-thead > tr > th {
+  background: var(--color-bg-elevated) !important;
+  border-bottom: 1px solid var(--card-border) !important;
+  color: var(--text-secondary) !important;
+}
 
+.ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--card-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+.ant-table-placeholder {
+  background: transparent !important;
+}
+
+.ant-empty-description {
+  color: var(--text-muted) !important;
+}
+
+/* 输入框 */
+.ant-input,
+.ant-input-password,
+.ant-input-affix-wrapper,
+.ant-input-affix-wrapper input {
+  background: var(--color-bg-elevated) !important;
+  background-color: var(--color-bg-elevated) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-input:hover,
+.ant-input-password:hover,
+.ant-input-affix-wrapper:hover {
+  background: var(--color-bg-elevated) !important;
+  background-color: var(--color-bg-elevated) !important;
+  border-color: var(--card-border-hover) !important;
+}
+
+.ant-input:focus,
+.ant-input-password:focus,
+.ant-input-focused,
+.ant-input-affix-wrapper-focused,
+.ant-input:focus-within,
+.ant-input-affix-wrapper:focus-within {
+  background: var(--color-bg-elevated) !important;
+  background-color: var(--color-bg-elevated) !important;
+  border-color: #38bdf8 !important; /* Sky-400 */
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.1) !important;
+}
+
+.ant-input::placeholder {
+  color: var(--text-muted) !important;
+}
+
+.ant-input-prefix,
+.ant-input-suffix {
+  color: var(--text-muted) !important;
+}
+
+/* 密码输入框眼睛图标 */
+.ant-input-password-icon {
+  color: var(--text-muted) !important;
+}
+
+.ant-input-password-icon:hover {
+  color: var(--text-primary) !important;
+}
+
+/* 表单 */
+.ant-form-item-label > label {
+  color: var(--text-secondary) !important;
+}
+
+/* 头像 */
+.ant-avatar {
+  background: #333 !important;
+  border-radius: 4px !important;
+}
+
+/* 分页 */
+.ant-pagination-item {
+  background: var(--color-bg-elevated) !important;
+  border-color: var(--card-border) !important;
+}
+
+.ant-pagination-item a {
+  color: var(--text-secondary) !important;
+}
+
+.ant-pagination-item-active {
+  background: var(--color-bg-card) !important;
+  border-color: var(--color-primary) !important;
+}
+
+.ant-pagination-item-active a {
+  color: var(--color-accent) !important;
+}
+
+/* 消息提示 */
+.ant-message-notice-content {
+  background: var(--color-bg-elevated) !important;
+  border: 1px solid var(--card-border) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  color: var(--text-primary) !important;
+}
+
+/* 标签 */
+.ant-tag {
+  background: rgba(6, 182, 212, 0.1) !important;
+  border-color: rgba(6, 182, 212, 0.2) !important;
+  color: #38bdf8 !important; /* Sky-400 */
+}
+
+/* 开关 */
+.ant-switch {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.ant-switch-checked {
+  background: linear-gradient(135deg, var(--color-primary-gradient-start), var(--color-primary-gradient-end)) !important;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Tabs标签页 */
+.ant-tabs-nav::before {
+  border-bottom-color: var(--card-border) !important;
+}
+
+.ant-tabs-tab {
+  color: var(--text-secondary) !important;
+}
+
+.ant-tabs-tab:hover {
+  color: var(--text-primary) !important;
+}
+
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--color-accent) !important;
+}
+
+.ant-tabs-ink-bar {
+  background: var(--color-primary) !important;
+}
+
+/* Collapse折叠面板 */
+.ant-collapse {
+  background: transparent !important;
+  border: none !important;
+}
+
+.ant-collapse-item {
+  border-bottom: 1px solid var(--card-border) !important;
+}
+
+.ant-collapse-header {
+  color: var(--text-secondary) !important;
+}
+
+.ant-collapse-content {
+  background: transparent !important;
+  border-top: none !important;
+}
+
+.ant-collapse-content-box {
+  padding: 12px 0 0 0 !important;
+}
+
+/* Progress进度条 */
+.ant-progress-text {
+  color: var(--text-secondary) !important;
+}
+
+/* Badge徽标 */
+.ant-badge-count {
+  box-shadow: none !important;
+}
+
+/* Spin加载 */
+.ant-spin-text {
+  color: var(--text-secondary) !important;
+}
+
+/* Tooltip提示 */
+.ant-tooltip-inner {
+  background: var(--color-bg-elevated) !important;
+  border: 1px solid var(--card-border) !important;
+}
+
+.ant-tooltip-arrow::before {
+  background: var(--color-bg-elevated) !important;
+}
+
+/* InputNumber数字输入框 */
+.ant-input-number {
+  background: var(--color-bg-elevated) !important;
+  background-color: var(--color-bg-elevated) !important;
+  border-color: var(--card-border) !important;
+}
+
+.ant-input-number:hover,
+.ant-input-number:focus,
+.ant-input-number-focused {
+  background: var(--color-bg-elevated) !important;
+  background-color: var(--color-bg-elevated) !important;
+  border-color: var(--color-primary) !important;
+}
+
+.ant-input-number-input {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-input-number-handler-wrap {
+  background: var(--color-bg-elevated) !important;
+  border-left-color: var(--card-border) !important;
+}
+
+.ant-input-number-handler {
+  border-color: var(--card-border) !important;
+}
+
+.ant-input-number-handler-up-inner,
+.ant-input-number-handler-down-inner {
+  color: var(--text-secondary) !important;
+}
+
+/* TextArea文本域 */
+.ant-input-textarea textarea,
+.ant-input-textarea textarea:hover,
+.ant-input-textarea textarea:focus {
+  background: var(--color-bg-elevated) !important;
+  background-color: var(--color-bg-elevated) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-input-textarea textarea:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.1) !important;
+}
+
+/* 表单项说明文字 */
+.ant-form-item-extra {
+  color: var(--text-muted) !important;
+}
+
+/* 表单项错误状态 */
+.ant-form-item-has-error .ant-input,
+.ant-form-item-has-error .ant-input-affix-wrapper {
+  background: var(--color-bg-elevated) !important;
+  border-color: #ef4444 !important;
+}
+
+/* 全局强制覆盖 - 确保所有input都是暗色背景 */
+input,
+input:focus,
+input:hover,
+input:active,
+textarea,
+textarea:focus,
+textarea:hover {
+  background-color: var(--color-bg-elevated) !important;
+}
+
+/* 覆盖浏览器自动填充样式 (Chrome/Safari/Edge) */
+/* 使用 box-shadow 遮盖背景色，使用 -webkit-text-fill-color 覆盖文字颜色 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+textarea:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--color-bg-elevated) inset !important;
+  box-shadow: 0 0 0 1000px var(--color-bg-elevated) inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Popconfirm确认弹窗 */
+.ant-popconfirm .ant-popover-inner {
+  background: var(--color-bg-elevated) !important;
+  border: 1px solid var(--card-border) !important;
+}
+
+.ant-popconfirm .ant-popover-message-title {
+  color: var(--text-primary) !important;
+}
+
+.ant-popconfirm .ant-popover-buttons .ant-btn-default {
+  background: var(--color-bg-card) !important;
+}

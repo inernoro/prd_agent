@@ -4,7 +4,7 @@ import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import UsersPage from './pages/UsersPage';
-import LLMConfigPage from './pages/LLMConfigPage';
+import ModelManagePage from './pages/ModelManagePage';
 import StatsPage from './pages/StatsPage';
 
 function App() {
@@ -31,7 +31,7 @@ function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/users" element={<UsersPage />} />
-        <Route path="/llm-config" element={<LLMConfigPage />} />
+        <Route path="/model-manage" element={<ModelManagePage />} />
         <Route path="/stats" element={<StatsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
