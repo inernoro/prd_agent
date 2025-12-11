@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -9,8 +6,6 @@ namespace PrdAgent.Core.Models;
 public class LLMConfig
 {
     /// <summary>配置ID</summary>
-    [BsonId]
-    [BsonRepresentation(BsonType.String)]
     public string Id { get; set; } = Guid.NewGuid().ToString();
     
     /// <summary>服务商名称 (Claude/OpenAI)</summary>

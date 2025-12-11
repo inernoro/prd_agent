@@ -41,6 +41,13 @@ public class AuthController : ControllerBase
     {
         try
         {
+            // 验证请求参数
+            var (isValid, errorMessage) = request.Validate();
+            if (!isValid)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+            }
+
             // 验证密码强度
             var passwordError = PasswordValidator.Validate(request.Password);
             if (passwordError != null)
@@ -51,8 +58,8 @@ public class AuthController : ControllerBase
             }
 
             // 验证邀请码
-            var isValid = await _userService.ValidateInviteCodeAsync(request.InviteCode);
-            if (!isValid)
+            var isInviteCodeValid = await _userService.ValidateInviteCodeAsync(request.InviteCode);
+            if (!isInviteCodeValid)
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_INVITE_CODE, 
@@ -96,6 +103,13 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
+        // 验证请求参数
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
         // 检查是否被锁定
         if (await _loginAttemptService.IsLockedAsync(request.Username))
         {
@@ -189,6 +203,13 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
     {
+        // 验证请求参数
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
         // TODO: 实现刷新令牌逻辑
         // 需要存储刷新令牌并验证
         await Task.CompletedTask;

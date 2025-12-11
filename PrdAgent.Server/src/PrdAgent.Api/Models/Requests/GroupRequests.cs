@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Models.Requests;
@@ -9,12 +8,20 @@ namespace PrdAgent.Api.Models.Requests;
 public class CreateGroupRequest
 {
     /// <summary>绑定的PRD文档ID</summary>
-    [Required(ErrorMessage = "PRD文档ID不能为空")]
     public string PrdDocumentId { get; set; } = string.Empty;
 
     /// <summary>群组名称（可选）</summary>
-    [StringLength(50, ErrorMessage = "群组名称不能超过50字符")]
     public string? GroupName { get; set; }
+
+    /// <summary>验证请求</summary>
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(PrdDocumentId))
+            return (false, "PRD文档ID不能为空");
+        if (GroupName != null && GroupName.Length > 50)
+            return (false, "群组名称不能超过50字符");
+        return (true, null);
+    }
 }
 
 /// <summary>
@@ -23,12 +30,18 @@ public class CreateGroupRequest
 public class JoinGroupRequest
 {
     /// <summary>邀请码</summary>
-    [Required(ErrorMessage = "邀请码不能为空")]
     public string InviteCode { get; set; } = string.Empty;
 
     /// <summary>加入时的角色</summary>
-    [Required(ErrorMessage = "角色不能为空")]
     public UserRole UserRole { get; set; }
+
+    /// <summary>验证请求</summary>
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(InviteCode))
+            return (false, "邀请码不能为空");
+        return (true, null);
+    }
 }
 
 /// <summary>
@@ -36,13 +49,23 @@ public class JoinGroupRequest
 /// </summary>
 public class GroupMessageRequest
 {
+    private const int MaxContentLength = 16 * 1024;
+
     /// <summary>消息内容</summary>
-    [Required(ErrorMessage = "消息内容不能为空")]
-    [MaxLength(16 * 1024, ErrorMessage = "消息内容不能超过16KB")]
     public string Content { get; set; } = string.Empty;
 
     /// <summary>附件ID列表</summary>
     public List<string>? AttachmentIds { get; set; }
+
+    /// <summary>验证请求</summary>
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Content))
+            return (false, "消息内容不能为空");
+        if (Content.Length > MaxContentLength)
+            return (false, "消息内容不能超过16KB");
+        return (true, null);
+    }
 }
 
 

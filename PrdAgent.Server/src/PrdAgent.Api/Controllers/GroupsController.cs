@@ -40,6 +40,13 @@ public class GroupsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Create([FromBody] CreateGroupRequest request)
     {
+        // 验证请求参数
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
         var userId = User.FindFirst("sub")?.Value;
         if (string.IsNullOrEmpty(userId))
         {
@@ -95,6 +102,13 @@ public class GroupsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Join([FromBody] JoinGroupRequest request)
     {
+        // 验证请求参数
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
         var userId = User.FindFirst("sub")?.Value;
         if (string.IsNullOrEmpty(userId))
         {

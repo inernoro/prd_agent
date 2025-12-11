@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -8,8 +5,6 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class InviteCode
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.String)]
     public string Code { get; set; } = string.Empty;
     public string CreatorId { get; set; } = string.Empty;
     public bool IsUsed { get; set; }

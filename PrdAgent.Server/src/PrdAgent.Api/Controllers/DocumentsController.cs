@@ -38,6 +38,13 @@ public class DocumentsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status413PayloadTooLarge)]
     public async Task<IActionResult> Upload([FromBody] UploadDocumentRequest request)
     {
+        // 验证请求参数
+        var (isRequestValid, requestErrorMessage) = request.Validate();
+        if (!isRequestValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, requestErrorMessage!));
+        }
+
         // 综合验证：内容、大小、格式、Token数
         var validationResult = DocumentValidator.Validate(request.Content);
         if (!validationResult.IsValid)
@@ -95,6 +102,13 @@ public class DocumentsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<DocumentValidationResponse>), StatusCodes.Status200OK)]
     public IActionResult ValidateDocument([FromBody] UploadDocumentRequest request)
     {
+        // 验证请求参数
+        var (isRequestValid, requestErrorMessage) = request.Validate();
+        if (!isRequestValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, requestErrorMessage!));
+        }
+
         var validationResult = DocumentValidator.Validate(request.Content);
 
         var response = new DocumentValidationResponse
