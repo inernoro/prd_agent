@@ -2,7 +2,6 @@ mod commands;
 mod models;
 mod services;
 
-#[cfg(debug_assertions)]
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10,10 +9,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(|_app| {
+        .setup(|app| {
+            // 初始化配置（从文件加载 API URL）
+            commands::config::init_config(app.handle());
+
             #[cfg(debug_assertions)]
             {
-                let window = _app.get_webview_window("main").unwrap();
+                let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
             Ok(())
@@ -31,6 +33,10 @@ pub fn run() {
             commands::group::create_group,
             commands::group::join_group,
             commands::group::get_groups,
+            commands::config::get_config,
+            commands::config::save_config,
+            commands::config::get_default_api_url,
+            commands::config::test_api_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
