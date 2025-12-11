@@ -30,6 +30,8 @@ public class MongoDbContext
     public IMongoCollection<Attachment> Attachments => _database.GetCollection<Attachment>("attachments");
     public IMongoCollection<LLMConfig> LLMConfigs => _database.GetCollection<LLMConfig>("llmconfigs");
     public IMongoCollection<InviteCode> InviteCodes => _database.GetCollection<InviteCode>("invitecodes");
+    public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
+    public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
 
     private void CreateIndexes()
     {
@@ -61,5 +63,18 @@ public class MongoDbContext
             Builders<ContentGap>.IndexKeys.Ascending(g => g.GroupId)));
         
         // InviteCodes: Code 已标记为 [BsonId]，MongoDB _id 字段天生唯一，无需额外索引
+        
+        // LLMPlatforms索引
+        LLMPlatforms.Indexes.CreateOne(new CreateIndexModel<LLMPlatform>(
+            Builders<LLMPlatform>.IndexKeys.Ascending(p => p.Name),
+            new CreateIndexOptions { Unique = true }));
+        
+        // LLMModels索引
+        LLMModels.Indexes.CreateOne(new CreateIndexModel<LLMModel>(
+            Builders<LLMModel>.IndexKeys.Ascending(m => m.ModelName)));
+        LLMModels.Indexes.CreateOne(new CreateIndexModel<LLMModel>(
+            Builders<LLMModel>.IndexKeys.Ascending(m => m.PlatformId)));
+        LLMModels.Indexes.CreateOne(new CreateIndexModel<LLMModel>(
+            Builders<LLMModel>.IndexKeys.Ascending(m => m.Priority)));
     }
 }

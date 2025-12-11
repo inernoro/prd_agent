@@ -3,7 +3,7 @@
 # PRD Agent 快速启动器
 # 用法:
 #   ./quick.sh          - 启动后端服务
-#   ./quick.sh web      - 启动Web管理后台
+#   ./quick.sh admin    - 启动Web管理后台
 #   ./quick.sh desktop  - 启动桌面客户端
 #   ./quick.sh all      - 同时启动前后端
 
@@ -42,8 +42,8 @@ start_backend() {
 }
 
 # 启动Web管理后台
-start_web() {
-    log_info "Starting web admin..."
+start_admin() {
+    log_info "Starting admin panel..."
     cd "$SCRIPT_DIR/prd-agent-admin"
     pnpm dev
 }
@@ -68,19 +68,19 @@ start_all() {
     # 等待后端启动
     sleep 3
     
-    # 前台启动Web管理后台
-    log_info "Starting web admin..."
+    # 前台启动管理后台
+    log_info "Starting admin panel..."
     cd "$SCRIPT_DIR/prd-agent-admin"
     pnpm dev &
-    WEB_PID=$!
+    ADMIN_PID=$!
     
     log_success "All services started!"
     log_info "Backend PID: $BACKEND_PID"
-    log_info "Web Admin PID: $WEB_PID"
+    log_info "Admin Panel PID: $ADMIN_PID"
     log_info "Press Ctrl+C to stop all services"
     
     # 捕获退出信号，清理进程
-    trap "kill $BACKEND_PID $WEB_PID 2>/dev/null; exit" SIGINT SIGTERM
+    trap "kill $BACKEND_PID $ADMIN_PID 2>/dev/null; exit" SIGINT SIGTERM
     
     # 等待任意子进程退出
     wait
@@ -94,7 +94,7 @@ show_help() {
     echo ""
     echo "Commands:"
     echo "  (default)  Start backend server"
-    echo "  web        Start web admin (prd-agent-admin)"
+    echo "  admin      Start admin panel (prd-agent-admin)"
     echo "  desktop    Start desktop client (prd-agent-desktop)"
     echo "  all        Start backend and web admin together"
     echo "  help       Show this help message"
@@ -106,8 +106,8 @@ case "${1:-}" in
     "")
         start_backend
         ;;
-    "web")
-        start_web
+    "admin")
+        start_admin
         ;;
     "desktop")
         start_desktop
