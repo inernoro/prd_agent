@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using PrdAgent.Api.Json;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Middleware;
@@ -47,10 +48,7 @@ public class ExceptionMiddleware
         context.Response.StatusCode = (int)statusCode;
 
         var response = ApiResponse<object>.Fail(errorCode, message);
-        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var json = JsonSerializer.Serialize(response, AppJsonContext.Default.ApiResponseObject);
 
         await context.Response.WriteAsync(json);
     }
@@ -66,6 +64,3 @@ public static class ExceptionMiddlewareExtensions
         return builder.UseMiddleware<ExceptionMiddleware>();
     }
 }
-
-
-

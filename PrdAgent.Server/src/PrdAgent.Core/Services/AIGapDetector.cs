@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
@@ -140,10 +141,7 @@ public class AIGapDetector
             if (jsonStart >= 0 && jsonEnd > jsonStart)
             {
                 var json = response[jsonStart..(jsonEnd + 1)];
-                return JsonSerializer.Deserialize<GapAnalysisResult>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
+                return JsonSerializer.Deserialize(json, GapAnalysisJsonContext.Default.GapAnalysisResult);
             }
         }
         catch
@@ -166,5 +164,11 @@ public class GapAnalysisResult
     public string? Suggestion { get; set; }
 }
 
-
-
+/// <summary>
+/// 缺口分析 JSON 上下文
+/// </summary>
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+[JsonSerializable(typeof(GapAnalysisResult))]
+public partial class GapAnalysisJsonContext : JsonSerializerContext
+{
+}

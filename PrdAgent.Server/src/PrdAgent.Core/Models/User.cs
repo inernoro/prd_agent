@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -6,6 +9,8 @@ namespace PrdAgent.Core.Models;
 public class User
 {
     /// <summary>用户唯一标识</summary>
+    [BsonId]
+    [BsonRepresentation(BsonType.String)]
     public string UserId { get; set; } = Guid.NewGuid().ToString();
     
     /// <summary>用户名（登录用）</summary>

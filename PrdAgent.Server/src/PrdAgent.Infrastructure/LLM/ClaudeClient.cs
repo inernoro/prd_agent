@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -42,22 +41,22 @@ public class ClaudeClient : ILLMClient
         List<LLMMessage> messages,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var requestBody = new
+        var requestBody = new ClaudeRequest
         {
-            model = _model,
-            max_tokens = _maxTokens,
-            temperature = _temperature,
-            system = systemPrompt,
-            messages = messages.Select(m => new
+            Model = _model,
+            MaxTokens = _maxTokens,
+            Temperature = _temperature,
+            System = systemPrompt,
+            Messages = messages.Select(m => new ClaudeRequestMessage
             {
-                role = m.Role,
-                content = BuildMessageContent(m)
-            }).ToArray(),
-            stream = true
+                Role = m.Role,
+                Content = BuildMessageContent(m)
+            }).ToList(),
+            Stream = true
         };
 
         var content = new StringContent(
-            JsonSerializer.Serialize(requestBody),
+            JsonSerializer.Serialize(requestBody, LLMJsonContext.Default.ClaudeRequest),
             Encoding.UTF8,
             "application/json");
 
@@ -105,7 +104,7 @@ public class ClaudeClient : ILLMClient
             if (data == "[DONE]")
                 break;
 
-            var eventData = JsonSerializer.Deserialize<ClaudeStreamEvent>(data);
+            var eventData = JsonSerializer.Deserialize(data, LLMJsonContext.Default.ClaudeStreamEvent);
             
             if (eventData?.Type == "content_block_delta" && eventData.Delta?.Text != null)
             {
@@ -133,7 +132,7 @@ public class ClaudeClient : ILLMClient
         };
     }
 
-    private object BuildMessageContent(LLMMessage message)
+    private static object BuildMessageContent(LLMMessage message)
     {
         if (message.Attachments == null || message.Attachments.Count == 0)
         {
@@ -147,54 +146,26 @@ public class ClaudeClient : ILLMClient
         {
             if (!string.IsNullOrEmpty(attachment.Base64Data))
             {
-                content.Add(new
+                content.Add(new ClaudeImageContent
                 {
-                    type = "image",
-                    source = new
+                    Type = "image",
+                    Source = new ClaudeImageSource
                     {
-                        type = "base64",
-                        media_type = attachment.MimeType ?? "image/png",
-                        data = attachment.Base64Data
+                        Type = "base64",
+                        MediaType = attachment.MimeType ?? "image/png",
+                        Data = attachment.Base64Data
                     }
                 });
             }
         }
 
         // 添加文本
-        content.Add(new
+        content.Add(new ClaudeTextContent
         {
-            type = "text",
-            text = message.Content
+            Type = "text",
+            Text = message.Content
         });
 
         return content;
     }
 }
-
-// Claude API响应模型
-internal class ClaudeStreamEvent
-{
-    public string? Type { get; set; }
-    public ClaudeMessage? Message { get; set; }
-    public ClaudeDelta? Delta { get; set; }
-    public ClaudeUsage? Usage { get; set; }
-}
-
-internal class ClaudeMessage
-{
-    public ClaudeUsage? Usage { get; set; }
-}
-
-internal class ClaudeDelta
-{
-    public string? Text { get; set; }
-}
-
-internal class ClaudeUsage
-{
-    public int InputTokens { get; set; }
-    public int OutputTokens { get; set; }
-}
-
-
-

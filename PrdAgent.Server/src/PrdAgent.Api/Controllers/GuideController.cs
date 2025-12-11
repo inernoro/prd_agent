@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
@@ -71,10 +72,7 @@ public class GuideController : ControllerBase
                 request.Role,
                 cancellationToken))
             {
-                var eventData = JsonSerializer.Serialize(streamEvent, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
+                var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.GuideStreamEvent);
 
                 await Response.WriteAsync($"event: guide\n", cancellationToken);
                 await Response.WriteAsync($"data: {eventData}\n\n", cancellationToken);
@@ -249,10 +247,7 @@ public class GuideController : ControllerBase
             step,
             cancellationToken))
         {
-            var eventData = JsonSerializer.Serialize(streamEvent, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.GuideStreamEvent);
 
             await Response.WriteAsync($"event: guide\n", cancellationToken);
             await Response.WriteAsync($"data: {eventData}\n\n", cancellationToken);

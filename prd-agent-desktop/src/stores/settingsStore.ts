@@ -58,3 +58,4 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   openModal: () => set({ isModalOpen: true }),
   closeModal: () => set({ isModalOpen: false }),
 }));
+

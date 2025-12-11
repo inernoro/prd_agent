@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Json;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -61,24 +62,24 @@ public class AdminUsersController : ControllerBase
             .Limit(pageSize)
             .ToListAsync();
 
-        var response = new
+        var response = new UserListResponse
         {
-            items = users.Select(u => new
+            Items = users.Select(u => new UserListItem
             {
-                u.UserId,
-                u.Username,
-                u.DisplayName,
-                role = u.Role.ToString(),
-                status = u.Status.ToString(),
-                u.CreatedAt,
-                u.LastLoginAt
-            }),
-            total,
-            page,
-            pageSize
+                UserId = u.UserId,
+                Username = u.Username,
+                DisplayName = u.DisplayName,
+                Role = u.Role.ToString(),
+                Status = u.Status.ToString(),
+                CreatedAt = u.CreatedAt,
+                LastLoginAt = u.LastLoginAt
+            }).ToList(),
+            Total = total,
+            Page = page,
+            PageSize = pageSize
         };
 
-        return Ok(ApiResponse<object>.Ok(response));
+        return Ok(ApiResponse<UserListResponse>.Ok(response));
     }
 
     /// <summary>
@@ -94,16 +95,18 @@ public class AdminUsersController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         }
 
-        return Ok(ApiResponse<object>.Ok(new
+        var response = new UserDetailResponse
         {
-            user.UserId,
-            user.Username,
-            user.DisplayName,
-            role = user.Role.ToString(),
-            status = user.Status.ToString(),
-            user.CreatedAt,
-            user.LastLoginAt
-        }));
+            UserId = user.UserId,
+            Username = user.Username,
+            DisplayName = user.DisplayName,
+            Role = user.Role.ToString(),
+            Status = user.Status.ToString(),
+            CreatedAt = user.CreatedAt,
+            LastLoginAt = user.LastLoginAt
+        };
+
+        return Ok(ApiResponse<UserDetailResponse>.Ok(response));
     }
 
     /// <summary>
@@ -123,7 +126,13 @@ public class AdminUsersController : ControllerBase
 
         _logger.LogInformation("User {UserId} status updated to {Status}", userId, request.Status);
 
-        return Ok(ApiResponse<object>.Ok(new { userId, status = request.Status.ToString() }));
+        var response = new UserStatusUpdateResponse
+        {
+            UserId = userId,
+            Status = request.Status.ToString()
+        };
+
+        return Ok(ApiResponse<UserStatusUpdateResponse>.Ok(response));
     }
 
     /// <summary>
@@ -143,7 +152,13 @@ public class AdminUsersController : ControllerBase
 
         _logger.LogInformation("User {UserId} role updated to {Role}", userId, request.Role);
 
-        return Ok(ApiResponse<object>.Ok(new { userId, role = request.Role.ToString() }));
+        var response = new UserRoleUpdateResponse
+        {
+            UserId = userId,
+            Role = request.Role.ToString()
+        };
+
+        return Ok(ApiResponse<UserRoleUpdateResponse>.Ok(response));
     }
 
     /// <summary>
@@ -169,7 +184,8 @@ public class AdminUsersController : ControllerBase
             codes.Add(code);
         }
 
-        return Ok(ApiResponse<object>.Ok(new { codes }));
+        var response = new InviteCodeGenerateResponse { Codes = codes };
+        return Ok(ApiResponse<InviteCodeGenerateResponse>.Ok(response));
     }
 }
 
@@ -188,6 +204,3 @@ public class GenerateInviteCodeRequest
     public int Count { get; set; } = 1;
     public int? ExpiresInDays { get; set; }
 }
-
-
-

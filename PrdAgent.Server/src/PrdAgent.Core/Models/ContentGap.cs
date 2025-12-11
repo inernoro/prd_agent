@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -6,6 +9,8 @@ namespace PrdAgent.Core.Models;
 public class ContentGap
 {
     /// <summary>缺失记录唯一标识</summary>
+    [BsonId]
+    [BsonRepresentation(BsonType.String)]
     public string GapId { get; set; } = Guid.NewGuid().ToString();
     
     /// <summary>所属群组ID</summary>

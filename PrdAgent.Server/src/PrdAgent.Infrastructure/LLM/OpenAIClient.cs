@@ -40,32 +40,32 @@ public class OpenAIClient : ILLMClient
         List<LLMMessage> messages,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var allMessages = new List<object>
+        var allMessages = new List<OpenAIRequestMessage>
         {
-            new { role = "system", content = systemPrompt }
+            new() { Role = "system", Content = systemPrompt }
         };
 
         foreach (var message in messages)
         {
-            allMessages.Add(new
+            allMessages.Add(new OpenAIRequestMessage
             {
-                role = message.Role,
-                content = BuildMessageContent(message)
+                Role = message.Role,
+                Content = BuildMessageContent(message)
             });
         }
 
-        var requestBody = new
+        var requestBody = new OpenAIRequest
         {
-            model = _model,
-            max_tokens = _maxTokens,
-            temperature = _temperature,
-            messages = allMessages,
-            stream = true,
-            stream_options = new { include_usage = true }
+            Model = _model,
+            MaxTokens = _maxTokens,
+            Temperature = _temperature,
+            Messages = allMessages,
+            Stream = true,
+            StreamOptions = new OpenAIStreamOptions { IncludeUsage = true }
         };
 
         var content = new StringContent(
-            JsonSerializer.Serialize(requestBody),
+            JsonSerializer.Serialize(requestBody, LLMJsonContext.Default.OpenAIRequest),
             Encoding.UTF8,
             "application/json");
 
@@ -149,7 +149,7 @@ public class OpenAIClient : ILLMClient
     {
         try
         {
-            return JsonSerializer.Deserialize<OpenAIStreamEvent>(data);
+            return JsonSerializer.Deserialize(data, LLMJsonContext.Default.OpenAIStreamEvent);
         }
         catch
         {
@@ -157,7 +157,7 @@ public class OpenAIClient : ILLMClient
         }
     }
 
-    private object BuildMessageContent(LLMMessage message)
+    private static object BuildMessageContent(LLMMessage message)
     {
         if (message.Attachments == null || message.Attachments.Count == 0)
         {
@@ -171,53 +171,32 @@ public class OpenAIClient : ILLMClient
         {
             if (!string.IsNullOrEmpty(attachment.Url))
             {
-                content.Add(new
+                content.Add(new OpenAIImageUrlContent
                 {
-                    type = "image_url",
-                    image_url = new { url = attachment.Url }
+                    Type = "image_url",
+                    ImageUrl = new OpenAIImageUrl { Url = attachment.Url }
                 });
             }
             else if (!string.IsNullOrEmpty(attachment.Base64Data))
             {
-                content.Add(new
+                content.Add(new OpenAIImageUrlContent
                 {
-                    type = "image_url",
-                    image_url = new { url = $"data:{attachment.MimeType};base64,{attachment.Base64Data}" }
+                    Type = "image_url",
+                    ImageUrl = new OpenAIImageUrl 
+                    { 
+                        Url = $"data:{attachment.MimeType};base64,{attachment.Base64Data}" 
+                    }
                 });
             }
         }
 
         // 添加文本
-        content.Add(new
+        content.Add(new OpenAITextContent
         {
-            type = "text",
-            text = message.Content
+            Type = "text",
+            Text = message.Content
         });
 
         return content;
     }
 }
-
-// OpenAI API响应模型
-internal class OpenAIStreamEvent
-{
-    public OpenAIChoice[]? Choices { get; set; }
-    public OpenAIUsage? Usage { get; set; }
-}
-
-internal class OpenAIChoice
-{
-    public OpenAIDelta? Delta { get; set; }
-}
-
-internal class OpenAIDelta
-{
-    public string? Content { get; set; }
-}
-
-internal class OpenAIUsage
-{
-    public int PromptTokens { get; set; }
-    public int CompletionTokens { get; set; }
-}
-
