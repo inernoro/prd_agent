@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
+using PrdAgent.Api.Json;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Middleware;
@@ -81,10 +82,7 @@ public class RateLimitMiddleware
         context.Response.ContentType = "application/json";
 
         var response = ApiResponse<object>.Fail(ErrorCodes.RATE_LIMITED, message);
-        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var json = JsonSerializer.Serialize(response, AppJsonContext.Default.ApiResponseObject);
 
         await context.Response.WriteAsync(json);
     }
@@ -132,6 +130,3 @@ public static class RateLimitMiddlewareExtensions
         return builder.UseMiddleware<RateLimitMiddleware>();
     }
 }
-
-
-

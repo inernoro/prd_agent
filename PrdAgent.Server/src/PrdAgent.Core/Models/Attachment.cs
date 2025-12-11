@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -6,6 +9,8 @@ namespace PrdAgent.Core.Models;
 public class Attachment
 {
     /// <summary>附件唯一标识</summary>
+    [BsonId]
+    [BsonRepresentation(BsonType.String)]
     public string AttachmentId { get; set; } = Guid.NewGuid().ToString();
     
     /// <summary>关联的消息ID</summary>

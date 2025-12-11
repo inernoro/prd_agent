@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -51,10 +52,7 @@ public class MessagesController : ControllerBase
                 request.AttachmentIds,
                 cancellationToken))
             {
-                var eventData = JsonSerializer.Serialize(streamEvent, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
+                var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);
 
                 await Response.WriteAsync($"event: message\n", cancellationToken);
                 await Response.WriteAsync($"data: {eventData}\n\n", cancellationToken);
@@ -75,16 +73,13 @@ public class MessagesController : ControllerBase
         {
             _logger.LogError(ex, "Error in SSE stream for session {SessionId}", sessionId);
             
-            var errorEvent = new
+            var errorEvent = new StreamErrorEvent
             {
-                type = "error",
-                errorCode = ErrorCodes.INTERNAL_ERROR,
-                errorMessage = "服务器内部错误"
+                Type = "error",
+                ErrorCode = ErrorCodes.INTERNAL_ERROR,
+                ErrorMessage = "服务器内部错误"
             };
-            var errorData = JsonSerializer.Serialize(errorEvent, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var errorData = JsonSerializer.Serialize(errorEvent, AppJsonContext.Default.StreamErrorEvent);
 
             await Response.WriteAsync($"event: error\n", cancellationToken);
             await Response.WriteAsync($"data: {errorData}\n\n", cancellationToken);
@@ -127,6 +122,3 @@ public class MessageResponse
     public DateTime Timestamp { get; set; }
     public TokenUsage? TokenUsage { get; set; }
 }
-
-
-

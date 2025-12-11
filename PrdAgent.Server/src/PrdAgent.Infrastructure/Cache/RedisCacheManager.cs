@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using PrdAgent.Core.Interfaces;
 using StackExchange.Redis;
 
@@ -20,20 +21,38 @@ public class RedisCacheManager : ICacheManager, IDisposable
         _defaultExpiry = TimeSpan.FromMinutes(defaultExpiryMinutes);
     }
 
-    /// <summary>获取缓存</summary>
+    /// <summary>获取缓存（使用 AOT 兼容的 JsonTypeInfo）</summary>
+    public async Task<T?> GetAsync<T>(string key, JsonTypeInfo<T> jsonTypeInfo)
+    {
+        var value = await _db.StringGetAsync(key);
+        if (value.IsNullOrEmpty)
+            return default;
+        
+        return JsonSerializer.Deserialize(value!, jsonTypeInfo);
+    }
+
+    /// <summary>获取缓存（泛型版本 - 仅用于兼容性，不推荐在 AOT 中使用）</summary>
     public async Task<T?> GetAsync<T>(string key)
     {
         var value = await _db.StringGetAsync(key);
         if (value.IsNullOrEmpty)
             return default;
         
-        return JsonSerializer.Deserialize<T>(value!);
+        // 尝试使用已知类型
+        return JsonSerializer.Deserialize<T>(value!, GetJsonOptions());
     }
 
-    /// <summary>设置缓存</summary>
+    /// <summary>设置缓存（使用 AOT 兼容的 JsonTypeInfo）</summary>
+    public async Task SetAsync<T>(string key, T value, JsonTypeInfo<T> jsonTypeInfo, TimeSpan? expiry = null)
+    {
+        var json = JsonSerializer.Serialize(value, jsonTypeInfo);
+        await _db.StringSetAsync(key, json, expiry ?? _defaultExpiry);
+    }
+
+    /// <summary>设置缓存（泛型版本 - 仅用于兼容性，不推荐在 AOT 中使用）</summary>
     public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
     {
-        var json = JsonSerializer.Serialize(value);
+        var json = JsonSerializer.Serialize(value, GetJsonOptions());
         await _db.StringSetAsync(key, json, expiry ?? _defaultExpiry);
     }
 
@@ -82,6 +101,14 @@ public class RedisCacheManager : ICacheManager, IDisposable
         {
             await _db.KeyDeleteAsync(key);
         }
+    }
+
+    private static JsonSerializerOptions GetJsonOptions()
+    {
+        return new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
     }
 
     public void Dispose()

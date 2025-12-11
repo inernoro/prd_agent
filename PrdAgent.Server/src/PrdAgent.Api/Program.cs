@@ -1,8 +1,11 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using PrdAgent.Api.Json;
 using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Cache;
 using PrdAgent.Infrastructure.Database;
@@ -24,8 +27,20 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
+// 配置 JSON 序列化选项 (AOT 兼容)
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
+});
+
 // 添加服务
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
+    });
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -85,8 +100,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 // 配置CORS
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() 
-    ?? new[] { "http://localhost:1420", "http://localhost:5173" };
+var allowedOriginsSection = builder.Configuration.GetSection("Cors:AllowedOrigins");
+string[] allowedOrigins;
+if (allowedOriginsSection.Exists())
+{
+    var origins = new List<string>();
+    foreach (var child in allowedOriginsSection.GetChildren())
+    {
+        if (!string.IsNullOrEmpty(child.Value))
+            origins.Add(child.Value);
+    }
+    allowedOrigins = origins.Count > 0 ? origins.ToArray() : new[] { "http://localhost:1420", "http://localhost:5173" };
+}
+else
+{
+    allowedOrigins = new[] { "http://localhost:1420", "http://localhost:5173" };
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -274,11 +304,18 @@ app.UseAuthorization();
 app.MapControllers();
 
 // 健康检查端点
-app.MapGet("/health", () => Results.Ok(new 
-{ 
-    status = "healthy", 
-    version = "1.0.0",
-    timestamp = DateTime.UtcNow 
-}));
+app.MapGet("/health", HealthCheck);
 
 app.Run();
+
+// 健康检查处理函数
+static IResult HealthCheck()
+{
+    var response = new HealthCheckResponse
+    {
+        Status = "healthy",
+        Version = "1.0.0",
+        Timestamp = DateTime.UtcNow
+    };
+    return Results.Ok(response);
+}
