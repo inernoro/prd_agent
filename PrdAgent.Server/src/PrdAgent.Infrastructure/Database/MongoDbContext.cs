@@ -12,6 +12,9 @@ public class MongoDbContext
 
     public MongoDbContext(string connectionString, string databaseName)
     {
+        // 注册 BSON 类映射（替代注解方式）
+        BsonClassMapRegistration.Register();
+        
         var client = new MongoClient(connectionString);
         _database = client.GetDatabase(databaseName);
         
@@ -57,9 +60,6 @@ public class MongoDbContext
         ContentGaps.Indexes.CreateOne(new CreateIndexModel<ContentGap>(
             Builders<ContentGap>.IndexKeys.Ascending(g => g.GroupId)));
         
-        // InviteCodes索引
-        InviteCodes.Indexes.CreateOne(new CreateIndexModel<InviteCode>(
-            Builders<InviteCode>.IndexKeys.Ascending(c => c.Code),
-            new CreateIndexOptions { Unique = true }));
+        // InviteCodes: Code 已标记为 [BsonId]，MongoDB _id 字段天生唯一，无需额外索引
     }
 }

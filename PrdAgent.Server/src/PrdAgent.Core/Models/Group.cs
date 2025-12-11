@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -9,8 +6,6 @@ namespace PrdAgent.Core.Models;
 public class Group
 {
     /// <summary>群组唯一标识</summary>
-    [BsonId]
-    [BsonRepresentation(BsonType.String)]
     public string GroupId { get; set; } = Guid.NewGuid().ToString();
     
     /// <summary>群组名称</summary>
@@ -43,12 +38,9 @@ public class Group
 /// <summary>
 /// 群组成员
 /// </summary>
-[BsonIgnoreExtraElements]
 public class GroupMember
 {
     /// <summary>成员记录ID</summary>
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
     public string? Id { get; set; }
     
     /// <summary>群组ID</summary>

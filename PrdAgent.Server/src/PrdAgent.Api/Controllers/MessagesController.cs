@@ -35,6 +35,22 @@ public class MessagesController : ControllerBase
         [FromBody] SendMessageRequest request,
         CancellationToken cancellationToken)
     {
+        // 验证请求参数
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            Response.ContentType = "text/event-stream";
+            var errorEvent = new StreamErrorEvent
+            {
+                Type = "error",
+                ErrorCode = ErrorCodes.INVALID_FORMAT,
+                ErrorMessage = errorMessage!
+            };
+            var errorData = JsonSerializer.Serialize(errorEvent, AppJsonContext.Default.StreamErrorEvent);
+            await Response.WriteAsync($"event: error\ndata: {errorData}\n\n", cancellationToken);
+            return;
+        }
+
         // 设置SSE响应头
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";

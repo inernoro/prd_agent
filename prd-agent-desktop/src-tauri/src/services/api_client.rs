@@ -21,6 +21,7 @@ pub fn set_api_base_url(url: String) {
 }
 
 /// 获取当前 API 基础 URL
+#[allow(dead_code)]
 pub fn get_api_base_url() -> String {
     API_BASE_URL.read().unwrap().clone()
 }

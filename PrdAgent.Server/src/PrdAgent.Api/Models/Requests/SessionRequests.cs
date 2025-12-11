@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Models.Requests;
@@ -9,7 +8,6 @@ namespace PrdAgent.Api.Models.Requests;
 public class SwitchRoleRequest
 {
     /// <summary>目标角色</summary>
-    [Required]
     public UserRole Role { get; set; }
 }
 
@@ -18,9 +16,9 @@ public class SwitchRoleRequest
 /// </summary>
 public class SendMessageRequest
 {
+    private const int MaxContentLength = 16 * 1024;
+
     /// <summary>消息内容</summary>
-    [Required(ErrorMessage = "消息内容不能为空")]
-    [MaxLength(16 * 1024, ErrorMessage = "消息内容不能超过16KB")]
     public string Content { get; set; } = string.Empty;
 
     /// <summary>角色（可选，用于临时切换视角）</summary>
@@ -28,6 +26,16 @@ public class SendMessageRequest
 
     /// <summary>附件ID列表</summary>
     public List<string>? AttachmentIds { get; set; }
+
+    /// <summary>验证请求</summary>
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Content))
+            return (false, "消息内容不能为空");
+        if (Content.Length > MaxContentLength)
+            return (false, "消息内容不能超过16KB");
+        return (true, null);
+    }
 }
 
 /// <summary>
@@ -36,7 +44,6 @@ public class SendMessageRequest
 public class StartGuideRequest
 {
     /// <summary>角色</summary>
-    [Required]
     public UserRole Role { get; set; }
 }
 
@@ -46,7 +53,6 @@ public class StartGuideRequest
 public class GuideControlRequest
 {
     /// <summary>控制动作</summary>
-    [Required]
     public GuideAction Action { get; set; }
 
     /// <summary>目标步骤（仅GoTo时需要）</summary>
