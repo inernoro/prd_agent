@@ -6,6 +6,10 @@ using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
+// AuthController 中定义的类型别名
+using ValidatePasswordRequest = PrdAgent.Api.Controllers.ValidatePasswordRequest;
+using PasswordValidationResponse = PrdAgent.Api.Controllers.PasswordValidationResponse;
+
 namespace PrdAgent.Api.Json;
 
 /// <summary>
@@ -54,6 +58,10 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdateStatusRequest))]
 [JsonSerializable(typeof(UpdateRoleRequest))]
 [JsonSerializable(typeof(GenerateInviteCodeRequest))]
+[JsonSerializable(typeof(ValidatePasswordRequest))]
+// 密码验证响应
+[JsonSerializable(typeof(ApiResponse<PasswordValidationResponse>))]
+[JsonSerializable(typeof(PasswordValidationResponse))]
 // 核心模型类型
 [JsonSerializable(typeof(TokenUsage))]
 [JsonSerializable(typeof(SenderInfo))]
