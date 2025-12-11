@@ -4,11 +4,30 @@ use std::sync::RwLock;
 
 use crate::models::ApiResponse;
 
+/// 默认 API 地址，可通过环境变量 API_BASE_URL 覆盖
+const DEFAULT_API_URL: &str = "https://agentapi.759800.com";
+
 lazy_static::lazy_static! {
     static ref API_BASE_URL: RwLock<String> = RwLock::new(
-        std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:5000".to_string())
+        std::env::var("API_BASE_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string())
     );
     static ref AUTH_TOKEN: RwLock<Option<String>> = RwLock::new(None);
+}
+
+/// 设置 API 基础 URL
+pub fn set_api_base_url(url: String) {
+    let mut base_url = API_BASE_URL.write().unwrap();
+    *base_url = url;
+}
+
+/// 获取当前 API 基础 URL
+pub fn get_api_base_url() -> String {
+    API_BASE_URL.read().unwrap().clone()
+}
+
+/// 获取默认 API 地址
+pub fn get_default_api_url() -> String {
+    DEFAULT_API_URL.to_string()
 }
 
 pub struct ApiClient {
