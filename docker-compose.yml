@@ -24,9 +24,11 @@ services:
       - prdagent-network
 
   api:
-    build:
-      context: ./PrdAgent.Server
-      dockerfile: Dockerfile
+    image: ghcr.io/inernoro/prd_agent/prdagent-server:main
+    # 本地开发如需构建可取消下面注释：
+    # build:
+    #   context: ./PrdAgent.Server
+    #   dockerfile: Dockerfile
     container_name: prdagent-api
     ports:
       - "5000:80"
