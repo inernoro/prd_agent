@@ -44,3 +44,5 @@ Write-Host "Output: prd-agent-desktop/src-tauri/target/release/bundle/" -Foregro
 
 
 
+
+

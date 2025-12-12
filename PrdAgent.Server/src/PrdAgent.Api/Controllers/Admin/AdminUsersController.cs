@@ -204,3 +204,5 @@ public class GenerateInviteCodeRequest
     public int Count { get; set; } = 1;
     public int? ExpiresInDays { get; set; }
 }
+
+

@@ -172,3 +172,5 @@ public class GapAnalysisResult
 public partial class GapAnalysisJsonContext : JsonSerializerContext
 {
 }
+
+

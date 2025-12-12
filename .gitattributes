@@ -49,4 +49,3 @@ Dockerfile text eol=lf
 *.woff2 binary
 *.ttf binary
 *.eot binary
-
