@@ -34,8 +34,3 @@ public class GapNotification
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool IsRead { get; set; }
 }
-
-
-
-
-

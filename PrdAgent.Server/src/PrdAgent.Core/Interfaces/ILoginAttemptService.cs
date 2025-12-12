@@ -17,8 +17,3 @@ public interface ILoginAttemptService
     /// <summary>获取剩余锁定时间（秒）</summary>
     Task<int> GetLockoutRemainingSecondsAsync(string username);
 }
-
-
-
-
-

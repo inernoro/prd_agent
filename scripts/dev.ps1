@@ -63,8 +63,3 @@ Services:
 - Redis:          localhost:6379
 
 "@ -ForegroundColor Cyan
-
-
-
-
-

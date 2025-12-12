@@ -31,8 +31,3 @@ public class JwtValidationResult
     public UserRole? Role { get; set; }
     public string? ErrorMessage { get; set; }
 }
-
-
-
-
-

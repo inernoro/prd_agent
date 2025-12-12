@@ -240,8 +240,3 @@ public class UpdateLLMConfigRequest
     public int RateLimitPerMinute { get; set; } = 60;
     public bool IsActive { get; set; } = false;
 }
-
-
-
-
-

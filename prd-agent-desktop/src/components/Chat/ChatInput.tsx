@@ -95,8 +95,3 @@ export default function ChatInput() {
     </div>
   );
 }
-
-
-
-
-

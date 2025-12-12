@@ -67,8 +67,3 @@ public class GroupMessageRequest
         return (true, null);
     }
 }
-
-
-
-
-

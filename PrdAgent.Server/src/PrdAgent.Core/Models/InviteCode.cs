@@ -13,8 +13,3 @@ public class InviteCode
     public DateTime? UsedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
 }
-
-
-
-
-

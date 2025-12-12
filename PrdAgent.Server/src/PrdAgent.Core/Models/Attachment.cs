@@ -35,8 +35,3 @@ public class Attachment
     /// <summary>上传时间</summary>
     public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
 }
-
-
-
-
-

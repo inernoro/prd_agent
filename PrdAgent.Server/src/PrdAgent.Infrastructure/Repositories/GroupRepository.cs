@@ -86,8 +86,3 @@ public class GroupMemberRepository : IGroupMemberRepository
         return await _members.CountDocumentsAsync(m => m.GroupId == groupId);
     }
 }
-
-
-
-
-

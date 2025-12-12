@@ -24,8 +24,3 @@ public interface IGapDetectionService
     /// <summary>获取未处理的缺失数量</summary>
     Task<int> GetPendingCountAsync(string groupId);
 }
-
-
-
-
-

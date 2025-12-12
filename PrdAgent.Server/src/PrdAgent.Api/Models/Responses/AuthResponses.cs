@@ -41,8 +41,3 @@ public class RegisterResponse
     public UserRole Role { get; set; }
     public DateTime CreatedAt { get; set; }
 }
-
-
-
-
-

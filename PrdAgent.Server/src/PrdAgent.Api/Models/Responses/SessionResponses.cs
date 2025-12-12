@@ -35,8 +35,3 @@ public class GuideControlResponse
     public int TotalSteps { get; set; }
     public GuideStatus Status { get; set; }
 }
-
-
-
-
-

@@ -65,8 +65,3 @@ export default function MessageList() {
     </div>
   );
 }
-
-
-
-
-

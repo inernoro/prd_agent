@@ -63,8 +63,3 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
     </header>
   );
 }
-
-
-
-
-

@@ -23,8 +23,3 @@ public interface IInviteCodeRepository
     Task InsertAsync(InviteCode inviteCode);
     Task MarkAsUsedAsync(string code, string usedBy);
 }
-
-
-
-
-

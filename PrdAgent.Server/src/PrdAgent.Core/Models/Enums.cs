@@ -116,8 +116,3 @@ public enum GuideStatus
     /// <summary>已停止</summary>
     Stopped
 }
-
-
-
-
-

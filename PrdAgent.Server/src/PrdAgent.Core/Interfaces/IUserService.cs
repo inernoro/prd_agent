@@ -28,8 +28,3 @@ public interface IUserService
     /// <summary>创建邀请码</summary>
     Task<string> CreateInviteCodeAsync(string creatorId);
 }
-
-
-
-
-

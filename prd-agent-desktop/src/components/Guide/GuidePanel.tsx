@@ -97,8 +97,3 @@ export default function GuidePanel() {
     </div>
   );
 }
-
-
-
-
-

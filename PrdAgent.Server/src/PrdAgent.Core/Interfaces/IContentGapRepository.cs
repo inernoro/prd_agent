@@ -12,8 +12,3 @@ public interface IContentGapRepository
     Task<ContentGap?> FindAndUpdateStatusAsync(string gapId, GapStatus status);
     Task<long> CountPendingAsync(string groupId);
 }
-
-
-
-
-

@@ -79,8 +79,3 @@ public static class PasswordValidator
         return Math.Min(score, 100);
     }
 }
-
-
-
-
-

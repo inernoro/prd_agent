@@ -41,8 +41,3 @@ public class GroupMemberResponse
     public DateTime JoinedAt { get; set; }
     public bool IsOwner { get; set; }
 }
-
-
-
-
-

@@ -77,8 +77,3 @@ public class LoginAttemptService : ILoginAttemptService
         return remaining.TotalSeconds > 0 ? (int)remaining.TotalSeconds : 0;
     }
 }
-
-
-
-
-

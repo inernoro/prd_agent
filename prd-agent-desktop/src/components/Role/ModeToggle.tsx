@@ -28,8 +28,3 @@ export default function ModeToggle() {
     </div>
   );
 }
-
-
-
-
-

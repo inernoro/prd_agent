@@ -44,8 +44,3 @@ public static class CacheKeys
     public static string ForDocument(string documentId) => $"{Document}{documentId}";
     public static string ForChatHistory(string sessionId) => $"{ChatHistory}{sessionId}";
 }
-
-
-
-
-

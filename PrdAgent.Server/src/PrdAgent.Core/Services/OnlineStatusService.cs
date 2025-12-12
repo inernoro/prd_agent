@@ -89,8 +89,3 @@ public class OnlineStatusService : IOnlineStatusService
         return DateTime.UtcNow - lastActive < OnlineExpiry;
     }
 }
-
-
-
-
-

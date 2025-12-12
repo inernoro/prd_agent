@@ -26,8 +26,3 @@ public interface IGroupMemberRepository
     Task DeleteAsync(string groupId, string userId);
     Task<long> CountByGroupIdAsync(string groupId);
 }
-
-
-
-
-

@@ -32,8 +32,3 @@ public class ContentGap
     /// <summary>处理时间</summary>
     public DateTime? ResolvedAt { get; set; }
 }
-
-
-
-
-

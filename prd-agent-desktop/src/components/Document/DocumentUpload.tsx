@@ -132,8 +132,3 @@ export default function DocumentUpload() {
     </div>
   );
 }
-
-
-
-
-

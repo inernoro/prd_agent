@@ -34,8 +34,3 @@ public interface IGroupService
     /// <summary>获取用户的群组列表</summary>
     Task<List<Group>> GetUserGroupsAsync(string userId);
 }
-
-
-
-
-

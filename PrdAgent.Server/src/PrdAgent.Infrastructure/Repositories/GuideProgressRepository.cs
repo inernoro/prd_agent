@@ -74,8 +74,3 @@ public class GuideProgressRepository : IGuideProgressRepository
         await _cache.RemoveAsync(progressKey);
     }
 }
-
-
-
-
-

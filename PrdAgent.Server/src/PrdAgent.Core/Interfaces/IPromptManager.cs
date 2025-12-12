@@ -16,8 +16,3 @@ public interface IPromptManager
     /// <summary>构建缺口检测Prompt</summary>
     string BuildGapDetectionPrompt(string prdContent, string question);
 }
-
-
-
-
-

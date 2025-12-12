@@ -18,8 +18,3 @@ public interface IMongoRepository<T> where T : class
     Task DeleteAsync(Expression<Func<T, bool>> filter);
     Task<long> CountAsync(Expression<Func<T, bool>> filter);
 }
-
-
-
-
-

@@ -137,8 +137,3 @@ public class DocumentValidationResult
         ErrorMessage = message
     };
 }
-
-
-
-
-

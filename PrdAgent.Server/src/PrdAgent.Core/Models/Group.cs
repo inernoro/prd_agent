@@ -55,8 +55,3 @@ public class GroupMember
     /// <summary>加入时间</summary>
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 }
-
-
-
-
-

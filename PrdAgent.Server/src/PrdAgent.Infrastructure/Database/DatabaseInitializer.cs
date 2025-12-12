@@ -72,8 +72,3 @@ public class DatabaseInitializer
         Console.WriteLine($"Created initial invite code: {inviteCode.Code} (expires in 30 days)");
     }
 }
-
-
-
-
-

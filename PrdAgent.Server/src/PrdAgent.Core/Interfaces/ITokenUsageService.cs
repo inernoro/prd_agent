@@ -45,8 +45,3 @@ public class GlobalTokenUsage
     public int TotalRequestsToday { get; set; }
     public int ActiveUsersToday { get; set; }
 }
-
-
-
-
-

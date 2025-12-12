@@ -58,8 +58,3 @@ public class GuideControlRequest
     /// <summary>目标步骤（仅GoTo时需要）</summary>
     public int? Step { get; set; }
 }
-
-
-
-
-

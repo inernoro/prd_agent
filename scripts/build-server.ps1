@@ -31,8 +31,3 @@ dotnet publish src/PrdAgent.Api/PrdAgent.Api.csproj -c $Configuration -o ./publi
 
 Write-Host "`nBuild completed!" -ForegroundColor Green
 Write-Host "Output: PrdAgent.Server/publish/" -ForegroundColor Cyan
-
-
-
-
-

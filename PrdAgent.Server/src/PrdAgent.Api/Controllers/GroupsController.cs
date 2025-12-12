@@ -257,8 +257,3 @@ public class GroupsController : ControllerBase
         return Ok(ApiResponse<List<GroupResponse>>.Ok(response));
     }
 }
-
-
-
-
-

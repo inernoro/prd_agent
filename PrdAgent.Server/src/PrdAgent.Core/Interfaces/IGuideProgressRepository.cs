@@ -37,8 +37,3 @@ public class GuideProgress
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
     public bool IsCompleted { get; set; }
 }
-
-
-
-
-

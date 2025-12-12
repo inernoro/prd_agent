@@ -9,8 +9,3 @@ public class GuideOutlineItem
     public string Title { get; set; } = string.Empty;
     public string PromptTemplate { get; set; } = string.Empty;
 }
-
-
-
-
-

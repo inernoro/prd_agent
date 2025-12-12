@@ -113,8 +113,3 @@ public class MarkdownParserTests
         Assert.NotNull(result.Title);
     }
 }
-
-
-
-
-

@@ -48,8 +48,3 @@ export const useSessionStore = create<SessionState>((set) => ({
     guideStep: 1,
   }),
 }));
-
-
-
-
-

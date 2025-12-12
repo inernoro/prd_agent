@@ -105,8 +105,3 @@ public class TokenUsageService : ITokenUsageService
         await _cache.SetAsync(GlobalStatsKey, stats, TimeSpan.FromDays(1));
     }
 }
-
-
-
-
-

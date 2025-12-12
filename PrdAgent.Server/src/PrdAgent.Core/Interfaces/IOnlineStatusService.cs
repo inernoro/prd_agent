@@ -33,8 +33,3 @@ public class OnlineMember
     public UserRole Role { get; set; }
     public DateTime LastActiveAt { get; set; }
 }
-
-
-
-
-

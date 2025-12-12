@@ -47,8 +47,3 @@ public class LLMStreamChunk
     public int? OutputTokens { get; set; }
     public string? ErrorMessage { get; set; }
 }
-
-
-
-
-
