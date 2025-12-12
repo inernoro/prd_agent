@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal, Form, Input, Select, InputNumber, Switch, Collapse, message, Button } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { createModel, updateModel } from '../../services/api';
@@ -16,6 +16,12 @@ export default function ModelFormModal({ open, model, platforms, onClose, onSucc
   const [form] = Form.useForm();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const isEdit = !!model;
+
+  const selectedPlatformId = Form.useWatch('platformId', form) as string | undefined;
+  const selectedPlatform = useMemo(
+    () => platforms.find(p => p.id === selectedPlatformId),
+    [platforms, selectedPlatformId],
+  );
 
   useEffect(() => {
     if (open) {
@@ -141,17 +147,35 @@ export default function ModelFormModal({ open, model, platforms, onClose, onSucc
                   <Form.Item
                     name="apiUrl"
                     label="API地址"
-                    extra="留空则使用平台的API地址"
+                    extra={
+                      selectedPlatform?.apiUrl
+                        ? `留空则使用平台的API地址（当前平台：${selectedPlatform.apiUrl}）`
+                        : '留空则使用平台的API地址'
+                    }
                   >
-                    <Input placeholder="https://api.openai.com/v1/chat/completions" />
+                    <Input
+                      placeholder={
+                        selectedPlatform?.apiUrl
+                          ? selectedPlatform.apiUrl
+                          : 'https://api.openai.com/v1/chat/completions'
+                      }
+                    />
                   </Form.Item>
 
                   <Form.Item
                     name="apiKey"
                     label="API密钥"
-                    extra={isEdit ? '留空则保持原密钥不变，或使用平台密钥' : '留空则使用平台密钥'}
+                    extra={
+                      selectedPlatform?.apiKeyMasked
+                        ? (isEdit
+                            ? `留空则保持原密钥不变，或使用平台密钥（当前平台：${selectedPlatform.apiKeyMasked}）`
+                            : `留空则使用平台密钥（当前平台：${selectedPlatform.apiKeyMasked}）`)
+                        : (isEdit ? '留空则保持原密钥不变，或使用平台密钥' : '留空则使用平台密钥')
+                    }
                   >
-                    <Input.Password placeholder="输入API密钥" />
+                    <Input.Password
+                      placeholder={selectedPlatform?.apiKeyMasked ? selectedPlatform.apiKeyMasked : '输入API密钥'}
+                    />
                   </Form.Item>
 
                   <div className="grid grid-cols-3 gap-4">

@@ -163,4 +163,3 @@ pub fn init_config(app: &tauri::AppHandle) {
         api_client::set_api_base_url(config.api_base_url);
     }
 }
-

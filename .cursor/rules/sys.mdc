@@ -1,7 +1,7 @@
 ---
-alwaysApply: true
+globs: prd-agent-admin/**,prd-agent-desktop/**,PrdAgent.Server/**
+alwaysApply: false
 ---
-
 # PRD Agent 开发规范
 
 ## 技术栈
