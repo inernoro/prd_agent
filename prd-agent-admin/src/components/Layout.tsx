@@ -9,6 +9,7 @@ import {
   DoubleLeftOutlined,
   DoubleRightOutlined,
   RobotOutlined,
+  MessageOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../stores/authStore';
 
@@ -20,6 +21,7 @@ interface LayoutProps {
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
+  { key: '/prd-agent', icon: <MessageOutlined />, label: 'PRD Agent' },
   { key: '/users', icon: <UserOutlined />, label: '用户管理' },
   { key: '/model-manage', icon: <RobotOutlined />, label: '模型管理' },
   { key: '/stats', icon: <BarChartOutlined />, label: 'Token统计' },

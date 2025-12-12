@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage';
 import UsersPage from './pages/UsersPage';
 import ModelManagePage from './pages/ModelManagePage';
 import StatsPage from './pages/StatsPage';
+import PrdAgentPage from './pages/PrdAgentPage';
 
 function App() {
   const { isAuthenticated, user } = useAuthStore();
@@ -30,6 +31,7 @@ function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/prd-agent" element={<PrdAgentPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/model-manage" element={<ModelManagePage />} />
         <Route path="/stats" element={<StatsPage />} />

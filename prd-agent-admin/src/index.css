@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 /* 基础变量 - Grok 极致黑白风格 */
 :root {
   --color-bg-base: #141414; /* 用户指定的主体背景色 */

@@ -68,3 +68,39 @@ export interface ApiResponse<T> {
   };
 }
 
+// ========== PRD Agent 相关类型 ==========
+export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
+export type InteractionMode = 'QA' | 'Guided';
+export type MessageRole = 'User' | 'Assistant';
+
+export interface PrdDocument {
+  id: string;
+  title: string;
+  charCount: number;
+  tokenEstimate: number;
+}
+
+export interface PrdSession {
+  sessionId: string;
+  groupId?: string;
+  documentId: string;
+  currentRole: UserRole;
+  mode: InteractionMode;
+  guideStep?: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: MessageRole;
+  content: string;
+  viewRole?: UserRole;
+  timestamp: Date;
+  senderId?: string;
+  senderName?: string;
+}
+
+export interface UploadDocumentResponse {
+  sessionId: string;
+  document: PrdDocument;
+}
+

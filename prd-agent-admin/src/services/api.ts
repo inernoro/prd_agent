@@ -126,6 +126,86 @@ export const getMainModel = () =>
 export const batchAddModelsFromPlatform = (platformId: string, models: Array<{ modelName: string; displayName?: string; group?: string }>) =>
   api.post('/config/models/batch-from-platform', { platformId, models });
 
+// ========== PRD Agent APIs ==========
+export const uploadDocument = (content: string) =>
+  api.post('/documents', { content, format: 'markdown' });
+
+export const sendMessageWithSSE = async (
+  sessionId: string,
+  content: string,
+  role: string,
+  onStart: () => void,
+  onDelta: (content: string) => void,
+  onDone: () => void,
+  onError: (error: string) => void
+) => {
+  const token = useAuthStore.getState().token;
+  
+  try {
+    const response = await fetch(`/api/v1/messages/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({
+        sessionId,
+        content,
+        role,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') {
+            onDone();
+            return;
+          }
+          try {
+            const event = JSON.parse(data);
+            if (event.type === 'start') {
+              onStart();
+            } else if (event.type === 'delta' && event.content) {
+              onDelta(event.content);
+            } else if (event.type === 'done') {
+              onDone();
+            } else if (event.type === 'error') {
+              onError(event.errorMessage || 'Unknown error');
+            }
+          } catch {
+            // 忽略解析错误，可能是不完整的 JSON
+          }
+        }
+      }
+    }
+    onDone();
+  } catch (error) {
+    onError(String(error));
+  }
+};
+
 export default api;
 
 
