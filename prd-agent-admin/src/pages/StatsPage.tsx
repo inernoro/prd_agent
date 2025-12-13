@@ -1,12 +1,13 @@
-import { useEffect, useState, memo } from 'react';
-import { Card, Row, Col, Statistic, Spin, Select, Table } from 'antd';
-import ReactECharts from 'echarts-for-react';
-
-// 使用 memo 包装 echarts 组件
-const MemoizedChart = memo(({ option, style }: { option: any; style: React.CSSProperties }) => (
-  <ReactECharts option={option} style={style} notMerge={true} lazyUpdate={true} />
-));
+import { useEffect, useState } from 'react';
+import { Spin, Select, Table, Grid } from '@arco-design/web-react';
+import type { ColumnProps } from '@arco-design/web-react/es/Table';
+import { EChart, buildChartOption, colors, barSeriesDefaults, pieSeriesDefaults, legendDefaults } from '../components/Charts';
+import { StatCard } from '../components/ui/StatCard';
+import { PanelCard } from '../components/ui/PanelCard';
 import { getTokenUsage, getActiveGroups, getGapStats } from '../services/api';
+
+const { Row, Col } = Grid;
+const Option = Select.Option;
 
 interface TokenData {
   totalInput: number;
@@ -31,7 +32,7 @@ interface GapStats {
 
 export default function StatsPage() {
   const [loading, setLoading] = useState(true);
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState<number>(7);
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [groups, setGroups] = useState<GroupData[]>([]);
   const [gapStats, setGapStats] = useState<GapStats | null>(null);
@@ -59,113 +60,172 @@ export default function StatsPage() {
     }
   };
 
-  const tokenChartOption = {
-    tooltip: { 
-      trigger: 'axis',
-      backgroundColor: '#000',
-      borderColor: '#333',
-      textStyle: { color: '#fff' }
-    },
-    legend: { data: ['输入Token', '输出Token'], bottom: 0, textStyle: { color: '#888' } },
-    xAxis: {
-      type: 'category',
-      data: tokenData?.dailyUsage.map((d) => d.date.slice(5)) || [],
-      axisLabel: { color: '#666' },
-      axisLine: { lineStyle: { color: '#333' } },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { color: '#666' },
-      splitLine: { lineStyle: { color: '#222' } },
-    },
-    series: [
-      { name: '输入Token', type: 'bar', stack: 'total', data: tokenData?.dailyUsage.map((d) => d.input) || [], itemStyle: { color: '#ffffff' } },
-      { name: '输出Token', type: 'bar', stack: 'total', data: tokenData?.dailyUsage.map((d) => d.output) || [], itemStyle: { color: '#666666' } },
-    ],
-    grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-  };
+  // 判断 Token 数据是否为空
+  const isTokenEmpty = !tokenData?.dailyUsage?.length || 
+    tokenData.dailyUsage.every(d => d.input === 0 && d.output === 0);
+  
+  // 判断 Gap 数据是否为空
+  const isGapEmpty = !gapStats || gapStats.total === 0;
 
-  const gapChartOption = {
-    tooltip: { 
-      trigger: 'item',
-      backgroundColor: '#000',
-      borderColor: '#333',
-      textStyle: { color: '#fff' }
+  const tokenChartOption = buildChartOption({
+    tooltip: { trigger: 'axis' },
+    legend: { 
+      ...legendDefaults,
+      data: ['输入Token', '输出Token'], 
+      bottom: 0,
     },
-    legend: { orient: 'vertical', left: 'left', textStyle: { color: '#888' } },
+    xAxis: {
+      data: tokenData?.dailyUsage.map((d) => d.date.slice(5)) || [],
+    },
+    yAxis: {},
+    grid: { bottom: '18%', top: '8%' },
+    series: [
+      { 
+        ...barSeriesDefaults,
+        name: '输入Token', 
+        stack: 'total', 
+        data: tokenData?.dailyUsage.map((d) => d.input) || [], 
+        itemStyle: { color: colors.accent, borderRadius: [0, 0, 0, 0] },
+      },
+      { 
+        ...barSeriesDefaults,
+        name: '输出Token', 
+        stack: 'total', 
+        data: tokenData?.dailyUsage.map((d) => d.output) || [], 
+        itemStyle: { color: colors.success, borderRadius: [4, 4, 0, 0] },
+      },
+    ],
+  });
+
+  const gapChartOption = buildChartOption({
+    tooltip: { trigger: 'item' },
+    legend: { 
+      ...legendDefaults,
+      orient: 'vertical', 
+      left: 'left', 
+      top: 'center',
+      itemWidth: 10,
+      itemHeight: 10,
+    },
     series: [{
-      type: 'pie',
-      radius: '70%',
-      itemStyle: { borderColor: '#000', borderWidth: 2 },
-      label: { color: '#888' },
+      ...pieSeriesDefaults,
+      center: ['60%', '50%'],
       data: gapStats ? [
-        { value: gapStats.byStatus.pending, name: '待处理', itemStyle: { color: '#ffffff' } },
-        { value: gapStats.byStatus.resolved, name: '已解决', itemStyle: { color: '#888888' } },
-        { value: gapStats.byStatus.ignored, name: '已忽略', itemStyle: { color: '#444444' } },
+        { value: gapStats.byStatus.pending, name: '待处理', itemStyle: { color: colors.warning } },
+        { value: gapStats.byStatus.resolved, name: '已解决', itemStyle: { color: colors.success } },
+        { value: gapStats.byStatus.ignored, name: '已忽略', itemStyle: { color: colors.textMuted } },
       ] : [],
     }],
-  };
+  });
 
-  const groupColumns = [
-    { title: '群组名称', dataIndex: 'groupName', key: 'groupName' },
-    { title: '成员数', dataIndex: 'memberCount', key: 'memberCount' },
-    { title: '消息数', dataIndex: 'messageCount', key: 'messageCount' },
-    { title: '缺失数', dataIndex: 'gapCount', key: 'gapCount' },
+  const groupColumns: ColumnProps<GroupData>[] = [
+    { 
+      title: '群组名称', 
+      dataIndex: 'groupName',
+      render: (name) => <span className="table-cell-primary">{name}</span>
+    },
+    { 
+      title: '成员', 
+      dataIndex: 'memberCount', 
+      width: 80,
+      align: 'right',
+      render: (count) => <span className="table-cell-secondary">{count}</span>
+    },
+    { 
+      title: '消息', 
+      dataIndex: 'messageCount', 
+      width: 80,
+      align: 'right',
+      render: (count) => <span className="table-cell-accent">{count}</span>
+    },
+    { 
+      title: '缺失', 
+      dataIndex: 'gapCount', 
+      width: 80,
+      align: 'right',
+      render: (count) => (
+        <span className={count > 0 ? 'table-cell-warning' : 'table-cell-muted'}>
+          {count}
+        </span>
+      )
+    },
   ];
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Spin size="large" />
+      <div className="page-loading">
+        <Spin size={32} />
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Token统计</h1>
-        <Select value={days} onChange={setDays} style={{ width: 120 }}>
-          <Select.Option value={7}>最近7天</Select.Option>
-          <Select.Option value={14}>最近14天</Select.Option>
-          <Select.Option value={30}>最近30天</Select.Option>
+    <div className="page-container animate-fadeIn">
+      {/* 页面标题 */}
+      <div className="page-header page-header-with-action">
+        <div>
+          <h1 className="page-title">Token统计</h1>
+          <p className="page-subtitle">API 使用量与内容缺失分析</p>
+        </div>
+        <Select value={days} onChange={setDays} style={{ width: 110 }} size="small">
+          <Option value={7}>最近7天</Option>
+          <Option value={14}>最近14天</Option>
+          <Option value={30}>最近30天</Option>
         </Select>
       </div>
 
-      <Row gutter={[16, 16]} className="mb-6">
+      {/* 统计卡片 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={8}>
-          <Card className="stat-card">
-            <Statistic title="总输入Token" value={tokenData?.totalInput || 0} suffix="tokens" valueStyle={{ color: '#fff' }} />
-          </Card>
+          <StatCard 
+            title="总输入Token" 
+            value={tokenData?.totalInput || 0} 
+            suffix="tokens" 
+            valueColor={colors.accent}
+          />
         </Col>
         <Col xs={24} sm={8}>
-          <Card className="stat-card">
-            <Statistic title="总输出Token" value={tokenData?.totalOutput || 0} suffix="tokens" valueStyle={{ color: '#888' }} />
-          </Card>
+          <StatCard 
+            title="总输出Token" 
+            value={tokenData?.totalOutput || 0} 
+            suffix="tokens"
+            valueColor={colors.success}
+          />
         </Col>
         <Col xs={24} sm={8}>
-          <Card className="stat-card">
-            <Statistic title="总Token消耗" value={tokenData?.totalTokens || 0} suffix="tokens" valueStyle={{ color: '#fff' }} />
-          </Card>
+          <StatCard 
+            title="总Token消耗" 
+            value={tokenData?.totalTokens || 0} 
+            suffix="tokens"
+          />
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
+      {/* 图表 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={16}>
-          <Card title="每日Token使用量">
-            <MemoizedChart option={tokenChartOption} style={{ height: 300 }} />
-          </Card>
+          <PanelCard title="每日Token使用量" isEmpty={isTokenEmpty}>
+            <EChart option={tokenChartOption} style={{ height: 240 }} />
+          </PanelCard>
         </Col>
         <Col xs={24} lg={8}>
-          <Card title={`内容缺失统计（共${gapStats?.total || 0}条）`}>
-            <MemoizedChart option={gapChartOption} style={{ height: 300 }} />
-          </Card>
+          <PanelCard title={`内容缺失统计（共${gapStats?.total || 0}条）`} isEmpty={isGapEmpty}>
+            <EChart option={gapChartOption} style={{ height: 240 }} />
+          </PanelCard>
         </Col>
       </Row>
 
-      <Card title="活跃群组 TOP 10" className="mt-4">
-        <Table columns={groupColumns} dataSource={groups} rowKey="groupId" pagination={false} size="small" />
-      </Card>
+      {/* 活跃群组 */}
+      <PanelCard title="活跃群组 TOP 10" isEmpty={groups.length === 0}>
+        <Table 
+          columns={groupColumns} 
+          data={groups} 
+          rowKey="groupId" 
+          pagination={false} 
+          size="mini"
+          border={false}
+        />
+      </PanelCard>
     </div>
   );
 }

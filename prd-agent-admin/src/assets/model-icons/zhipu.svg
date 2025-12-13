@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="zhipu-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="url(#zhipu-grad)"/>
+  <!-- 智谱清言 GLM 风格: 抽象 "智" 字形 -->
+  <g fill="#fff" opacity="0.95">
+    <rect x="18" y="18" width="28" height="4" rx="2"/>
+    <rect x="30" y="18" width="4" height="14" rx="2"/>
+    <rect x="18" y="36" width="28" height="4" rx="2"/>
+    <rect x="22" y="36" width="4" height="12" rx="2"/>
+    <rect x="38" y="36" width="4" height="12" rx="2"/>
+    <rect x="22" y="44" width="20" height="4" rx="2"/>
+  </g>
+</svg>

@@ -1,73 +1,94 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { 
-  Tabs, Table, Button, Tag, Space, message, Popconfirm, Tooltip, 
-  Switch, Progress
-} from 'antd';
+  Button, Tag, Message, Popconfirm, Tooltip, Input, Spin, Empty, Switch, Table, Collapse
+} from '@arco-design/web-react';
+import type { ColumnProps } from '@arco-design/web-react/es/Table';
 import { 
-  PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined,
-  StarOutlined, StarFilled, HolderOutlined, AppstoreAddOutlined
-} from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+  IconPlus, IconEdit, IconDelete, IconLink,
+  IconStar, IconStarFill, IconApps, IconSearch,
+  IconEye, IconEyeInvisible, IconSettings
+} from '@arco-design/web-react/icon';
 import { 
   getModels, getPlatforms, deleteModel, deletePlatform, testModel, 
-  setMainModel, updateModelPriorities 
+  setMainModel, updateModel, updatePlatform
 } from '../services/api';
 import type { LLMModel, LLMPlatform } from '../types';
 import PlatformFormModal from '../components/ModelManage/PlatformFormModal';
 import ModelFormModal from '../components/ModelManage/ModelFormModal';
-import ModelLibraryModal from '../components/ModelManage/ModelLibraryModal';
+import { ModelLibraryModal } from '../components/ModelManage/ModelLibraryModal';
+import { ModelIcon } from '../components/ModelManage/ModelIcon';
 
-// 可排序行组件
-function SortableRow({ children, ...props }: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': string }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: props['data-row-key'],
-  });
+const CollapseItem = Collapse.Item;
 
-  const style: React.CSSProperties = {
-    ...props.style,
-    transform: CSS.Transform.toString(transform),
-    transition,
-    cursor: 'move',
-    ...(isDragging ? { opacity: 0.5, background: 'rgba(6, 182, 212, 0.1)' } : {}),
-  };
+// 模型类型定义
+type ModelType = 'chat' | 'thinking' | 'vision' | 'embedding' | 'code' | 'audio' | 'image' | 'rerank';
 
+// 通过模型名关键词匹配类型
+function getModelType(modelName: string): ModelType {
+  const n = modelName.toLowerCase();
+  if (n.includes('thinking') || n.includes('think')) return 'thinking';
+  if (n.includes('vision') || n.includes('-vl') || n.includes('vl-')) return 'vision';
+  if (n.includes('embedding') || n.includes('embed')) return 'embedding';
+  if (n.includes('rerank')) return 'rerank';
+  if (n.includes('coder') || n.includes('code')) return 'code';
+  if (n.includes('audio') || n.includes('tts') || n.includes('speech') || n.includes('whisper')) return 'audio';
+  if (n.includes('image') || n.includes('dall') || n.includes('img')) return 'image';
+  return 'chat';
+}
+
+// 模型类型配置
+const MODEL_TYPE_CONFIG: Record<ModelType, { label: string; color: string }> = {
+  thinking: { label: '思考', color: '#a855f7' },
+  vision: { label: '视觉', color: '#06b6d4' },
+  embedding: { label: '嵌入', color: '#6b7280' },
+  rerank: { label: '重排', color: '#8b5cf6' },
+  code: { label: '代码', color: '#22c55e' },
+  audio: { label: '语音', color: '#f97316' },
+  image: { label: '图像', color: '#ec4899' },
+  chat: { label: '对话', color: '#3b82f6' },
+};
+
+// 模型类型标签组件
+function ModelTypeTag({ modelName }: { modelName: string }) {
+  const type = getModelType(modelName);
+  const config = MODEL_TYPE_CONFIG[type];
   return (
-    <tr {...props} ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      {children}
-    </tr>
+    <span 
+      style={{ 
+        fontSize: 11,
+        padding: '2px 6px',
+        borderRadius: 'var(--radius-sm)',
+        color: config.color, 
+        background: `color-mix(in srgb, ${config.color} 15%, transparent)`,
+      }}
+    >
+      {config.label}
+    </span>
   );
 }
 
+// 从模型名称中提取分组
+function extractGroupFromModelName(modelName: string): string {
+  const name = modelName.toLowerCase();
+  const parts = name.split('-');
+  if (parts.length >= 2) {
+    return `${parts[0]}-${parts[1]}`;
+  }
+  return parts[0] || 'other';
+}
+
 export default function ModelManagePage() {
-  const [activeTab, setActiveTab] = useState('models');
   const [models, setModels] = useState<LLMModel[]>([]);
   const [platforms, setPlatforms] = useState<LLMPlatform[]>([]);
   const [loading, setLoading] = useState(true);
   const [testingModels, setTestingModels] = useState<Set<string>>(new Set());
+  const [togglingPlatforms, setTogglingPlatforms] = useState<Set<string>>(new Set());
+  const [togglingModels, setTogglingModels] = useState<Set<string>>(new Set());
+  const [selectedPlatformId, setSelectedPlatformId] = useState<string | null>('__all__');
+  const [platformSearch, setPlatformSearch] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   
   // 弹窗状态
   const [platformModalVisible, setPlatformModalVisible] = useState(false);
@@ -75,16 +96,6 @@ export default function ModelManagePage() {
   const [libraryModalVisible, setLibraryModalVisible] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState<LLMPlatform | null>(null);
   const [editingModel, setEditingModel] = useState<LLMModel | null>(null);
-
-  // 拖拽传感器
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
 
   useEffect(() => {
     loadData();
@@ -100,33 +111,69 @@ export default function ModelManagePage() {
       if (modelsRes.success) setModels(modelsRes.data);
       if (platformsRes.success) setPlatforms(platformsRes.data);
     } catch {
-      message.error('加载数据失败');
+      Message.error('加载数据失败');
     } finally {
       setLoading(false);
     }
   };
 
+  // 当前选中的平台
+  const selectedPlatform = useMemo(() => 
+    platforms.find(p => p.id === selectedPlatformId),
+    [platforms, selectedPlatformId]
+  );
 
-  // 处理拖拽结束
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
+  // 过滤后的平台列表
+  const filteredPlatforms = useMemo(() => {
+    if (!platformSearch) return platforms;
+    const search = platformSearch.toLowerCase();
+    return platforms.filter(p => 
+      p.name.toLowerCase().includes(search) ||
+      p.platformType.toLowerCase().includes(search)
+    );
+  }, [platforms, platformSearch]);
 
-    const oldIndex = models.findIndex(m => m.id === active.id);
-    const newIndex = models.findIndex(m => m.id === over.id);
+  // 当前平台的模型（按分组整理）
+  const platformModels = useMemo(() => {
+    const platformModelsList = selectedPlatformId === '__all__' 
+      ? models 
+      : models.filter(m => m.platformId === selectedPlatformId);
     
-    const newModels = arrayMove(models, oldIndex, newIndex);
-    setModels(newModels);
+    const filtered = modelSearch 
+      ? platformModelsList.filter(m => 
+          m.name.toLowerCase().includes(modelSearch.toLowerCase()) ||
+          m.modelName.toLowerCase().includes(modelSearch.toLowerCase())
+        )
+      : platformModelsList;
 
-    // 更新优先级
-    const updates = newModels.map((m, idx) => ({ id: m.id, priority: idx + 1 }));
-    try {
-      await updateModelPriorities(updates);
-    } catch {
-      message.error('更新排序失败');
-      loadData();
+    const groups: Record<string, LLMModel[]> = {};
+    filtered.forEach(m => {
+      const group = m.group || extractGroupFromModelName(m.modelName);
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(m);
+    });
+
+    const sortedEntries = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+    const sortedGroups: Record<string, LLMModel[]> = {};
+    sortedEntries.forEach(([key, models]) => {
+      sortedGroups[key] = models;
+    });
+    
+    return sortedGroups;
+  }, [models, selectedPlatformId, modelSearch]);
+
+  const platformModelCount = useMemo(() => 
+    Object.values(platformModels).reduce((sum, arr) => sum + arr.length, 0),
+    [platformModels]
+  );
+
+  // 默认展开所有分组
+  useEffect(() => {
+    const groups = Object.keys(platformModels);
+    if (groups.length > 0) {
+      setExpandedGroups(groups.slice(0, 8));
     }
-  };
+  }, [platformModels]);
 
   // 测试模型
   const handleTestModel = async (model: LLMModel) => {
@@ -134,13 +181,13 @@ export default function ModelManagePage() {
     try {
       const res = await testModel(model.id) as unknown as { success: boolean; data: { success: boolean; duration: number; error?: string } };
       if (res.success && res.data.success) {
-        message.success(`测试成功，耗时 ${res.data.duration}ms`);
+        Message.success(`测试成功，耗时 ${res.data.duration}ms`);
       } else {
-        message.error(`测试失败: ${res.data.error || '未知错误'}`);
+        Message.error(`测试失败: ${res.data.error || '未知错误'}`);
       }
       loadData();
     } catch {
-      message.error('测试请求失败');
+      Message.error('测试请求失败');
     } finally {
       setTestingModels(prev => {
         const next = new Set(prev);
@@ -154,241 +201,323 @@ export default function ModelManagePage() {
   const handleSetMain = async (model: LLMModel) => {
     try {
       await setMainModel(model.id);
-      message.success(`已将 ${model.name} 设为主模型`);
+      Message.success(`已将 ${model.name} 设为主模型`);
       loadData();
     } catch {
-      message.error('设置主模型失败');
+      Message.error('设置主模型失败');
     }
   };
 
-  // 删除模型
+  // 启用/禁用平台
+  const handleTogglePlatformEnabled = async (platform: LLMPlatform, enabled: boolean) => {
+    if (togglingPlatforms.has(platform.id)) return;
+    setTogglingPlatforms(prev => new Set([...prev, platform.id]));
+    const prevEnabled = platform.enabled;
+    setPlatforms(prev => prev.map(p => (p.id === platform.id ? { ...p, enabled } : p)));
+    try {
+      await updatePlatform(platform.id, { enabled });
+      Message.success(enabled ? '平台已启用' : '平台已禁用');
+    } catch (error: unknown) {
+      setPlatforms(prev => prev.map(p => (p.id === platform.id ? { ...p, enabled: prevEnabled } : p)));
+      const err = error as { error?: { message?: string } };
+      Message.error(err?.error?.message || '更新平台状态失败');
+    } finally {
+      setTogglingPlatforms(prev => {
+        const next = new Set(prev);
+        next.delete(platform.id);
+        return next;
+      });
+    }
+  };
+
+  // 启用/禁用模型
+  const handleToggleModelEnabled = async (model: LLMModel, enabled: boolean) => {
+    if (togglingModels.has(model.id)) return;
+    setTogglingModels(prev => new Set([...prev, model.id]));
+    const prevEnabled = model.enabled;
+    setModels(prev => prev.map(m => (m.id === model.id ? { ...m, enabled } : m)));
+    try {
+      await updateModel(model.id, { enabled });
+      Message.success(enabled ? '模型已启用' : '模型已禁用');
+    } catch (error: unknown) {
+      setModels(prev => prev.map(m => (m.id === model.id ? { ...m, enabled: prevEnabled } : m)));
+      const err = error as { error?: { message?: string } };
+      Message.error(err?.error?.message || '更新模型状态失败');
+    } finally {
+      setTogglingModels(prev => {
+        const next = new Set(prev);
+        next.delete(model.id);
+        return next;
+      });
+    }
+  };
+
+  const platformIdToName = useMemo(() => {
+    const map = new Map<string, string>();
+    platforms.forEach(p => map.set(p.id, p.name));
+    return map;
+  }, [platforms]);
+
+  const modelTableColumns: ColumnProps<LLMModel>[] = useMemo(() => {
+    const cols: ColumnProps<LLMModel>[] = [
+      {
+        title: '模型',
+        dataIndex: 'name',
+        width: selectedPlatformId === '__all__' ? 320 : undefined,
+        render: (_: unknown, model: LLMModel) => (
+          <div className="flex items-center gap-3 min-w-0">
+            <ModelIcon
+              modelName={model.platformName || platformIdToName.get(model.platformId || '') || model.name}
+              displayName={model.platformName || model.name}
+              size={32}
+              className="shrink-0"
+            />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span style={{ fontSize: 13, color: 'var(--text-primary)' }} className="truncate">
+                  {model.name}
+                </span>
+                {model.isMain && <Tag color="gold" size="small">主</Tag>}
+                <ModelTypeTag modelName={model.modelName} />
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }} className="truncate mt-1">
+                {model.modelName}
+              </div>
+            </div>
+          </div>
+        ),
+      },
+    ];
+
+    if (selectedPlatformId === '__all__') {
+      cols.push({
+        title: '平台',
+        width: 140,
+        render: (_: unknown, model: LLMModel) => (
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            {model.platformName || platformIdToName.get(model.platformId || '') || '-'}
+          </span>
+        ),
+      });
+    }
+
+    cols.push(
+      {
+        title: '启用',
+        width: 80,
+        align: 'center',
+        render: (_: unknown, model: LLMModel) => (
+          <Switch
+            size="small"
+            checked={model.enabled}
+            loading={togglingModels.has(model.id)}
+            onChange={(checked) => handleToggleModelEnabled(model, checked)}
+          />
+        ),
+      },
+      {
+        title: '操作',
+        width: 140,
+        align: 'right',
+        render: (_: unknown, model: LLMModel) => (
+          <div className="flex items-center justify-end gap-1">
+            <Tooltip content="测试连接">
+              <Button
+                type="text"
+                size="mini"
+                icon={<IconLink />}
+                loading={testingModels.has(model.id)}
+                onClick={() => handleTestModel(model)}
+              />
+            </Tooltip>
+            <Tooltip content={model.isMain ? '主模型' : '设为主模型'}>
+              <Button
+                type="text"
+                size="mini"
+                icon={model.isMain ? <IconStarFill style={{ color: '#f59e0b' }} /> : <IconStar />}
+                onClick={() => !model.isMain && handleSetMain(model)}
+                disabled={model.isMain}
+              />
+            </Tooltip>
+            <Tooltip content="编辑">
+              <Button
+                type="text"
+                size="mini"
+                icon={<IconEdit />}
+                onClick={() => {
+                  setEditingModel(model);
+                  setModelModalVisible(true);
+                }}
+              />
+            </Tooltip>
+            <Popconfirm
+              title="确定删除此模型?"
+              onOk={() => handleDeleteModel(model.id)}
+            >
+              <Tooltip content="删除">
+                <Button type="text" size="mini" icon={<IconDelete />} status="danger" />
+              </Tooltip>
+            </Popconfirm>
+          </div>
+        ),
+      }
+    );
+
+    return cols;
+  }, [platformIdToName, selectedPlatformId, testingModels, togglingModels]);
+
   const handleDeleteModel = async (id: string) => {
     try {
       await deleteModel(id);
-      message.success('模型已删除');
+      Message.success('模型已删除');
       loadData();
     } catch {
-      message.error('删除失败');
+      Message.error('删除失败');
     }
   };
 
-  // 删除平台
   const handleDeletePlatform = async (id: string) => {
     try {
       await deletePlatform(id);
-      message.success('平台已删除');
+      Message.success('平台已删除');
+      if (selectedPlatformId === id) {
+        setSelectedPlatformId('__all__');
+      }
       loadData();
     } catch (error: unknown) {
       const err = error as { error?: { message?: string } };
-      message.error(err?.error?.message || '删除失败');
+      Message.error(err?.error?.message || '删除失败');
     }
   };
 
-  // 模型表格列
-  const modelColumns: ColumnsType<LLMModel> = [
-    {
-      title: '',
-      width: 30,
-      render: () => <HolderOutlined className="text-gray-500" />,
-    },
-    {
-      title: '模型',
-      key: 'model',
-      render: (_, record) => (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{record.name}</span>
-            {record.isMain && <Tag color="gold">主模型</Tag>}
-            {!record.enabled && <Tag color="default">已禁用</Tag>}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            <code>{record.modelName}</code>
-            {record.group && <Tag color="blue" style={{ marginRight: 0 }}>{record.group}</Tag>}
-            {record.platformName && <span>/ {record.platformName}</span>}
-          </div>
-        </div>
-      ),
-    },
-    {
-      title: '调用次数',
-      dataIndex: 'callCount',
-      key: 'callCount',
-      width: 100,
-      align: 'center',
-    },
-    {
-      title: '平均耗时',
-      key: 'avgDuration',
-      width: 100,
-      align: 'center',
-      render: (_, record) => (
-        <span>{record.averageDuration > 0 ? `${record.averageDuration}ms` : '-'}</span>
-      ),
-    },
-    {
-      title: '成功率',
-      key: 'successRate',
-      width: 120,
-      render: (_, record) => (
-        record.callCount > 0 ? (
-          <Progress 
-            percent={record.successRate} 
-            size="small" 
-            status={record.successRate >= 90 ? 'success' : record.successRate >= 70 ? 'normal' : 'exception'}
-            format={p => `${p}%`}
-          />
-        ) : <span className="text-gray-500">-</span>
-      ),
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 200,
-      render: (_, record) => (
-        <Space>
-          <Tooltip title="测试连接">
-            <Button 
-              size="small" 
-              icon={<ApiOutlined />} 
-              loading={testingModels.has(record.id)}
-              onClick={() => handleTestModel(record)}
-            />
-          </Tooltip>
-          <Tooltip title={record.isMain ? '当前主模型' : '设为主模型'}>
-            <Button 
-              size="small" 
-              type={record.isMain ? 'primary' : 'default'}
-              icon={record.isMain ? <StarFilled /> : <StarOutlined />}
-              onClick={() => !record.isMain && handleSetMain(record)}
-              disabled={record.isMain}
-            />
-          </Tooltip>
-          <Button 
-            size="small" 
-            icon={<EditOutlined />} 
-            onClick={() => {
-              setEditingModel(record);
-              setModelModalVisible(true);
-            }}
-          />
-          <Popconfirm title="确定要删除此模型吗?" onConfirm={() => handleDeleteModel(record.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
-  // 平台表格列
-  const platformColumns: ColumnsType<LLMPlatform> = [
-    {
-      title: '平台名称',
-      key: 'name',
-      render: (_, record) => (
-        <div className="flex items-center gap-2">
-          <div 
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold"
-            style={{ background: getPlatformColor(record.platformType) }}
-          >
-            {record.name[0].toUpperCase()}
-          </div>
-          <div>
-            <div className="font-medium">{record.name}</div>
-            <div className="text-xs text-gray-500">{record.platformType}</div>
-          </div>
-          {!record.enabled && <Tag color="default">已禁用</Tag>}
-        </div>
-      ),
-    },
-    {
-      title: 'API地址',
-      dataIndex: 'apiUrl',
-      key: 'apiUrl',
-      render: (url: string) => (
-        <code className="text-xs text-cyan-400 break-all">{url}</code>
-      ),
-    },
-    {
-      title: 'API密钥',
-      dataIndex: 'apiKeyMasked',
-      key: 'apiKeyMasked',
-      width: 150,
-      render: (key: string) => <code className="text-xs">{key}</code>,
-    },
-    {
-      title: '并发数',
-      dataIndex: 'maxConcurrency',
-      key: 'maxConcurrency',
-      width: 80,
-      align: 'center',
-    },
-    {
-      title: '状态',
-      key: 'enabled',
-      width: 80,
-      render: (_, record) => (
-        <Switch checked={record.enabled} disabled size="small" />
-      ),
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 120,
-      render: (_, record) => (
-        <Space>
-          <Button 
-            size="small" 
-            icon={<EditOutlined />} 
-            onClick={() => {
-              setEditingPlatform(record);
-              setPlatformModalVisible(true);
-            }}
-          />
-          <Popconfirm 
-            title="确定要删除此平台吗?" 
-            description="如果平台下有模型则无法删除"
-            onConfirm={() => handleDeletePlatform(record.id)}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">模型管理</h1>
+    <div className="h-full flex flex-col animate-fadeIn">
+      {/* 页面标题 */}
+      <div className="flex items-end justify-between mb-6">
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+            模型管理
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            平台 {platforms.length} 个（启用 {platforms.filter(p => p.enabled).length}） / 模型 {models.length} 个
+          </p>
+        </div>
       </div>
 
-      <Tabs 
-        activeKey={activeTab} 
-        onChange={setActiveTab}
-        tabBarExtraContent={
-          activeTab === 'models' ? (
-            <Space>
-              <Button 
-                icon={<AppstoreAddOutlined />} 
-                onClick={() => setLibraryModalVisible(true)}
-              >
-                从平台添加
-              </Button>
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
-                onClick={() => {
-                  setEditingModel(null);
-                  setModelModalVisible(true);
-                }}
-              >
-                手动添加
-              </Button>
-            </Space>
-          ) : (
-            <Button 
-              type="primary" 
-              icon={<PlusOutlined />} 
+      <div className="flex-1 flex gap-6" style={{ minHeight: 0 }}>
+        {/* 左侧：平台列表 */}
+        <div 
+          className="flex flex-col shrink-0"
+          style={{
+            width: 280,
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-xl)',
+            overflow: 'hidden',
+          }}
+        >
+          {/* 搜索框 */}
+          <div style={{ padding: 'var(--space-5)', borderBottom: '1px solid var(--border-subtle)' }}>
+            <Input
+              prefix={<IconSearch style={{ color: 'var(--text-muted)' }} />}
+              placeholder="搜索平台..."
+              value={platformSearch}
+              onChange={setPlatformSearch}
+              allowClear
+            />
+          </div>
+
+          {/* 平台列表 */}
+          <div className="flex-1 overflow-y-auto p-3" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Spin size={24} />
+              </div>
+            ) : (
+              <>
+                {/* 全部模型 */}
+                <div
+                  className="flex items-center gap-4 p-4 cursor-pointer transition-all rounded-lg"
+                  style={{
+                    background: selectedPlatformId === '__all__' ? 'var(--bg-card)' : 'transparent',
+                    border: selectedPlatformId === '__all__' ? '1px solid var(--border-default)' : '1px solid transparent',
+                  }}
+                  onClick={() => setSelectedPlatformId('__all__')}
+                >
+                  <div 
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--accent)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    All
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>全部模型</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>共 {models.length} 个</div>
+                  </div>
+                </div>
+
+                {/* 平台列表 */}
+                {filteredPlatforms.map(platform => {
+                  const modelCount = models.filter(m => m.platformId === platform.id).length;
+                  const isSelected = selectedPlatformId === platform.id;
+                  
+                  return (
+                    <div
+                      key={platform.id}
+                      className="flex items-center gap-4 p-4 cursor-pointer transition-all rounded-lg"
+                      style={{
+                        background: isSelected ? 'var(--bg-card)' : 'transparent',
+                        border: isSelected ? '1px solid var(--border-default)' : '1px solid transparent',
+                      }}
+                      onClick={() => setSelectedPlatformId(platform.id)}
+                    >
+                      <ModelIcon
+                        modelName={platform.platformType}
+                        displayName={platform.name}
+                        size={36}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div 
+                          className="truncate"
+                          style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}
+                        >
+                          {platform.name}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                          {modelCount} 个模型
+                        </div>
+                      </div>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <Switch
+                          size="small"
+                          checked={platform.enabled}
+                          loading={togglingPlatforms.has(platform.id)}
+                          onChange={(checked) => handleTogglePlatformEnabled(platform, checked)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          {/* 添加平台按钮 */}
+          <div style={{ padding: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+            <Button
+              type="primary"
+              long
+              icon={<IconPlus />}
               onClick={() => {
                 setEditingPlatform(null);
                 setPlatformModalVisible(true);
@@ -396,55 +525,190 @@ export default function ModelManagePage() {
             >
               添加平台
             </Button>
-          )
-        }
-        items={[
-          {
-            key: 'models',
-            label: `模型列表 (${models.length})`,
-            children: (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleDragEnd}
-              >
-                <SortableContext
-                  items={models.map(m => m.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <Table
-                    columns={modelColumns}
-                    dataSource={models}
-                    rowKey="id"
-                    loading={loading}
-                    pagination={false}
-                    components={{
-                      body: {
-                        row: SortableRow,
-                      },
-                    }}
-                  />
-                </SortableContext>
-              </DndContext>
-            ),
-          },
-          {
-            key: 'platforms',
-            label: `平台列表 (${platforms.length})`,
-            children: (
-              <Table
-                columns={platformColumns}
-                dataSource={platforms}
-                rowKey="id"
-                loading={loading}
-                pagination={false}
-              />
-            ),
-          },
-        ]}
-      />
+          </div>
+        </div>
 
-      {/* 平台表单弹窗 */}
+        {/* 右侧：模型列表 */}
+        <div 
+          className="flex-1 flex flex-col min-w-0"
+          style={{
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-xl)',
+            overflow: 'hidden',
+          }}
+        >
+          {(selectedPlatformId === '__all__' || selectedPlatform) ? (
+            <>
+              {/* 平台详情头部 */}
+              {selectedPlatform && (
+                <div 
+                  className="flex items-center justify-between"
+                  style={{ 
+                    padding: 'var(--space-4) var(--space-5)',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    background: 'var(--bg-card)',
+                  }}
+                >
+                  <div className="flex items-center gap-6" style={{ fontSize: 13 }}>
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: 'var(--text-muted)' }}>API 密钥</span>
+                      <button 
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <IconEyeInvisible /> : <IconEye />}
+                      </button>
+                      <code style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                        {showApiKey ? selectedPlatform.apiKeyMasked : '************************'}
+                      </code>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: 'var(--text-muted)' }}>API 地址</span>
+                      <code style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
+                        {selectedPlatform.apiUrl}
+                      </code>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Tooltip content="编辑">
+                      <Button 
+                        type="text"
+                        size="small"
+                        icon={<IconEdit />}
+                        onClick={() => {
+                          setEditingPlatform(selectedPlatform);
+                          setPlatformModalVisible(true);
+                        }}
+                      />
+                    </Tooltip>
+                    <Popconfirm 
+                      title="确定删除此平台?" 
+                      content="如果平台下有模型则无法删除"
+                      onOk={() => handleDeletePlatform(selectedPlatform.id)}
+                    >
+                      <Tooltip content="删除">
+                        <Button type="text" size="small" icon={<IconDelete />} status="danger" />
+                      </Tooltip>
+                    </Popconfirm>
+                  </div>
+                </div>
+              )}
+
+              {/* 模型列表头部 */}
+              <div 
+                className="flex items-center justify-between"
+                style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--border-subtle)' }}
+              >
+                <div className="flex items-center gap-4">
+                  <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {selectedPlatformId === '__all__' ? '全部模型' : '模型'}
+                  </span>
+                  <Tag size="small">{platformModelCount}</Tag>
+                  <Input
+                    prefix={<IconSearch style={{ color: 'var(--text-muted)' }} />}
+                    placeholder="搜索模型..."
+                    value={modelSearch}
+                    onChange={setModelSearch}
+                    allowClear
+                    style={{ width: 200 }}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    type="text"
+                    size="small"
+                    icon={<IconSettings />}
+                    onClick={() => setLibraryModalVisible(true)}
+                  >
+                    管理
+                  </Button>
+                  <Button 
+                    type="secondary"
+                    size="small"
+                    icon={<IconPlus />}
+                    onClick={() => {
+                      setEditingModel(null);
+                      setModelModalVisible(true);
+                    }}
+                  >
+                    添加
+                  </Button>
+                </div>
+              </div>
+
+              {/* 模型分组列表 */}
+              <div className="flex-1 overflow-y-auto p-5">
+                {Object.keys(platformModels).length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full">
+                    <Empty
+                      description="暂无模型"
+                    />
+                    <Button 
+                      type="primary" 
+                      icon={<IconApps />}
+                      style={{ marginTop: 'var(--space-4)' }}
+                      onClick={() => setLibraryModalVisible(true)}
+                    >
+                      从模型库添加
+                    </Button>
+                  </div>
+                ) : (
+                  <Collapse
+                    activeKey={expandedGroups}
+                    onChange={(_, keys) => setExpandedGroups(keys)}
+                    bordered={false}
+                  >
+                    {Object.entries(platformModels).map(([group, groupModels]) => (
+                      <CollapseItem
+                        key={group}
+                        name={group}
+                        header={
+                          <div className="flex items-center gap-3">
+                            <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>
+                              {group}
+                            </span>
+                            <Tag size="small">{groupModels.length} 个模型</Tag>
+                          </div>
+                        }
+                      >
+                        <Table
+                          size="small"
+                          rowKey="id"
+                          columns={modelTableColumns}
+                          data={groupModels}
+                          pagination={false}
+                          border={false}
+                          noDataElement={<span style={{ color: 'var(--text-muted)' }}>暂无模型</span>}
+                        />
+                      </CollapseItem>
+                    ))}
+                  </Collapse>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center">
+              <Empty description="请选择一个平台" />
+              {platforms.length === 0 && (
+                <Button 
+                  type="primary" 
+                  icon={<IconPlus />}
+                  style={{ marginTop: 'var(--space-4)' }}
+                  onClick={() => {
+                    setEditingPlatform(null);
+                    setPlatformModalVisible(true);
+                  }}
+                >
+                  添加平台
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 弹窗 */}
       <PlatformFormModal
         open={platformModalVisible}
         platform={editingPlatform}
@@ -459,7 +723,6 @@ export default function ModelManagePage() {
         }}
       />
 
-      {/* 模型表单弹窗 */}
       <ModelFormModal
         open={modelModalVisible}
         model={editingModel}
@@ -475,7 +738,6 @@ export default function ModelManagePage() {
         }}
       />
 
-      {/* 模型库弹窗 */}
       <ModelLibraryModal
         open={libraryModalVisible}
         platforms={platforms}
@@ -488,18 +750,3 @@ export default function ModelManagePage() {
     </div>
   );
 }
-
-function getPlatformColor(type: string): string {
-  const colors: Record<string, string> = {
-    openai: '#10a37f',
-    anthropic: '#d97757',
-    google: '#4285f4',
-    qwen: '#6366f1',
-    zhipu: '#3b82f6',
-    baidu: '#2932e1',
-    deepseek: '#0ea5e9',
-    other: '#6b7280',
-  };
-  return colors[type] || colors.other;
-}
-

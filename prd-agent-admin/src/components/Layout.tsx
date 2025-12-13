@@ -1,28 +1,29 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Layout as AntLayout, Menu, Avatar, Dropdown } from 'antd';
+import { Layout as ArcoLayout, Menu, Avatar, Dropdown } from '@arco-design/web-react';
 import {
-  DashboardOutlined,
-  UserOutlined,
-  BarChartOutlined,
-  LogoutOutlined,
-  DoubleLeftOutlined,
-  DoubleRightOutlined,
-  RobotOutlined,
-} from '@ant-design/icons';
+  IconDashboard,
+  IconUser,
+  IconRobot,
+  IconFire,
+  IconExport,
+  IconMenuFold,
+  IconMenuUnfold,
+} from '@arco-design/web-react/icon';
 import { useAuthStore } from '../stores/authStore';
 
-const { Sider, Content } = AntLayout;
+const { Sider, Content } = ArcoLayout;
+const MenuItem = Menu.Item;
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/users', icon: <UserOutlined />, label: '用户管理' },
-  { key: '/model-manage', icon: <RobotOutlined />, label: '模型管理' },
-  { key: '/stats', icon: <BarChartOutlined />, label: 'Token统计' },
+  { key: '/', icon: <IconDashboard />, label: '仪表盘' },
+  { key: '/users', icon: <IconUser />, label: '用户管理' },
+  { key: '/model-manage', icon: <IconRobot />, label: '模型管理' },
+  { key: '/stats', icon: <IconFire />, label: 'Token统计' },
 ];
 
 export default function Layout({ children }: LayoutProps) {
@@ -31,81 +32,111 @@ export default function Layout({ children }: LayoutProps) {
   const { user, logout } = useAuthStore();
   const [collapsed, setCollapsed] = useState(false);
 
-  const userMenu = {
-    items: [
-      {
-        key: 'logout',
-        icon: <LogoutOutlined />,
-        label: '退出登录',
-        onClick: logout,
-      },
-    ],
-  };
+  const dropList = (
+    <Menu onClickMenuItem={(key) => {
+      if (key === 'logout') logout();
+    }}>
+      <MenuItem key="logout">
+        <IconExport style={{ marginRight: 8 }} />
+        退出登录
+      </MenuItem>
+    </Menu>
+  );
 
   return (
-    <AntLayout className="h-screen animated-bg">
+    <ArcoLayout className="h-full">
+      {/* 侧边栏 */}
       <Sider
-        trigger={null}
-        collapsible
+        className={`admin-sider ${collapsed ? 'is-collapsed' : ''}`}
         collapsed={collapsed}
-        width={220}
+        collapsible
+        trigger={null}
+        width={200}
         collapsedWidth={64}
+        style={{
+          background: 'var(--bg-elevated)',
+          borderRight: '1px solid var(--border-subtle)',
+        }}
       >
-        <div className="flex flex-col h-full">
-          <div className="h-16 flex items-center justify-center">
-            <div className="flex items-center gap-3">
-              <div 
-                className="w-8 h-8 aspect-square flex-shrink-0 flex items-center justify-center border border-white/20"
-              >
-                <span className="text-white font-bold text-lg">PRD</span>
-              </div>
-              {!collapsed && (
-                <span className="text-white font-semibold text-lg tracking-tight">Agent</span>
-              )}
+        <div className="admin-sider-container">
+          {/* Logo */}
+          <div className={`admin-sider-logo ${collapsed ? 'is-collapsed' : ''}`}>
+            <div className="admin-sider-logo-icon">
+              <span>PRD</span>
             </div>
+            {!collapsed && (
+              <span className="admin-sider-logo-text">Agent</span>
+            )}
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          {/* 菜单 */}
+          <div className="admin-sider-menu-wrapper">
             <Menu
-              theme="dark"
-              mode="inline"
+              className="admin-sider-menu"
+              mode="vertical"
               selectedKeys={[location.pathname]}
-              items={menuItems}
-              onClick={({ key }) => navigate(key)}
-              className="mt-2 px-3 !bg-transparent !border-e-0"
-            />
+              onClickMenuItem={(key) => navigate(key)}
+            >
+              {menuItems.map((item) => (
+                <MenuItem 
+                  key={item.key}
+                  className="admin-sider-menu-item"
+                >
+                  <span className="admin-sider-menu-item-inner">
+                    <span className="sidebar-icon">{item.icon}</span>
+                    {!collapsed && <span className="sidebar-label">{item.label}</span>}
+                  </span>
+                </MenuItem>
+              ))}
+            </Menu>
           </div>
 
-          <div className="p-3 flex flex-col gap-2">
-            <Dropdown menu={userMenu} placement="topLeft" trigger={['click']}>
-              <div 
-                className={`flex items-center gap-3 cursor-pointer transition-all hover:bg-white/5 rounded-lg p-2 ${collapsed ? 'justify-center' : ''}`}
-              >
-                <Avatar shape="square" size={32} icon={<UserOutlined />} className="flex-shrink-0" style={{ backgroundColor: '#000', border: '1px solid #333' }} />
+          {/* 底部区域 */}
+          <div className="admin-sider-footer">
+            {/* 用户信息 */}
+            <Dropdown droplist={dropList} position="top" trigger="click">
+              <div className={`admin-sider-user ${collapsed ? 'is-collapsed' : ''}`}>
+                <Avatar 
+                  size={28} 
+                  className="admin-sider-user-avatar"
+                >
+                  {(user?.displayName || 'A').charAt(0).toUpperCase()}
+                </Avatar>
                 {!collapsed && (
-                  <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-                    <span style={{ color: '#e5e5e5', fontSize: '14px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.displayName || 'Admin'}</span>
-                    <span style={{ color: '#6b7280', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>系统管理员</span>
+                  <div className="admin-sider-user-info">
+                    <div className="admin-sider-user-name">
+                      {user?.displayName || 'Admin'}
+                    </div>
+                    <div className="admin-sider-user-role">
+                      系统管理员
+                    </div>
                   </div>
                 )}
               </div>
             </Dropdown>
-            
+
+            {/* 折叠按钮 */}
             <button
               onClick={() => setCollapsed(!collapsed)}
-              className={`flex items-center text-gray-500 hover:text-white transition-colors ${collapsed ? 'justify-center py-2' : 'px-2 py-2'}`}
+              className="admin-sider-toggle"
+              type="button"
             >
-              {collapsed ? <DoubleRightOutlined /> : <DoubleLeftOutlined />}
+              {collapsed ? (
+                <IconMenuUnfold style={{ fontSize: 16 }} />
+              ) : (
+                <IconMenuFold style={{ fontSize: 16 }} />
+              )}
             </button>
           </div>
         </div>
       </Sider>
 
-      <AntLayout>
-        <Content className="p-6 overflow-auto">
+      {/* 主内容区 */}
+      <ArcoLayout>
+        <Content className="admin-content">
           {children}
         </Content>
-      </AntLayout>
-    </AntLayout>
+      </ArcoLayout>
+    </ArcoLayout>
   );
 }

@@ -3,8 +3,8 @@ import ChatInput from './ChatInput';
 import RoleSelector from './RoleSelector';
 import { usePrdSessionStore } from '../../stores/prdSessionStore';
 import { usePrdMessageStore } from '../../stores/prdMessageStore';
-import { FileTextOutlined, NumberOutlined, LogoutOutlined } from '@ant-design/icons';
-import { Tooltip, Button, Popconfirm } from 'antd';
+import { IconFile, IconCode, IconExport } from '@arco-design/web-react/icon';
+import { Tooltip, Button, Popconfirm } from '@arco-design/web-react';
 
 export default function ChatContainer() {
   const { document, clearSession } = usePrdSessionStore();
@@ -16,19 +16,31 @@ export default function ChatContainer() {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-gray-900/50 to-black/50 rounded-xl border border-white/10">
+    <div 
+      className="flex-1 flex flex-col overflow-hidden"
+      style={{
+        background: 'var(--bg-elevated)',
+        borderRadius: 'var(--radius-xl)',
+        border: '1px solid var(--border-subtle)',
+      }}
+    >
       {/* 头部信息栏 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/20">
+      <div 
+        className="flex items-center justify-between px-5 py-4"
+        style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-card)' }}
+      >
         <div className="flex items-center gap-4">
           {document && (
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm">
-                <FileTextOutlined className="text-blue-400" />
-                <span className="text-white font-medium">{document.title}</span>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <IconFile style={{ color: 'var(--accent)', fontSize: 16 }} />
+                <span style={{ color: 'var(--text-primary)', fontWeight: 500, fontSize: 14 }}>
+                  {document.title}
+                </span>
               </div>
-              <div className="flex items-center gap-4 text-xs text-gray-500">
+              <div className="flex items-center gap-4" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 <span className="flex items-center gap-1">
-                  <NumberOutlined />
+                  <IconCode style={{ fontSize: 12 }} />
                   {document.charCount.toLocaleString()} 字
                 </span>
                 <span>约 {document.tokenEstimate.toLocaleString()} tokens</span>
@@ -39,21 +51,20 @@ export default function ChatContainer() {
         
         <div className="flex items-center gap-3">
           <RoleSelector />
-          <Tooltip title="结束会话">
-            <Popconfirm
-              title="结束当前会话"
-              description="确定要结束当前会话吗？聊天记录将被清空。"
-              onConfirm={handleEndSession}
-              okText="确定"
-              cancelText="取消"
-            >
+          <Popconfirm
+            title="确定要结束当前会话吗？聊天记录将被清空。"
+            onOk={handleEndSession}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Tooltip content="结束会话">
               <Button 
                 type="text" 
-                icon={<LogoutOutlined />}
-                className="text-gray-400 hover:!text-red-400"
+                icon={<IconExport />}
+                style={{ color: 'var(--text-muted)' }}
               />
-            </Popconfirm>
-          </Tooltip>
+            </Tooltip>
+          </Popconfirm>
         </div>
       </div>
       
@@ -67,4 +78,3 @@ export default function ChatContainer() {
     </div>
   );
 }
-

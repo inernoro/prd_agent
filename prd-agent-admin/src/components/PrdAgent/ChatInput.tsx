@@ -1,5 +1,5 @@
 import { useState, useRef, KeyboardEvent } from 'react';
-import { SendOutlined, LoadingOutlined } from '@ant-design/icons';
+import { IconSend, IconLoading } from '@arco-design/web-react/icon';
 import { usePrdSessionStore } from '../../stores/prdSessionStore';
 import { usePrdMessageStore } from '../../stores/prdMessageStore';
 import { sendMessageWithSSE } from '../../services/api';
@@ -26,7 +26,6 @@ export default function ChatInput() {
     const messageContent = content.trim();
     setContent('');
     
-    // 重置 textarea 高度
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -35,11 +34,11 @@ export default function ChatInput() {
       await sendMessageWithSSE(
         sessionId,
         messageContent,
-        currentRole.toLowerCase(),
+        currentRole,
         () => startStreaming(),
-        (chunk) => appendStreamingContent(chunk),
+        (chunk: string) => appendStreamingContent(chunk),
         () => finalizeStreaming(),
-        (error) => {
+        (error: unknown) => {
           console.error('SSE Error:', error);
           finalizeStreaming();
         }
@@ -66,7 +65,10 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="p-4 border-t border-white/10 bg-black/20 backdrop-blur-sm">
+    <div 
+      className="p-4"
+      style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-card)' }}
+    >
       <div className="flex items-end gap-3 max-w-4xl mx-auto">
         <div className="flex-1 relative">
           <textarea
@@ -78,7 +80,18 @@ export default function ChatInput() {
             }}
             onKeyDown={handleKeyDown}
             placeholder="输入您的问题... (Enter 发送, Shift+Enter 换行)"
-            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 text-white placeholder-gray-500 transition-all"
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              resize: 'none',
+              outline: 'none',
+              color: 'var(--text-primary)',
+              fontSize: 14,
+              lineHeight: 1.5,
+            }}
             rows={1}
             disabled={isStreaming}
           />
@@ -87,16 +100,26 @@ export default function ChatInput() {
         <button
           onClick={handleSend}
           disabled={!content.trim() || isStreaming}
-          className="p-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl hover:from-blue-500 hover:to-blue-400 transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
+          style={{
+            padding: 12,
+            background: 'var(--accent)',
+            color: '#fff',
+            borderRadius: 'var(--radius-md)',
+            border: 'none',
+            cursor: !content.trim() || isStreaming ? 'not-allowed' : 'pointer',
+            opacity: !content.trim() || isStreaming ? 0.4 : 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
           {isStreaming ? (
-            <LoadingOutlined className="text-lg" spin />
+            <IconLoading style={{ fontSize: 18 }} spin />
           ) : (
-            <SendOutlined className="text-lg" />
+            <IconSend style={{ fontSize: 18 }} />
           )}
         </button>
       </div>
     </div>
   );
 }
-

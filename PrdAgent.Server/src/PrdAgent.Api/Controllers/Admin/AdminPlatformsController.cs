@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Cryptography;
@@ -19,6 +20,11 @@ public class AdminPlatformsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminPlatformsController> _logger;
     private readonly IConfiguration _config;
+    private readonly ICacheManager _cache;
+    private readonly IHttpClientFactory _httpClientFactory;
+    
+    private const string ModelsCacheKeyPrefix = "platform:models:";
+    private static readonly TimeSpan ModelsCacheExpiry = TimeSpan.FromHours(24);
     
     // 预设模型列表缓存
     private static readonly Dictionary<string, List<PresetModel>> PresetModels = new()
@@ -87,11 +93,15 @@ public class AdminPlatformsController : ControllerBase
     public AdminPlatformsController(
         MongoDbContext db,
         ILogger<AdminPlatformsController> logger,
-        IConfiguration config)
+        IConfiguration config,
+        ICacheManager cache,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _logger = logger;
         _config = config;
+        _cache = cache;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -259,7 +269,7 @@ public class AdminPlatformsController : ControllerBase
     }
 
     /// <summary>
-    /// 获取平台可用模型列表（从API获取或使用预设列表）
+    /// 获取平台可用模型列表（优先从缓存获取，否则从API获取或使用预设列表）
     /// </summary>
     [HttpGet("{id}/available-models")]
     public async Task<IActionResult> GetAvailableModels(string id)
@@ -270,35 +280,93 @@ public class AdminPlatformsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
         }
 
+        // 尝试从缓存获取
+        var cacheKey = ModelsCacheKeyPrefix + id;
+        var cachedModels = await _cache.GetAsync<List<AvailableModelDto>>(cacheKey);
+        if (cachedModels != null && cachedModels.Count > 0)
+        {
+            return Ok(ApiResponse<object>.Ok(cachedModels));
+        }
+
+        // 从API或预设获取模型列表
+        var models = await GetModelsForPlatform(platform);
+        
+        // 缓存结果
+        if (models.Count > 0)
+        {
+            await _cache.SetAsync(cacheKey, models, ModelsCacheExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(models));
+    }
+
+    /// <summary>
+    /// 刷新平台模型列表（强制从API重新获取并更新缓存）
+    /// </summary>
+    [HttpPost("{id}/refresh-models")]
+    public async Task<IActionResult> RefreshModels(string id)
+    {
+        var platform = await _db.LLMPlatforms.Find(p => p.Id == id).FirstOrDefaultAsync();
+        if (platform == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
+        }
+
+        // 清除旧缓存
+        var cacheKey = ModelsCacheKeyPrefix + id;
+        await _cache.RemoveAsync(cacheKey);
+
+        // 从API或预设获取模型列表
+        var models = await GetModelsForPlatform(platform);
+        
+        // 缓存结果
+        if (models.Count > 0)
+        {
+            await _cache.SetAsync(cacheKey, models, ModelsCacheExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(models));
+    }
+
+    /// <summary>
+    /// 获取平台的模型列表（从API或预设）
+    /// </summary>
+    private async Task<List<AvailableModelDto>> GetModelsForPlatform(LLMPlatform platform)
+    {
         // OpenAI兼容的平台尝试从API获取模型列表
         if (platform.PlatformType == "openai" || platform.PlatformType == "other")
         {
             try
             {
-                var models = await FetchModelsFromApi(platform);
-                if (models.Count > 0)
+                var apiModels = await FetchModelsFromApi(platform);
+                if (apiModels.Count > 0)
                 {
-                    return Ok(ApiResponse<object>.Ok(models));
+                    return apiModels.Select(m => new AvailableModelDto
+                    {
+                        ModelName = ((dynamic)m).modelName,
+                        DisplayName = ((dynamic)m).displayName,
+                        Group = ((dynamic)m).group
+                    }).ToList();
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to fetch models from API for platform {Id}", id);
+                _logger.LogWarning(ex, "Failed to fetch models from API for platform {Id}", platform.Id);
             }
         }
 
         // 使用预设列表
         if (PresetModels.TryGetValue(platform.PlatformType, out var presets))
         {
-            return Ok(ApiResponse<object>.Ok(presets.Select(p => new
+            return presets.Select(p => new AvailableModelDto
             {
-                modelName = p.ModelName,
-                displayName = p.DisplayName,
-                group = p.Group
-            })));
+                ModelName = p.ModelName,
+                DisplayName = p.DisplayName,
+                Group = p.Group
+            }).ToList();
         }
 
-        return Ok(ApiResponse<object>.Ok(Array.Empty<object>()));
+        return new List<AvailableModelDto>();
     }
 
     /// <summary>
@@ -309,7 +377,8 @@ public class AdminPlatformsController : ControllerBase
         var apiUrl = GetModelsEndpoint(platform.ApiUrl);
         var apiKey = DecryptApiKey(platform.ApiKeyEncrypted);
 
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        using var client = _httpClientFactory.CreateClient("LoggedHttpClient");
+        client.Timeout = TimeSpan.FromSeconds(30);
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
 
         var response = await client.GetAsync(apiUrl);
@@ -472,5 +541,12 @@ public class UpdatePlatformRequest
     public bool Enabled { get; set; } = true;
     public int MaxConcurrency { get; set; } = 5;
     public string? Remark { get; set; }
+}
+
+public class AvailableModelDto
+{
+    public string ModelName { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string? Group { get; set; }
 }
 

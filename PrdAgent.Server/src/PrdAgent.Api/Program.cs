@@ -12,18 +12,24 @@ using PrdAgent.Infrastructure.Cache;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Markdown;
+using Serilog.Sinks.SystemConsole.Themes;
 using PrdAgent.Infrastructure.Prompts;
 using PrdAgent.Infrastructure.Repositories;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 配置Serilog
+// 配置Serilog - Pretty格式输出
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
-    .WriteTo.Console()
-    .WriteTo.File("logs/prdagent-.log", rollingInterval: RollingInterval.Day)
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}",
+        theme: Serilog.Sinks.SystemConsole.Themes.AnsiConsoleTheme.Code)
+    .WriteTo.File(
+        "logs/prdagent-.log", 
+        rollingInterval: RollingInterval.Day,
+        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -139,6 +145,13 @@ var jwtExpirationHours = builder.Configuration.GetValue<int>("Jwt:ExpirationHour
 builder.Services.AddSingleton<IJwtService>(sp => 
     new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtExpirationHours));
 
+// 注册 HTTP 日志处理程序
+builder.Services.AddTransient<HttpLoggingHandler>();
+
+// 注册通用 HTTP 客户端（带日志）- 用于所有第三方 API 请求
+builder.Services.AddHttpClient("LoggedHttpClient")
+    .AddHttpMessageHandler<HttpLoggingHandler>();
+
 // 注册 LLM 客户端
 var llmApiKey = builder.Configuration["LLM:ClaudeApiKey"] ?? "";
 var llmModel = builder.Configuration["LLM:Model"] ?? "claude-3-5-sonnet-20241022";
@@ -149,7 +162,8 @@ builder.Services.AddHttpClient<ILLMClient, ClaudeClient>()
         client.BaseAddress = new Uri("https://api.anthropic.com/");
         client.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
         client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-    });
+    })
+    .AddHttpMessageHandler<HttpLoggingHandler>();
 
 builder.Services.AddScoped<ILLMClient>(sp =>
 {
@@ -295,11 +309,13 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    
+    // 开发环境下启用请求响应日志（Pretty格式）
+    app.UseRequestResponseLogging();
 }
 
 app.UseExceptionMiddleware();
 app.UseRateLimiting();
-app.UseSerilogRequestLogging();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();

@@ -68,3 +68,47 @@ export interface ApiResponse<T> {
   };
 }
 
+// ========== PRD Agent ==========
+export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
+
+export type InteractionMode = 'QA' | 'Guided';
+
+export interface PrdSession {
+  sessionId: string;
+  documentId: string;
+  currentRole: UserRole;
+  mode: InteractionMode;
+  guideStep?: number;
+}
+
+export interface PrdDocumentSection {
+  level: number;
+  title: string;
+  startLine: number;
+  endLine: number;
+  children: PrdDocumentSection[];
+}
+
+export interface PrdDocument {
+  id: string;
+  title: string;
+  charCount: number;
+  tokenEstimate: number;
+  sections: PrdDocumentSection[];
+}
+
+export interface UploadDocumentResponse {
+  sessionId: string;
+  document: PrdDocument;
+}
+
+export type ChatMessageRole = 'User' | 'Assistant';
+
+export interface ChatMessage {
+  id: string;
+  role: ChatMessageRole;
+  content: string;
+  timestamp: Date;
+  viewRole?: UserRole;
+}
+

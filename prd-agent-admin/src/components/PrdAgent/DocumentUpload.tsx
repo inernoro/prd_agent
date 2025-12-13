@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
-import { message } from 'antd';
-import { LoadingOutlined, CloudUploadOutlined, FileMarkdownOutlined } from '@ant-design/icons';
+import { Message } from '@arco-design/web-react';
+import { IconLoading, IconUpload, IconFile } from '@arco-design/web-react/icon';
 import { usePrdSessionStore } from '../../stores/prdSessionStore';
 import { uploadDocument } from '../../services/api';
 import { ApiResponse, UploadDocumentResponse, PrdSession } from '../../types';
@@ -25,12 +25,12 @@ export default function DocumentUpload() {
           mode: 'QA',
         };
         setSession(session, response.data.document);
-        message.success(`文档「${response.data.document.title}」加载成功！`);
+        Message.success(`文档「${response.data.document.title}」加载成功!`);
       } else {
-        message.error(response.error?.message || '上传失败');
+        Message.error(response.error?.message || '上传失败');
       }
     } catch (err) {
-      message.error(String(err));
+      Message.error(String(err));
     } finally {
       setLoading(false);
     }
@@ -47,7 +47,7 @@ export default function DocumentUpload() {
         const content = await file.text();
         handleUpload(content);
       } else {
-        message.warning('仅支持 Markdown (.md) 格式文件');
+        Message.warning('仅支持 Markdown (.md) 格式文件');
       }
     }
   }, []);
@@ -79,7 +79,6 @@ export default function DocumentUpload() {
       tabIndex={-1}
       style={{ outline: 'none' }}
     >
-      {/* 完全隐藏的 file input */}
       <input 
         ref={fileInputRef}
         type="file" 
@@ -89,47 +88,81 @@ export default function DocumentUpload() {
       />
       
       <div
-        className={`w-full max-w-3xl p-10 border-2 border-dashed rounded-2xl text-center transition-all duration-300 bg-black/10 ${
-          isDragging 
-            ? 'border-blue-500 bg-blue-500/10 scale-[1.02]' 
-            : 'border-gray-600 hover:border-blue-400/50'
-        }`}
+        style={{
+          width: '100%',
+          maxWidth: 640,
+          padding: 'var(--space-10)',
+          border: `2px dashed ${isDragging ? 'var(--accent)' : 'var(--border-default)'}`,
+          borderRadius: 'var(--radius-xl)',
+          textAlign: 'center',
+          background: isDragging ? 'var(--accent-muted)' : 'var(--bg-card)',
+          transition: 'all var(--duration-normal) var(--ease-out)',
+          transform: isDragging ? 'scale(1.01)' : 'scale(1)',
+        }}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
       >
         {loading ? (
           <div className="flex flex-col items-center">
-            <LoadingOutlined className="text-5xl text-blue-500 mb-4" spin />
-            <p className="text-gray-400 text-lg">正在解析文档...</p>
+            <IconLoading style={{ fontSize: 48, color: 'var(--accent)', marginBottom: 'var(--space-4)' }} spin />
+            <p style={{ color: 'var(--text-muted)', fontSize: 16 }}>正在解析文档...</p>
           </div>
         ) : (
           <>
-            <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-2xl flex items-center justify-center border border-blue-500/30">
-              <FileMarkdownOutlined className="text-4xl text-blue-400" />
+            <div 
+              style={{
+                width: 72,
+                height: 72,
+                margin: '0 auto var(--space-6)',
+                background: 'var(--accent-muted)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <IconFile style={{ fontSize: 32, color: 'var(--accent)' }} />
             </div>
             
-            <h2 className="text-2xl font-semibold text-white mb-3">上传 PRD 文档</h2>
-            <p className="text-gray-400 mb-8">
+            <h2 style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 'var(--space-3)' }}>
+              上传 PRD 文档
+            </h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 'var(--space-6)' }}>
               拖拽 Markdown 文件到此处，或点击选择文件<br />
-              <span className="text-gray-500 text-sm">也可以使用 Ctrl+V 粘贴 Markdown 内容</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>也可以使用 Ctrl+V 粘贴 Markdown 内容</span>
             </p>
 
             <button 
               onClick={handleButtonClick}
-              className="inline-flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl cursor-pointer hover:from-blue-500 hover:to-blue-400 transition-all duration-300 shadow-lg shadow-blue-500/25 border-0"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '12px 24px',
+                background: 'var(--accent)',
+                color: '#fff',
+                borderRadius: 'var(--radius-md)',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 500,
+              }}
             >
-              <CloudUploadOutlined className="text-lg" />
-              <span className="font-medium">选择文件</span>
+              <IconUpload style={{ fontSize: 16 }} />
+              <span>选择文件</span>
             </button>
 
-            <div className="mt-8 flex items-center justify-center gap-6 text-xs text-gray-500">
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 bg-green-500 rounded-full" />
+            <div 
+              className="flex items-center justify-center gap-6"
+              style={{ marginTop: 'var(--space-6)', fontSize: 12, color: 'var(--text-muted)' }}
+            >
+              <span className="flex items-center gap-2">
+                <span style={{ width: 6, height: 6, background: 'var(--success)', borderRadius: '50%' }} />
                 支持 .md 格式
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 bg-green-500 rounded-full" />
+              <span className="flex items-center gap-2">
+                <span style={{ width: 6, height: 6, background: 'var(--success)', borderRadius: '50%' }} />
                 最大 10MB
               </span>
             </div>
@@ -139,4 +172,3 @@ export default function DocumentUpload() {
     </div>
   );
 }
-

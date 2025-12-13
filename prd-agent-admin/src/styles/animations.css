@@ -1,0 +1,279 @@
+/* =============================================================================
+   Linear 风格动效
+   ============================================================================= */
+
+/* --------------------------------------------------------------------------
+   基础动画变量
+   -------------------------------------------------------------------------- */
+:root {
+  --ease-linear: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* --------------------------------------------------------------------------
+   淡入动画
+   -------------------------------------------------------------------------- */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   滑入动画
+   -------------------------------------------------------------------------- */
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   脉冲动画
+   -------------------------------------------------------------------------- */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   旋转动画
+   -------------------------------------------------------------------------- */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   弹跳动画
+   -------------------------------------------------------------------------- */
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   动画工具类
+   -------------------------------------------------------------------------- */
+.animate-fadeIn {
+  animation: fadeIn 0.2s var(--ease-linear) forwards;
+}
+
+.animate-fadeInUp {
+  animation: fadeInUp 0.3s var(--ease-linear) forwards;
+}
+
+.animate-fadeInDown {
+  animation: fadeInDown 0.3s var(--ease-linear) forwards;
+}
+
+.animate-fadeInScale {
+  animation: fadeInScale 0.2s var(--ease-linear) forwards;
+}
+
+.animate-slideInLeft {
+  animation: slideInLeft 0.3s var(--ease-linear) forwards;
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.3s var(--ease-linear) forwards;
+}
+
+.animate-pulse {
+  animation: pulse 2s var(--ease-linear) infinite;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.animate-bounce {
+  animation: bounce 0.5s var(--ease-bounce);
+}
+
+/* --------------------------------------------------------------------------
+   Stagger 延迟（用于列表动画）
+   -------------------------------------------------------------------------- */
+.stagger-1 { animation-delay: 50ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 150ms; }
+.stagger-4 { animation-delay: 200ms; }
+.stagger-5 { animation-delay: 250ms; }
+.stagger-6 { animation-delay: 300ms; }
+.stagger-7 { animation-delay: 350ms; }
+.stagger-8 { animation-delay: 400ms; }
+
+/* --------------------------------------------------------------------------
+   交互动效
+   -------------------------------------------------------------------------- */
+.hover-lift {
+  transition: transform var(--duration-fast) var(--ease-linear),
+              box-shadow var(--duration-fast) var(--ease-linear);
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.hover-scale {
+  transition: transform var(--duration-fast) var(--ease-linear);
+}
+
+.hover-scale:hover {
+  transform: scale(1.02);
+}
+
+.hover-glow {
+  transition: box-shadow var(--duration-normal) var(--ease-linear);
+}
+
+.hover-glow:hover {
+  box-shadow: var(--shadow-glow);
+}
+
+/* --------------------------------------------------------------------------
+   骨架屏动画
+   -------------------------------------------------------------------------- */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-card) 25%,
+    var(--bg-card-hover) 50%,
+    var(--bg-card) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* --------------------------------------------------------------------------
+   加载指示器
+   -------------------------------------------------------------------------- */
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.loading-dots span {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+.loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+.loading-dots span:nth-child(3) { animation-delay: 0s; }
+
+/* --------------------------------------------------------------------------
+   进入/离开过渡
+   -------------------------------------------------------------------------- */
+.transition-enter {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.transition-enter-active {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.2s var(--ease-linear),
+              transform 0.2s var(--ease-linear);
+}
+
+.transition-exit {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.transition-exit-active {
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 0.15s var(--ease-linear),
+              transform 0.15s var(--ease-linear);
+}
+

@@ -1,0 +1,711 @@
+/* =============================================================================
+   Arco Design 暗色主题覆盖 - Linear 风格
+   ============================================================================= */
+
+/* --------------------------------------------------------------------------
+   全局 Arco 覆盖
+   -------------------------------------------------------------------------- */
+.arco-dark,
+body[arco-theme="dark"] {
+  --color-bg-1: var(--bg-base);
+  --color-bg-2: var(--bg-elevated);
+  --color-bg-3: var(--bg-card);
+  --color-bg-4: var(--bg-card-hover);
+  --color-bg-5: rgba(255, 255, 255, 0.08);
+  
+  --color-border: var(--border-subtle);
+  --color-border-2: var(--border-default);
+  --color-border-3: var(--border-hover);
+  
+  --color-text-1: var(--text-primary);
+  --color-text-2: var(--text-secondary);
+  --color-text-3: var(--text-muted);
+  --color-text-4: var(--text-disabled);
+  
+  --color-primary-6: var(--accent);
+  --color-primary-5: var(--accent-hover);
+}
+
+/* --------------------------------------------------------------------------
+   按钮
+   -------------------------------------------------------------------------- */
+.arco-btn {
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.arco-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.arco-btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.arco-btn-primary:active {
+  transform: translateY(0);
+}
+
+.arco-btn-secondary {
+  background: var(--bg-card);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.arco-btn-secondary:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-hover);
+}
+
+.arco-btn-text {
+  color: var(--text-secondary);
+}
+
+.arco-btn-text:hover {
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+
+/* --------------------------------------------------------------------------
+   输入框
+   -------------------------------------------------------------------------- */
+.arco-input,
+.arco-input-wrapper,
+.arco-textarea,
+.arco-input-number,
+.arco-select .arco-select-view {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: var(--radius-md);
+  transition: all var(--duration-fast) var(--ease-out);
+  color: var(--text-primary) !important;
+}
+
+.arco-input-inner-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+.arco-input-wrapper .arco-input {
+  border: none !important;
+  background: transparent !important;
+}
+
+.arco-input:hover,
+.arco-input-wrapper:hover,
+.arco-textarea:hover,
+.arco-input-number:hover,
+.arco-select:hover .arco-select-view {
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.arco-input:focus,
+.arco-input-wrapper.arco-input-focus,
+.arco-textarea:focus,
+.arco-input-number.arco-input-number-focused,
+.arco-select.arco-select-focused .arco-select-view {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.arco-input::placeholder,
+.arco-textarea::placeholder,
+.arco-input-wrapper .arco-input::placeholder {
+  color: var(--text-muted) !important;
+  opacity: 0.7;
+}
+
+/* 搜索输入框前缀图标 */
+.arco-input-prefix {
+  color: var(--text-muted);
+}
+
+/* 清除按钮 */
+.arco-input-clear-icon {
+  color: var(--text-muted);
+}
+
+.arco-input-clear-icon:hover {
+  color: var(--text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   下拉选择器
+   -------------------------------------------------------------------------- */
+.arco-select .arco-select-view {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.arco-select:hover .arco-select-view {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+.arco-select.arco-select-focused .arco-select-view {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.arco-select-view-value,
+.arco-select-view-input {
+  color: var(--text-primary) !important;
+}
+
+.arco-select-view-placeholder {
+  color: var(--text-muted) !important;
+}
+
+.arco-select-suffix .arco-select-arrow-icon {
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   下拉菜单弹出层
+   -------------------------------------------------------------------------- */
+.arco-select-popup,
+.arco-dropdown-menu,
+.arco-trigger-popup {
+  background: var(--bg-elevated) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.arco-select-option,
+.arco-dropdown-option {
+  border-radius: var(--radius-sm);
+  margin: 2px 4px;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.arco-select-option:hover,
+.arco-dropdown-option:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+.arco-select-option-selected,
+.arco-select-option.arco-select-option-selected {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+}
+
+/* --------------------------------------------------------------------------
+   表格
+   -------------------------------------------------------------------------- */
+.arco-table {
+  background: transparent;
+}
+
+.arco-table-th {
+  background: var(--bg-card) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  color: var(--text-secondary) !important;
+  font-weight: 500;
+  padding: var(--space-3) var(--space-4) !important;
+}
+
+.arco-table-td {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: var(--space-4) !important;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.arco-table-tr:hover .arco-table-td {
+  background: var(--bg-card) !important;
+}
+
+.arco-table-empty .arco-table-td {
+  background: transparent !important;
+}
+
+/* --------------------------------------------------------------------------
+   弹窗
+   -------------------------------------------------------------------------- */
+.arco-modal-wrapper {
+  background: var(--bg-overlay);
+}
+
+.arco-modal {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+
+.arco-modal-header {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: var(--space-5) var(--space-6) !important;
+}
+
+.arco-modal-title {
+  font-weight: 600 !important;
+  color: var(--text-primary) !important;
+}
+
+.arco-modal-content {
+  padding: var(--space-6) !important;
+}
+
+.arco-modal-footer {
+  border-top: 1px solid var(--border-subtle) !important;
+  padding: var(--space-4) var(--space-6) !important;
+  background: var(--bg-card);
+}
+
+.arco-modal-close-icon {
+  color: var(--text-muted);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.arco-modal-close-icon:hover {
+  color: var(--text-primary);
+}
+
+/* --------------------------------------------------------------------------
+   开关
+   -------------------------------------------------------------------------- */
+.arco-switch {
+  background: var(--border-default);
+}
+
+.arco-switch-checked {
+  background: var(--accent) !important;
+}
+
+/* --------------------------------------------------------------------------
+   标签
+   -------------------------------------------------------------------------- */
+.arco-tag {
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.arco-tag-default {
+  background: var(--bg-card);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.arco-tag-arcoblue {
+  background: var(--accent-muted);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.arco-tag-green {
+  background: var(--success-muted);
+  border-color: transparent;
+  color: var(--success);
+}
+
+.arco-tag-orange {
+  background: var(--warning-muted);
+  border-color: transparent;
+  color: var(--warning);
+}
+
+.arco-tag-red {
+  background: var(--error-muted);
+  border-color: transparent;
+  color: var(--error);
+}
+
+/* --------------------------------------------------------------------------
+   消息提示
+   -------------------------------------------------------------------------- */
+.arco-message {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+/* --------------------------------------------------------------------------
+   加载
+   -------------------------------------------------------------------------- */
+.arco-spin-icon {
+  color: var(--accent);
+}
+
+.arco-spin-tip {
+  color: var(--text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   空状态
+   -------------------------------------------------------------------------- */
+.arco-empty-description {
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   表单
+   -------------------------------------------------------------------------- */
+.arco-form-label-item > label {
+  color: var(--text-secondary) !important;
+  font-weight: 500;
+}
+
+.arco-form-item-extra {
+  color: var(--text-muted) !important;
+  font-size: 12px;
+}
+
+.arco-form-item-message {
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------------------
+   Tooltip
+   -------------------------------------------------------------------------- */
+.arco-tooltip-content {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-md) !important;
+  color: var(--text-primary) !important;
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------------------
+   Popconfirm
+   -------------------------------------------------------------------------- */
+.arco-popconfirm-content {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Menu
+   -------------------------------------------------------------------------- */
+.arco-menu {
+  background: transparent !important;
+}
+
+.arco-menu-item {
+  border-radius: var(--radius-md) !important;
+  margin: 2px 0 !important;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.arco-menu-item:hover {
+  background: var(--bg-card) !important;
+}
+
+.arco-menu-selected {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+}
+
+.arco-menu-selected:hover {
+  background: var(--accent-muted) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Admin 侧边栏 - Linear 极简成熟风格
+   -------------------------------------------------------------------------- */
+.admin-sider {
+  flex: 0 0 auto;
+}
+
+.admin-sider .admin-sider-menu {
+  padding: 0 !important;
+}
+
+/* 菜单项基础样式 */
+.admin-sider .admin-sider-menu-item.arco-menu-item {
+  position: relative;
+  padding: 0 !important;
+  margin: 2px 0 !important;
+  border-radius: var(--radius-md) !important;
+  background: transparent !important;
+  overflow: hidden;
+}
+
+/* hover 态 - 克制的背景变化 */
+.admin-sider .admin-sider-menu-item.arco-menu-item:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* 选中态 - 左侧指示条 + 轻背景 */
+.admin-sider .admin-sider-menu-item.arco-menu-item.arco-menu-selected {
+  background: rgba(99, 102, 241, 0.08) !important;
+}
+
+.admin-sider .admin-sider-menu-item.arco-menu-item.arco-menu-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.admin-sider .admin-sider-menu-item.arco-menu-item.arco-menu-selected:hover {
+  background: rgba(99, 102, 241, 0.12) !important;
+}
+
+/* 菜单项内部容器 */
+.admin-sider .admin-sider-menu-item-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.admin-sider .admin-sider-menu-item.arco-menu-item:hover .admin-sider-menu-item-inner {
+  color: var(--text-primary);
+}
+
+.admin-sider .admin-sider-menu-item.arco-menu-selected .admin-sider-menu-item-inner {
+  color: var(--accent) !important;
+}
+
+/* 折叠态调整 */
+.admin-sider.is-collapsed .admin-sider-menu-item-inner {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.admin-sider.is-collapsed .admin-sider-menu-item.arco-menu-item.arco-menu-selected::before {
+  left: 0;
+  width: 3px;
+  height: 20px;
+}
+
+/* 图标：固定盒子 + 光学居中 */
+.admin-sider .sidebar-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  flex: 0 0 18px;
+  font-size: 16px;
+}
+
+.admin-sider .sidebar-icon svg,
+.admin-sider .sidebar-icon .arco-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+/* 文本标签 */
+.admin-sider .sidebar-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+/* 侧边栏容器 */
+.admin-sider-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Logo 区域 */
+.admin-sider-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.admin-sider-logo.is-collapsed {
+  justify-content: center;
+  padding: 16px 12px;
+}
+
+.admin-sider-logo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--accent);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.admin-sider-logo-icon span {
+  color: #fff;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.admin-sider-logo-text {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+/* 菜单包装器 */
+.admin-sider-menu-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* 底部区域 */
+.admin-sider-footer {
+  padding: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* 用户卡片 */
+.admin-sider-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.admin-sider-user:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.admin-sider-user.is-collapsed {
+  justify-content: center;
+  padding: 8px;
+}
+
+.admin-sider-user-avatar {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+  flex-shrink: 0;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+
+.admin-sider-user-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-sider-user-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-sider-user-role {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 折叠按钮 */
+.admin-sider-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 32px;
+  margin-top: 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.admin-sider-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+}
+
+/* 主内容区 */
+.admin-content {
+  padding: 24px 28px;
+  overflow: auto;
+  background: var(--bg-base);
+}
+
+/* --------------------------------------------------------------------------
+   折叠面板
+   -------------------------------------------------------------------------- */
+.arco-collapse {
+  background: transparent !important;
+  border: none !important;
+}
+
+.arco-collapse-item {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-lg) !important;
+  margin-bottom: var(--space-3) !important;
+  overflow: hidden;
+}
+
+.arco-collapse-item-header {
+  background: var(--bg-card) !important;
+  padding: var(--space-4) var(--space-5) !important;
+}
+
+.arco-collapse-item-header:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+.arco-collapse-item-content {
+  background: transparent !important;
+}
+
+.arco-collapse-item-content-box {
+  padding: var(--space-4) var(--space-5) !important;
+}
+
+/* --------------------------------------------------------------------------
+   分页
+   -------------------------------------------------------------------------- */
+.arco-pagination-item {
+  background: var(--bg-card) !important;
+  border-color: var(--border-subtle) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+.arco-pagination-item:hover {
+  border-color: var(--border-hover) !important;
+}
+
+.arco-pagination-item-active {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+

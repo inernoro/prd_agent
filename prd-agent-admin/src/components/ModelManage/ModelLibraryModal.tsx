@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Modal, Input, Spin, Tag, Empty, message, Badge } from 'antd';
-import { SearchOutlined, PlusOutlined, CheckOutlined } from '@ant-design/icons';
-import { getAvailableModels, batchAddModelsFromPlatform } from '../../services/api';
-import type { LLMPlatform, AvailableModel } from '../../types';
+import { useState, useMemo } from 'react';
+import { Modal, Input, Checkbox, Button, Message, Tag } from '@arco-design/web-react';
+import { IconSearch } from '@arco-design/web-react/icon';
+import { addModelsFromLibrary } from '../../services/api';
+import type { LLMPlatform } from '../../types';
 
 interface Props {
   open: boolean;
@@ -11,351 +11,302 @@ interface Props {
   onSuccess: () => void;
 }
 
-export default function ModelLibraryModal({ open, platforms, onClose, onSuccess }: Props) {
-  const [selectedPlatformId, setSelectedPlatformId] = useState<string | null>(null);
-  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+// 模型库数据
+const MODEL_LIBRARY = {
+  'openai': {
+    name: 'OpenAI',
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      { id: 'gpt-4', name: 'GPT-4' },
+      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+      { id: 'o1', name: 'o1' },
+      { id: 'o1-mini', name: 'o1-mini' },
+      { id: 'o1-preview', name: 'o1-preview' },
+    ],
+  },
+  'anthropic': {
+    name: 'Anthropic',
+    models: [
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
+      { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
+    ],
+  },
+  'google': {
+    name: 'Google',
+    models: [
+      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
+    ],
+  },
+  'deepseek': {
+    name: 'DeepSeek',
+    models: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'deepseek-coder', name: 'DeepSeek Coder' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+    ],
+  },
+  'qwen': {
+    name: 'Qwen',
+    models: [
+      { id: 'qwen-max', name: 'Qwen Max' },
+      { id: 'qwen-plus', name: 'Qwen Plus' },
+      { id: 'qwen-turbo', name: 'Qwen Turbo' },
+      { id: 'qwen-long', name: 'Qwen Long' },
+    ],
+  },
+};
+
+function getPlatformColor(type: string): string {
+  const colors: Record<string, string> = {
+    openai: '#10a37f',
+    anthropic: '#d97706',
+    google: '#4285f4',
+    deepseek: '#0066ff',
+    qwen: '#6366f1',
+    zhipu: '#2563eb',
+    moonshot: '#8b5cf6',
+    doubao: '#3b82f6',
+    baidu: '#2563eb',
+  };
+  return colors[type.toLowerCase()] || '#6366f1';
+}
+
+export function ModelLibraryModal({ open, platforms, onClose, onSuccess }: Props) {
+  const [search, setSearch] = useState('');
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  const [selectedPlatformId, setSelectedPlatformId] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  const [searchText, setSearchText] = useState('');
-  const [addedModels, setAddedModels] = useState<Set<string>>(new Set());
-  const [addingModels, setAddingModels] = useState<Set<string>>(new Set());
 
-  // 启用的平台
-  const enabledPlatforms = useMemo(() => 
-    platforms.filter(p => p.enabled), 
-    [platforms]
-  );
+  // 过滤后的模型库
+  const filteredLibrary = useMemo(() => {
+    if (!search) return MODEL_LIBRARY;
+    const result: typeof MODEL_LIBRARY = {} as typeof MODEL_LIBRARY;
+    Object.entries(MODEL_LIBRARY).forEach(([key, value]) => {
+      const filtered = value.models.filter(
+        m => m.id.toLowerCase().includes(search.toLowerCase()) ||
+             m.name.toLowerCase().includes(search.toLowerCase())
+      );
+      if (filtered.length > 0) {
+        (result as any)[key] = { ...value, models: filtered };
+      }
+    });
+    return result;
+  }, [search]);
 
-  useEffect(() => {
-    if (open && enabledPlatforms.length > 0 && !selectedPlatformId) {
-      setSelectedPlatformId(enabledPlatforms[0].id);
+  const handleToggleModel = (modelId: string) => {
+    setSelectedModels(prev => {
+      const next = new Set(prev);
+      if (next.has(modelId)) {
+        next.delete(modelId);
+      } else {
+        next.add(modelId);
+      }
+      return next;
+    });
+  };
+
+  const handleSubmit = async () => {
+    if (selectedModels.size === 0) {
+      Message.warning('请至少选择一个模型');
+      return;
     }
-    if (!open) {
-      setAddedModels(new Set());
-      setSearchText('');
+    if (!selectedPlatformId) {
+      Message.warning('请选择要关联的平台');
+      return;
     }
-  }, [open, enabledPlatforms, selectedPlatformId]);
-
-  useEffect(() => {
-    if (selectedPlatformId) {
-      loadAvailableModels(selectedPlatformId);
-    }
-  }, [selectedPlatformId]);
-
-  const loadAvailableModels = async (platformId: string) => {
+    
     setLoading(true);
     try {
-      const res = await getAvailableModels(platformId) as unknown as { success: boolean; data: AvailableModel[] };
-      if (res.success) {
-        setAvailableModels(res.data);
-      }
-    } catch {
-      setAvailableModels([]);
+      const models = Array.from(selectedModels).map(id => {
+        // 从库中找到模型
+        for (const provider of Object.values(MODEL_LIBRARY)) {
+          const model = provider.models.find(m => m.id === id);
+          if (model) {
+            return { modelName: model.id, name: model.name };
+          }
+        }
+        return { modelName: id, name: id };
+      });
+      
+      await addModelsFromLibrary(selectedPlatformId, models);
+      Message.success(`成功添加 ${models.length} 个模型`);
+      onSuccess();
+      setSelectedModels(new Set());
+    } catch (error: unknown) {
+      const err = error as { error?: { message?: string } };
+      Message.error(err?.error?.message || '添加失败');
     } finally {
       setLoading(false);
     }
   };
 
-  // 从模型名称中智能提取分组
-  const extractGroupFromModelName = (modelName: string): string => {
-    const name = modelName.toLowerCase();
-    
-    // 常见模型系列的正则匹配规则
-    const patterns: [RegExp, (match: RegExpMatchArray) => string][] = [
-      // Qwen 系列: qwen2.5-coder, qwen2.5-vl, qwen3-235b, qwen3-embedding, qwen3-reranker
-      [/^(qwen\d*\.?\d*)-([a-z]+)/i, (m) => `${m[1]}-${m[2]}`.toLowerCase()],
-      // GPT 系列: gpt-4, gpt-4o, gpt-3.5-turbo
-      [/^(gpt-\d+\.?\d*[a-z]*)/i, (m) => m[1].toLowerCase()],
-      // Claude 系列: claude-3, claude-3.5-sonnet
-      [/^(claude-\d+\.?\d*)/i, (m) => m[1].toLowerCase()],
-      // Gemini 系列
-      [/^(gemini-\d*\.?\d*[a-z]*)/i, (m) => m[1].toLowerCase()],
-      // DeepSeek 系列
-      [/^(deepseek-[a-z]+)/i, (m) => m[1].toLowerCase()],
-      // GLM 系列
-      [/^(glm-\d+[a-z]*)/i, (m) => m[1].toLowerCase()],
-      // ERNIE 系列
-      [/^(ernie-[a-z0-9.-]+)/i, (m) => m[1].toLowerCase()],
-      // Llama 系列
-      [/^(llama-?\d*\.?\d*)/i, (m) => m[1].toLowerCase().replace(/-$/, '')],
-      // Mixtral/Mistral 系列
-      [/^(mixtral|mistral)[-_]?(\d*x?\d*)?/i, (m) => m[2] ? `${m[1]}-${m[2]}`.toLowerCase() : m[1].toLowerCase()],
-    ];
-
-    for (const [pattern, extractor] of patterns) {
-      const match = name.match(pattern);
-      if (match) {
-        return extractor(match);
-      }
-    }
-
-    // 默认策略：取前两段（用 - 分隔），组成分组名
-    const parts = name.split(/[-_]/);
-    if (parts.length >= 2) {
-      // 如果第二段是数字或版本号，合并前两段
-      if (/^\d/.test(parts[1])) {
-        return `${parts[0]}-${parts[1]}`;
-      }
-      // 否则取第一段加第二段
-      return `${parts[0]}-${parts[1]}`;
-    }
-    
-    return parts[0] || 'other';
-  };
-
-  // 按分组整理模型
-  const groupedModels = useMemo(() => {
-    const filtered = searchText 
-      ? availableModels.filter(m => 
-          m.modelName.toLowerCase().includes(searchText.toLowerCase()) ||
-          m.displayName.toLowerCase().includes(searchText.toLowerCase())
-        )
-      : availableModels;
-
-    const groups: Record<string, AvailableModel[]> = {};
-    filtered.forEach(m => {
-      // 优先使用 API 返回的 group，否则从模型名称智能提取
-      const group = m.group || extractGroupFromModelName(m.modelName);
-      if (!groups[group]) groups[group] = [];
-      groups[group].push(m);
-    });
-    
-    // 按分组名称排序
-    const sortedGroups: Record<string, AvailableModel[]> = {};
-    Object.keys(groups).sort().forEach(key => {
-      sortedGroups[key] = groups[key];
-    });
-    
-    return sortedGroups;
-  }, [availableModels, searchText]);
-
-  // 添加单个模型
-  const handleAddModel = async (model: AvailableModel) => {
-    if (!selectedPlatformId || addedModels.has(model.modelName) || addingModels.has(model.modelName)) return;
-
-    setAddingModels(prev => new Set([...prev, model.modelName]));
-    try {
-      const res = await batchAddModelsFromPlatform(selectedPlatformId, [{
-        modelName: model.modelName,
-        displayName: model.displayName,
-        group: model.group,
-      }]) as unknown as { success: boolean; data: { added: string[]; skipped: string[] } };
-      
-      if (res.success && res.data.added.length > 0) {
-        setAddedModels(prev => new Set([...prev, model.modelName]));
-        message.success(`已添加 ${model.displayName}`);
-      } else if (res.data.skipped.length > 0) {
-        setAddedModels(prev => new Set([...prev, model.modelName]));
-        message.info(`${model.displayName} 已存在`);
-      }
-    } catch {
-      message.error('添加失败');
-    } finally {
-      setAddingModels(prev => {
-        const next = new Set(prev);
-        next.delete(model.modelName);
-        return next;
-      });
-    }
-  };
-
-  // 添加一组模型
-  const handleAddGroup = async (_groupName: string, models: AvailableModel[]) => {
-    if (!selectedPlatformId) return;
-
-    const modelsToAdd = models.filter(m => !addedModels.has(m.modelName));
-    if (modelsToAdd.length === 0) {
-      message.info('该分组下的模型已全部添加');
-      return;
-    }
-
-    modelsToAdd.forEach(m => {
-      setAddingModels(prev => new Set([...prev, m.modelName]));
-    });
-
-    try {
-      const res = await batchAddModelsFromPlatform(selectedPlatformId, modelsToAdd.map(m => ({
-        modelName: m.modelName,
-        displayName: m.displayName,
-        group: m.group,
-      }))) as unknown as { success: boolean; data: { added: string[]; skipped: string[]; addedCount: number } };
-
-      if (res.success) {
-        res.data.added.forEach(name => {
-          setAddedModels(prev => new Set([...prev, name]));
-        });
-        res.data.skipped.forEach(name => {
-          setAddedModels(prev => new Set([...prev, name]));
-        });
-        message.success(`已添加 ${res.data.addedCount} 个模型`);
-      }
-    } catch {
-      message.error('批量添加失败');
-    } finally {
-      modelsToAdd.forEach(m => {
-        setAddingModels(prev => {
-          const next = new Set(prev);
-          next.delete(m.modelName);
-          return next;
-        });
-      });
-    }
-  };
-
-  const selectedPlatform = enabledPlatforms.find(p => p.id === selectedPlatformId);
-
   return (
     <Modal
-      title={
-        <div className="flex items-center gap-2">
-          <span>模型库</span>
-          {selectedPlatform && (
-            <Tag color="blue">{selectedPlatform.name}</Tag>
-          )}
-        </div>
-      }
-      open={open}
-      onCancel={() => {
-        onClose();
-        if (addedModels.size > 0) {
-          onSuccess();
-        }
-      }}
+      title="模型库"
+      visible={open}
+      onCancel={onClose}
       footer={null}
-      width={800}
-      styles={{ body: { padding: 0, maxHeight: '70vh', overflow: 'hidden' } }}
-      destroyOnClose
-      centered
+      style={{ maxWidth: 720 }}
+      unmountOnExit
     >
-      <div className="flex" style={{ height: '60vh', maxHeight: '500px' }}>
-        {/* 左侧平台列表 */}
-        <div className="w-48 border-r border-white/10 overflow-y-auto">
-          {enabledPlatforms.map(platform => (
-            <div
-              key={platform.id}
-              className={`
-                px-4 py-3 cursor-pointer transition-colors flex items-center gap-2
-                ${selectedPlatformId === platform.id 
-                  ? 'bg-cyan-500/20 border-l-2 border-cyan-500' 
-                  : 'hover:bg-white/5'
-                }
-              `}
-              onClick={() => setSelectedPlatformId(platform.id)}
-            >
-              <div 
-                className="w-7 h-7 rounded flex items-center justify-center text-white text-xs font-bold"
-                style={{ background: getPlatformColor(platform.platformType) }}
+      <div style={{ marginTop: 'var(--space-4)' }}>
+        {/* 搜索栏 */}
+        <Input
+          prefix={<IconSearch style={{ color: 'var(--text-muted)' }} />}
+          placeholder="搜索模型..."
+          value={search}
+          onChange={setSearch}
+          allowClear
+          style={{ marginBottom: 'var(--space-4)' }}
+        />
+
+        {/* 平台选择 */}
+        <div style={{ marginBottom: 'var(--space-4)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 'var(--space-2)' }}>
+            选择要关联的平台
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {platforms.filter(p => p.enabled).map(platform => (
+              <button
+                key={platform.id}
+                onClick={() => setSelectedPlatformId(platform.id)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 'var(--radius-md)',
+                  border: selectedPlatformId === platform.id 
+                    ? '2px solid var(--accent)' 
+                    : '1px solid var(--border-default)',
+                  background: selectedPlatformId === platform.id 
+                    ? 'var(--accent-muted)' 
+                    : 'var(--bg-card)',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
               >
-                {platform.name[0].toUpperCase()}
-              </div>
-              <span className={selectedPlatformId === platform.id ? 'text-white' : 'text-gray-400'}>
+                <div 
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 4,
+                    background: getPlatformColor(platform.platformType),
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#fff',
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  {(platform.name || '?').slice(0, 1).toUpperCase()}
+                </div>
                 {platform.name}
-              </span>
-            </div>
-          ))}
-          {enabledPlatforms.length === 0 && (
-            <div className="p-4 text-center text-gray-500 text-sm">
-              暂无可用平台
-            </div>
-          )}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* 右侧模型列表 */}
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-          {/* 搜索框 */}
-          <div className="p-3 border-b border-white/10">
-            <Input
-              prefix={<SearchOutlined className="text-gray-500" />}
-              placeholder="搜索模型ID或名称"
-              value={searchText}
-              onChange={e => setSearchText(e.target.value)}
-              allowClear
-            />
-          </div>
-
-          {/* 模型列表 */}
-          <div className="flex-1 min-h-0 p-3" style={{ overflowY: 'auto' }}>
-            {loading ? (
-              <div className="flex items-center justify-center h-full">
-                <Spin tip="加载中..." />
-              </div>
-            ) : Object.keys(groupedModels).length === 0 ? (
-              <Empty description="暂无可用模型" />
-            ) : (
-              <div className="space-y-4">
-                {Object.entries(groupedModels).map(([group, models]) => (
-                  <div key={group}>
-                    {/* 分组标题 */}
-                    <div 
-                      className="flex items-center justify-between py-2 px-3 bg-white/5 rounded-lg mb-2 cursor-pointer hover:bg-white/10 transition-colors"
-                      onClick={() => handleAddGroup(group, models)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-300">{group}</span>
-                        <Badge count={models.length} style={{ backgroundColor: '#3b82f6' }} />
-                      </div>
-                      <PlusOutlined className="text-gray-500" />
-                    </div>
-                    
-                    {/* 模型列表 */}
-                    <div className="space-y-1">
-                      {models.map(model => {
-                        const isAdded = addedModels.has(model.modelName);
-                        const isAdding = addingModels.has(model.modelName);
-                        
-                        return (
-                          <div
-                            key={model.modelName}
-                            className={`
-                              flex items-center justify-between px-3 py-2 rounded-lg transition-colors
-                              ${isAdded 
-                                ? 'bg-green-500/10 cursor-default' 
-                                : 'hover:bg-white/5 cursor-pointer'
-                              }
-                            `}
-                            onClick={() => !isAdded && handleAddModel(model)}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-sm">
-                                {model.displayName[0]}
-                              </div>
-                              <div>
-                                <div className="text-gray-200">{model.displayName}</div>
-                                <div className="text-xs text-gray-500">{model.modelName}</div>
-                              </div>
-                            </div>
-                            {isAdding ? (
-                              <Spin size="small" />
-                            ) : isAdded ? (
-                              <CheckOutlined className="text-green-500" />
-                            ) : (
-                              <PlusOutlined className="text-gray-500" />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+        {/* 模型列表 */}
+        <div 
+          style={{ 
+            maxHeight: 400, 
+            overflowY: 'auto',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+          }}
+        >
+          {Object.entries(filteredLibrary).map(([key, provider]) => (
+            <div key={key}>
+              {/* 提供商标题 */}
+              <div 
+                style={{
+                  padding: 'var(--space-3) var(--space-4)',
+                  background: 'var(--bg-card)',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 1,
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <div 
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 'var(--radius-sm)',
+                      background: getPlatformColor(key),
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fff',
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {provider.name.slice(0, 1)}
                   </div>
+                  <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {provider.name}
+                  </span>
+                  <Tag size="small">{provider.models.length}</Tag>
+                </div>
+              </div>
+              
+              {/* 模型列表 */}
+              <div style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                {provider.models.map(model => (
+                  <label
+                    key={model.id}
+                    className="flex items-center gap-3 p-3 cursor-pointer rounded-md transition-colors"
+                    style={{
+                      background: selectedModels.has(model.id) ? 'var(--accent-muted)' : 'transparent',
+                    }}
+                  >
+                    <Checkbox
+                      checked={selectedModels.has(model.id)}
+                      onChange={() => handleToggleModel(model.id)}
+                    />
+                    <div className="flex-1">
+                      <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{model.name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                        {model.id}
+                      </div>
+                    </div>
+                  </label>
                 ))}
               </div>
-            )}
+            </div>
+          ))}
+        </div>
+
+        {/* 底部操作 */}
+        <div className="flex items-center justify-between" style={{ marginTop: 'var(--space-5)' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            已选择 {selectedModels.size} 个模型
+          </span>
+          <div className="flex gap-3">
+            <Button onClick={onClose}>取消</Button>
+            <Button 
+              type="primary" 
+              onClick={handleSubmit}
+              loading={loading}
+              disabled={selectedModels.size === 0 || !selectedPlatformId}
+            >
+              添加到平台
+            </Button>
           </div>
         </div>
       </div>
     </Modal>
   );
 }
-
-function getPlatformColor(type: string): string {
-  const colors: Record<string, string> = {
-    openai: '#10a37f',
-    anthropic: '#d97757',
-    google: '#4285f4',
-    qwen: '#6366f1',
-    zhipu: '#3b82f6',
-    baidu: '#2932e1',
-    deepseek: '#0ea5e9',
-    other: '#6b7280',
-  };
-  return colors[type] || colors.other;
-}
-

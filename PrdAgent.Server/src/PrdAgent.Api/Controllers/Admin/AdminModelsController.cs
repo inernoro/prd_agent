@@ -193,6 +193,17 @@ public class AdminModelsController : ControllerBase
     }
 
     /// <summary>
+    /// 删除所有模型
+    /// </summary>
+    [HttpDelete("models/all")]
+    public async Task<IActionResult> DeleteAllModels()
+    {
+        var result = await _db.LLMModels.DeleteManyAsync(_ => true);
+        _logger.LogInformation("All models deleted: {Count} models", result.DeletedCount);
+        return Ok(ApiResponse<object>.Ok(new { deletedCount = result.DeletedCount }));
+    }
+
+    /// <summary>
     /// 测试模型连接
     /// </summary>
     [HttpPost("models/{id}/test")]

@@ -17,10 +17,24 @@ function App() {
   // 只有ADMIN可以访问
   if (user?.role !== 'ADMIN') {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-100">
+      <div 
+        className="h-full w-full flex items-center justify-center"
+        style={{ background: 'var(--bg-base)' }}
+      >
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">无权限访问</h1>
-          <p className="text-gray-600">只有管理员可以访问此系统</p>
+          <h1 
+            style={{ 
+              fontSize: 24, 
+              fontWeight: 600, 
+              color: 'var(--text-primary)',
+              marginBottom: 8,
+            }}
+          >
+            无权限访问
+          </h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
+            只有管理员可以访问此系统
+          </p>
         </div>
       </div>
     );
@@ -40,6 +54,3 @@ function App() {
 }
 
 export default App;
-
-
-

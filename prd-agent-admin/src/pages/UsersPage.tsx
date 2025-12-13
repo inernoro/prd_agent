@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Table, Card, Input, Select, Button, Modal, message, InputNumber } from 'antd';
-import { SearchOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons';
+import { Table, Input, Select, Button, Modal, Message, InputNumber } from '@arco-design/web-react';
+import type { ColumnProps } from '@arco-design/web-react/es/Table';
+import { IconSearch, IconPlus, IconCopy } from '@arco-design/web-react/icon';
 import { getUsers, updateUserStatus, updateUserRole, generateInviteCodes } from '../services/api';
 import dayjs from 'dayjs';
+
+const Option = Select.Option;
 
 interface User {
   userId: string;
@@ -46,7 +49,7 @@ export default function UsersPage() {
         setTotal(response.data.total);
       }
     } catch (error) {
-      message.error('加载用户列表失败');
+      Message.error('加载用户列表失败');
     } finally {
       setLoading(false);
     }
@@ -55,20 +58,20 @@ export default function UsersPage() {
   const handleStatusChange = async (userId: string, status: string) => {
     try {
       await updateUserStatus(userId, status);
-      message.success('状态更新成功');
+      Message.success('状态更新成功');
       loadUsers();
     } catch (error) {
-      message.error('状态更新失败');
+      Message.error('状态更新失败');
     }
   };
 
   const handleRoleChange = async (userId: string, role: string) => {
     try {
       await updateUserRole(userId, role);
-      message.success('角色更新成功');
+      Message.success('角色更新成功');
       loadUsers();
     } catch (error) {
-      message.error('角色更新失败');
+      Message.error('角色更新失败');
     }
   };
 
@@ -77,152 +80,177 @@ export default function UsersPage() {
       const response = await generateInviteCodes(inviteCount) as any;
       if (response.success) {
         setInviteCodes(response.data.codes);
-        message.success(`成功生成 ${inviteCount} 个邀请码`);
+        Message.success(`成功生成 ${inviteCount} 个邀请码`);
       }
     } catch (error) {
-      message.error('生成邀请码失败');
+      Message.error('生成邀请码失败');
     }
   };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    message.success('已复制到剪贴板');
+    Message.success('已复制到剪贴板');
   };
 
-  const columns = [
+  const columns: ColumnProps<User>[] = [
     {
       title: '用户名',
       dataIndex: 'username',
-      key: 'username',
-      render: (text: string, record: User) => (
+      render: (_, record) => (
         <div>
-          <div className="font-medium">{text}</div>
-          <div className="text-xs text-gray-500">{record.displayName}</div>
+          <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{record.username}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{record.displayName}</div>
         </div>
       ),
     },
     {
       title: '角色',
       dataIndex: 'role',
-      key: 'role',
-      render: (role: string, record: User) => (
+      width: 130,
+      render: (role, record) => (
         <Select
           value={role}
           onChange={(value) => handleRoleChange(record.userId, value)}
-          style={{ width: 110 }}
           size="small"
+          style={{ width: 110 }}
         >
-          <Select.Option value="PM">产品经理</Select.Option>
-          <Select.Option value="DEV">开发</Select.Option>
-          <Select.Option value="QA">测试</Select.Option>
-          <Select.Option value="ADMIN">管理员</Select.Option>
+          <Option value="PM">产品经理</Option>
+          <Option value="DEV">开发</Option>
+          <Option value="QA">测试</Option>
+          <Option value="ADMIN">管理员</Option>
         </Select>
       ),
     },
     {
       title: '状态',
       dataIndex: 'status',
-      key: 'status',
-      render: (status: string, record: User) => (
+      width: 110,
+      render: (status, record) => (
         <Select
           value={status}
           onChange={(value) => handleStatusChange(record.userId, value)}
-          style={{ width: 90 }}
           size="small"
+          style={{ width: 90 }}
         >
-          <Select.Option value="Active">正常</Select.Option>
-          <Select.Option value="Disabled">禁用</Select.Option>
+          <Option value="Active">正常</Option>
+          <Option value="Disabled">禁用</Option>
         </Select>
       ),
     },
     {
       title: '注册时间',
       dataIndex: 'createdAt',
-      key: 'createdAt',
-      render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm'),
+      width: 160,
+      render: (date) => (
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          {dayjs(date).format('YYYY-MM-DD HH:mm')}
+        </span>
+      ),
     },
     {
       title: '最后登录',
       dataIndex: 'lastLoginAt',
-      key: 'lastLoginAt',
-      render: (date?: string) => date ? dayjs(date).format('YYYY-MM-DD HH:mm') : '-',
+      width: 160,
+      render: (date) => (
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {date ? dayjs(date).format('YYYY-MM-DD HH:mm') : '-'}
+        </span>
+      ),
     },
   ];
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">用户管理</h1>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setInviteModalVisible(true)}>
+    <div className="animate-fadeIn">
+      {/* 页面标题 */}
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
+            用户管理
+          </h1>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            共 {total} 个用户
+          </p>
+        </div>
+        <Button type="primary" size="small" icon={<IconPlus />} onClick={() => setInviteModalVisible(true)}>
           生成邀请码
         </Button>
       </div>
 
-      <Card>
-        <div className="flex gap-4 mb-4 flex-wrap">
+      {/* 内容卡片 */}
+      <div 
+        className="card"
+        style={{ padding: '16px' }}
+      >
+        {/* 筛选栏 */}
+        <div className="flex gap-3 mb-4 flex-wrap">
           <Input
             placeholder="搜索用户名或昵称"
-            prefix={<SearchOutlined />}
+            prefix={<IconSearch style={{ color: 'var(--text-muted)' }} />}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={setSearch}
             style={{ width: 240 }}
+            allowClear
           />
           <Select
             placeholder="角色筛选"
             allowClear
             value={roleFilter}
             onChange={setRoleFilter}
-            style={{ width: 120 }}
+            style={{ width: 130 }}
           >
-            <Select.Option value="PM">产品经理</Select.Option>
-            <Select.Option value="DEV">开发</Select.Option>
-            <Select.Option value="QA">测试</Select.Option>
-            <Select.Option value="ADMIN">管理员</Select.Option>
+            <Option value="PM">产品经理</Option>
+            <Option value="DEV">开发</Option>
+            <Option value="QA">测试</Option>
+            <Option value="ADMIN">管理员</Option>
           </Select>
           <Select
             placeholder="状态筛选"
             allowClear
             value={statusFilter}
             onChange={setStatusFilter}
-            style={{ width: 100 }}
+            style={{ width: 110 }}
           >
-            <Select.Option value="Active">正常</Select.Option>
-            <Select.Option value="Disabled">禁用</Select.Option>
+            <Option value="Active">正常</Option>
+            <Option value="Disabled">禁用</Option>
           </Select>
         </div>
 
+        {/* 表格 */}
         <Table
           columns={columns}
-          dataSource={users}
+          data={users}
           rowKey="userId"
           loading={loading}
+          border={false}
           pagination={{
             current: page,
             total,
             pageSize: 20,
             onChange: setPage,
-            showTotal: (total) => `共 ${total} 条`,
+            showTotal: true,
           }}
         />
-      </Card>
+      </div>
 
+      {/* 邀请码弹窗 */}
       <Modal
         title="生成邀请码"
-        open={inviteModalVisible}
+        visible={inviteModalVisible}
         onCancel={() => {
           setInviteModalVisible(false);
           setInviteCodes([]);
         }}
         footer={null}
+        style={{ maxWidth: 480 }}
       >
-        <div className="py-4">
-          <div className="flex gap-4 mb-4">
+        <div style={{ padding: 'var(--space-4) 0' }}>
+          <div className="flex gap-4 mb-5">
             <InputNumber
               min={1}
               max={50}
               value={inviteCount}
               onChange={(value) => setInviteCount(value || 1)}
-              addonBefore="生成数量"
+              style={{ width: 120 }}
             />
             <Button type="primary" onClick={handleGenerateInviteCodes}>
               生成
@@ -230,11 +258,26 @@ export default function UsersPage() {
           </div>
 
           {inviteCodes.length > 0 && (
-            <div className="space-y-2">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
               {inviteCodes.map((code) => (
-                <div key={code} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-                  <code className="text-sm font-mono text-cyan-400">{code}</code>
-                  <Button size="small" icon={<CopyOutlined />} onClick={() => copyToClipboard(code)}>
+                <div 
+                  key={code} 
+                  className="flex items-center justify-between"
+                  style={{
+                    padding: 'var(--space-3) var(--space-4)',
+                    background: 'var(--bg-card)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                >
+                  <code style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                    {code}
+                  </code>
+                  <Button 
+                    size="mini" 
+                    icon={<IconCopy />} 
+                    onClick={() => copyToClipboard(code)}
+                  >
                     复制
                   </Button>
                 </div>
