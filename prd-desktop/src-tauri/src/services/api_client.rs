@@ -101,18 +101,26 @@ impl ApiClient {
 
         let status = response.status();
         let headers = format!("{:?}", response.headers());
-        
+
         let text = response
             .text()
             .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
         if text.is_empty() {
-            return Err(format!("Empty response from server. Status: {}, Headers: {}", status, headers));
+            return Err(format!(
+                "Empty response from server. Status: {}, Headers: {}",
+                status, headers
+            ));
         }
 
-        serde_json::from_str::<ApiResponse<T>>(&text)
-            .map_err(|e| format!("Failed to parse response: {}. Response: {}", e, &text[..text.len().min(500)]))
+        serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+            format!(
+                "Failed to parse response: {}. Response: {}",
+                e,
+                &text[..text.len().min(500)]
+            )
+        })
     }
 
     pub async fn put<T: DeserializeOwned, B: Serialize>(

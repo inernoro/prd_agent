@@ -45,8 +45,7 @@ fn load_config_from_file(app: &tauri::AppHandle) -> Result<AppConfig, String> {
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config file: {}", e))
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config file: {}", e))
     } else {
         Ok(AppConfig::default())
     }
@@ -166,10 +165,9 @@ pub fn init_config(app: &tauri::AppHandle) {
         api_client::set_api_base_url("http://localhost:5000".to_string());
         return;
     }
-    
+
     #[cfg(not(debug_assertions))]
     if let Ok(config) = load_config_from_file(app) {
         api_client::set_api_base_url(config.api_base_url);
     }
 }
-
