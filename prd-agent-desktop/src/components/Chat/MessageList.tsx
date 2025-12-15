@@ -55,7 +55,12 @@ export default function MessageList() {
       {messages.length === 0 && !isStreaming && (
         <div className="h-full flex items-center justify-center text-text-secondary">
           <div className="text-center">
-            <p className="text-lg mb-2">👋 你好！</p>
+            <div className="w-12 h-12 mx-auto mb-3 bg-primary-100 dark:bg-primary-900/30 rounded-full flex items-center justify-center">
+              <svg className="w-6 h-6 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+              </svg>
+            </div>
+            <p className="text-lg mb-2">你好!</p>
             <p className="text-sm">有什么关于这份PRD的问题，尽管问我</p>
           </div>
         </div>

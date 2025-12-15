@@ -19,7 +19,7 @@ interface SettingsState {
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   config: null,
-  defaultApiUrl: 'https://agentapi.759800.com',
+  defaultApiUrl: 'http://localhost:5000',
   isLoading: false,
   isModalOpen: false,
 

@@ -2,13 +2,53 @@ import { useState, useRef, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
+import { useAuthStore } from '../../stores/authStore';
 import { Message } from '../../types';
+
+// 演示模式的模拟回复
+const DEMO_RESPONSES = [
+  '根据PRD文档的描述，这个功能的核心目标是提升用户体验。让我为您详细解读一下相关内容...',
+  '从产品角度来看，这个需求的优先级较高。文档中提到的关键点包括：用户场景分析、功能边界定义、以及预期效果...',
+  '关于这个问题，PRD中有明确的说明。主要涉及以下几个方面：1) 业务流程设计 2) 数据流转逻辑 3) 异常处理机制...',
+  '这是一个很好的问题。根据文档内容，我们需要关注以下技术实现细节和业务约束条件...',
+  '让我查阅一下文档中的相关章节。根据PRD的描述，这个模块的设计考虑了可扩展性和易用性两个维度...',
+];
 
 export default function ChatInput() {
   const { sessionId, currentRole } = useSessionStore();
-  const { addMessage, isStreaming } = useMessageStore();
+  const { addMessage, isStreaming, startStreaming, stopStreaming, appendStreamingContent } = useMessageStore();
+  const { user } = useAuthStore();
   const [content, setContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 检测是否为演示模式
+  const isDemoMode = user?.userId === 'demo-user-001';
+
+  // 演示模式下的模拟流式回复
+  const simulateStreamingResponse = async (question: string) => {
+    startStreaming();
+    
+    // 随机选择一个回复模板
+    const baseResponse = DEMO_RESPONSES[Math.floor(Math.random() * DEMO_RESPONSES.length)];
+    const fullResponse = `${baseResponse}\n\n针对您的问题"${question.slice(0, 50)}${question.length > 50 ? '...' : ''}"，我的建议是结合实际业务场景进行分析，确保理解准确。如有疑问，可以继续提问。`;
+    
+    // 模拟流式输出
+    for (let i = 0; i < fullResponse.length; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20 + Math.random() * 30));
+      appendStreamingContent(fullResponse[i]);
+    }
+    
+    // 添加完整消息
+    const assistantMessage: Message = {
+      id: Date.now().toString(),
+      role: 'Assistant',
+      content: fullResponse,
+      timestamp: new Date(),
+      viewRole: currentRole,
+    };
+    addMessage(assistantMessage);
+    stopStreaming();
+  };
 
   const handleSend = async () => {
     if (!content.trim() || !sessionId || isStreaming) return;
@@ -22,7 +62,14 @@ export default function ChatInput() {
     };
 
     addMessage(userMessage);
+    const questionContent = content.trim();
     setContent('');
+
+    // 演示模式：模拟回复
+    if (isDemoMode) {
+      await simulateStreamingResponse(questionContent);
+      return;
+    }
 
     try {
       await invoke('send_message', {

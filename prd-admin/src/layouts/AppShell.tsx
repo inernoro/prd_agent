@@ -123,8 +123,19 @@ export default function AppShell() {
           </div>
         </aside>
 
-        <main className="h-full w-full overflow-auto">
-          <div className="mx-auto w-full max-w-[1440px] px-5 py-5">
+        <main
+          className="relative h-full w-full overflow-auto"
+          style={{ background: 'var(--bg-base)' }}
+        >
+          {/* 主内容区背景：满屏暗角 + 轻微渐变（不随 max-width 截断） */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.08) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.035) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.025) 0%, transparent 70%)',
+            }}
+          />
+          <div className="relative mx-auto w-full max-w-[1440px] px-5 py-5">
             <Outlet />
           </div>
         </main>

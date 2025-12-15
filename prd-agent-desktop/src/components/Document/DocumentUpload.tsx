@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useAuthStore } from '../../stores/authStore';
 import { ApiResponse, Document, Session } from '../../types';
 
 interface UploadResponse {
@@ -10,15 +11,48 @@ interface UploadResponse {
 
 export default function DocumentUpload() {
   const { setSession } = useSessionStore();
+  const { user } = useAuthStore();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // 检测是否为演示模式
+  const isDemoMode = user?.userId === 'demo-user-001';
 
   const handleUpload = async (content: string) => {
     setLoading(true);
     setError('');
 
     try {
+      // 演示模式：模拟文档上传
+      if (isDemoMode) {
+        await new Promise(resolve => setTimeout(resolve, 800)); // 模拟延迟
+        
+        // 提取文档标题（从第一行 # 开头的内容）
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        const title = titleMatch ? titleMatch[1] : '演示文档';
+        
+        const demoDocument: Document = {
+          id: 'demo-doc-001',
+          title,
+          charCount: content.length,
+          tokenEstimate: Math.ceil(content.length / 4),
+        };
+        
+        const session: Session = {
+          sessionId: 'demo-session-001',
+          documentId: demoDocument.id,
+          currentRole: 'PM',
+          mode: 'QA',
+        };
+        
+        // 存储文档内容到 sessionStorage 供后续使用
+        sessionStorage.setItem('demo-prd-content', content);
+        
+        setSession(session, demoDocument);
+        return;
+      }
+
       const response = await invoke<ApiResponse<UploadResponse>>('upload_document', {
         content,
       });
