@@ -11,7 +11,7 @@ Write-Host "PRD Agent Server Build Script" -ForegroundColor Cyan
 Write-Host "==============================" -ForegroundColor Cyan
 
 # 切换到后端目录
-Set-Location "$PSScriptRoot\..\PrdAgent.Server"
+Set-Location "$PSScriptRoot\..\prd-api"
 
 # 还原依赖
 Write-Host "`n[1/4] Restoring dependencies..." -ForegroundColor Yellow
@@ -30,4 +30,4 @@ Write-Host "`n[4/4] Publishing..." -ForegroundColor Yellow
 dotnet publish src/PrdAgent.Api/PrdAgent.Api.csproj -c $Configuration -o ./publish
 
 Write-Host "`nBuild completed!" -ForegroundColor Green
-Write-Host "Output: PrdAgent.Server/publish/" -ForegroundColor Cyan
+Write-Host "Output: prd-api/publish/" -ForegroundColor Cyan

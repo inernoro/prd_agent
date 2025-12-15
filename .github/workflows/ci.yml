@@ -30,13 +30,13 @@ jobs:
         with:
           filters: |
             server:
-              - 'PrdAgent.Server/**'
+              - 'prd-api/**'
               - '.github/workflows/ci.yml'
             admin:
-              - 'prd-agent-admin/**'
+              - 'prd-admin/**'
               - '.github/workflows/ci.yml'
             desktop:
-              - 'prd-agent-desktop/**'
+              - 'prd-desktop/**'
               - '.github/workflows/ci.yml'
 
   # 后端服务构建和测试
@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: PrdAgent.Server
+        working-directory: prd-api
 
     steps:
       - name: Checkout
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: prd-agent-admin
+        working-directory: prd-admin
 
     steps:
       - name: Checkout
@@ -108,7 +108,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-admin-${{ hashFiles('prd-agent-admin/pnpm-lock.yaml', 'prd-agent-admin/package.json') }}
+          key: ${{ runner.os }}-pnpm-admin-${{ hashFiles('prd-admin/pnpm-lock.yaml', 'prd-admin/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-admin-
 
@@ -129,7 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: prd-agent-desktop
+        working-directory: prd-desktop
 
     steps:
       - name: Checkout
@@ -154,7 +154,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-desktop-${{ hashFiles('prd-agent-desktop/pnpm-lock.yaml', 'prd-agent-desktop/package.json') }}
+          key: ${{ runner.os }}-pnpm-desktop-${{ hashFiles('prd-desktop/pnpm-lock.yaml', 'prd-desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-desktop-
 
@@ -169,8 +169,8 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            prd-agent-desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('prd-agent-desktop/src-tauri/Cargo.lock') }}
+            prd-desktop/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -189,15 +189,15 @@ jobs:
         run: pnpm build
 
       - name: Check Rust
-        working-directory: prd-agent-desktop/src-tauri
+        working-directory: prd-desktop/src-tauri
         run: cargo check
 
       - name: Rust format check
-        working-directory: prd-agent-desktop/src-tauri
+        working-directory: prd-desktop/src-tauri
         run: cargo fmt --check
 
       - name: Rust clippy
-        working-directory: prd-agent-desktop/src-tauri
+        working-directory: prd-desktop/src-tauri
         run: cargo clippy -- -D warnings
 
   # CI 状态汇总（用于 branch protection）
@@ -220,10 +220,10 @@ jobs:
           desktop_ok="${{ needs.changes.outputs.desktop != 'true' || needs.desktop-check.result == 'success' }}"
           
           if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" ]]; then
-            echo "✅ All required checks passed!"
+            echo "All required checks passed!"
             exit 0
           else
-            echo "❌ Some checks failed"
+            echo "Some checks failed"
             echo "  Server: ${{ needs.server-build.result }}"
             echo "  Admin: ${{ needs.admin-build.result }}"
             echo "  Desktop: ${{ needs.desktop-check.result }}"

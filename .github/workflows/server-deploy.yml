@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'PrdAgent.Server/**'
+      - 'prd-api/**'
       - '.github/workflows/server-deploy.yml'
   release:
     types: [published]
@@ -57,8 +57,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ./PrdAgent.Server
-          file: ./PrdAgent.Server/Dockerfile
+          context: ./prd-api
+          file: ./prd-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -95,16 +95,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-admin-deploy-${{ hashFiles('prd-agent-admin/pnpm-lock.yaml', 'prd-agent-admin/package.json') }}
+          key: ${{ runner.os }}-pnpm-admin-deploy-${{ hashFiles('prd-admin/pnpm-lock.yaml', 'prd-admin/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-admin-deploy-
 
       - name: Install dependencies
-        working-directory: prd-agent-admin
+        working-directory: prd-admin
         run: pnpm install
 
       - name: Build
-        working-directory: prd-agent-admin
+        working-directory: prd-admin
         run: pnpm build
         env:
           VITE_API_BASE_URL: ${{ vars.API_BASE_URL || '/api' }}
@@ -113,7 +113,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: admin-dist
-          path: prd-agent-admin/dist
+          path: prd-admin/dist
           retention-days: 30
 
   # 部署通知（可选）
@@ -127,13 +127,13 @@ jobs:
       - name: Notify success
         if: needs.build-and-push.result == 'success'
         run: |
-          echo "🚀 Deployment successful!"
+          echo "Deployment successful!"
           echo "Image: ${{ needs.build-and-push.outputs.image_tag }}"
           echo "Digest: ${{ needs.build-and-push.outputs.image_digest }}"
 
       - name: Notify failure
         if: needs.build-and-push.result == 'failure'
         run: |
-          echo "❌ Deployment failed!"
+          echo "Deployment failed!"
           exit 1
 

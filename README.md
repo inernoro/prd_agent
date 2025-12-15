@@ -7,16 +7,16 @@
 ```
 prd_agent/
 ├── doc/                          # 设计文档
-├── PrdAgent.Server/              # 后端服务 (.NET 8)
+├── prd-api/                      # 后端服务 (.NET 8)
 │   ├── src/
 │   │   ├── PrdAgent.Api/         # API 层
 │   │   ├── PrdAgent.Core/        # 核心业务层
 │   │   └── PrdAgent.Infrastructure/  # 基础设施层
 │   └── tests/
-├── prd-agent-desktop/            # 桌面客户端 (Tauri + React)
+├── prd-desktop/                  # 桌面客户端 (Tauri + React)
 │   ├── src-tauri/                # Rust 后端
 │   └── src/                      # React 前端
-├── prd-agent-admin/              # Web 管理后台 (React + Ant Design)
+├── prd-admin/                    # Web 管理后台 (React + Ant Design)
 │   └── src/
 ├── scripts/                      # 构建脚本
 └── docker-compose.yml            # Docker 配置
@@ -65,16 +65,16 @@ cp .env.example .env
 docker-compose up mongodb redis -d
 
 # 启动后端服务
-cd PrdAgent.Server/src/PrdAgent.Api
+cd prd-api/src/PrdAgent.Api
 dotnet watch run
 
 # 启动桌面客户端
-cd prd-agent-desktop
+cd prd-desktop
 pnpm install
 pnpm tauri dev
 
 # 启动管理后台
-cd prd-agent-admin
+cd prd-admin
 pnpm install
 pnpm dev
 ```

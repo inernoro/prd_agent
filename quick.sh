@@ -37,21 +37,21 @@ log_error() {
 # 启动后端服务
 start_backend() {
     log_info "Starting backend server..."
-    cd "$SCRIPT_DIR/PrdAgent.Server/src/PrdAgent.Api"
+    cd "$SCRIPT_DIR/prd-api/src/PrdAgent.Api"
     dotnet run
 }
 
 # 启动Web管理后台
 start_admin() {
     log_info "Starting admin panel..."
-    cd "$SCRIPT_DIR/prd-agent-admin"
+    cd "$SCRIPT_DIR/prd-admin"
     pnpm dev
 }
 
 # 启动桌面客户端
 start_desktop() {
     log_info "Starting desktop client..."
-    cd "$SCRIPT_DIR/prd-agent-desktop"
+    cd "$SCRIPT_DIR/prd-desktop"
     pnpm tauri:dev
 }
 
@@ -61,7 +61,7 @@ start_all() {
     
     # 后台启动后端
     log_info "Starting backend server in background..."
-    cd "$SCRIPT_DIR/PrdAgent.Server/src/PrdAgent.Api"
+    cd "$SCRIPT_DIR/prd-api/src/PrdAgent.Api"
     dotnet run &
     BACKEND_PID=$!
     
@@ -70,7 +70,7 @@ start_all() {
     
     # 前台启动管理后台
     log_info "Starting admin panel..."
-    cd "$SCRIPT_DIR/prd-agent-admin"
+    cd "$SCRIPT_DIR/prd-admin"
     pnpm dev &
     ADMIN_PID=$!
     
@@ -94,8 +94,8 @@ show_help() {
     echo ""
     echo "Commands:"
     echo "  (default)  Start backend server"
-    echo "  admin      Start admin panel (prd-agent-admin)"
-    echo "  desktop    Start desktop client (prd-agent-desktop)"
+    echo "  admin      Start admin panel (prd-admin)"
+    echo "  desktop    Start desktop client (prd-desktop)"
     echo "  all        Start backend and web admin together"
     echo "  help       Show this help message"
     echo ""

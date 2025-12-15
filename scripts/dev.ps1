@@ -12,17 +12,17 @@ $RootPath = "$PSScriptRoot\.."
 
 function Start-Server {
     Write-Host "`nStarting Backend Server..." -ForegroundColor Yellow
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$RootPath\PrdAgent.Server\src\PrdAgent.Api'; dotnet watch run"
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$RootPath\prd-api\src\PrdAgent.Api'; dotnet watch run"
 }
 
 function Start-Desktop {
     Write-Host "`nStarting Desktop Client..." -ForegroundColor Yellow
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$RootPath\prd-agent-desktop'; pnpm tauri dev"
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$RootPath\prd-desktop'; pnpm tauri dev"
 }
 
 function Start-Admin {
     Write-Host "`nStarting Admin Frontend..." -ForegroundColor Yellow
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$RootPath\prd-agent-admin'; pnpm dev"
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$RootPath\prd-admin'; pnpm dev"
 }
 
 function Start-Docker {

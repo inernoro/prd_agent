@@ -11,7 +11,7 @@ Write-Host "PRD Agent Desktop Build Script" -ForegroundColor Cyan
 Write-Host "================================" -ForegroundColor Cyan
 
 # 切换到桌面客户端目录
-Set-Location "$PSScriptRoot\..\prd-agent-desktop"
+Set-Location "$PSScriptRoot\..\prd-desktop"
 
 # 安装依赖
 Write-Host "`n[1/3] Installing dependencies..." -ForegroundColor Yellow
@@ -40,4 +40,4 @@ switch ($Platform) {
 }
 
 Write-Host "`nBuild completed!" -ForegroundColor Green
-Write-Host "Output: prd-agent-desktop/src-tauri/target/release/bundle/" -ForegroundColor Cyan
+Write-Host "Output: prd-desktop/src-tauri/target/release/bundle/" -ForegroundColor Cyan

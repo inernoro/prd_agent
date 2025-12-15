@@ -37,21 +37,21 @@ function Write-Error {
 # 启动后端服务
 function Start-Backend {
     Write-Info "Starting backend server..."
-    Set-Location "$ScriptDir\PrdAgent.Server\src\PrdAgent.Api"
+    Set-Location "$ScriptDir\prd-api\src\PrdAgent.Api"
     dotnet run
 }
 
 # 启动Web管理后台
 function Start-Admin {
     Write-Info "Starting admin panel..."
-    Set-Location "$ScriptDir\prd-agent-admin"
+    Set-Location "$ScriptDir\prd-admin"
     pnpm dev
 }
 
 # 启动桌面客户端
 function Start-Desktop {
     Write-Info "Starting desktop client..."
-    Set-Location "$ScriptDir\prd-agent-desktop"
+    Set-Location "$ScriptDir\prd-desktop"
     pnpm tauri:dev
 }
 
@@ -63,7 +63,7 @@ function Start-All {
     Write-Info "Starting backend server in background..."
     $backendJob = Start-Job -ScriptBlock {
         param($dir)
-        Set-Location "$dir\PrdAgent.Server\src\PrdAgent.Api"
+        Set-Location "$dir\prd-api\src\PrdAgent.Api"
         dotnet run
     } -ArgumentList $ScriptDir
     
@@ -74,7 +74,7 @@ function Start-All {
     Write-Info "Starting admin panel in background..."
     $adminJob = Start-Job -ScriptBlock {
         param($dir)
-        Set-Location "$dir\prd-agent-admin"
+        Set-Location "$dir\prd-admin"
         pnpm dev
     } -ArgumentList $ScriptDir
     
@@ -115,8 +115,8 @@ function Show-Help {
     Write-Host ""
     Write-Host "Commands:"
     Write-Host "  (default)  Start backend server"
-    Write-Host "  admin      Start admin panel (prd-agent-admin)"
-    Write-Host "  desktop    Start desktop client (prd-agent-desktop)"
+    Write-Host "  admin      Start admin panel (prd-admin)"
+    Write-Host "  desktop    Start desktop client (prd-desktop)"
     Write-Host "  all        Start backend and web admin together"
     Write-Host "  help       Show this help message"
     Write-Host ""

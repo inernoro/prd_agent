@@ -42,7 +42,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     defaults:
       run:
-        working-directory: prd-agent-desktop
+        working-directory: prd-desktop
 
     steps:
       - name: Checkout
@@ -67,7 +67,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-desktop-release-${{ hashFiles('prd-agent-desktop/pnpm-lock.yaml', 'prd-agent-desktop/package.json') }}
+          key: ${{ runner.os }}-pnpm-desktop-release-${{ hashFiles('prd-desktop/pnpm-lock.yaml', 'prd-desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-desktop-release-
 
@@ -84,8 +84,8 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            prd-agent-desktop/src-tauri/target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('prd-agent-desktop/src-tauri/Cargo.lock') }}
+            prd-desktop/src-tauri/target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
@@ -148,7 +148,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: prd-agent-desktop
+          projectPath: prd-desktop
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }}
 
@@ -158,10 +158,10 @@ jobs:
         with:
           name: prd-agent-${{ matrix.artifact_name }}
           path: |
-            prd-agent-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
-            prd-agent-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
-            prd-agent-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
-            prd-agent-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
           if-no-files-found: error
 
   # 创建 GitHub Release
