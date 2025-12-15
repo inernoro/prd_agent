@@ -1,4 +1,4 @@
-// 运行期默认 mock（本次需求不连后端）
+// 默认走真实后端；需要离线演示/开发时可通过 VITE_USE_MOCK=true 切到 mock 实现
 
 import type { LoginContract } from '@/services/contracts/auth';
 import type { GetUsersContract, GenerateInviteCodesContract, UpdateUserRoleContract, UpdateUserStatusContract } from '@/services/contracts/adminUsers';
@@ -16,6 +16,10 @@ import { createPlatformMock, deletePlatformMock, getPlatformsMock, updatePlatfor
 import { createModelMock, deleteModelMock, getModelsMock, setMainModelMock, testModelMock, updateModelMock } from '@/services/mock/impl/models';
 import { activateLLMConfigMock, createLLMConfigMock, deleteLLMConfigMock, getLLMConfigsMock, updateLLMConfigMock } from '@/services/mock/impl/llmConfigs';
 
+import { loginReal } from '@/services/real/auth';
+import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
+import { createModelReal, deleteModelReal, getModelsReal, setMainModelReal, testModelReal, updateModelReal } from '@/services/real/models';
+
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
 ) {
@@ -26,7 +30,9 @@ function withAuth<TArgs extends unknown[], TResult>(
   };
 }
 
-export const login: LoginContract = loginMock;
+const useMock = ['1', 'true', 'yes'].includes(((import.meta.env.VITE_USE_MOCK as string | undefined) ?? '').toLowerCase());
+
+export const login: LoginContract = useMock ? loginMock : loginReal;
 
 export const getUsers: GetUsersContract = withAuth(getUsersMock);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleMock);
@@ -39,17 +45,17 @@ export const getMessageTrend: GetMessageTrendContract = withAuth(getMessageTrend
 export const getActiveGroups: GetActiveGroupsContract = withAuth(getActiveGroupsMock);
 export const getGapStats: GetGapStatsContract = withAuth(getGapStatsMock);
 
-export const getPlatforms: GetPlatformsContract = withAuth(getPlatformsMock);
-export const createPlatform: CreatePlatformContract = withAuth(createPlatformMock);
-export const updatePlatform: UpdatePlatformContract = withAuth(updatePlatformMock);
-export const deletePlatform: DeletePlatformContract = withAuth(deletePlatformMock);
+export const getPlatforms: GetPlatformsContract = withAuth(useMock ? getPlatformsMock : getPlatformsReal);
+export const createPlatform: CreatePlatformContract = withAuth(useMock ? createPlatformMock : createPlatformReal);
+export const updatePlatform: UpdatePlatformContract = withAuth(useMock ? updatePlatformMock : updatePlatformReal);
+export const deletePlatform: DeletePlatformContract = withAuth(useMock ? deletePlatformMock : deletePlatformReal);
 
-export const getModels: GetModelsContract = withAuth(getModelsMock);
-export const createModel: CreateModelContract = withAuth(createModelMock);
-export const updateModel: UpdateModelContract = withAuth(updateModelMock);
-export const deleteModel: DeleteModelContract = withAuth(deleteModelMock);
-export const testModel: TestModelContract = withAuth(testModelMock);
-export const setMainModel: SetMainModelContract = withAuth(setMainModelMock);
+export const getModels: GetModelsContract = withAuth(useMock ? getModelsMock : getModelsReal);
+export const createModel: CreateModelContract = withAuth(useMock ? createModelMock : createModelReal);
+export const updateModel: UpdateModelContract = withAuth(useMock ? updateModelMock : updateModelReal);
+export const deleteModel: DeleteModelContract = withAuth(useMock ? deleteModelMock : deleteModelReal);
+export const testModel: TestModelContract = withAuth(useMock ? testModelMock : testModelReal);
+export const setMainModel: SetMainModelContract = withAuth(useMock ? setMainModelMock : setMainModelReal);
 
 export const getLLMConfigs: GetLLMConfigsContract = withAuth(getLLMConfigsMock);
 export const createLLMConfig: CreateLLMConfigContract = withAuth(createLLMConfigMock);

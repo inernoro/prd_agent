@@ -118,11 +118,11 @@ if (allowedOriginsSection.Exists())
         if (!string.IsNullOrEmpty(child.Value))
             origins.Add(child.Value);
     }
-    allowedOrigins = origins.Count > 0 ? origins.ToArray() : new[] { "http://localhost:1420", "http://localhost:5173" };
+    allowedOrigins = origins.Count > 0 ? origins.ToArray() : new[] { "http://localhost:1420", "http://localhost:8000", "http://localhost:5173" };
 }
 else
 {
-    allowedOrigins = new[] { "http://localhost:1420", "http://localhost:5173" };
+    allowedOrigins = new[] { "http://localhost:1420", "http://localhost:8000", "http://localhost:5173" };
 }
 
 builder.Services.AddCors(options =>

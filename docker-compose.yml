@@ -31,7 +31,7 @@ services:
     #   dockerfile: Dockerfile
     container_name: prdagent-api
     ports:
-      - "18080:8080"
+      - "5000:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - MongoDB__ConnectionString=mongodb://mongodb:27017

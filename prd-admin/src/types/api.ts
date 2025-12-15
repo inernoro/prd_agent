@@ -8,7 +8,9 @@ export type ErrorCode =
   | 'PERMISSION_DENIED'
   | 'LLM_ERROR'
   | 'UNAUTHORIZED'
-  | 'UNKNOWN';
+  | 'UNKNOWN'
+  // 允许后端返回自定义错误码（如 MODEL_NOT_FOUND / DUPLICATE_MODEL 等）
+  | (string & {});
 
 export type ApiError = {
   code: ErrorCode;

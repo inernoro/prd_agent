@@ -58,7 +58,7 @@ Write-Host @"
 Services:
 - Backend API:    http://localhost:5000
 - Desktop Client: http://localhost:1420 (Tauri dev)
-- Admin Panel:    http://localhost:5173
+- Admin Panel:    http://localhost:8000
 - MongoDB:        mongodb://localhost:27017
 - Redis:          localhost:6379
 

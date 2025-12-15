@@ -6,9 +6,9 @@ import path from 'path';
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   server: {
-    // 避免与仓库内其他 Vite 项目（默认 5173）冲突
     // 需要自定义时：PORT=xxxx pnpm dev
-    port: Number.parseInt(process.env.PORT || '', 10) || 5180,
+    // 默认 8000（与后端 5000 端口区分开，便于联调）
+    port: Number.parseInt(process.env.PORT || '', 10) || 8000,
     strictPort: false,
   },
   resolve: {
