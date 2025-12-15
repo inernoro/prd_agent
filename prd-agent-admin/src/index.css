@@ -433,16 +433,18 @@ a:hover {
   padding: var(--space-12);
   text-align: center;
   color: var(--text-muted);
+  min-height: 200px;
 }
 
 .empty-state-icon {
   font-size: 48px;
   margin-bottom: var(--space-4);
-  opacity: 0.5;
+  opacity: 0.3;
+  color: var(--text-muted);
 }
 
 .empty-state-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--text-secondary);
   margin-bottom: var(--space-2);
@@ -452,6 +454,7 @@ a:hover {
   font-size: 13px;
   color: var(--text-muted);
   max-width: 300px;
+  line-height: 1.5;
 }
 
 /* --------------------------------------------------------------------------
@@ -470,7 +473,7 @@ a:hover {
 }
 
 .page-header {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
 }
 
 .page-header-with-action {
@@ -478,19 +481,22 @@ a:hover {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
+  margin-bottom: var(--space-6);
 }
 
 .page-title {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 2px;
-  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
 }
 
 .page-subtitle {
   font-size: 13px;
   color: var(--text-muted);
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 /* --------------------------------------------------------------------------
@@ -500,52 +506,59 @@ a:hover {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-5);
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   transition: all var(--duration-normal) var(--ease-out);
+  min-height: 92px;
 }
 
 .stat-card:hover {
   background: var(--bg-card-hover);
   border-color: var(--border-default);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .stat-card-simple {
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .stat-card-content {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .stat-card-label {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
-  margin-bottom: var(--space-1);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .stat-card-value {
   display: flex;
   align-items: baseline;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .stat-card-number {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.02em;
-  line-height: 1.2;
+  line-height: 1.1;
 }
 
 .stat-card-suffix {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 400;
   color: var(--text-muted);
 }
@@ -554,10 +567,10 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-md);
-  font-size: 18px;
+  font-size: 20px;
   flex-shrink: 0;
   line-height: 0;
 }
@@ -573,6 +586,11 @@ a:hover {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.panel-card:hover {
+  border-color: var(--border-default);
 }
 
 .panel-card-header {
@@ -580,14 +598,14 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.01);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .panel-card-title {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.01em;
 }
@@ -598,16 +616,37 @@ a:hover {
 
 .panel-card-body {
   flex: 1;
-  padding: var(--space-4);
+  padding: var(--space-5);
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-card-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  min-height: 200px;
+  flex: 1;
+  min-height: 240px;
+  color: var(--text-muted);
+}
+
+.panel-card-empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: var(--space-3);
+  opacity: 0.3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+}
+
+.panel-card-empty-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 /* --------------------------------------------------------------------------
@@ -617,38 +656,71 @@ a:hover {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
+  line-height: 1.5;
 }
 
 .table-cell-secondary {
   font-size: 13px;
   color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .table-cell-muted {
   font-size: 13px;
   color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .table-cell-accent {
   font-size: 13px;
   font-weight: 500;
   color: var(--accent);
+  line-height: 1.5;
 }
 
 .table-cell-success {
   font-size: 13px;
   font-weight: 500;
   color: var(--success);
+  line-height: 1.5;
 }
 
 .table-cell-warning {
   font-size: 13px;
   font-weight: 500;
   color: var(--warning);
+  line-height: 1.5;
 }
 
 .table-cell-error {
   font-size: 13px;
   font-weight: 500;
   color: var(--error);
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------------
+   响应式优化
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .page-header-with-action {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .stat-card {
+    min-height: 80px;
+  }
+  
+  .stat-card-number {
+    font-size: 24px;
+  }
+  
+  .panel-card-body {
+    padding: var(--space-4);
+  }
+  
+  .panel-card-empty {
+    min-height: 200px;
+  }
 }

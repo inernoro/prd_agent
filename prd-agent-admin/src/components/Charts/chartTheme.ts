@@ -14,12 +14,12 @@ export const colors = {
   
   // 文本
   textPrimary: '#fafafa',
-  textSecondary: '#a1a1aa',
-  textMuted: '#71717a',
+  textSecondary: '#b3b3bd',
+  textMuted: '#7a7a86',
   
   // 边框/网格
   border: 'rgba(255, 255, 255, 0.08)',
-  gridLine: 'rgba(255, 255, 255, 0.06)',
+  gridLine: 'rgba(255, 255, 255, 0.10)',
   axisLine: 'rgba(255, 255, 255, 0.12)',
   
   // 强调色
@@ -49,12 +49,14 @@ export const seriesColors = [
 export const axisCommon = {
   axisLabel: {
     color: colors.textMuted,
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+    margin: 10,
   },
   axisLine: {
     lineStyle: {
       color: colors.axisLine,
+      width: 1,
     },
   },
   axisTick: {
@@ -63,7 +65,8 @@ export const axisCommon = {
   splitLine: {
     lineStyle: {
       color: colors.gridLine,
-      type: 'dashed' as const,
+      type: 'solid' as const,
+      width: 1,
     },
   },
 };
@@ -99,20 +102,20 @@ export const tooltipDefaults = {
 // Legend 配置
 export const legendDefaults = {
   textStyle: {
-    color: colors.textMuted,
-    fontSize: 11,
+    color: colors.textSecondary,
+    fontSize: 12,
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
   },
-  itemWidth: 12,
-  itemHeight: 12,
-  itemGap: 16,
+  itemWidth: 14,
+  itemHeight: 14,
+  itemGap: 20,
   icon: 'roundRect',
 };
 
 // Grid 配置
 export const gridDefaults = {
-  left: '3%',
-  right: '4%',
+  left: '2%',
+  right: '2%',
   bottom: '3%',
   top: '8%',
   containLabel: true,
