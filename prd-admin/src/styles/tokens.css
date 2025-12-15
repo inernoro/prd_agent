@@ -1,0 +1,44 @@
+:root {
+  --bg-base: #0b0b0d;
+  --bg-elevated: #121216;
+  --bg-card: rgba(255, 255, 255, 0.03);
+  --bg-card-hover: rgba(255, 255, 255, 0.05);
+  --bg-input: rgba(255, 255, 255, 0.04);
+  --bg-input-hover: rgba(255, 255, 255, 0.06);
+
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.12);
+  --border-hover: rgba(255, 255, 255, 0.18);
+  --border-focus: color-mix(in srgb, var(--accent-gold) 55%, transparent);
+
+  --text-primary: #f7f7fb;
+  --text-secondary: rgba(247, 247, 251, 0.72);
+  --text-muted: rgba(247, 247, 251, 0.48);
+
+  --accent-green: #7cfc00;
+  --accent-gold: #d6b26a;
+  --accent-gold-2: #f2d59b;
+  --gold-gradient: linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+
+  /* 更“薄”的层级：以描边为主，阴影更克制 */
+  --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.28);
+  --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.36);
+  --shadow-gold: 0 10px 22px rgba(214, 178, 106, 0.16);
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+}

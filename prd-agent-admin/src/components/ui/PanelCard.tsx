@@ -1,5 +1,3 @@
-import { Empty } from '@arco-design/web-react';
-
 interface PanelCardProps {
   title: string;
   children: React.ReactNode;
@@ -29,7 +27,12 @@ export function PanelCard({
       <div className="panel-card-body">
         {isEmpty ? (
           <div className="panel-card-empty">
-            <Empty description={emptyText} />
+            <svg className="panel-card-empty-icon" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="8" y="12" width="48" height="40" rx="4" />
+              <path d="M8 20h48M20 12v40M44 12v40" />
+              <circle cx="32" cy="32" r="6" fill="currentColor" opacity="0.2" />
+            </svg>
+            <span className="panel-card-empty-text">{emptyText}</span>
           </div>
         ) : (
           children

@@ -72,13 +72,13 @@ export default function StatsPage() {
     legend: { 
       ...legendDefaults,
       data: ['输入Token', '输出Token'], 
-      bottom: 0,
+      bottom: '5%',
     },
     xAxis: {
       data: tokenData?.dailyUsage.map((d) => d.date.slice(5)) || [],
     },
     yAxis: {},
-    grid: { bottom: '18%', top: '8%' },
+    grid: { bottom: '20%', top: '5%', left: '3%', right: '3%' },
     series: [
       { 
         ...barSeriesDefaults,
@@ -98,18 +98,20 @@ export default function StatsPage() {
   });
 
   const gapChartOption = buildChartOption({
-    tooltip: { trigger: 'item' },
+    tooltip: { 
+      trigger: 'item',
+      formatter: '{b}: {c} ({d}%)',
+    },
     legend: { 
       ...legendDefaults,
       orient: 'vertical', 
-      left: 'left', 
+      left: '5%', 
       top: 'center',
-      itemWidth: 10,
-      itemHeight: 10,
     },
     series: [{
       ...pieSeriesDefaults,
-      center: ['60%', '50%'],
+      center: ['62%', '50%'],
+      radius: ['50%', '75%'],
       data: gapStats ? [
         { value: gapStats.byStatus.pending, name: '待处理', itemStyle: { color: colors.warning } },
         { value: gapStats.byStatus.resolved, name: '已解决', itemStyle: { color: colors.success } },
@@ -175,7 +177,7 @@ export default function StatsPage() {
       </div>
 
       {/* 统计卡片 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} sm={8}>
           <StatCard 
             title="总输入Token" 
@@ -202,21 +204,21 @@ export default function StatsPage() {
       </Row>
 
       {/* 图表 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} lg={16}>
-          <PanelCard title="每日Token使用量" isEmpty={isTokenEmpty}>
-            <EChart option={tokenChartOption} style={{ height: 240 }} />
+          <PanelCard title="每日Token使用量" isEmpty={isTokenEmpty} emptyText="暂无Token使用数据">
+            <EChart option={tokenChartOption} style={{ height: 280, width: '100%' }} />
           </PanelCard>
         </Col>
         <Col xs={24} lg={8}>
-          <PanelCard title={`内容缺失统计（共${gapStats?.total || 0}条）`} isEmpty={isGapEmpty}>
-            <EChart option={gapChartOption} style={{ height: 240 }} />
+          <PanelCard title={`内容缺失统计（共${gapStats?.total || 0}条）`} isEmpty={isGapEmpty} emptyText="暂无内容缺失数据">
+            <EChart option={gapChartOption} style={{ height: 280, width: '100%' }} />
           </PanelCard>
         </Col>
       </Row>
 
       {/* 活跃群组 */}
-      <PanelCard title="活跃群组 TOP 10" isEmpty={groups.length === 0}>
+      <PanelCard title="活跃群组 TOP 10" isEmpty={groups.length === 0} emptyText="暂无活跃群组">
         <Table 
           columns={groupColumns} 
           data={groups} 

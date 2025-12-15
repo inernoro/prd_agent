@@ -32,13 +32,22 @@ body[arco-theme="dark"] {
 .arco-btn {
   border-radius: var(--radius-md);
   font-weight: 500;
+  font-size: 13px;
   transition: all var(--duration-fast) var(--ease-out);
+  padding: 8px 16px;
+}
+
+.arco-btn-size-small,
+.arco-btn.arco-btn-size-small {
+  padding: 6px 12px;
+  font-size: 12px;
 }
 
 .arco-btn-primary {
   background: var(--accent);
   border-color: var(--accent);
   box-shadow: var(--shadow-sm);
+  color: #fff;
 }
 
 .arco-btn-primary:hover {
@@ -50,6 +59,7 @@ body[arco-theme="dark"] {
 
 .arco-btn-primary:active {
   transform: translateY(0);
+  box-shadow: var(--shadow-sm);
 }
 
 .arco-btn-secondary {
@@ -143,6 +153,8 @@ body[arco-theme="dark"] {
 .arco-select .arco-select-view {
   background: rgba(255, 255, 255, 0.04) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: var(--radius-md) !important;
+  transition: all var(--duration-fast) var(--ease-out);
 }
 
 .arco-select:hover .arco-select-view {
@@ -152,13 +164,15 @@ body[arco-theme="dark"] {
 
 .arco-select.arco-select-focused .arco-select-view {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12) !important;
   background: rgba(255, 255, 255, 0.06) !important;
 }
 
 .arco-select-view-value,
 .arco-select-view-input {
   color: var(--text-primary) !important;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .arco-select-view-placeholder {
@@ -167,6 +181,11 @@ body[arco-theme="dark"] {
 
 .arco-select-suffix .arco-select-arrow-icon {
   color: var(--text-muted);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.arco-select:hover .arco-select-suffix .arco-select-arrow-icon {
+  color: var(--text-secondary);
 }
 
 /* --------------------------------------------------------------------------
@@ -207,10 +226,13 @@ body[arco-theme="dark"] {
 }
 
 .arco-table-th {
-  background: var(--bg-card) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
   border-bottom: 1px solid var(--border-subtle) !important;
-  color: var(--text-secondary) !important;
-  font-weight: 500;
+  color: var(--text-muted) !important;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   padding: var(--space-3) var(--space-4) !important;
 }
 
@@ -218,14 +240,20 @@ body[arco-theme="dark"] {
   border-bottom: 1px solid var(--border-subtle) !important;
   padding: var(--space-4) !important;
   transition: background var(--duration-fast) var(--ease-out);
+  color: var(--text-secondary);
+}
+
+.arco-table-tr {
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
 .arco-table-tr:hover .arco-table-td {
-  background: var(--bg-card) !important;
+  background: rgba(255, 255, 255, 0.03) !important;
 }
 
 .arco-table-empty .arco-table-td {
   background: transparent !important;
+  border: none !important;
 }
 
 /* --------------------------------------------------------------------------
@@ -340,13 +368,39 @@ body[arco-theme="dark"] {
 
 .arco-spin-tip {
   color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: var(--space-3);
+}
+
+.arco-spin-loading {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* --------------------------------------------------------------------------
    空状态
    -------------------------------------------------------------------------- */
+.arco-empty {
+  padding: var(--space-8) var(--space-4);
+}
+
+.arco-empty-image {
+  margin-bottom: var(--space-4);
+  opacity: 0.3;
+}
+
 .arco-empty-description {
   color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 /* --------------------------------------------------------------------------

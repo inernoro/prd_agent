@@ -69,7 +69,7 @@ export default function DashboardPage() {
       data: trend.map((t) => t.date.slice(5)),
     },
     yAxis: {},
-    grid: { bottom: '3%', top: '8%' },
+    grid: { bottom: '5%', top: '5%', left: '3%', right: '3%' },
     series: [{
       ...lineSeriesDefaults,
       data: trend.map((t) => t.count),
@@ -78,26 +78,31 @@ export default function DashboardPage() {
           type: 'linear',
           x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [
-            { offset: 0, color: 'rgba(99, 102, 241, 0.25)' },
-            { offset: 1, color: 'rgba(99, 102, 241, 0.02)' },
+            { offset: 0, color: 'rgba(99, 102, 241, 0.2)' },
+            { offset: 1, color: 'rgba(99, 102, 241, 0.01)' },
           ],
         },
       },
-      lineStyle: { color: colors.accent, width: 2 },
+      lineStyle: { color: colors.accent, width: 2.5 },
       itemStyle: { color: colors.accent },
+      smooth: true,
     }],
   });
 
   const roleChartOption = buildChartOption({
-    tooltip: { trigger: 'item' },
+    tooltip: { 
+      trigger: 'item',
+      formatter: '{b}: {c} ({d}%)',
+    },
     legend: { 
       ...legendDefaults,
-      bottom: '5%', 
+      bottom: '8%', 
       left: 'center',
     },
     series: [{
       ...pieSeriesDefaults,
-      center: ['50%', '42%'],
+      center: ['50%', '40%'],
+      radius: ['50%', '75%'],
       data: overview ? [
         { value: overview.usersByRole.pm, name: '产品经理', itemStyle: { color: colors.accent } },
         { value: overview.usersByRole.dev, name: '开发', itemStyle: { color: colors.success } },
@@ -124,7 +129,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 统计卡片 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} sm={12} lg={6}>
           <StatCard
             title="总用户数"
@@ -161,15 +166,15 @@ export default function DashboardPage() {
       </Row>
 
       {/* 图表 */}
-      <Row gutter={[12, 12]}>
+      <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
-          <PanelCard title="消息趋势（近14天）" isEmpty={isTrendEmpty}>
-            <EChart option={trendChartOption} style={{ height: 240 }} />
+          <PanelCard title="消息趋势（近14天）" isEmpty={isTrendEmpty} emptyText="暂无消息趋势数据">
+            <EChart option={trendChartOption} style={{ height: 280, width: '100%' }} />
           </PanelCard>
         </Col>
         <Col xs={24} lg={8}>
-          <PanelCard title="用户角色分布" isEmpty={isRoleEmpty}>
-            <EChart option={roleChartOption} style={{ height: 240 }} />
+          <PanelCard title="用户角色分布" isEmpty={isRoleEmpty} emptyText="暂无用户数据">
+            <EChart option={roleChartOption} style={{ height: 280, width: '100%' }} />
           </PanelCard>
         </Col>
       </Row>

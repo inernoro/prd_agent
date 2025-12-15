@@ -5,7 +5,7 @@ use std::sync::RwLock;
 use crate::models::ApiResponse;
 
 /// 默认 API 地址，可通过环境变量 API_BASE_URL 覆盖
-const DEFAULT_API_URL: &str = "https://agentapi.759800.com";
+const DEFAULT_API_URL: &str = "http://localhost:5000";
 
 lazy_static::lazy_static! {
     static ref API_BASE_URL: RwLock<String> = RwLock::new(
@@ -99,10 +99,20 @@ impl ApiClient {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        response
-            .json::<ApiResponse<T>>()
+        let status = response.status();
+        let headers = format!("{:?}", response.headers());
+        
+        let text = response
+            .text()
             .await
-            .map_err(|e| format!("Failed to parse response: {}", e))
+            .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        if text.is_empty() {
+            return Err(format!("Empty response from server. Status: {}, Headers: {}", status, headers));
+        }
+
+        serde_json::from_str::<ApiResponse<T>>(&text)
+            .map_err(|e| format!("Failed to parse response: {}. Response: {}", e, &text[..text.len().min(500)]))
     }
 
     pub async fn put<T: DeserializeOwned, B: Serialize>(
