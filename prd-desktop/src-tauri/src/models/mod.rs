@@ -63,8 +63,14 @@ pub struct UserInfo {
 pub struct GroupInfo {
     pub group_id: String,
     pub group_name: String,
+    #[serde(default)]
+    pub prd_document_id: Option<String>,
     pub prd_title: Option<String>,
+    #[serde(default)]
+    pub invite_link: Option<String>,
     pub invite_code: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
     pub member_count: i32,
 }
 

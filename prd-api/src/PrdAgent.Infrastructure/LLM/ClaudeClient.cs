@@ -32,7 +32,10 @@ public class ClaudeClient : ILLMClient
         _temperature = temperature;
 
         _httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-        _httpClient.DefaultRequestHeaders.Add("x-api-key", _apiKey);
+        if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
+            _httpClient.DefaultRequestHeaders.Add("x-api-key", _apiKey);
+        }
         _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
     }
 

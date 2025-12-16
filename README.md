@@ -49,10 +49,25 @@ cd prd_agent
 ```
 
 2. **配置环境变量**
+
+配置 Claude API Key（必需）：
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，配置 API Key 等
+# Windows PowerShell
+$env:LLM__ClaudeApiKey="your-claude-api-key-here"
+
+# Linux/macOS
+export LLM__ClaudeApiKey="your-claude-api-key-here"
+
+# 或在 appsettings.json 中配置（不推荐，敏感信息应使用环境变量）
+# {
+#   "LLM": {
+#     "ClaudeApiKey": "your-claude-api-key-here",
+#     "Model": "claude-3-5-sonnet-20241022"
+#   }
+# }
 ```
+
+> 注意：Claude API Key 可以从 [Anthropic Console](https://console.anthropic.com/) 获取
 
 3. **启动开发环境**
 ```powershell

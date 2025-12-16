@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using PrdAgent.Api.Json;
@@ -197,24 +198,172 @@ builder.Services.AddHttpClient("LoggedHttpClient")
     .AddHttpMessageHandler<HttpLoggingHandler>();
 
 // 注册 LLM 客户端
-var llmApiKey = builder.Configuration["LLM:ClaudeApiKey"] ?? "";
-var llmModel = builder.Configuration["LLM:Model"] ?? "claude-3-5-sonnet-20241022";
+// 优先从环境变量读取，其次从配置读取
+var llmApiKey = Environment.GetEnvironmentVariable("LLM__ClaudeApiKey") 
+    ?? builder.Configuration["LLM:ClaudeApiKey"] 
+    ?? "";
+var llmModel = Environment.GetEnvironmentVariable("LLM__Model")
+    ?? builder.Configuration["LLM:Model"] 
+    ?? "claude-3-5-sonnet-20241022";
+
+if (string.IsNullOrWhiteSpace(llmApiKey))
+{
+    Log.Warning("LLM:ClaudeApiKey is not configured. Please set LLM__ClaudeApiKey environment variable or LLM:ClaudeApiKey in appsettings.json");
+}
 
 builder.Services.AddHttpClient<ILLMClient, ClaudeClient>()
     .ConfigureHttpClient(client =>
     {
         client.BaseAddress = new Uri("https://api.anthropic.com/");
-        client.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
+        if (!string.IsNullOrWhiteSpace(llmApiKey))
+        {
+            client.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
+        }
         client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
     })
     .AddHttpMessageHandler<HttpLoggingHandler>();
 
+// 注册 LLM 客户端 - 优先从数据库读取主模型，其次从LLMConfig，最后从环境变量
 builder.Services.AddScoped<ILLMClient>(sp =>
 {
+    var db = sp.GetRequiredService<MongoDbContext>();
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-    var httpClient = httpClientFactory.CreateClient(nameof(ClaudeClient));
-    return new ClaudeClient(httpClient, llmApiKey, llmModel);
+    var config = sp.GetRequiredService<IConfiguration>();
+    var jwtSecret = config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+    
+    // 1. 优先：从数据库获取主模型 (IsMain=true)
+    var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
+    if (mainModel != null)
+    {
+        var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, jwtSecret);
+        
+        if (!string.IsNullOrWhiteSpace(apiUrl) && !string.IsNullOrWhiteSpace(apiKey))
+        {
+            var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
+            
+            // 判断平台类型
+            string? platformType = null;
+            if (mainModel.PlatformId != null)
+            {
+                var platform = db.LLMPlatforms.Find(p => p.Id == mainModel.PlatformId).FirstOrDefault();
+                platformType = platform?.PlatformType?.ToLower();
+            }
+            
+            // 根据平台类型或API URL判断使用哪个客户端
+            if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
+            {
+                httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
+                httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
+                httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7);
+            }
+            else
+            {
+                // 默认使用 OpenAI 格式（兼容 openai、google、qwen、zhipu、baidu、other 等）
+                httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
+                httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7);
+            }
+        }
+    }
+    
+    // 2. 其次：从数据库获取活动的 LLMConfig
+    var activeConfig = db.LLMConfigs.Find(c => c.IsActive).FirstOrDefault();
+    if (activeConfig != null)
+    {
+        var apiKey = DecryptApiKey(activeConfig.ApiKeyEncrypted, jwtSecret);
+        
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
+            
+            if (activeConfig.Provider == "Claude")
+            {
+                httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.anthropic.com/");
+                httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
+                httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+                return new ClaudeClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature);
+            }
+            else if (activeConfig.Provider == "OpenAI")
+            {
+                httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.openai.com/");
+                httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                return new OpenAIClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature);
+            }
+        }
+    }
+    
+    // 3. 最后：回退到环境变量配置
+    if (string.IsNullOrWhiteSpace(llmApiKey))
+    {
+        Log.Warning("No main model or active LLM config found in database and LLM:ClaudeApiKey is not configured. Please set a main model in admin panel or set LLM__ClaudeApiKey environment variable");
+        var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
+        httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
+        httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+        return new ClaudeClient(httpClient, "", llmModel);
+    }
+    
+    var fallbackHttpClient = httpClientFactory.CreateClient("LoggedHttpClient");
+    fallbackHttpClient.BaseAddress = new Uri("https://api.anthropic.com/");
+    if (!string.IsNullOrWhiteSpace(llmApiKey))
+    {
+        fallbackHttpClient.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
+    }
+    fallbackHttpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+    return new ClaudeClient(fallbackHttpClient, llmApiKey, llmModel);
 });
+
+// 辅助方法：解析模型的 API 配置（与 AdminModelsController 中的逻辑一致）
+static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model, MongoDbContext db, string jwtSecret)
+{
+    string? apiUrl = model.ApiUrl;
+    string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
+
+    // 如果模型没有配置，从平台继承
+    if (model.PlatformId != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
+    {
+        var platform = db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefault();
+        if (platform != null)
+        {
+            apiUrl ??= platform.ApiUrl;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                apiKey = DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+            }
+        }
+    }
+
+    return (apiUrl, apiKey);
+}
+
+// 辅助方法：解密 API Key（与 AdminLLMConfigController 中的逻辑一致）
+static string DecryptApiKey(string encryptedKey, string secretKey)
+{
+    if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
+    
+    try
+    {
+        var parts = encryptedKey.Split(':');
+        if (parts.Length != 2) return string.Empty;
+
+        var keyBytes = Encoding.UTF8.GetBytes(secretKey.Length >= 32 ? secretKey[..32] : secretKey.PadRight(32));
+        var iv = Convert.FromBase64String(parts[0]);
+        var encryptedBytes = Convert.FromBase64String(parts[1]);
+
+        using var aes = Aes.Create();
+        aes.Key = keyBytes;
+        aes.IV = iv;
+
+        using var decryptor = aes.CreateDecryptor();
+        var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
+        
+        return Encoding.UTF8.GetString(decryptedBytes);
+    }
+    catch
+    {
+        return string.Empty;
+    }
+}
 
 // 注册仓储
 builder.Services.AddScoped<IUserRepository>(sp =>

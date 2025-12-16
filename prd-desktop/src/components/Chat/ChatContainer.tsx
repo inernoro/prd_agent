@@ -40,10 +40,14 @@ export default function ChatContainer() {
           });
         }
       }
+    }).catch((err) => {
+      console.error('Failed to listen to message-chunk event:', err);
     });
 
     return () => {
-      unlistenMessage.then(fn => fn());
+      unlistenMessage.then(fn => fn()).catch((err) => {
+        console.error('Failed to unlisten message-chunk event:', err);
+      });
     };
   }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage]);
 
@@ -79,10 +83,14 @@ export default function ChatContainer() {
           });
         }
       }
-    );
+    ).catch((err) => {
+      console.error('Failed to listen to guide-chunk event:', err);
+    });
 
     return () => {
-      unlistenGuide.then((fn) => fn());
+      unlistenGuide.then((fn) => fn()).catch((err) => {
+        console.error('Failed to unlisten guide-chunk event:', err);
+      });
     };
   }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage]);
 

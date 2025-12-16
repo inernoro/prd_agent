@@ -53,10 +53,14 @@ function App() {
       if (code) {
         setPendingInviteCode(code);
       }
+    }).catch((err) => {
+      console.error('Failed to listen to deep-link event:', err);
     });
 
     return () => {
-      unlistenPromise.then((fn) => fn());
+      unlistenPromise.then((fn) => fn()).catch((err) => {
+        console.error('Failed to unlisten deep-link event:', err);
+      });
     };
   }, []);
 
