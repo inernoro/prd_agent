@@ -118,21 +118,56 @@ if (allowedOriginsSection.Exists())
         if (!string.IsNullOrEmpty(child.Value))
             origins.Add(child.Value);
     }
-    allowedOrigins = origins.Count > 0 ? origins.ToArray() : new[] { "http://localhost:1420", "http://localhost:8000", "http://localhost:5173" };
+    allowedOrigins = origins.Count > 0 ? origins.ToArray() : new[]
+    {
+        "http://localhost:1420",
+        "http://localhost:8000",
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:1420",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:4173",
+    };
 }
 else
 {
-    allowedOrigins = new[] { "http://localhost:1420", "http://localhost:8000", "http://localhost:5173" };
+    allowedOrigins = new[]
+    {
+        "http://localhost:1420",
+        "http://localhost:8000",
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:1420",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:4173",
+    };
 }
 
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
+        // 开发环境：放行 localhost/127.0.0.1 任意端口，避免 Vite 端口变化导致 CORS 丢失
+        if (builder.Environment.IsDevelopment())
+        {
+            policy
+                .SetIsOriginAllowed(origin =>
+                {
+                    if (string.IsNullOrWhiteSpace(origin) || origin == "null") return false;
+                    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+                    return uri.Host is "localhost" or "127.0.0.1";
+                })
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+            return;
+        }
+
+        // 生产环境：严格按配置允许来源
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowAnyMethod();
     });
 });
 

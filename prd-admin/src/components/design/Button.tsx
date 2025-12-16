@@ -1,25 +1,27 @@
 import { cn } from '@/lib/cn';
+import * as React from 'react';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 type Size = 'sm' | 'md';
 
-export function Button({
-  className,
-  variant = 'secondary',
-  size = 'md',
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: Variant;
-  size?: Size;
-}) {
+export const Button = React.forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: Variant;
+    size?: Size;
+  }
+>(function Button(
+  { className, variant = 'secondary', size = 'md', type = 'button', ...props },
+  ref
+) {
   const base =
     'inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed';
 
   // 更紧凑的控件高度（更像参照图的“工具型 UI”）
   const sizeCls =
     size === 'sm'
-      ? 'h-8 px-3 rounded-[10px] text-[13px]'
+      ? 'h-[35px] px-3 rounded-[10px] text-[13px]'
       : 'h-10 px-4 rounded-[12px] text-[13px]';
 
   const variantCls =
@@ -49,10 +51,13 @@ export function Button({
 
   return (
     <button
-      type="button"
+      ref={ref}
+      type={type}
       className={cn(base, sizeCls, variantCls, hoverCls, className)}
       style={style}
       {...props}
     />
   );
-}
+});
+
+Button.displayName = 'Button';

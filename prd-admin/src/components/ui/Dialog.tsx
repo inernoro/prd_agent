@@ -7,12 +7,21 @@ export function Dialog({
   title,
   description,
   content,
+  maxWidth,
+  contentClassName,
+  contentStyle,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
   content: React.ReactNode;
+  /** 默认 520px；可传 900 或 '900px' 等，用于大弹窗 */
+  maxWidth?: number | string;
+  /** 追加到 Dialog 内容容器的 className */
+  contentClassName?: string;
+  /** 追加到 Dialog 内容容器的 style */
+  contentStyle?: React.CSSProperties;
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -22,11 +31,16 @@ export function Dialog({
           style={{ background: 'rgba(0,0,0,0.72)' }}
         />
         <DialogPrimitive.Content
-          className="fixed left-1/2 top-1/2 w-[92vw] max-w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-[22px] p-6"
+          className={[
+            'fixed left-1/2 top-1/2 w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[22px] p-6',
+            contentClassName ?? '',
+          ].join(' ')}
           style={{
             background: 'color-mix(in srgb, var(--bg-elevated) 90%, black)',
             border: '1px solid var(--border-default)',
             boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+            maxWidth: typeof maxWidth === 'number' ? `${maxWidth}px` : (maxWidth ?? '520px'),
+            ...contentStyle,
           }}
         >
           <div className="flex items-start justify-between gap-4">

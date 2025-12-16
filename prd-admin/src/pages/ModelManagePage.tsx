@@ -2,6 +2,7 @@ import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
+import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import {
   createModel,
   createPlatform,
@@ -15,9 +16,10 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Check, Eye, EyeOff, Link2, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
+import { Check, Eye, EyeOff, Link2, Minus, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
+import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
 
 type PlatformForm = {
   name: string;
@@ -35,6 +37,12 @@ type ModelForm = {
   enabled: boolean;
 };
 
+type AvailableModel = {
+  modelName: string;
+  displayName: string;
+  group?: string;
+};
+
 const defaultPlatformForm: PlatformForm = {
   name: '',
   platformType: 'openai',
@@ -50,6 +58,9 @@ const defaultModelForm: ModelForm = {
   group: '',
   enabled: true,
 };
+
+const isSvgAssetUrl = (url?: string | null) => !!url && /\.svg(\?|#|$)/i.test(url);
+const isRasterAssetUrl = (url?: string | null) => !!url && /\.(png|jpe?g|webp|gif|bmp|ico)(\?|#|$)/i.test(url);
 
 export default function ModelManagePage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -69,11 +80,22 @@ export default function ModelManagePage() {
   const [modelForm, setModelForm] = useState<ModelForm>(defaultModelForm);
 
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
+  const [platformTogglingId, setPlatformTogglingId] = useState<string | null>(null);
   const [apiUrlDraft, setApiUrlDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [platformChecking, setPlatformChecking] = useState(false);
   const [platformCheckMsg, setPlatformCheckMsg] = useState<string | null>(null);
+
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
+  const [availableError, setAvailableError] = useState<string | null>(null);
+  const [availableSearch, setAvailableSearch] = useState('');
+  const [availableTab, setAvailableTab] = useState<
+    'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools'
+  >('all');
+  const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
 
   const load = async () => {
     setLoading(true);
@@ -136,24 +158,149 @@ export default function ModelManagePage() {
       const key = m.group || m.modelName.split('-').slice(0, 2).join('-') || 'other';
       (g[key] ||= []).push(m);
     }
+    // 同组内按“名字”排序（UI 展示用），不改变分组排序策略
+    for (const ms of Object.values(g)) {
+      ms.sort((a, b) => {
+        const an = (a.name || a.modelName || '').trim();
+        const bn = (b.name || b.modelName || '').trim();
+        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    }
     return Object.entries(g).sort((a, b) => b[1].length - a[1].length);
   }, [filteredModels]);
+
+  const existingModelByName = useMemo(() => {
+    const map = new Map<string, Model>();
+    if (!selectedPlatform) return map;
+    for (const m of models) {
+      if (m.platformId !== selectedPlatform.id) continue;
+      if (!map.has(m.modelName)) map.set(m.modelName, m);
+    }
+    return map;
+  }, [models, selectedPlatform?.id]);
+
+  const modelCategory = (m: AvailableModel) => {
+    const s = (m.modelName || '').toLowerCase();
+    if (/(embed|embedding)/.test(s)) return 'embedding' as const;
+    if (/(rerank|re-rank)/.test(s)) return 'rerank' as const;
+    if (/(vision|vl|image)/.test(s)) return 'vision' as const;
+    if (/(search|web|online|联网)/.test(s)) return 'web' as const;
+    if (/(free|gratis|免费)/.test(s)) return 'free' as const;
+    if (/(tool|tools|function)/.test(s)) return 'tools' as const;
+    return 'reasoning' as const;
+  };
+
+  const filteredAvailableModels = useMemo(() => {
+    let list = availableModels;
+    if (availableTab !== 'all') {
+      list = list.filter((m) => modelCategory(m) === availableTab);
+    }
+    const s = availableSearch.trim().toLowerCase();
+    if (!s) return list;
+    return list.filter((m) => (m.modelName || '').toLowerCase().includes(s) || (m.displayName || '').toLowerCase().includes(s));
+  }, [availableModels, availableSearch, availableTab]);
+
+  const groupedAvailable = useMemo(() => {
+    const autoGroupKey = (rawName: string) => {
+      const s = (rawName || '').trim().toLowerCase();
+      const parts = s.replace(/\//g, '-').split('-').filter(Boolean);
+      if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
+      if (parts.length >= 1) return parts[0];
+      return 'other';
+    };
+
+    const buckets: Record<string, AvailableModel[]> = {};
+    for (const m of filteredAvailableModels) {
+      const key = (m.group || autoGroupKey(m.modelName) || 'other').toLowerCase();
+      (buckets[key] ||= []).push(m);
+    }
+
+    // 模型数量不足 3 的分组统一并入 other
+    const merged: Record<string, AvailableModel[]> = {};
+    const other: AvailableModel[] = [];
+    for (const [k, ms] of Object.entries(buckets)) {
+      if (k !== 'other' && ms.length < 3) other.push(...ms);
+      else merged[k] = ms;
+    }
+    if (buckets.other) other.push(...buckets.other);
+    if (other.length > 0) merged.other = other;
+
+    // 同组内按“名字”排序（优先 displayName，其次 modelName）
+    for (const ms of Object.values(merged)) {
+      ms.sort((a, b) => {
+        const an = ((a.displayName || a.modelName) || '').trim();
+        const bn = ((b.displayName || b.modelName) || '').trim();
+        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    }
+
+    return Object.entries(merged).sort((a, b) => {
+      const ao = a[0] === 'other';
+      const bo = b[0] === 'other';
+      if (ao !== bo) return ao ? 1 : -1;
+      return b[1].length - a[1].length;
+    });
+  }, [filteredAvailableModels]);
+
+  // 默认展开第一个分组（允许用户自行折叠/展开）
+  useEffect(() => {
+    if (groupedAvailable.length === 0) return;
+    const first = groupedAvailable[0]?.[0];
+    if (!first) return;
+    setOpenAvailableGroups((prev) => {
+      if (Object.keys(prev).length === 0) return { [first]: true };
+      if (prev[first] === undefined) return { ...prev, [first]: true };
+      return prev;
+    });
+  }, [groupedAvailable]);
+
+  const fetchAvailableModels = async (opts?: { refresh?: boolean }) => {
+    if (!selectedPlatform) return;
+    setAvailableLoading(true);
+    setAvailableError(null);
+    try {
+      const isRefresh = !!opts?.refresh;
+      const r = await apiRequest<AvailableModel[]>(
+        isRefresh
+          ? `/api/v1/platforms/${selectedPlatform.id}/refresh-models`
+          : `/api/v1/platforms/${selectedPlatform.id}/available-models`,
+        isRefresh ? { method: 'POST', body: {} } : { method: 'GET' }
+      );
+      if (!r.success) {
+        setAvailableError(r.error?.message || '获取模型列表失败');
+        setAvailableModels([]);
+        return;
+      }
+      setAvailableModels(r.data || []);
+    } finally {
+      setAvailableLoading(false);
+    }
+  };
+
+  const toggleModel = async (m: AvailableModel) => {
+    if (!selectedPlatform) return;
+    const exist = existingModelByName.get(m.modelName);
+    if (exist) {
+      const res = await deleteModel(exist.id);
+      if (!res.success) return;
+      await load();
+      return;
+    }
+
+    const res = await createModel({
+      name: m.displayName || m.modelName,
+      modelName: m.modelName,
+      platformId: selectedPlatform.id,
+      group: m.group || undefined,
+      enabled: true,
+    });
+    if (!res.success) return;
+    await load();
+  };
 
   const openCreatePlatform = () => {
     setEditingPlatform(null);
     setPlatformForm(defaultPlatformForm);
-    setPlatformDialogOpen(true);
-  };
-
-  const openEditPlatform = (p: Platform) => {
-    setEditingPlatform(p);
-    setPlatformForm({
-      name: p.name,
-      platformType: p.platformType,
-      apiUrl: p.apiUrl,
-      apiKey: '',
-      enabled: p.enabled,
-    });
     setPlatformDialogOpen(true);
   };
 
@@ -188,6 +335,18 @@ export default function ModelManagePage() {
     if (!res.success) return;
     if (selectedPlatformId === p.id) setSelectedPlatformId('');
     await load();
+  };
+
+  const togglePlatformEnabled = async (p: Platform) => {
+    if (platformTogglingId) return;
+    setPlatformTogglingId(p.id);
+    try {
+      const res = await updatePlatform(p.id, { enabled: !p.enabled });
+      if (!res.success) return;
+      await load();
+    } finally {
+      setPlatformTogglingId(null);
+    }
   };
 
   const savePlatformInline = async (patch: Partial<PlatformForm> & { apiKey?: string }) => {
@@ -261,6 +420,9 @@ export default function ModelManagePage() {
 
   const platformAvatar = (p: Platform) => {
     const t = (p.platformType || '').toLowerCase();
+    const avatarUrl = getAvatarUrlByPlatformType(p.platformType || p.name || '');
+    const isSvg = isSvgAssetUrl(avatarUrl);
+    const isRaster = isRasterAssetUrl(avatarUrl);
     const bg =
       t.includes('openai')
         ? 'rgba(16,185,129,0.18)'
@@ -289,9 +451,20 @@ export default function ModelManagePage() {
     return (
       <div
         className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
-        style={{ background: bg, color: fg, border: '1px solid var(--border-subtle)' }}
+        // 仅在 svg / 文字占位时使用“色块底”，避免 png/jpg 等方图贴边显得突兀
+        style={{ background: !avatarUrl || isSvg ? bg : 'transparent', color: fg, border: '1px solid var(--border-subtle)' }}
       >
-        {letter}
+        {avatarUrl ? (
+          isRaster ? (
+            <div className="h-6 w-6 rounded-full overflow-hidden bg-transparent">
+              <img src={avatarUrl} alt={p.name || p.platformType} className="h-full w-full object-contain" />
+            </div>
+          ) : (
+            <img src={avatarUrl} alt={p.name || p.platformType} className="h-5 w-5 object-contain" />
+          )
+        ) : (
+          letter
+        )}
       </div>
     );
   };
@@ -372,12 +545,25 @@ export default function ModelManagePage() {
     color: 'var(--text-primary)',
   };
 
+  const openModelPicker = async () => {
+    if (!selectedPlatform) return;
+    setAvailableSearch('');
+    setAvailableTab('all');
+    setModelPickerOpen(true);
+    await fetchAvailableModels();
+  };
+
+  const isAll = selectedPlatformId === '__all__';
+
   return (
     <div className="space-y-4">
       <div>
         <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>模型管理</div>
-        <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-          平台 {platforms.length} 个 / 模型 {models.length} 个
+        <div className="mt-1 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
+          平台 {selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个
+          {selectedPlatformId && selectedPlatformId !== '__all__'
+            ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
+            : ''}
         </div>
       </div>
 
@@ -458,7 +644,24 @@ export default function ModelManagePage() {
                       </div>
                       <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{count} 个模型</div>
                     </div>
-                    <Badge variant={p.enabled ? 'success' : 'subtle'}>{p.enabled ? '启用' : '禁用'}</Badge>
+                    <button
+                      type="button"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        await togglePlatformEnabled(p);
+                      }}
+                      className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition-colors hover:brightness-[1.06] disabled:opacity-60 disabled:cursor-not-allowed"
+                      style={
+                        p.enabled
+                          ? { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }
+                          : { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }
+                      }
+                      disabled={loading || platformTogglingId === p.id}
+                      aria-label={p.enabled ? '点击禁用平台' : '点击启用平台'}
+                    >
+                      {platformTogglingId === p.id ? '处理中' : p.enabled ? '启用' : '禁用'}
+                    </button>
                   </button>
                 );
               })}
@@ -483,9 +686,9 @@ export default function ModelManagePage() {
                 </div>
                 {selectedPlatform && <Badge variant="subtle">{selectedPlatform.platformType}</Badge>}
               </div>
-              {selectedPlatform ? (
-                <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                  {selectedPlatform.apiUrl} · {selectedPlatform.apiKeyMasked}
+              {selectedPlatform ? null : isAll ? (
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  展示全部平台的模型列表
                 </div>
               ) : (
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -524,78 +727,96 @@ export default function ModelManagePage() {
           <div className="flex-1 overflow-auto">
             {loading ? (
               <div className="py-16 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-            ) : selectedPlatform ? (
+            ) : selectedPlatform || isAll ? (
               <div className="p-4 space-y-6">
-                <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 密钥</div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      value={apiKeyDraft}
-                      onChange={(e) => setApiKeyDraft(e.target.value)}
-                      className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                      style={inputStyle}
-                      type={showApiKey ? 'text' : 'password'}
-                      name="platform-api-key"
-                      autoComplete="new-password"
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      data-lpignore="true"
-                      data-1p-ignore="true"
-                      data-bwignore="true"
-                      placeholder={selectedPlatform.apiKeyMasked || 'sk-...'}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowApiKey((v) => !v)}
-                      aria-label={showApiKey ? '隐藏' : '显示'}
-                    >
-                      {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={onCheckPlatform} disabled={platformChecking}>
-                      {platformChecking ? '检测中' : '检测'}
-                    </Button>
-                  </div>
-                  <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                    留空表示不修改；保存后仅展示掩码。点击“检测”会优先测试该平台的主模型。
-                  </div>
-                  {platformCheckMsg && (
-                    <div className="mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      {platformCheckMsg}
-                    </div>
-                  )}
-                </div>
+                {selectedPlatform && (
+                  <>
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 密钥</div>
+                      <div className="mt-2">
+                        <div
+                          className="flex h-[30px] box-border items-center overflow-hidden rounded-[14px]"
+                          style={{
+                            background: 'var(--bg-input)',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                          }}
+                        >
+                          <input
+                            value={apiKeyDraft}
+                            onChange={(e) => setApiKeyDraft(e.target.value)}
+                            className="h-full w-full flex-1 bg-transparent px-4 text-sm outline-none"
+                            style={{ color: 'var(--text-primary)' }}
+                            type={showApiKey ? 'text' : 'password'}
+                            name="platform-api-key"
+                            autoComplete="new-password"
+                            spellCheck={false}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
+                            data-bwignore="true"
+                            placeholder={selectedPlatform.apiKeyMasked || 'sk-...'}
+                          />
 
-                <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 地址</div>
-                  <div className="mt-2">
-                    <input
-                      value={apiUrlDraft}
-                      onChange={(e) => setApiUrlDraft(e.target.value)}
-                      onBlur={async () => {
-                        const next = apiUrlDraft.trim();
-                        if (!next || next === selectedPlatform.apiUrl) return;
-                        await savePlatformInline({ apiUrl: next });
-                      }}
-                      className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                      style={inputStyle}
-                      type="url"
-                      name="platform-api-url"
-                      autoComplete="off"
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      data-lpignore="true"
-                      data-1p-ignore="true"
-                      data-bwignore="true"
-                      placeholder="https://..."
-                    />
-                  </div>
-                  <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                    建议填写基础地址（如 `https://api.xxx.com`）；后端会自动拼接 OpenAI 兼容路径。
-                  </div>
-                </div>
+                          <button
+                            type="button"
+                            className="h-full w-[30px] inline-flex items-center justify-center transition-colors hover:bg-white/5 disabled:opacity-60 disabled:cursor-not-allowed"
+                            onClick={() => setShowApiKey((v) => !v)}
+                            aria-label={showApiKey ? '隐藏' : '显示'}
+                            disabled={platformChecking}
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+
+                          <div className="h-6 w-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+
+                          <button
+                            type="button"
+                            onClick={onCheckPlatform}
+                            disabled={platformChecking}
+                            className="h-full px-4 text-[13px] font-semibold transition-colors hover:bg-white/8 disabled:opacity-60 disabled:cursor-not-allowed"
+                            style={{ color: 'var(--text-primary)' }}
+                          >
+                            {platformChecking ? '检测中' : '检测'}
+                          </button>
+                        </div>
+                      </div>
+                      {platformCheckMsg && (
+                        <div className="mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                          {platformCheckMsg}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 地址</div>
+                      <div className="mt-2">
+                        <input
+                          value={apiUrlDraft}
+                          onChange={(e) => setApiUrlDraft(e.target.value)}
+                          onBlur={async () => {
+                            const next = apiUrlDraft.trim();
+                            if (!next || next === selectedPlatform.apiUrl) return;
+                            await savePlatformInline({ apiUrl: next });
+                          }}
+                          className="h-[30px] w-full rounded-[14px] px-4 text-sm outline-none"
+                          style={inputStyle}
+                          type="url"
+                          name="platform-api-url"
+                          autoComplete="off"
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
+                          data-bwignore="true"
+                          placeholder="https://..."
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -650,7 +871,7 @@ export default function ModelManagePage() {
                               <Badge variant="subtle">{ms.length} 个</Badge>
                             </summary>
 
-                            <div className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                            <div className="divide-y divide-white/30">
                               {ms.map((m) => (
                                 <div key={m.id} className="px-4 py-3 flex items-center justify-between hover:bg-white/2">
                                   <div className="min-w-0">
@@ -678,9 +899,19 @@ export default function ModelManagePage() {
                                     <Button variant="ghost" size="sm" onClick={() => openEditModel(m)}>
                                       <Pencil size={16} />
                                     </Button>
-                                    <Button variant="danger" size="sm" onClick={() => onDeleteModel(m)}>
-                                      <Trash2 size={16} />
-                                    </Button>
+                                    <ConfirmTip
+                                      title={`确认删除模型“${m.name}”？`}
+                                      description="该操作不可撤销"
+                                      confirmText="确认删除"
+                                      cancelText="取消"
+                                      onConfirm={() => onDeleteModel(m)}
+                                      side="top"
+                                      align="end"
+                                    >
+                                      <Button variant="danger" size="sm" aria-label="删除模型">
+                                        <Trash2 size={16} />
+                                      </Button>
+                                    </ConfirmTip>
                                   </div>
                                 </div>
                               ))}
@@ -703,8 +934,9 @@ export default function ModelManagePage() {
             <Button
               variant="secondary"
               size="sm"
+              className="w-[100px]"
               onClick={() => {
-                if (selectedPlatform) openEditPlatform(selectedPlatform);
+                if (selectedPlatform) openModelPicker();
               }}
               disabled={!selectedPlatform}
             >
@@ -723,9 +955,19 @@ export default function ModelManagePage() {
             <div className="flex-1" />
 
             {selectedPlatform && (
-              <Button variant="danger" size="sm" onClick={() => onDeletePlatform(selectedPlatform)}>
-                删除平台
-              </Button>
+              <ConfirmTip
+                title={`确认删除“${selectedPlatform.name}”平台？`}
+                description="该操作不可撤销"
+                confirmText="确认删除"
+                cancelText="取消"
+                onConfirm={() => onDeletePlatform(selectedPlatform)}
+                side="top"
+                align="end"
+              >
+                <Button variant="danger" size="sm">
+                  删除平台
+                </Button>
+              </ConfirmTip>
             )}
           </div>
         </Card>
@@ -808,6 +1050,197 @@ export default function ModelManagePage() {
                 <Check size={16} />
                 保存
               </Button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={modelPickerOpen}
+        onOpenChange={(open) => {
+          setModelPickerOpen(open);
+          if (!open) {
+            setAvailableModels([]);
+            setAvailableError(null);
+          }
+        }}
+        title={`${selectedPlatform?.name ?? ''}模型`}
+        description="从平台可用模型列表中一键添加/移除"
+        maxWidth={600}
+        content={
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2"
+                  style={{ color: 'var(--text-muted)' }}
+                />
+                <input
+                  value={availableSearch}
+                  onChange={(e) => setAvailableSearch(e.target.value)}
+                  type="search"
+                  name="available-model-search"
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-bwignore="true"
+                  className="h-10 w-full rounded-[14px] pl-9 pr-4 text-sm outline-none"
+                  style={inputStyle}
+                  placeholder="搜索模型 ID 或名称"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  await fetchAvailableModels({ refresh: true });
+                }}
+                disabled={!selectedPlatform || availableLoading}
+                aria-label="刷新"
+              >
+                <RefreshCw size={16} />
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {(
+                [
+                  ['all', '全部'],
+                  ['reasoning', '推理'],
+                  ['vision', '视觉'],
+                  ['web', '联网'],
+                  ['free', '免费'],
+                  ['embedding', '嵌入'],
+                  ['rerank', '重排'],
+                  ['tools', '工具'],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setAvailableTab(k)}
+                  className="px-1 pb-2 text-sm transition-colors"
+                  style={{
+                    color: availableTab === k ? 'rgba(34,197,94,0.95)' : 'var(--text-secondary)',
+                    borderBottom: availableTab === k ? '2px solid rgba(34,197,94,0.95)' : '2px solid transparent',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+              <div className="flex-1" />
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                可用 {filteredAvailableModels.length} 个 · 已添加 {existingModelByName.size} 个
+              </div>
+            </div>
+
+            <div
+              className="rounded-[16px] overflow-hidden"
+              style={{ border: '1px solid var(--border-subtle)' }}
+            >
+              {availableLoading ? (
+                <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+              ) : availableError ? (
+                <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>{availableError}</div>
+              ) : groupedAvailable.length === 0 ? (
+                <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>暂无可用模型</div>
+              ) : (
+                <div className="max-h-[58vh] overflow-auto">
+                  <div className="space-y-2 p-2">
+                    {groupedAvailable.map(([g, ms]) => (
+                      <details
+                        key={g}
+                        className="rounded-[14px] overflow-hidden"
+                        style={{ border: '1px solid var(--border-subtle)' }}
+                        open={!!openAvailableGroups[g]}
+                        onToggle={(e) => {
+                          const nextOpen = (e.currentTarget as HTMLDetailsElement).open;
+                          setOpenAvailableGroups((prev) => ({ ...prev, [g]: nextOpen }));
+                        }}
+                      >
+                        <summary
+                          className="px-4 py-3 flex items-center justify-between cursor-pointer select-none"
+                          style={{ background: 'rgba(255,255,255,0.03)' }}
+                        >
+                          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
+                          <Badge variant="subtle">{ms.length}</Badge>
+                        </summary>
+                        <div className="divide-y divide-white/30">
+                          {ms.map((m) => {
+                            const exist = existingModelByName.get(m.modelName);
+                            const label = (m.displayName || m.modelName).trim();
+                            const avatarUrl =
+                              (g || '').toLowerCase() === 'other' ? getAvatarUrlByModelName(m.modelName || label) : getAvatarUrlByGroup(g);
+                            return (
+                              <div
+                                key={`${g}:${m.modelName}`}
+                                className="px-4 py-3 flex items-center justify-between transition-colors"
+                                style={{
+                                  background: exist ? 'rgba(34,197,94,0.08)' : 'transparent',
+                                }}
+                              >
+                                <div className="min-w-0 flex items-center gap-3">
+                                  <div
+                                    className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
+                                    style={{
+                                      // 仅在 svg / 文字占位时使用“色块底”，避免 png/jpg 等方图贴边显得突兀
+                                      background: !avatarUrl || isSvgAssetUrl(avatarUrl) ? 'rgba(59,130,246,0.14)' : 'rgba(255, 255, 255, 0)',
+                                      color: 'rgba(59,130,246,0.95)',
+                                      border: '1px solid var(--border-subtle)',
+                                    }}
+                                  >
+                                    {avatarUrl ? (
+                                      isRasterAssetUrl(avatarUrl) ? (
+                                        <div className="h-6 w-6 rounded-full overflow-hidden bg-transparent">
+                                          <img src={avatarUrl} alt={g} className="h-full w-full object-contain" style={{ opacity: 1 }} />
+                                        </div>
+                                      ) : (
+                                        <img
+                                          src={avatarUrl}
+                                          alt={g}
+                                          className="h-5 w-5 object-contain"
+                                          style={{
+                                            opacity: 1,
+                                            // svg 图标可保留轻微阴影提升可读性（raster 容易把“方边”阴影放大）
+                                            filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.35))',
+                                          }}
+                                        />
+                                      )
+                                    ) : (
+                                      g.slice(0, 1).toUpperCase()
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                        {label}
+                                      </div>
+                                      {exist && <Badge variant="success">已添加</Badge>}
+                                    </div>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant={exist ? 'secondary' : 'ghost'}
+                                  size="sm"
+                                  onClick={() => toggleModel(m)}
+                                  disabled={availableLoading}
+                                  aria-label={exist ? '移除' : '添加'}
+                                >
+                                  {exist ? <Minus size={16} /> : <Plus size={16} />}
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         }
