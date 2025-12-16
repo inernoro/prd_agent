@@ -1,217 +1,289 @@
-using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace PrdAgent.Api.Middleware;
 
 /// <summary>
-/// 请求响应日志中间件 - 以Pretty格式记录所有HTTP请求和响应内容
+/// 请求响应日志中间件 - 默认只记录“高信噪摘要”：
+/// - 请求是否到达（method/path/query）
+/// - 响应状态码/耗时
+/// - 统一响应格式(ApiResponse)的 success / error.code / 常见分页 itemsCount / total
+/// 
+/// 说明：
+/// - 默认不记录 request/response 原文 body，避免泄露用户内容（安全约束）
+/// - 对 SSE(text/event-stream) 自动跳过响应捕获，避免阻塞流式传输
 /// </summary>
 public class RequestResponseLoggingMiddleware
 {
     private readonly RequestDelegate _next;
-    
-    private static readonly JsonSerializerOptions PrettyJsonOptions = new()
-    {
-        WriteIndented = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
+    private readonly ILogger<RequestResponseLoggingMiddleware> _logger;
 
-    // 最大记录body长度
-    private const int MaxBodyLength = 10000;
+    // 只为“摘要提取”读取响应体，避免大响应占用内存
+    private const int MaxInspectResponseBytes = 64 * 1024; // 64KB
 
-    // 不需要记录body的路径
-    private static readonly HashSet<string> SkipBodyPaths = new(StringComparer.OrdinalIgnoreCase)
+    // 不记录日志的路径（避免噪音）
+    private static readonly HashSet<string> SkipLogPathPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
         "/health",
-        "/swagger",
-        // 安全约束：不记录用户原文/PRD原文。以下路径可能包含大段敏感内容，默认跳过 body。
-        "/api/v1/documents",
-        "/api/v1/sessions",
-        "/api/v1/groups"
+        "/swagger"
     };
 
-    public RequestResponseLoggingMiddleware(RequestDelegate next)
+    public RequestResponseLoggingMiddleware(
+        RequestDelegate next,
+        ILogger<RequestResponseLoggingMiddleware> logger)
     {
         _next = next;
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
-        var requestId = Guid.NewGuid().ToString("N")[..8];
-        
-        // 检查是否需要跳过
+        // CORS 预检请求非常多，且不携带业务信息，默认不记录，避免“看起来一次操作很多请求”
+        if (HttpMethods.IsOptions(context.Request.Method))
+        {
+            await _next(context);
+            return;
+        }
+
         var path = context.Request.Path.Value ?? "";
-        var shouldSkipBody = SkipBodyPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+        if (SkipLogPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            await _next(context);
+            return;
+        }
 
-        // 记录请求
-        var requestBody = shouldSkipBody ? "[SKIPPED]" : await ReadRequestBodyAsync(context.Request);
-        LogRequest(context.Request, requestId, requestBody);
+        var requestId = Activity.Current?.Id ?? Guid.NewGuid().ToString("N")[..8];
+        var method = context.Request.Method;
+        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
+        var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
+        var protocol = context.Request.Protocol;
+        var absoluteUrl = BuildAbsoluteUrl(context, path, query);
 
-        // 包装响应流以捕获响应内容
+        var accept = context.Request.Headers.Accept.ToString();
+        var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase);
+
+        var sw = Stopwatch.StartNew();
+
+        // SSE 流式响应不能缓存整个 body，否则会阻塞/卡住
+        if (isEventStream)
+        {
+            try
+            {
+                await _next(context);
+            }
+            finally
+            {
+                sw.Stop();
+                WriteSummaryLog(
+                    context.Response.StatusCode,
+                    sw.ElapsedMilliseconds,
+                    requestId,
+                    method,
+                    protocol,
+                    absoluteUrl,
+                    context.Response.ContentType,
+                    clientIp,
+                    userId,
+                    apiSummary: "stream=text/event-stream",
+                    responseBytes: null);
+            }
+            return;
+        }
+
+        // 包装响应流用于“摘要提取”
         var originalBodyStream = context.Response.Body;
-        using var responseBodyStream = new MemoryStream();
+        await using var responseBodyStream = new MemoryStream();
         context.Response.Body = responseBodyStream;
 
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        
         try
         {
             await _next(context);
         }
         finally
         {
-            stopwatch.Stop();
-            
-            // 读取响应内容
-            var responseBody = shouldSkipBody ? "[SKIPPED]" : await ReadResponseBodyAsync(responseBodyStream);
-            
-            // 记录响应
-            LogResponse(context.Response, requestId, stopwatch.ElapsedMilliseconds, responseBody);
-            
-            // 将响应写回原始流
+            sw.Stop();
+
+            var statusCode = context.Response.StatusCode;
+            string? responseBody = null;
+            string apiSummary = "";
+
+            try
+            {
+                if (responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
+                {
+                    responseBodyStream.Seek(0, SeekOrigin.Begin);
+                    using var reader = new StreamReader(responseBodyStream, leaveOpen: true);
+                    responseBody = await reader.ReadToEndAsync();
+                }
+
+                apiSummary = SummarizeApiResponse(responseBody);
+            }
+            catch
+            {
+                // 摘要提取失败不影响请求，只输出最小信息
+                apiSummary = "";
+            }
+
+            WriteSummaryLog(
+                statusCode,
+                sw.ElapsedMilliseconds,
+                requestId,
+                method,
+                protocol,
+                absoluteUrl,
+                context.Response.ContentType,
+                clientIp,
+                userId,
+                apiSummary,
+                responseBytes: responseBodyStream.Length);
+
+            // 写回原始响应流
             responseBodyStream.Seek(0, SeekOrigin.Begin);
             await responseBodyStream.CopyToAsync(originalBodyStream);
+            context.Response.Body = originalBodyStream;
         }
     }
 
-    private async Task<string> ReadRequestBodyAsync(HttpRequest request)
+    private void WriteSummaryLog(
+        int statusCode,
+        long durationMs,
+        string requestId,
+        string method,
+        string protocol,
+        string absoluteUrl,
+        string? responseContentType,
+        string clientIp,
+        string userId,
+        string? apiSummary,
+        long? responseBytes)
     {
-        if (request.ContentLength == 0 || request.ContentLength == null)
-        {
-            return string.Empty;
-        }
+        var level = statusCode >= 500
+            ? LogLevel.Error
+            : statusCode >= 400
+                ? LogLevel.Warning
+                : LogLevel.Information;
 
-        request.EnableBuffering();
-        
-        using var reader = new StreamReader(
-            request.Body, 
-            Encoding.UTF8, 
-            detectEncodingFromByteOrderMarks: false, 
-            bufferSize: 1024, 
-            leaveOpen: true);
-        
-        var body = await reader.ReadToEndAsync();
-        request.Body.Position = 0;
-        
-        return body;
+        // 单行输出，尽量贴近 ASP.NET 的 "Request finished ..." 风格，但更聚焦且可控（不打 starting、不打 OPTIONS）
+        // 示例：
+        // Request finished HTTP/1.1 GET http://localhost:5000/api/v1/config/models?page=1 - 200 null application/json; charset=utf-8 13.4012ms success=true items=20 total=123 rid=abcd ip=127.0.0.1
+        // ContentType 只用于展示；可能为空（例如 NoContent/204）
+        var contentType = string.IsNullOrWhiteSpace(responseContentType) ? "null" : responseContentType;
+        _logger.Log(level,
+            "Request finished {Protocol} {Method} {Url} - {StatusCode} null {ContentType} {DurationMs}ms{ApiSummary} rid={RequestId} ip={ClientIp}",
+            protocol,
+            method,
+            absoluteUrl,
+            statusCode,
+            contentType,
+            $"{durationMs:0.####}",
+            string.IsNullOrWhiteSpace(apiSummary) ? "" : $" {apiSummary}",
+            requestId,
+            clientIp);
     }
 
-    private static async Task<string> ReadResponseBodyAsync(MemoryStream responseBody)
+    private static string BuildAbsoluteUrl(HttpContext context, string path, string? query)
     {
-        responseBody.Seek(0, SeekOrigin.Begin);
-        var body = await new StreamReader(responseBody).ReadToEndAsync();
-        responseBody.Seek(0, SeekOrigin.Begin);
-        return body;
-    }
-
-    private static void LogRequest(HttpRequest request, string requestId, string body)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine();
-        sb.AppendLine($"\u001b[36m========== API REQUEST [{requestId}] ==========\u001b[0m");
-        sb.AppendLine($"  \u001b[33mMethod:\u001b[0m {request.Method}");
-        sb.AppendLine($"  \u001b[33mPath:\u001b[0m {request.Path}{request.QueryString}");
-        sb.AppendLine($"  \u001b[33mHeaders:\u001b[0m");
-        
-        foreach (var header in request.Headers)
-        {
-            // 跳过敏感头部或过长的头部
-            var value = header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-                ? MaskSensitiveValue(header.Value.ToString())
-                : header.Value.ToString();
-            
-            if (value.Length > 200)
-            {
-                value = value[..200] + "...[TRUNCATED]";
-            }
-            
-            sb.AppendLine($"    {header.Key}: {value}");
-        }
-
-        if (!string.IsNullOrEmpty(body) && body != "[SKIPPED]")
-        {
-            sb.AppendLine($"  \u001b[33mBody:\u001b[0m");
-            var prettyBody = TryPrettyPrintJson(body);
-            
-            if (prettyBody.Length > MaxBodyLength)
-            {
-                prettyBody = prettyBody[..MaxBodyLength] + "\n    ... [TRUNCATED]";
-            }
-            
-            foreach (var line in prettyBody.Split('\n'))
-            {
-                sb.AppendLine($"    {line}");
-            }
-        }
-        
-        sb.AppendLine($"\u001b[36m==============================================\u001b[0m");
-
-        Console.WriteLine(sb.ToString());
-    }
-
-    private static void LogResponse(HttpResponse response, string requestId, long durationMs, string body)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine();
-        
-        var statusColor = response.StatusCode >= 400 ? "\u001b[31m" : "\u001b[32m";
-        sb.AppendLine($"{statusColor}========== API RESPONSE [{requestId}] ==========\u001b[0m");
-        sb.AppendLine($"  \u001b[33mStatus:\u001b[0m {statusColor}{response.StatusCode}\u001b[0m");
-        sb.AppendLine($"  \u001b[33mDuration:\u001b[0m {durationMs}ms");
-        sb.AppendLine($"  \u001b[33mHeaders:\u001b[0m");
-        
-        foreach (var header in response.Headers)
-        {
-            sb.AppendLine($"    {header.Key}: {header.Value}");
-        }
-
-        if (!string.IsNullOrEmpty(body) && body != "[SKIPPED]")
-        {
-            sb.AppendLine($"  \u001b[33mBody:\u001b[0m");
-            var prettyBody = TryPrettyPrintJson(body);
-            
-            if (prettyBody.Length > MaxBodyLength)
-            {
-                prettyBody = prettyBody[..MaxBodyLength] + "\n    ... [TRUNCATED]";
-            }
-            
-            foreach (var line in prettyBody.Split('\n'))
-            {
-                sb.AppendLine($"    {line}");
-            }
-        }
-        
-        sb.AppendLine($"{statusColor}===============================================\u001b[0m");
-
-        Console.WriteLine(sb.ToString());
-    }
-
-    private static string TryPrettyPrintJson(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return json;
-        }
-
+        // 仅用于日志展示：在常见本地联调场景下给出完整 URL
+        // 如果 Host/Schema 不可用，退化为 path+query
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            return JsonSerializer.Serialize(doc, PrettyJsonOptions);
+            var scheme = context.Request.Scheme;
+            var host = context.Request.Host.HasValue ? context.Request.Host.Value : "";
+            if (string.IsNullOrWhiteSpace(host)) return path + (query ?? "");
+            return $"{scheme}://{host}{path}{(query ?? "")}";
         }
         catch
         {
-            return json;
+            return path + (query ?? "");
         }
     }
 
-    private static string MaskSensitiveValue(string value)
+    private static string SummarizeApiResponse(string? responseBody)
     {
-        if (string.IsNullOrEmpty(value) || value.Length <= 12)
+        if (string.IsNullOrWhiteSpace(responseBody))
         {
-            return "***";
+            return "";
         }
-        
-        return $"{value[..8]}...{value[^4..]}";
+
+        // 仅尝试解析统一响应格式：{ success, data, error }
+        // 注意：控制器 JSON 配置使用 camelCase
+        try
+        {
+            var trimmed = responseBody.TrimStart();
+            if (!(trimmed.StartsWith("{") || trimmed.StartsWith("[")))
+            {
+                return "";
+            }
+
+            using var doc = JsonDocument.Parse(responseBody);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return "";
+            }
+
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("success", out var successEl) || successEl.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                return "";
+            }
+
+            var success = successEl.GetBoolean();
+            string? errorCode = null;
+            if (!success && root.TryGetProperty("error", out var errorEl) && errorEl.ValueKind == JsonValueKind.Object)
+            {
+                if (errorEl.TryGetProperty("code", out var codeEl) && codeEl.ValueKind == JsonValueKind.String)
+                {
+                    errorCode = codeEl.GetString();
+                }
+            }
+
+            int? itemsCount = null;
+            int? total = null;
+
+            if (root.TryGetProperty("data", out var dataEl))
+            {
+                // Paged: data.items + data.total
+                if (dataEl.ValueKind == JsonValueKind.Object)
+                {
+                    if (dataEl.TryGetProperty("items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        itemsCount = itemsEl.GetArrayLength();
+                    }
+                    if (dataEl.TryGetProperty("total", out var totalEl) && totalEl.ValueKind == JsonValueKind.Number && totalEl.TryGetInt32(out var totalVal))
+                    {
+                        total = totalVal;
+                    }
+                }
+                else if (dataEl.ValueKind == JsonValueKind.Array)
+                {
+                    itemsCount = dataEl.GetArrayLength();
+                }
+            }
+
+            var parts = new List<string>
+            {
+                $"success={success.ToString().ToLowerInvariant()}"
+            };
+            if (!string.IsNullOrWhiteSpace(errorCode))
+            {
+                parts.Add($"errorCode={errorCode}");
+            }
+            if (itemsCount.HasValue)
+            {
+                parts.Add($"items={itemsCount.Value}");
+            }
+            if (total.HasValue)
+            {
+                parts.Add($"total={total.Value}");
+            }
+
+            return string.Join(' ', parts);
+        }
+        catch
+        {
+            return "";
+        }
     }
 }
 

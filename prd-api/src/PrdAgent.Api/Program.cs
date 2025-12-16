@@ -16,12 +16,21 @@ using Serilog.Sinks.SystemConsole.Themes;
 using PrdAgent.Infrastructure.Prompts;
 using PrdAgent.Infrastructure.Repositories;
 using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // 配置Serilog - Pretty格式输出
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
+    // 压低框架噪音（你关心的是业务请求是否到达与返回摘要）
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    // 关闭 Controller 的信息日志（你只想看请求 finished，不想看控制器内部 LogInformation）
+    .MinimumLevel.Override("PrdAgent.Api.Controllers", LogEventLevel.Warning)
+    // 说明：不启用 Microsoft.AspNetCore.Hosting.Diagnostics（它会打 Request starting/finished 两次且包含 OPTIONS）。
+    // 我们用自定义中间件只打一条“Request finished ...”风格日志，更清爽、可控。
     .Enrich.FromLogContext()
     .WriteTo.Console(
         outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}",
@@ -351,10 +360,10 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    
-    // 开发环境下启用请求响应日志（Pretty格式）
-    app.UseRequestResponseLogging();
 }
+
+// 始终启用“单行 Request finished 摘要日志”（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
+app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
 app.UseRateLimiting();
@@ -365,6 +374,14 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
+
+// 启动时输出“实际监听端口/前端默认端口提示”
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    Log.Information("API listening on: {Urls}", app.Urls);
+    Log.Information("Admin Web 默认: http://localhost:8000 （可通过 prd-admin: PORT=xxxx pnpm dev 修改）");
+    Log.Information("Desktop Dev 默认: http://localhost:1420");
+});
 
 app.Run();
 
