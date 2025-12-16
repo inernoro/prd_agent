@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Admin;
@@ -162,6 +163,44 @@ public class AdminUsersController : ControllerBase
     }
 
     /// <summary>
+    /// 修改用户密码（管理员）
+    /// </summary>
+    [HttpPut("{userId}/password")]
+    public async Task<IActionResult> UpdatePassword(string userId, [FromBody] UpdatePasswordRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "密码不能为空"));
+        }
+
+        var passwordError = PasswordValidator.Validate(request.Password);
+        if (passwordError != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.WEAK_PASSWORD, passwordError));
+        }
+
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+        var result = await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
+
+        if (result.MatchedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        _logger.LogInformation("User {UserId} password updated by admin", userId);
+
+        var response = new UserPasswordUpdateResponse
+        {
+            UserId = userId,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        return Ok(ApiResponse<UserPasswordUpdateResponse>.Ok(response));
+    }
+
+    /// <summary>
     /// 生成邀请码
     /// </summary>
     [HttpPost("invite-codes")]
@@ -203,6 +242,11 @@ public class GenerateInviteCodeRequest
 {
     public int Count { get; set; } = 1;
     public int? ExpiresInDays { get; set; }
+}
+
+public class UpdatePasswordRequest
+{
+    public string Password { get; set; } = string.Empty;
 }
 
 

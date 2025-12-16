@@ -2,8 +2,8 @@ use futures::StreamExt;
 use serde::Serialize;
 use tauri::{command, AppHandle, Emitter};
 
-use crate::models::{ApiResponse, GuideControlResponse, SessionInfo, SwitchRoleResponse};
-use crate::services::ApiClient;
+use crate::models::{ApiResponse, GuideControlResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse};
+use crate::services::{api_client, ApiClient};
 
 #[derive(Serialize)]
 struct SwitchRoleRequest {
@@ -34,6 +34,18 @@ pub async fn get_session(session_id: String) -> Result<ApiResponse<SessionInfo>,
 }
 
 #[command]
+pub async fn get_message_history(
+    session_id: String,
+    limit: Option<i32>,
+) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
+    let client = ApiClient::new();
+    let limit = limit.unwrap_or(50);
+    client
+        .get(&format!("/sessions/{}/messages?limit={}", session_id, limit))
+        .await
+}
+
+#[command]
 pub async fn switch_role(
     session_id: String,
     role: String,
@@ -53,23 +65,27 @@ pub async fn send_message(
     content: String,
     role: Option<String>,
 ) -> Result<(), String> {
+    let base_url = api_client::get_api_base_url();
     let url = format!(
         "{}/api/v1/sessions/{}/messages",
-        std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:5000".to_string()),
+        base_url,
         session_id
     );
 
-    let client = reqwest::Client::new();
+    let client = api_client::build_streaming_client(&base_url);
     let request = SendMessageRequest { content, role };
 
-    let response = client
+    let mut req = client
         .post(&url)
         .header("Accept", "text/event-stream")
         .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .json(&request);
+
+    if let Some(token) = api_client::get_auth_token() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
 
     let mut stream = response.bytes_stream();
 
@@ -103,23 +119,79 @@ pub async fn send_message(
 
 #[command]
 pub async fn start_guide(app: AppHandle, session_id: String, role: String) -> Result<(), String> {
+    let base_url = api_client::get_api_base_url();
     let url = format!(
         "{}/api/v1/sessions/{}/guide/start",
-        std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:5000".to_string()),
+        base_url,
         session_id
     );
 
-    let client = reqwest::Client::new();
+    let client = api_client::build_streaming_client(&base_url);
     let request = StartGuideRequest { role };
 
-    let response = client
+    let mut req = client
         .post(&url)
         .header("Accept", "text/event-stream")
         .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .json(&request);
+
+    if let Some(token) = api_client::get_auth_token() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                for line in text.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                            let _ = app.emit("guide-chunk", event);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "error",
+                    serde_json::json!({
+                        "code": "STREAM_ERROR",
+                        "message": format!("Stream error: {}", e)
+                    }),
+                );
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[command]
+pub async fn get_guide_step_content(app: AppHandle, session_id: String, step: i32) -> Result<(), String> {
+    let base_url = api_client::get_api_base_url();
+    let url = format!(
+        "{}/api/v1/sessions/{}/guide/step/{}",
+        base_url,
+        session_id,
+        step
+    );
+
+    let client = api_client::build_streaming_client(&base_url);
+
+    let mut req = client
+        .get(&url)
+        .header("Accept", "text/event-stream");
+
+    if let Some(token) = api_client::get_auth_token() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
 
     let mut stream = response.bytes_stream();
 

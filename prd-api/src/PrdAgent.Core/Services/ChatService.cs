@@ -16,6 +16,7 @@ public class ChatService : IChatService
     private readonly IPromptManager _promptManager;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
+    private static readonly TimeSpan ChatHistoryExpiry = TimeSpan.FromMinutes(30);
 
     public ChatService(
         ILLMClient llmClient,
@@ -174,7 +175,7 @@ public class ChatService : IChatService
         };
 
         // 更新对话历史缓存
-        await SaveMessagesToHistoryAsync(sessionId, userMessage, assistantMessage);
+        await SaveMessagesToHistoryAsync(session, userMessage, assistantMessage);
 
         // 写入 MongoDB（用于后台追溯与统计）
         // 注意：日志中不得打印消息原文；仓储层不记录日志，这里也不记录 content
@@ -193,7 +194,16 @@ public class ChatService : IChatService
 
     public async Task<List<Message>> GetHistoryAsync(string sessionId, int limit = 50)
     {
-        var key = CacheKeys.ForChatHistory(sessionId);
+        var session = await _sessionService.GetByIdAsync(sessionId);
+        if (session == null)
+        {
+            return new List<Message>();
+        }
+
+        var key = !string.IsNullOrEmpty(session.GroupId)
+            ? CacheKeys.ForGroupChatHistory(session.GroupId)
+            : CacheKeys.ForChatHistory(sessionId);
+
         var history = await _cache.GetAsync<List<Message>>(key);
         
         if (history == null)
@@ -209,9 +219,12 @@ public class ChatService : IChatService
         return new List<Message>();
     }
 
-    private async Task SaveMessagesToHistoryAsync(string sessionId, params Message[] messages)
+    private async Task SaveMessagesToHistoryAsync(Session session, params Message[] messages)
     {
-        var key = CacheKeys.ForChatHistory(sessionId);
+        var key = !string.IsNullOrEmpty(session.GroupId)
+            ? CacheKeys.ForGroupChatHistory(session.GroupId)
+            : CacheKeys.ForChatHistory(session.SessionId);
+
         var history = await _cache.GetAsync<List<Message>>(key) ?? new List<Message>();
         
         history.AddRange(messages);
@@ -222,6 +235,7 @@ public class ChatService : IChatService
             history = history.TakeLast(100).ToList();
         }
 
-        await _cache.SetAsync(key, history);
+        // 滑动过期：每次写入刷新 TTL
+        await _cache.SetAsync(key, history, ChatHistoryExpiry);
     }
 }

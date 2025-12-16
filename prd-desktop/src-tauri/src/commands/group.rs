@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::command;
 
-use crate::models::{ApiResponse, GroupInfo};
+use crate::models::{ApiResponse, GroupInfo, OpenGroupSessionResponse};
 use crate::services::ApiClient;
 
 #[derive(Serialize)]
@@ -59,4 +59,22 @@ pub async fn join_group(
 pub async fn get_groups() -> Result<ApiResponse<Vec<GroupInfo>>, String> {
     let client = ApiClient::new();
     client.get("/groups").await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenGroupSessionRequest {
+    user_role: String,
+}
+
+#[command]
+pub async fn open_group_session(
+    group_id: String,
+    user_role: String,
+) -> Result<ApiResponse<OpenGroupSessionResponse>, String> {
+    let client = ApiClient::new();
+    let request = OpenGroupSessionRequest { user_role };
+    client
+        .post(&format!("/groups/{}/session", group_id), &request)
+        .await
 }

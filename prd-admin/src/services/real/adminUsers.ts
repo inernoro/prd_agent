@@ -1,6 +1,13 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { ok, type ApiResponse } from '@/types/api';
-import type { GetUsersContract, GenerateInviteCodesContract, UpdateUserRoleContract, UpdateUserStatusContract, GetUsersParams } from '@/services/contracts/adminUsers';
+import type {
+  GetUsersContract,
+  GenerateInviteCodesContract,
+  UpdateUserPasswordContract,
+  UpdateUserRoleContract,
+  UpdateUserStatusContract,
+  GetUsersParams,
+} from '@/services/contracts/adminUsers';
 import type { AdminUser, PagedResult, UserRole, UserStatus } from '@/types/admin';
 
 type BackendPagedUsers = {
@@ -36,6 +43,15 @@ export const updateUserStatusReal: UpdateUserStatusContract = async (userId: str
   const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/status`, {
     method: 'PUT',
     body: { status },
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const updateUserPasswordReal: UpdateUserPasswordContract = async (userId: string, password: string): Promise<ApiResponse<true>> => {
+  const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/password`, {
+    method: 'PUT',
+    body: { password },
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);

@@ -1,4 +1,5 @@
 import { useSessionStore } from '../../stores/sessionStore';
+import { invoke } from '@tauri-apps/api/core';
 
 // 问答图标
 const ChatIcon = ({ className }: { className?: string }) => (
@@ -15,12 +16,33 @@ const BookIcon = ({ className }: { className?: string }) => (
 );
 
 export default function ModeToggle() {
-  const { mode, setMode } = useSessionStore();
+  const { mode, setMode, sessionId, currentRole } = useSessionStore();
+
+  const switchToQa = async () => {
+    if (mode === 'Guided' && sessionId) {
+      try {
+        await invoke('control_guide', { sessionId, action: 'stop' });
+      } catch (err) {
+        console.error('Failed to stop guide:', err);
+      }
+    }
+    setMode('QA');
+  };
+
+  const switchToGuided = async () => {
+    setMode('Guided');
+    if (!sessionId) return;
+    try {
+      await invoke('start_guide', { sessionId, role: currentRole.toLowerCase() });
+    } catch (err) {
+      console.error('Failed to start guide:', err);
+    }
+  };
 
   return (
     <div className="flex items-center gap-2 bg-background-light dark:bg-background-dark rounded-lg p-1">
       <button
-        onClick={() => setMode('QA')}
+        onClick={switchToQa}
         className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
           mode === 'QA'
             ? 'bg-primary-500 text-white'
@@ -31,7 +53,7 @@ export default function ModeToggle() {
         <span>问答</span>
       </button>
       <button
-        onClick={() => setMode('Guided')}
+        onClick={switchToGuided}
         className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
           mode === 'Guided'
             ? 'bg-primary-500 text-white'

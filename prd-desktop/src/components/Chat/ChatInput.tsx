@@ -16,7 +16,7 @@ const DEMO_RESPONSES = [
 
 export default function ChatInput() {
   const { sessionId, currentRole } = useSessionStore();
-  const { addMessage, isStreaming, startStreaming, stopStreaming, appendStreamingContent } = useMessageStore();
+  const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -26,7 +26,14 @@ export default function ChatInput() {
 
   // 演示模式下的模拟流式回复
   const simulateStreamingResponse = async (question: string) => {
-    startStreaming();
+    const streamingId = `demo-assistant-${Date.now()}`;
+    startStreaming({
+      id: streamingId,
+      role: 'Assistant',
+      content: '',
+      timestamp: new Date(),
+      viewRole: currentRole,
+    });
     
     // 随机选择一个回复模板
     const baseResponse = DEMO_RESPONSES[Math.floor(Math.random() * DEMO_RESPONSES.length)];
@@ -35,18 +42,8 @@ export default function ChatInput() {
     // 模拟流式输出
     for (let i = 0; i < fullResponse.length; i++) {
       await new Promise(resolve => setTimeout(resolve, 20 + Math.random() * 30));
-      appendStreamingContent(fullResponse[i]);
+      appendToStreamingMessage(fullResponse[i]);
     }
-    
-    // 添加完整消息
-    const assistantMessage: Message = {
-      id: Date.now().toString(),
-      role: 'Assistant',
-      content: fullResponse,
-      timestamp: new Date(),
-      viewRole: currentRole,
-    };
-    addMessage(assistantMessage);
     stopStreaming();
   };
 

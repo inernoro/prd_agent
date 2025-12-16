@@ -37,6 +37,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<UserDetailResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserStatusUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserRoleUpdateResponse>))]
+[JsonSerializable(typeof(ApiResponse<UserPasswordUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<InviteCodeGenerateResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminGroupListItem>>))]
 [JsonSerializable(typeof(ApiResponse<AdminGroupListItem>))]
@@ -62,6 +63,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UploadDocumentRequest))]
 [JsonSerializable(typeof(UpdateStatusRequest))]
 [JsonSerializable(typeof(UpdateRoleRequest))]
+[JsonSerializable(typeof(UpdatePasswordRequest))]
 [JsonSerializable(typeof(GenerateInviteCodeRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
 // 密码验证响应

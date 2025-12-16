@@ -38,9 +38,11 @@ public static class CacheKeys
     public const string Session = "session:";
     public const string Document = "document:";
     public const string ChatHistory = "chat:history:";
+    public const string GroupChatHistory = "chat:history:group:";
     public const string UserSession = "user:session:";
     
     public static string ForSession(string sessionId) => $"{Session}{sessionId}";
     public static string ForDocument(string documentId) => $"{Document}{documentId}";
     public static string ForChatHistory(string sessionId) => $"{ChatHistory}{sessionId}";
+    public static string ForGroupChatHistory(string groupId) => $"{GroupChatHistory}{groupId}";
 }

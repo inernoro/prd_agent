@@ -1,6 +1,7 @@
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::{de::DeserializeOwned, Serialize};
 use std::sync::RwLock;
+use std::time::Duration;
 
 use crate::models::ApiResponse;
 
@@ -20,6 +21,11 @@ pub fn set_api_base_url(url: String) {
     *base_url = url;
 }
 
+/// 获取当前 auth token（用于 SSE 等需要手动拼 header 的场景）
+pub fn get_auth_token() -> Option<String> {
+    AUTH_TOKEN.read().unwrap().clone()
+}
+
 /// 获取当前 API 基础 URL
 #[allow(dead_code)]
 pub fn get_api_base_url() -> String {
@@ -37,8 +43,9 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new() -> Self {
+        let base_url = Self::get_base_url();
         Self {
-            client: Client::new(),
+            client: build_http_client(&base_url),
         }
     }
 
@@ -152,4 +159,38 @@ impl Default for ApiClient {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn is_localhost_url(api_base_url: &str) -> bool {
+    let parsed = match Url::parse(api_base_url) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    match parsed.host_str() {
+        Some("localhost") | Some("127.0.0.1") | Some("::1") => true,
+        _ => false,
+    }
+}
+
+/// 统一构建 HTTP client：
+/// - 对 localhost/127.0.0.1/::1 自动绕过系统/环境代理，避免被全局代理截胡导致 503
+/// - 其他地址保持 reqwest 默认行为（允许使用环境代理）
+pub fn build_http_client(api_base_url: &str) -> Client {
+    let mut builder = Client::builder().timeout(Duration::from_secs(60));
+
+    if is_localhost_url(api_base_url) {
+        builder = builder.no_proxy();
+    }
+
+    builder.build().unwrap_or_else(|_| Client::new())
+}
+
+/// SSE/流式请求专用：不设置总超时（避免长对话被客户端超时切断），但仍对 localhost 绕过代理
+pub fn build_streaming_client(api_base_url: &str) -> Client {
+    let mut builder = Client::builder();
+    if is_localhost_url(api_base_url) {
+        builder = builder.no_proxy();
+    }
+    builder.build().unwrap_or_else(|_| Client::new())
 }

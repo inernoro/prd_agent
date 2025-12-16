@@ -3,7 +3,8 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, generateInviteCodes, updateUserRole, updateUserStatus, isMockMode } from '@/services';
+import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, isMockMode } from '@/services';
+import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 
 type UserRow = {
   userId: string;
@@ -14,6 +15,50 @@ type UserRow = {
   createdAt: string;
   lastLoginAt?: string;
 };
+
+function fmtDateTime(v?: string | null) {
+  if (!v) return '-';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(d);
+}
+
+function fmtRelative(v?: string | null) {
+  if (!v) return '';
+  const d = new Date(v);
+  const t = d.getTime();
+  if (Number.isNaN(t)) return '';
+  const diff = Date.now() - t;
+  const abs = Math.abs(diff);
+
+  const sec = Math.floor(abs / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  const day = Math.floor(hr / 24);
+
+  const suffix = diff >= 0 ? '前' : '后';
+  if (sec < 60) return `${sec} 秒${suffix}`;
+  if (min < 60) return `${min} 分钟${suffix}`;
+  if (hr < 24) return `${hr} 小时${suffix}`;
+  if (day < 30) return `${day} 天${suffix}`;
+  return '';
+}
+
+const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
+  { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
+  { key: 'lower', label: '包含小写字母', test: (pwd) => /[a-z]/.test(pwd) },
+  { key: 'upper', label: '包含大写字母', test: (pwd) => /[A-Z]/.test(pwd) },
+  { key: 'digit', label: '包含数字', test: (pwd) => /\d/.test(pwd) },
+  { key: 'special', label: '包含特殊字符（如 !@#$ 等）', test: (pwd) => /[!@#$%^&*(),.?":{}|<>]/.test(pwd) },
+];
 
 export default function UsersPage() {
   const [loading, setLoading] = useState(true);
@@ -27,6 +72,29 @@ export default function UsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(1);
   const [inviteCodes, setInviteCodes] = useState<string[]>([]);
+
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
+  const [pwd, setPwd] = useState('');
+  const [pwd2, setPwd2] = useState('');
+  const [pwdSubmitError, setPwdSubmitError] = useState<string | null>(null);
+  const [pwdSubmitting, setPwdSubmitting] = useState(false);
+
+  const pwdChecks = useMemo(() => {
+    const v = pwd ?? '';
+    const touched = v.length > 0;
+    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
+  }, [pwd]);
+
+  const pwdAllOk = useMemo(() => {
+    if (!pwd) return false;
+    return passwordRules.every((r) => r.test(pwd));
+  }, [pwd]);
+
+  const pwdMatchOk = useMemo(() => {
+    if (!pwd || !pwd2) return false;
+    return pwd === pwd2;
+  }, [pwd, pwd2]);
 
   const query = useMemo(
     () => ({ page, pageSize: 20, search: search.trim() || undefined, role: role || undefined, status: status || undefined }),
@@ -58,6 +126,33 @@ export default function UsersPage() {
 
   const onCopy = async (text: string) => {
     await navigator.clipboard.writeText(text);
+  };
+
+  const openChangePassword = (u: UserRow) => {
+    setPwdUser(u);
+    setPwd('');
+    setPwd2('');
+    setPwdSubmitError(null);
+    setPwdOpen(true);
+  };
+
+  const submitChangePassword = async () => {
+    if (!pwdUser) return;
+    if (!pwdAllOk) return;
+    if (!pwdMatchOk) return;
+
+    setPwdSubmitting(true);
+    setPwdSubmitError(null);
+    try {
+      const res = await updateUserPassword(pwdUser.userId, pwd);
+      if (!res.success) {
+        setPwdSubmitError(res.error?.message || '修改失败');
+        return;
+      }
+      setPwdOpen(false);
+    } finally {
+      setPwdSubmitting(false);
+    }
   };
 
   return (
@@ -134,8 +229,8 @@ export default function UsersPage() {
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>用户</th>
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>角色</th>
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>状态</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>注册时间</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>最后登录</th>
+                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>最后登录时间</th>
+                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -184,8 +279,25 @@ export default function UsersPage() {
                         <option value="Disabled">禁用</option>
                       </select>
                     </td>
-                    <td className="px-4 py-3" style={{ color: 'var(--text-secondary)' }}>{u.createdAt}</td>
-                    <td className="px-4 py-3" style={{ color: 'var(--text-muted)' }}>{u.lastLoginAt || '-'}</td>
+                    <td className="px-4 py-3">
+                      {!u.lastLoginAt ? (
+                        <Badge variant="subtle">从未登录</Badge>
+                      ) : (
+                        <div className="flex flex-col">
+                          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {fmtDateTime(u.lastLoginAt)}
+                          </div>
+                          <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                            {fmtRelative(u.lastLoginAt)}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Button variant="secondary" size="sm" onClick={() => openChangePassword(u)}>
+                        修改密码
+                      </Button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -254,6 +366,163 @@ export default function UsersPage() {
                 ))}
               </div>
             )}
+          </div>
+        }
+      />
+
+      <Dialog
+        open={pwdOpen}
+        onOpenChange={(v) => {
+          setPwdOpen(v);
+          if (!v) {
+            setPwdUser(null);
+            setPwd('');
+            setPwd2('');
+            setPwdSubmitError(null);
+            setPwdSubmitting(false);
+          }
+        }}
+        title={pwdUser ? `修改密码：${pwdUser.username}` : '修改密码'}
+        description={pwdUser ? `${pwdUser.displayName} · ${pwdUser.userId}` : undefined}
+        content={
+          <div className="space-y-4">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>新密码</div>
+              <input
+                value={pwd}
+                onChange={(e) => {
+                  setPwd(e.target.value);
+                  setPwdSubmitError(null);
+                }}
+                type="password"
+                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="至少8位，含大小写、数字、特殊字符"
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认新密码</div>
+              <input
+                value={pwd2}
+                onChange={(e) => {
+                  setPwd2(e.target.value);
+                  setPwdSubmitError(null);
+                }}
+                type="password"
+                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="再次输入新密码"
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div
+              className="rounded-[16px] px-4 py-3"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+            >
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
+              <div className="mt-2 rounded-[14px]" style={{ background: 'rgba(0,0,0,0.10)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <ul className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                  {pwdChecks.map((r) => {
+                    const ok = r.touched ? r.ok : false;
+                    const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok ? 'ok' : 'bad';
+                    const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
+                    const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
+                    const statusText = state === 'ok' ? '通过' : state === 'bad' ? '未通过' : '待输入';
+                    const statusBg =
+                      state === 'ok'
+                        ? 'rgba(34,197,94,0.10)'
+                        : state === 'bad'
+                          ? 'rgba(239,68,68,0.10)'
+                          : 'rgba(255,255,255,0.03)';
+                    const statusBorder =
+                      state === 'ok'
+                        ? 'rgba(34,197,94,0.28)'
+                        : state === 'bad'
+                          ? 'rgba(239,68,68,0.28)'
+                          : 'rgba(255,255,255,0.10)';
+
+                    return (
+                      <li key={r.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Icon size={16} style={{ color }} />
+                          <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
+                            {r.label}
+                          </div>
+                        </div>
+                        <span
+                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
+                          style={{ color, background: statusBg, border: `1px solid ${statusBorder}` }}
+                        >
+                          {statusText}
+                        </span>
+                      </li>
+                    );
+                  })}
+
+                  {(() => {
+                    const state: 'todo' | 'ok' | 'bad' = pwd2.length === 0 ? 'todo' : pwdMatchOk ? 'ok' : 'bad';
+                    const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
+                    const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
+                    const statusText = state === 'ok' ? '通过' : state === 'bad' ? '未通过' : '待输入';
+                    const statusBg =
+                      state === 'ok'
+                        ? 'rgba(34,197,94,0.10)'
+                        : state === 'bad'
+                          ? 'rgba(239,68,68,0.10)'
+                          : 'rgba(255,255,255,0.03)';
+                    const statusBorder =
+                      state === 'ok'
+                        ? 'rgba(34,197,94,0.28)'
+                        : state === 'bad'
+                          ? 'rgba(239,68,68,0.28)'
+                          : 'rgba(255,255,255,0.10)';
+
+                    return (
+                      <li className="flex items-center justify-between gap-3 px-3 py-2.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Icon size={16} style={{ color }} />
+                          <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
+                            两次输入一致
+                          </div>
+                        </div>
+                        <span
+                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
+                          style={{ color, background: statusBg, border: `1px solid ${statusBorder}` }}
+                        >
+                          {statusText}
+                        </span>
+                      </li>
+                    );
+                  })()}
+                </ul>
+              </div>
+            </div>
+
+            {pwdSubmitError && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+              >
+                {pwdSubmitError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button variant="ghost" size="sm" onClick={() => setPwdOpen(false)} disabled={pwdSubmitting}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={submitChangePassword}
+                disabled={pwdSubmitting || !pwdAllOk || !pwdMatchOk}
+              >
+                {pwdSubmitting ? '保存中...' : '保存'}
+              </Button>
+            </div>
           </div>
         }
       />

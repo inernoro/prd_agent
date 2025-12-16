@@ -41,3 +41,14 @@ public class GroupMemberResponse
     public DateTime JoinedAt { get; set; }
     public bool IsOwner { get; set; }
 }
+
+/// <summary>
+/// 打开群组会话响应
+/// </summary>
+public class OpenGroupSessionResponse
+{
+    public string SessionId { get; set; } = string.Empty;
+    public string GroupId { get; set; } = string.Empty;
+    public string DocumentId { get; set; } = string.Empty;
+    public UserRole CurrentRole { get; set; }
+}

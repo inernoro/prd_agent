@@ -35,9 +35,17 @@ export default function GuidePanel() {
 
       if (response.success && response.data) {
         setGuideStep(response.data.currentStep);
-        if (response.data.status === 'stopped') {
+        const status = (response.data.status || '').toLowerCase();
+        if (status === 'stopped') {
           setMode('QA');
+          return;
         }
+
+        // 拉取当前步骤内容（SSE流式输出到消息区）
+        await invoke('get_guide_step_content', {
+          sessionId,
+          step: response.data.currentStep,
+        });
       }
     } catch (err) {
       console.error('Failed to control guide:', err);

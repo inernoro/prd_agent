@@ -60,6 +60,15 @@ public class UserRoleUpdateResponse
 }
 
 /// <summary>
+/// 用户密码更新响应
+/// </summary>
+public class UserPasswordUpdateResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
 /// 邀请码生成响应
 /// </summary>
 public class InviteCodeGenerateResponse

@@ -68,3 +68,13 @@ pub async fn register(
 
     client.post("/auth/register", &request).await
 }
+
+/// 前端持久化登录态恢复时，同步 token 到 Rust（用于后续 API/SSE 鉴权）
+#[command]
+pub async fn set_auth_token(token: Option<String>) -> Result<(), String> {
+    match token {
+        Some(t) if !t.trim().is_empty() => ApiClient::set_token(t),
+        _ => ApiClient::clear_token(),
+    }
+    Ok(())
+}

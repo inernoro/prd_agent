@@ -18,17 +18,25 @@ public class GroupsController : ControllerBase
     private readonly IGroupService _groupService;
     private readonly IDocumentService _documentService;
     private readonly IUserService _userService;
+    private readonly ISessionService _sessionService;
+    private readonly ICacheManager _cache;
     private readonly ILogger<GroupsController> _logger;
+
+    private static readonly TimeSpan GroupSessionExpiry = TimeSpan.FromMinutes(30);
 
     public GroupsController(
         IGroupService groupService,
         IDocumentService documentService,
         IUserService userService,
+        ISessionService sessionService,
+        ICacheManager cache,
         ILogger<GroupsController> logger)
     {
         _groupService = groupService;
         _documentService = documentService;
         _userService = userService;
+        _sessionService = sessionService;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -152,6 +160,76 @@ public class GroupsController : ControllerBase
             };
             return BadRequest(ApiResponse<object>.Fail(errorCode, ex.Message));
         }
+    }
+
+    /// <summary>
+    /// 打开群组会话（用于桌面端进入群组后进行问答/引导）
+    /// </summary>
+    [HttpPost("{groupId}/session")]
+    [ProducesResponseType(typeof(ApiResponse<OpenGroupSessionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> OpenGroupSession(string groupId, [FromBody] OpenGroupSessionRequest request)
+    {
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
+        var userId = User.FindFirst("sub")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        // 校验群组存在
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 校验成员关系（群主/成员均可）
+        var isMember = await _groupService.IsMemberAsync(groupId, userId);
+        if (!isMember)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+        }
+
+        // 复用同一用户在该群组的 session，避免重复创建
+        var cacheKey = $"group:session:{groupId}:{userId}";
+        var cachedSessionId = await _cache.GetAsync<string>(cacheKey);
+        if (!string.IsNullOrEmpty(cachedSessionId))
+        {
+            var cachedSession = await _sessionService.GetByIdAsync(cachedSessionId);
+            if (cachedSession != null)
+            {
+                await _cache.RefreshExpiryAsync(cacheKey, GroupSessionExpiry);
+
+                return Ok(ApiResponse<OpenGroupSessionResponse>.Ok(new OpenGroupSessionResponse
+                {
+                    SessionId = cachedSession.SessionId,
+                    GroupId = groupId,
+                    DocumentId = cachedSession.DocumentId,
+                    CurrentRole = cachedSession.CurrentRole
+                }));
+            }
+        }
+
+        // 创建新 session（绑定 groupId）
+        var session = await _sessionService.CreateAsync(group.PrdDocumentId, groupId);
+        session = await _sessionService.SwitchRoleAsync(session.SessionId, request.UserRole);
+
+        await _cache.SetAsync(cacheKey, session.SessionId, GroupSessionExpiry);
+
+        return Ok(ApiResponse<OpenGroupSessionResponse>.Ok(new OpenGroupSessionResponse
+        {
+            SessionId = session.SessionId,
+            GroupId = groupId,
+            DocumentId = session.DocumentId,
+            CurrentRole = session.CurrentRole
+        }));
     }
 
     /// <summary>

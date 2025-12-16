@@ -1,7 +1,13 @@
 // 默认走真实后端；需要离线演示/开发时可通过 VITE_USE_MOCK=true 切到 mock 实现
 
 import type { LoginContract } from '@/services/contracts/auth';
-import type { GetUsersContract, GenerateInviteCodesContract, UpdateUserRoleContract, UpdateUserStatusContract } from '@/services/contracts/adminUsers';
+import type {
+  GetUsersContract,
+  GenerateInviteCodesContract,
+  UpdateUserPasswordContract,
+  UpdateUserRoleContract,
+  UpdateUserStatusContract,
+} from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
 import type { CreateModelContract, DeleteModelContract, GetModelsContract, SetMainModelContract, TestModelContract, UpdateModelContract } from '@/services/contracts/models';
@@ -22,7 +28,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import { loginMock } from '@/services/mock/impl/auth';
-import { getUsersMock, generateInviteCodesMock, updateUserRoleMock, updateUserStatusMock } from '@/services/mock/impl/adminUsers';
+import { getUsersMock, generateInviteCodesMock, updateUserPasswordMock, updateUserRoleMock, updateUserStatusMock } from '@/services/mock/impl/adminUsers';
 import { getActiveGroupsMock, getGapStatsMock, getMessageTrendMock, getOverviewStatsMock, getTokenUsageMock } from '@/services/mock/impl/adminStats';
 import {
   deleteAdminGroupMock,
@@ -41,7 +47,7 @@ import { createModelMock, deleteModelMock, getModelsMock, setMainModelMock, test
 import { activateLLMConfigMock, createLLMConfigMock, deleteLLMConfigMock, getLLMConfigsMock, updateLLMConfigMock } from '@/services/mock/impl/llmConfigs';
 
 import { loginReal } from '@/services/real/auth';
-import { getUsersReal, generateInviteCodesReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
+import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { createModelReal, deleteModelReal, getModelsReal, setMainModelReal, testModelReal, updateModelReal } from '@/services/real/models';
@@ -78,6 +84,7 @@ export const login: LoginContract = useMock ? loginMock : loginReal;
 export const getUsers: GetUsersContract = withAuth(useMock ? getUsersMock : getUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(useMock ? updateUserRoleMock : updateUserRoleReal);
 export const updateUserStatus: UpdateUserStatusContract = withAuth(useMock ? updateUserStatusMock : updateUserStatusReal);
+export const updateUserPassword: UpdateUserPasswordContract = withAuth(useMock ? updateUserPasswordMock : updateUserPasswordReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(useMock ? generateInviteCodesMock : generateInviteCodesReal);
 
 export const getOverviewStats: GetOverviewStatsContract = withAuth(useMock ? getOverviewStatsMock : getOverviewStatsReal);

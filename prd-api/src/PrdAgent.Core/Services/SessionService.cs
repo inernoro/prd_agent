@@ -90,10 +90,17 @@ public class SessionService : ISessionService
     public async Task DeleteAsync(string sessionId)
     {
         var sessionKey = CacheKeys.ForSession(sessionId);
-        var historyKey = CacheKeys.ForChatHistory(sessionId);
-        
+
+        // 先读 session，避免删除群组共享历史（由 TTL 自然过期）
+        var session = await _cache.GetAsync<Session>(sessionKey);
+
         await _cache.RemoveAsync(sessionKey);
-        await _cache.RemoveAsync(historyKey);
+
+        if (session == null || string.IsNullOrEmpty(session.GroupId))
+        {
+            var historyKey = CacheKeys.ForChatHistory(sessionId);
+            await _cache.RemoveAsync(historyKey);
+        }
     }
 
     public async Task CleanupExpiredSessionsAsync()

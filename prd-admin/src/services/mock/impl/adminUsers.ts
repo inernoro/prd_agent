@@ -49,6 +49,15 @@ export async function updateUserStatusMock(userId: string, status: UserStatus): 
   return ok(true);
 }
 
+export async function updateUserPasswordMock(userId: string, password: string): Promise<ApiResponse<true>> {
+  await sleep(260);
+  const u = db.users.find((x) => x.userId === userId);
+  if (!u) return fail('SESSION_NOT_FOUND', '用户不存在');
+  if (!password || password.length < 8) return fail('WEAK_PASSWORD', '密码强度不足');
+  // mock 模式不存储密码，仅模拟成功
+  return ok(true);
+}
+
 function genCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let out = '';

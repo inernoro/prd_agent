@@ -70,6 +70,15 @@ pub struct GroupInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OpenGroupSessionResponse {
+    pub session_id: String,
+    pub group_id: String,
+    pub document_id: String,
+    pub current_role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SwitchRoleResponse {
     pub session_id: String,
     pub current_role: String,
@@ -81,6 +90,24 @@ pub struct GuideControlResponse {
     pub current_step: i32,
     pub total_steps: i32,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsage {
+    pub input: i32,
+    pub output: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageHistoryItem {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub view_role: Option<String>,
+    pub timestamp: String,
+    pub token_usage: Option<TokenUsage>,
 }
 
 #[allow(dead_code)]

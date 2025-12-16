@@ -1,4 +1,4 @@
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -90,13 +90,27 @@ pub struct ApiTestResult {
     pub server_status: Option<String>,
 }
 
+fn is_localhost_url(api_base_url: &str) -> bool {
+    let parsed = match Url::parse(api_base_url) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    match parsed.host_str() {
+        Some("localhost") | Some("127.0.0.1") | Some("::1") => true,
+        _ => false,
+    }
+}
+
 /// 测试 API 连接
 #[tauri::command]
 pub async fn test_api_connection(api_url: String) -> ApiTestResult {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap_or_default();
+    // 对 localhost 自动绕过系统/环境代理，避免被全局代理截胡导致 503
+    let mut builder = Client::builder().timeout(Duration::from_secs(10));
+    if is_localhost_url(api_url.trim()) {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().unwrap_or_default();
 
     let health_url = format!("{}/health", api_url.trim_end_matches('/'));
     let start = std::time::Instant::now();

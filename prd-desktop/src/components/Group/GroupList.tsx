@@ -1,26 +1,53 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Group, ApiResponse } from '../../types';
+import { ApiResponse, Document, Session, UserRole } from '../../types';
+import { useAuthStore } from '../../stores/authStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useGroupListStore } from '../../stores/groupListStore';
 
 export default function GroupList() {
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const { user } = useAuthStore();
+  const { groups, loading, loadGroups } = useGroupListStore();
+  const { activeGroupId, setActiveGroupId, setSession } = useSessionStore();
 
   useEffect(() => {
     loadGroups();
   }, []);
 
-  const loadGroups = async () => {
+  const openGroup = async (groupId: string) => {
+    setActiveGroupId(groupId);
+
+    // 默认用登录用户角色打开群组会话（DEV/QA/PM）；管理员按 PM 处理
+    const role: UserRole =
+      user?.role === 'DEV' || user?.role === 'QA' || user?.role === 'PM'
+        ? user.role
+        : 'PM';
+
     try {
-      const response = await invoke<ApiResponse<Group[]>>('get_groups');
-      if (response.success && response.data) {
-        setGroups(response.data);
-      }
+      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
+        'open_group_session',
+        { groupId, userRole: role }
+      );
+
+      if (!openResp.success || !openResp.data) return;
+
+      const docResp = await invoke<ApiResponse<Document>>('get_document', {
+        documentId: openResp.data.documentId,
+      });
+
+      if (!docResp.success || !docResp.data) return;
+
+      const session: Session = {
+        sessionId: openResp.data.sessionId,
+        groupId: openResp.data.groupId,
+        documentId: openResp.data.documentId,
+        currentRole: (openResp.data.currentRole as UserRole) || role,
+        mode: 'QA',
+      };
+
+      setSession(session, docResp.data);
     } catch (err) {
-      console.error('Failed to load groups:', err);
-    } finally {
-      setLoading(false);
+      console.error('Failed to open group session:', err);
     }
   };
 
@@ -45,7 +72,7 @@ export default function GroupList() {
       {groups.map((group) => (
         <button
           key={group.groupId}
-          onClick={() => setActiveGroupId(group.groupId)}
+          onClick={() => openGroup(group.groupId)}
           className={`w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${
             activeGroupId === group.groupId ? 'bg-primary-50 dark:bg-primary-900/20 border-l-2 border-primary-500' : ''
           }`}

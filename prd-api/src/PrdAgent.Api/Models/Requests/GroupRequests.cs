@@ -67,3 +67,19 @@ public class GroupMessageRequest
         return (true, null);
     }
 }
+
+/// <summary>
+/// 打开群组会话请求
+/// </summary>
+public class OpenGroupSessionRequest
+{
+    /// <summary>当前用户角色</summary>
+    public UserRole UserRole { get; set; } = UserRole.DEV;
+
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (UserRole is not (UserRole.PM or UserRole.DEV or UserRole.QA or UserRole.ADMIN))
+            return (false, "无效的角色");
+        return (true, null);
+    }
+}

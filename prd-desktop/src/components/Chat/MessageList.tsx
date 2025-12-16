@@ -3,12 +3,12 @@ import { useMessageStore } from '../../stores/messageStore';
 import ReactMarkdown from 'react-markdown';
 
 export default function MessageList() {
-  const { messages, streamingContent, isStreaming } = useMessageStore();
+  const { messages, isStreaming, streamingMessageId } = useMessageStore();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent]);
+  }, [messages, isStreaming, streamingMessageId]);
 
   return (
     <div className="h-full overflow-y-auto p-4 space-y-4">
@@ -31,6 +31,10 @@ export default function MessageList() {
                 <ReactMarkdown>{message.content}</ReactMarkdown>
               </div>
             )}
+
+            {isStreaming && streamingMessageId === message.id && (
+              <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />
+            )}
             
             {message.senderName && (
               <p className="text-xs opacity-70 mt-2">
@@ -40,17 +44,6 @@ export default function MessageList() {
           </div>
         </div>
       ))}
-
-      {isStreaming && streamingContent && (
-        <div className="flex justify-start">
-          <div className="max-w-[80%] p-4 rounded-2xl rounded-bl-md bg-surface-light dark:bg-surface-dark border border-border">
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown>{streamingContent}</ReactMarkdown>
-            </div>
-            <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />
-          </div>
-        </div>
-      )}
 
       {messages.length === 0 && !isStreaming && (
         <div className="h-full flex items-center justify-center text-text-secondary">

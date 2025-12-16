@@ -12,5 +12,6 @@ export type GetUsersParams = {
 export type GetUsersContract = (params: GetUsersParams) => Promise<ApiResponse<PagedResult<AdminUser>>>;
 export type UpdateUserRoleContract = (userId: string, role: UserRole) => Promise<ApiResponse<true>>;
 export type UpdateUserStatusContract = (userId: string, status: UserStatus) => Promise<ApiResponse<true>>;
+export type UpdateUserPasswordContract = (userId: string, password: string) => Promise<ApiResponse<true>>;
 
 export type GenerateInviteCodesContract = (count: number) => Promise<ApiResponse<{ codes: string[] }>>;
