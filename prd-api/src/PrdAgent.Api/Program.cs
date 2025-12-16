@@ -238,6 +238,12 @@ builder.Services.AddScoped<IContentGapRepository>(sp =>
     return new ContentGapRepository(db.ContentGaps);
 });
 
+builder.Services.AddScoped<IMessageRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new MessageRepository(db.Messages);
+});
+
 // 注册登录尝试服务
 builder.Services.AddSingleton<ILoginAttemptService>(sp =>
 {
@@ -287,7 +293,8 @@ builder.Services.AddScoped<IChatService>(sp =>
     var cache = sp.GetRequiredService<ICacheManager>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var userService = sp.GetRequiredService<IUserService>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, userService);
+    var messageRepo = sp.GetRequiredService<IMessageRepository>();
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, userService, messageRepo);
 });
 
 builder.Services.AddScoped<IGuideService>(sp =>

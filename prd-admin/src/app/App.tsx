@@ -6,6 +6,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import UsersPage from '@/pages/UsersPage';
 import ModelManagePage from '@/pages/ModelManagePage';
 import StatsPage from '@/pages/StatsPage';
+import GroupsPage from '@/pages/GroupsPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -49,6 +50,7 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="groups" element={<GroupsPage />} />
         <Route path="model-manage" element={<ModelManagePage />} />
         <Route path="stats" element={<StatsPage />} />
       </Route>

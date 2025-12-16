@@ -6,19 +6,58 @@ import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContr
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
 import type { CreateModelContract, DeleteModelContract, GetModelsContract, SetMainModelContract, TestModelContract, UpdateModelContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
+import type {
+  DeleteAdminGroupContract,
+  GenerateAdminGapSummaryContract,
+  GetAdminGroupGapsContract,
+  GetAdminGroupMembersContract,
+  GetAdminGroupMessagesContract,
+  GetAdminGroupsContract,
+  RegenerateAdminGroupInviteContract,
+  RemoveAdminGroupMemberContract,
+  UpdateAdminGapStatusContract,
+  UpdateAdminGroupContract,
+} from '@/services/contracts/adminGroups';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import { loginMock } from '@/services/mock/impl/auth';
 import { getUsersMock, generateInviteCodesMock, updateUserRoleMock, updateUserStatusMock } from '@/services/mock/impl/adminUsers';
 import { getActiveGroupsMock, getGapStatsMock, getMessageTrendMock, getOverviewStatsMock, getTokenUsageMock } from '@/services/mock/impl/adminStats';
+import {
+  deleteAdminGroupMock,
+  generateAdminGapSummaryMock,
+  getAdminGroupGapsMock,
+  getAdminGroupMembersMock,
+  getAdminGroupMessagesMock,
+  getAdminGroupsMock,
+  regenerateAdminGroupInviteMock,
+  removeAdminGroupMemberMock,
+  updateAdminGapStatusMock,
+  updateAdminGroupMock,
+} from '@/services/mock/impl/adminGroups';
 import { createPlatformMock, deletePlatformMock, getPlatformsMock, updatePlatformMock } from '@/services/mock/impl/platforms';
 import { createModelMock, deleteModelMock, getModelsMock, setMainModelMock, testModelMock, updateModelMock } from '@/services/mock/impl/models';
 import { activateLLMConfigMock, createLLMConfigMock, deleteLLMConfigMock, getLLMConfigsMock, updateLLMConfigMock } from '@/services/mock/impl/llmConfigs';
 
 import { loginReal } from '@/services/real/auth';
+import { getUsersReal, generateInviteCodesReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
+import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { createModelReal, deleteModelReal, getModelsReal, setMainModelReal, testModelReal, updateModelReal } from '@/services/real/models';
+import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
+import {
+  deleteAdminGroupReal,
+  generateAdminGapSummaryReal,
+  getAdminGroupGapsReal,
+  getAdminGroupMembersReal,
+  getAdminGroupMessagesReal,
+  getAdminGroupsReal,
+  regenerateAdminGroupInviteReal,
+  removeAdminGroupMemberReal,
+  updateAdminGapStatusReal,
+  updateAdminGroupReal,
+} from '@/services/real/adminGroups';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -32,18 +71,34 @@ function withAuth<TArgs extends unknown[], TResult>(
 
 const useMock = ['1', 'true', 'yes'].includes(((import.meta.env.VITE_USE_MOCK as string | undefined) ?? '').toLowerCase());
 
+export const isMockMode = useMock;
+
 export const login: LoginContract = useMock ? loginMock : loginReal;
 
-export const getUsers: GetUsersContract = withAuth(getUsersMock);
-export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleMock);
-export const updateUserStatus: UpdateUserStatusContract = withAuth(updateUserStatusMock);
-export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesMock);
+export const getUsers: GetUsersContract = withAuth(useMock ? getUsersMock : getUsersReal);
+export const updateUserRole: UpdateUserRoleContract = withAuth(useMock ? updateUserRoleMock : updateUserRoleReal);
+export const updateUserStatus: UpdateUserStatusContract = withAuth(useMock ? updateUserStatusMock : updateUserStatusReal);
+export const generateInviteCodes: GenerateInviteCodesContract = withAuth(useMock ? generateInviteCodesMock : generateInviteCodesReal);
 
-export const getOverviewStats: GetOverviewStatsContract = withAuth(getOverviewStatsMock);
-export const getTokenUsage: GetTokenUsageContract = withAuth(getTokenUsageMock);
-export const getMessageTrend: GetMessageTrendContract = withAuth(getMessageTrendMock);
-export const getActiveGroups: GetActiveGroupsContract = withAuth(getActiveGroupsMock);
-export const getGapStats: GetGapStatsContract = withAuth(getGapStatsMock);
+export const getOverviewStats: GetOverviewStatsContract = withAuth(useMock ? getOverviewStatsMock : getOverviewStatsReal);
+export const getTokenUsage: GetTokenUsageContract = withAuth(useMock ? getTokenUsageMock : getTokenUsageReal);
+export const getMessageTrend: GetMessageTrendContract = withAuth(useMock ? getMessageTrendMock : getMessageTrendReal);
+export const getActiveGroups: GetActiveGroupsContract = withAuth(useMock ? getActiveGroupsMock : getActiveGroupsReal);
+export const getGapStats: GetGapStatsContract = withAuth(useMock ? getGapStatsMock : getGapStatsReal);
+
+export const getAdminGroups: GetAdminGroupsContract = withAuth(useMock ? getAdminGroupsMock : getAdminGroupsReal);
+export const getAdminGroupMembers: GetAdminGroupMembersContract = withAuth(useMock ? getAdminGroupMembersMock : getAdminGroupMembersReal);
+export const removeAdminGroupMember: RemoveAdminGroupMemberContract = withAuth(useMock ? removeAdminGroupMemberMock : removeAdminGroupMemberReal);
+export const regenerateAdminGroupInvite: RegenerateAdminGroupInviteContract = withAuth(useMock ? regenerateAdminGroupInviteMock : regenerateAdminGroupInviteReal);
+export const updateAdminGroup: UpdateAdminGroupContract = withAuth(useMock ? updateAdminGroupMock : updateAdminGroupReal);
+export const deleteAdminGroup: DeleteAdminGroupContract = withAuth(useMock ? deleteAdminGroupMock : deleteAdminGroupReal);
+
+// gaps 复用用户侧接口（/api/v1/groups/{groupId}/gaps），由后端做权限控制；后台仅聚合展示+状态变更
+export const getAdminGroupGaps: GetAdminGroupGapsContract = withAuth(useMock ? getAdminGroupGapsMock : getAdminGroupGapsReal);
+export const updateAdminGapStatus: UpdateAdminGapStatusContract = withAuth(useMock ? updateAdminGapStatusMock : updateAdminGapStatusReal);
+export const generateAdminGapSummary: GenerateAdminGapSummaryContract = withAuth(useMock ? generateAdminGapSummaryMock : generateAdminGapSummaryReal);
+
+export const getAdminGroupMessages: GetAdminGroupMessagesContract = withAuth(useMock ? getAdminGroupMessagesMock : getAdminGroupMessagesReal);
 
 export const getPlatforms: GetPlatformsContract = withAuth(useMock ? getPlatformsMock : getPlatformsReal);
 export const createPlatform: CreatePlatformContract = withAuth(useMock ? createPlatformMock : createPlatformReal);
@@ -57,8 +112,8 @@ export const deleteModel: DeleteModelContract = withAuth(useMock ? deleteModelMo
 export const testModel: TestModelContract = withAuth(useMock ? testModelMock : testModelReal);
 export const setMainModel: SetMainModelContract = withAuth(useMock ? setMainModelMock : setMainModelReal);
 
-export const getLLMConfigs: GetLLMConfigsContract = withAuth(getLLMConfigsMock);
-export const createLLMConfig: CreateLLMConfigContract = withAuth(createLLMConfigMock);
-export const updateLLMConfig: UpdateLLMConfigContract = withAuth(updateLLMConfigMock);
-export const deleteLLMConfig: DeleteLLMConfigContract = withAuth(deleteLLMConfigMock);
-export const activateLLMConfig: ActivateLLMConfigContract = withAuth(activateLLMConfigMock);
+export const getLLMConfigs: GetLLMConfigsContract = withAuth(useMock ? getLLMConfigsMock : getLLMConfigsReal);
+export const createLLMConfig: CreateLLMConfigContract = withAuth(useMock ? createLLMConfigMock : createLLMConfigReal);
+export const updateLLMConfig: UpdateLLMConfigContract = withAuth(useMock ? updateLLMConfigMock : updateLLMConfigReal);
+export const deleteLLMConfig: DeleteLLMConfigContract = withAuth(useMock ? deleteLLMConfigMock : deleteLLMConfigReal);
+export const activateLLMConfig: ActivateLLMConfigContract = withAuth(useMock ? activateLLMConfigMock : activateLLMConfigReal);

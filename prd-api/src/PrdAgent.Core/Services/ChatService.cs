@@ -15,6 +15,7 @@ public class ChatService : IChatService
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
     private readonly IUserService _userService;
+    private readonly IMessageRepository _messageRepository;
 
     public ChatService(
         ILLMClient llmClient,
@@ -22,7 +23,8 @@ public class ChatService : IChatService
         IDocumentService documentService,
         ICacheManager cache,
         IPromptManager promptManager,
-        IUserService userService)
+        IUserService userService,
+        IMessageRepository messageRepository)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
@@ -30,6 +32,7 @@ public class ChatService : IChatService
         _cache = cache;
         _promptManager = promptManager;
         _userService = userService;
+        _messageRepository = messageRepository;
     }
 
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
@@ -172,6 +175,10 @@ public class ChatService : IChatService
 
         // 更新对话历史缓存
         await SaveMessagesToHistoryAsync(sessionId, userMessage, assistantMessage);
+
+        // 写入 MongoDB（用于后台追溯与统计）
+        // 注意：日志中不得打印消息原文；仓储层不记录日志，这里也不记录 content
+        await _messageRepository.InsertManyAsync(new[] { userMessage, assistantMessage });
 
         // 刷新会话活跃时间
         await _sessionService.RefreshActivityAsync(sessionId);

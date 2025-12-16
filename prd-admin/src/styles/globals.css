@@ -14,3 +14,126 @@
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: content-box; }
+
+/* 主模型选中：轻量瞬时动效（行闪一下 + 星标弹一下） */
+@keyframes mainRowSweepRtl {
+  0% { transform: translateX(110%); opacity: 0; }
+  12% { opacity: 1; }
+  65% { opacity: 1; }
+  100% { transform: translateX(-110%); opacity: 0; }
+}
+
+/* 扫光到一半后才开始“染色”文字，制造变金的错觉 */
+@keyframes mainRowTintKickIn {
+  0% { opacity: 0; }
+  49% { opacity: 0; }
+  50% { opacity: 0.92; }
+  82% { opacity: 0.92; }
+  100% { opacity: 0; }
+}
+
+/* 文字：在扫光过半（50% ≈ 260ms）后变金，再恢复 */
+@keyframes mainRowTextGold {
+  0% { color: var(--main-row-text-from); }
+  49% { color: var(--main-row-text-from); }
+  50% { color: rgba(250, 204, 21, 0.95); }
+  82% { color: rgba(250, 204, 21, 0.95); }
+  100% { color: var(--main-row-text-from); }
+}
+
+@keyframes mainStarPop {
+  0% { transform: scale(0.88) rotate(-10deg); filter: drop-shadow(0 0 0 rgba(250, 204, 21, 0)); }
+  55% { transform: scale(1.18) rotate(0deg); filter: drop-shadow(0 6px 10px rgba(250, 204, 21, 0.22)); }
+  100% { transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 0 rgba(250, 204, 21, 0)); }
+}
+
+.main-row-flash {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.main-row-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 一条窄一些的黄光带，从右往左扫过 */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(250, 204, 21, 0.00) 35%,
+    rgba(250, 204, 21, 0.18) 50%,
+    rgba(250, 204, 21, 0.10) 58%,
+    rgba(250, 204, 21, 0.00) 70%,
+    transparent 100%
+  );
+  filter: blur(0.2px);
+  transform: translateX(110%);
+  animation: mainRowSweepRtl 520ms ease-out 1;
+}
+
+.main-row-flash::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 叠在内容之上，用混合模式把文字“染成金色” */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(250, 204, 21, 0.00) 35%,
+    rgba(250, 204, 21, 0.90) 50%,
+    rgba(250, 204, 21, 0.55) 58%,
+    rgba(250, 204, 21, 0.00) 70%,
+    transparent 100%
+  );
+  mix-blend-mode: color;
+  transform: translateX(110%);
+  animation:
+    mainRowSweepRtl 520ms ease-out 1,
+    mainRowTintKickIn 520ms ease-out 1;
+}
+
+/* 针对本行里用 inline style 指定颜色的文本，附加一个颜色动画（动画层级可覆盖 inline style） */
+.main-row-flash [style*="var(--text-primary)"] { --main-row-text-from: var(--text-primary); animation: mainRowTextGold 520ms ease-out 1; }
+.main-row-flash [style*="var(--text-secondary)"] { --main-row-text-from: var(--text-secondary); animation: mainRowTextGold 520ms ease-out 1; }
+.main-row-flash [style*="var(--text-muted)"] { --main-row-text-from: var(--text-muted); animation: mainRowTextGold 520ms ease-out 1; }
+
+.main-star-pop {
+  transform-origin: 50% 50%;
+  animation: mainStarPop 420ms cubic-bezier(0.2, 0.9, 0.2, 1) 1;
+}
+
+/* 测试按钮动效 */
+@keyframes testBtnOkPop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.08); }
+  60% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
+.test-btn-ok {
+  animation: testBtnOkPop 320ms ease-out 1;
+}
+
+.test-btn-loading {
+  position: relative;
+  overflow: hidden;
+}
+
+.test-btn-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.00) 35%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.00) 65%,
+    transparent 100%
+  );
+  animation: mainRowSweepRtl 1.1s ease-in-out infinite;
+}

@@ -19,13 +19,22 @@ public class GroupService : IGroupService
         _memberRepository = memberRepository;
     }
 
-    public async Task<Group> CreateAsync(string ownerId, string prdDocumentId, string? groupName = null)
+    public async Task<Group> CreateAsync(
+        string ownerId,
+        string prdDocumentId,
+        string? groupName = null,
+        string? prdTitleSnapshot = null,
+        int? prdTokenEstimateSnapshot = null,
+        int? prdCharCountSnapshot = null)
     {
         var group = new Group
         {
             OwnerId = ownerId,
             PrdDocumentId = prdDocumentId,
-            GroupName = groupName ?? "新建群组"
+            GroupName = groupName ?? "新建群组",
+            PrdTitleSnapshot = prdTitleSnapshot,
+            PrdTokenEstimateSnapshot = prdTokenEstimateSnapshot,
+            PrdCharCountSnapshot = prdCharCountSnapshot
         };
 
         await _groupRepository.InsertAsync(group);

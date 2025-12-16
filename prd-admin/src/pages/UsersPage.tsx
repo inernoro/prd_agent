@@ -3,7 +3,7 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, generateInviteCodes, updateUserRole, updateUserStatus } from '@/services';
+import { getUsers, generateInviteCodes, updateUserRole, updateUserStatus, isMockMode } from '@/services';
 
 type UserRow = {
   userId: string;
@@ -124,7 +124,7 @@ export default function UsersPage() {
             <option value="Disabled">禁用</option>
           </select>
 
-          <Badge variant="subtle">mock</Badge>
+          {isMockMode ? <Badge variant="subtle">mock</Badge> : null}
         </div>
 
         <div className="mt-5 overflow-hidden rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>

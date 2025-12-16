@@ -8,7 +8,13 @@ namespace PrdAgent.Core.Interfaces;
 public interface IGroupService
 {
     /// <summary>创建群组</summary>
-    Task<Group> CreateAsync(string ownerId, string prdDocumentId, string? groupName = null);
+    Task<Group> CreateAsync(
+        string ownerId,
+        string prdDocumentId,
+        string? groupName = null,
+        string? prdTitleSnapshot = null,
+        int? prdTokenEstimateSnapshot = null,
+        int? prdCharCountSnapshot = null);
     
     /// <summary>根据ID获取群组</summary>
     Task<Group?> GetByIdAsync(string groupId);

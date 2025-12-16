@@ -80,6 +80,8 @@ export default function ModelManagePage() {
   const [modelForm, setModelForm] = useState<ModelForm>(defaultModelForm);
 
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ modelId: string; ok: boolean; msg?: string } | null>(null);
+  const [mainJustSetId, setMainJustSetId] = useState<string | null>(null);
   const [platformTogglingId, setPlatformTogglingId] = useState<string | null>(null);
   const [apiUrlDraft, setApiUrlDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
@@ -97,8 +99,8 @@ export default function ModelManagePage() {
   >('all');
   const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const [p, m] = await Promise.all([getPlatforms(), getModels()]);
       if (p.success) {
@@ -107,7 +109,7 @@ export default function ModelManagePage() {
       }
       if (m.success) setModels(m.data);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   };
 
@@ -115,6 +117,13 @@ export default function ModelManagePage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 主模型选中后的瞬时动效（行闪一下 + 星星弹一下）
+  useEffect(() => {
+    if (!mainJustSetId) return;
+    const t = window.setTimeout(() => setMainJustSetId(null), 650);
+    return () => window.clearTimeout(t);
+  }, [mainJustSetId]);
 
   const filteredPlatforms = useMemo(() => {
     const s = platformSearch.trim().toLowerCase();
@@ -524,18 +533,39 @@ export default function ModelManagePage() {
 
   const onSetMain = async (m: Model) => {
     if (m.isMain) return;
+    // 先本地即时更新，避免主区域因全局 loading 闪烁“加载中”
+    setModels((prev) =>
+      prev.map((x) => (x.platformId === m.platformId ? { ...x, isMain: x.id === m.id } : x))
+    );
+    setMainJustSetId(m.id);
+
     const res = await setMainModel(m.id);
-    if (!res.success) return;
-    await load();
+    if (!res.success) {
+      // 失败则静默回源校准
+      await load({ silent: true });
+      return;
+    }
+    // 成功后静默刷新，保持与后端一致
+    await load({ silent: true });
   };
 
   const onTest = async (m: Model) => {
     setTestingModelId(m.id);
+    setTestResult(null);
     try {
-      await testModel(m.id);
+      const res = await testModel(m.id);
+      if (res.success && res.data?.success) {
+        setTestResult({ modelId: m.id, ok: true, msg: `${res.data.duration}ms` });
+      } else {
+        const errMsg = res.data?.error ?? res.error?.message ?? '测试失败';
+        setTestResult({ modelId: m.id, ok: false, msg: errMsg });
+      }
+    } catch {
+      setTestResult({ modelId: m.id, ok: false, msg: '网络错误' });
     } finally {
       setTestingModelId(null);
-      await load();
+      // 自动清除测试结果（让 OK/失败 提示保持一小会儿）
+      window.setTimeout(() => setTestResult((cur) => (cur?.modelId === m.id ? null : cur)), 1800);
     }
   };
 
@@ -873,7 +903,13 @@ export default function ModelManagePage() {
 
                             <div className="divide-y divide-white/30">
                               {ms.map((m) => (
-                                <div key={m.id} className="px-4 py-3 flex items-center justify-between hover:bg-white/2">
+                                <div
+                                  key={m.id}
+                                  className={[
+                                    'px-4 py-3 flex items-center justify-between hover:bg-white/2',
+                                    mainJustSetId === m.id ? 'main-row-flash' : '',
+                                  ].join(' ')}
+                                >
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2 min-w-0">
                                       <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
@@ -889,12 +925,49 @@ export default function ModelManagePage() {
                                       size="sm"
                                       onClick={() => onTest(m)}
                                       disabled={testingModelId === m.id}
+                                      className={[
+                                        testingModelId === m.id ? 'test-btn-loading' : '',
+                                        testResult?.modelId === m.id && testResult.ok ? 'test-btn-ok' : '',
+                                      ].filter(Boolean).join(' ')}
+                                      style={
+                                        testResult?.modelId === m.id
+                                          ? testResult.ok
+                                            ? { background: 'rgba(34,197,94,0.18)', borderColor: 'rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
+                                            : { background: 'rgba(239,68,68,0.14)', borderColor: 'rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
+                                          : undefined
+                                      }
+                                      title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : undefined}
                                     >
-                                      <Link2 size={16} />
-                                      {testingModelId === m.id ? '测试中' : '测试'}
+                                      {testingModelId === m.id ? (
+                                        <RefreshCw size={16} className="animate-spin" />
+                                      ) : testResult?.modelId === m.id ? (
+                                        testResult.ok ? <Check size={16} /> : <Minus size={16} />
+                                      ) : (
+                                        <Link2 size={16} />
+                                      )}
+                                      {testingModelId === m.id
+                                        ? '测试中'
+                                        : testResult?.modelId === m.id
+                                          ? testResult.ok
+                                            ? 'OK'
+                                            : '失败'
+                                          : '测试'}
                                     </Button>
-                                    <Button variant={m.isMain ? 'secondary' : 'ghost'} size="sm" onClick={() => onSetMain(m)} disabled={m.isMain}>
-                                      <Star size={16} />
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => onSetMain(m)}
+                                      disabled={m.isMain}
+                                      aria-label={m.isMain ? '主模型' : '设为主模型'}
+                                      title={m.isMain ? '主模型' : '设为主模型'}
+                                      className={m.isMain ? 'disabled:opacity-100' : ''}
+                                      style={m.isMain ? { color: 'rgba(250,204,21,0.95)' } : { color: 'var(--text-secondary)' }}
+                                    >
+                                      <Star
+                                        size={16}
+                                        fill={m.isMain ? 'currentColor' : 'none'}
+                                        className={mainJustSetId === m.id ? 'main-star-pop' : ''}
+                                      />
                                     </Button>
                                     <Button variant="ghost" size="sm" onClick={() => openEditModel(m)}>
                                       <Pencil size={16} />
@@ -1067,8 +1140,9 @@ export default function ModelManagePage() {
         title={`${selectedPlatform?.name ?? ''}模型`}
         description="从平台可用模型列表中一键添加/移除"
         maxWidth={600}
+        contentStyle={{ height: 'min(80vh, 720px)' }}
         content={
-          <div className="space-y-4">
+          <div className="h-full min-h-0 flex flex-col space-y-4">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Search
@@ -1149,7 +1223,7 @@ export default function ModelManagePage() {
               ) : groupedAvailable.length === 0 ? (
                 <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>暂无可用模型</div>
               ) : (
-                <div className="max-h-[58vh] overflow-auto">
+                <div className="flex-1 min-h-0 overflow-auto">
                   <div className="space-y-2 p-2">
                     {groupedAvailable.map(([g, ms]) => (
                       <details

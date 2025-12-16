@@ -70,9 +70,12 @@ public class GroupsController : ControllerBase
         }
 
         var group = await _groupService.CreateAsync(
-            userId,
-            request.PrdDocumentId,
-            request.GroupName ?? document.Title);
+            ownerId: userId,
+            prdDocumentId: request.PrdDocumentId,
+            groupName: request.GroupName ?? document.Title,
+            prdTitleSnapshot: document.Title,
+            prdTokenEstimateSnapshot: document.TokenEstimate,
+            prdCharCountSnapshot: document.CharCount);
 
         var members = await _groupService.GetMembersAsync(group.GroupId);
 

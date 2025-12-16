@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, BarChart3, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, BarChart3, LogOut, PanelLeftClose, PanelLeftOpen, Users2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
@@ -17,6 +17,7 @@ export default function AppShell() {
     () => [
       { key: '/', label: '仪表盘', icon: <LayoutDashboard size={18} /> },
       { key: '/users', label: '用户管理', icon: <Users size={18} /> },
+      { key: '/groups', label: '群组管理', icon: <Users2 size={18} /> },
       { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} /> },
       { key: '/stats', label: '统计', icon: <BarChart3 size={18} /> },
     ],

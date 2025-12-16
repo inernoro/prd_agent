@@ -23,7 +23,11 @@ public class RequestResponseLoggingMiddleware
     private static readonly HashSet<string> SkipBodyPaths = new(StringComparer.OrdinalIgnoreCase)
     {
         "/health",
-        "/swagger"
+        "/swagger",
+        // 安全约束：不记录用户原文/PRD原文。以下路径可能包含大段敏感内容，默认跳过 body。
+        "/api/v1/documents",
+        "/api/v1/sessions",
+        "/api/v1/groups"
     };
 
     public RequestResponseLoggingMiddleware(RequestDelegate next)

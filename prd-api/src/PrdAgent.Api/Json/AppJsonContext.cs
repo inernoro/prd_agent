@@ -38,6 +38,11 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<UserStatusUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserRoleUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<InviteCodeGenerateResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminGroupListItem>>))]
+[JsonSerializable(typeof(ApiResponse<AdminGroupListItem>))]
+[JsonSerializable(typeof(ApiResponse<List<AdminGroupMemberDto>>))]
+[JsonSerializable(typeof(ApiResponse<AdminRegenerateInviteResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminMessageDto>>))]
 [JsonSerializable(typeof(ApiResponse<HealthCheckResponse>))]
 // 流式事件类型
 [JsonSerializable(typeof(ChatStreamEvent))]

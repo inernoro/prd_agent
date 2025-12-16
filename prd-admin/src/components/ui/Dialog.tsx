@@ -32,7 +32,7 @@ export function Dialog({
         />
         <DialogPrimitive.Content
           className={[
-            'fixed left-1/2 top-1/2 w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[22px] p-6',
+            'fixed left-1/2 top-1/2 w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[22px] p-6 flex flex-col',
             contentClassName ?? '',
           ].join(' ')}
           style={{
@@ -63,7 +63,7 @@ export function Dialog({
             </DialogPrimitive.Close>
           </div>
 
-          <div className="mt-5">{content}</div>
+          <div className="mt-5 flex-1 min-h-0">{content}</div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
