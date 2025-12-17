@@ -127,7 +127,7 @@ export default function AppShell() {
         </aside>
 
         <main
-          className="relative h-full w-full overflow-auto"
+          className="relative h-full w-full overflow-auto flex flex-col"
           style={{ background: 'var(--bg-base)' }}
         >
           {/* 主内容区背景：满屏暗角 + 轻微渐变（不随 max-width 截断） */}
@@ -138,8 +138,10 @@ export default function AppShell() {
                 'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.08) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.035) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.025) 0%, transparent 70%)',
             }}
           />
-          <div className="relative mx-auto w-full max-w-[1440px] px-5 py-5">
-            <Outlet />
+          <div className="relative mx-auto w-full max-w-[1440px] px-5 py-5 flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0">
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>

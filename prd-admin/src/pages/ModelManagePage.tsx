@@ -650,7 +650,7 @@ export default function ModelManagePage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="h-full min-h-0 flex flex-col gap-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>模型管理</div>
@@ -702,7 +702,7 @@ export default function ModelManagePage() {
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]" style={{ minHeight: 720 }}>
+      <div className="grid gap-4 lg:grid-cols-[320px_1fr] flex-1 min-h-0">
         {/* 左侧：平台列表（导航风格） */}
         <Card className="p-0 overflow-hidden flex flex-col">
           <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
