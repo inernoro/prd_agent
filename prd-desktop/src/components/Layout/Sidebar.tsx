@@ -246,21 +246,43 @@ export default function Sidebar() {
   }, [openBindPrdPicker]);
 
   return (
-    <aside className={`${isCollapsed ? 'w-14' : 'w-64'} border-r border-border bg-surface-light dark:bg-surface-dark transition-all duration-200`}>
+    <aside className={`${isCollapsed ? 'w-14' : 'w-56'} flex-shrink-0 border-r border-border bg-surface-light dark:bg-surface-dark transition-all duration-200`}>
       <div className="h-full flex flex-col">
-        {!isCollapsed && (
-          <>
-            <div className="p-4 border-b border-border">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-medium text-text-secondary">群组</h2>
+        {/* 头部：群组标题 + 操作按钮 */}
+        <div className="p-3 border-b border-border flex items-center justify-between">
+          {!isCollapsed && (
+            <>
+              <h2 className="text-sm font-medium text-text-secondary">群组</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCollapsed(true)}
+                  title="折叠侧边栏"
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30"
+                  style={{ outline: 'none' }}
+                  onFocus={(e) => {
+                    // 强制清除 WebView 默认焦点 outline（该环境下仅靠 class 不稳定）
+                    (e.currentTarget as HTMLButtonElement).style.outline = 'none';
+                  }}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
                       title="群组操作"
-                      className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-border text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                      className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30"
+                      style={{ outline: 'none' }}
+                      onFocus={(e) => {
+                        // 强制清除 WebView 默认焦点 outline（该环境下仅靠 class 不稳定）
+                        (e.currentTarget as HTMLButtonElement).style.outline = 'none';
+                      }}
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                       </svg>
                     </button>
@@ -269,16 +291,16 @@ export default function Sidebar() {
                     <DropdownMenu.Content
                       sideOffset={6}
                       align="end"
-                      className="z-50 min-w-[160px] rounded-md border border-border bg-surface-light dark:bg-surface-dark shadow-lg p-1"
+                      className="z-50 min-w-[140px] rounded-md border border-border bg-surface-light dark:bg-surface-dark shadow-lg p-1"
                     >
                       <DropdownMenu.Item
-                        className="px-2 py-2 text-sm rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 outline-none"
+                        className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 outline-none"
                         onSelect={handleCreateGroup}
                       >
                         创建群组
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
-                        className="px-2 py-2 text-sm rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 outline-none"
+                        className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 outline-none"
                         onSelect={handleJoinGroup}
                       >
                         加入群组
@@ -287,18 +309,27 @@ export default function Sidebar() {
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <GroupList />
-            </div>
-            <div className="p-3 border-t border-border space-y-2">
-              <button
-                onClick={openBindPrdPicker}
-                className="w-full py-2 text-sm text-text-secondary hover:text-primary-500 flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded"
-              >
-                上传 PRD 并绑定到当前群组
-              </button>
-            </div>
+            </>
+          )}
+          {isCollapsed && (
+            <button
+              onClick={() => setIsCollapsed(false)}
+              className="mx-auto p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+              title="展开侧边栏"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+        </div>
+
+        {/* 群组列表 */}
+        {!isCollapsed && (
+          <div className="flex-1 overflow-y-auto">
+            <GroupList />
+          </div>
+        )}
 
             {/* 加入群组弹层 */}
             {joinOpen && (
@@ -387,24 +418,8 @@ export default function Sidebar() {
                 </div>
               </div>
             )}
-          </>
-        )}
-        
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-2 m-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 self-end"
-        >
-          <svg 
-            className={`w-4 h-4 transition-transform ${isCollapsed ? 'rotate-180' : ''}`} 
-            fill="none" 
-            viewBox="0 0 24 24" 
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
 
-        {/* 即使侧边栏收起，也要能弹出文件选择（用于顶部“待上传”等触发） */}
+        {/* 即使侧边栏收起，也要能弹出文件选择（用于顶部"待上传"等触发） */}
         <input
           ref={fileInputRef}
           type="file"

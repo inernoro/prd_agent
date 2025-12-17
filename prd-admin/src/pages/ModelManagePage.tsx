@@ -76,6 +76,12 @@ export default function ModelManagePage() {
   const [platformDialogOpen, setPlatformDialogOpen] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
   const [platformForm, setPlatformForm] = useState<PlatformForm>(defaultPlatformForm);
+  const [platformCtxMenu, setPlatformCtxMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    platform: Platform | null;
+  }>({ open: false, x: 0, y: 0, platform: null });
 
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<Model | null>(null);
@@ -143,6 +149,27 @@ export default function ModelManagePage() {
     const t = window.setTimeout(() => setMainJustSetId(null), 650);
     return () => window.clearTimeout(t);
   }, [mainJustSetId]);
+
+  const closePlatformCtxMenu = () => {
+    setPlatformCtxMenu({ open: false, x: 0, y: 0, platform: null });
+  };
+
+  useEffect(() => {
+    if (!platformCtxMenu.open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closePlatformCtxMenu();
+    };
+    const onAnyScrollOrResize = () => closePlatformCtxMenu();
+    window.addEventListener('keydown', onKeyDown);
+    // 捕获任意滚动（包含列表自身滚动），避免菜单“漂移”
+    window.addEventListener('scroll', onAnyScrollOrResize, true);
+    window.addEventListener('resize', onAnyScrollOrResize);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onAnyScrollOrResize, true);
+      window.removeEventListener('resize', onAnyScrollOrResize);
+    };
+  }, [platformCtxMenu.open]);
 
   const filteredPlatforms = useMemo(() => {
     const s = platformSearch.trim().toLowerCase();
@@ -333,6 +360,18 @@ export default function ModelManagePage() {
     setPlatformDialogOpen(true);
   };
 
+  const openEditPlatform = (p: Platform) => {
+    setEditingPlatform(p);
+    setPlatformForm({
+      name: p.name || '',
+      platformType: p.platformType || 'openai',
+      apiUrl: p.apiUrl || '',
+      apiKey: '',
+      enabled: !!p.enabled,
+    });
+    setPlatformDialogOpen(true);
+  };
+
   const submitPlatform = async () => {
     if (editingPlatform) {
       const res = await updatePlatform(editingPlatform.id, {
@@ -383,6 +422,18 @@ export default function ModelManagePage() {
     const res = await updatePlatform(selectedPlatform.id, patch);
     if (!res.success) return;
     await load();
+  };
+
+  const onOpenPlatformCtxMenu = (e: React.MouseEvent, p: Platform) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 右键时顺便选中，符合用户预期（菜单操作作用于当前行）
+    setSelectedPlatformId(p.id);
+    const menuW = 220;
+    const menuH = 96;
+    const x = Math.min(e.clientX, Math.max(8, window.innerWidth - menuW - 8));
+    const y = Math.min(e.clientY, Math.max(8, window.innerHeight - menuH - 8));
+    setPlatformCtxMenu({ open: true, x, y, platform: p });
   };
 
   const onCheckPlatform = async () => {
@@ -771,6 +822,7 @@ export default function ModelManagePage() {
                     role="button"
                     tabIndex={0}
                     onClick={() => setSelectedPlatformId(p.id)}
+                    onContextMenu={(e) => onOpenPlatformCtxMenu(e, p)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
@@ -800,6 +852,12 @@ export default function ModelManagePage() {
                         e.stopPropagation();
                         await togglePlatformEnabled(p);
                       }}
+                      onContextMenu={(e) => {
+                        // 避免右键启用按钮时触发行点击/聚焦（交互更稳定）
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onOpenPlatformCtxMenu(e, p);
+                      }}
                       className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition-colors hover:brightness-[1.06] disabled:opacity-60 disabled:cursor-not-allowed"
                       style={
                         p.enabled
@@ -824,6 +882,57 @@ export default function ModelManagePage() {
             </Button>
           </div>
         </Card>
+
+        {/* 平台右键菜单 */}
+        {platformCtxMenu.open && (
+          <div
+            className="fixed inset-0 z-[60]"
+            onMouseDown={(e) => {
+              // 点击空白处关闭
+              e.preventDefault();
+              closePlatformCtxMenu();
+            }}
+          >
+            <div
+              className="fixed z-[61] w-[220px] rounded-[14px] p-1.5"
+              style={{
+                left: platformCtxMenu.x,
+                top: platformCtxMenu.y,
+                background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+                border: '1px solid var(--border-default)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+              }}
+              onMouseDown={(e) => {
+                // 不让点菜单本身触发 overlay 的关闭
+                e.stopPropagation();
+              }}
+            >
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                style={{ color: 'var(--text-primary)' }}
+                onClick={() => {
+                  const p = platformCtxMenu.platform;
+                  closePlatformCtxMenu();
+                  if (!p) return;
+                  openEditPlatform(p);
+                }}
+              >
+                <Pencil size={16} />
+                重命名
+              </button>
+              <div className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                style={{ color: 'var(--text-secondary)' }}
+                onClick={() => closePlatformCtxMenu()}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 右侧：平台详情 + 模型列表 */}
         <Card variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">

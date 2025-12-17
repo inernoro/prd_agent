@@ -4,7 +4,6 @@ import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
-import GuidePanel from '../Guide/GuidePanel';
 
 const phaseText: Record<string, string> = {
   requesting: '正在请求大模型…',
@@ -16,6 +15,7 @@ const phaseText: Record<string, string> = {
 export default function ChatContainer() {
   const { mode, sessionId, currentRole, guideStep } = useSessionStore();
   const {
+    messages,
     startStreaming,
     appendToStreamingMessage,
     startStreamingBlock,
@@ -33,6 +33,13 @@ export default function ChatContainer() {
     setContext,
     setGuidedStep,
   } = useMessageStore();
+
+  const showTopPhaseBanner =
+    isStreaming &&
+    !!streamingPhase &&
+    streamingPhase !== 'typing' &&
+    // 如果当前已经有“流式气泡”，阶段提示应在气泡内展示，避免重复
+    (!streamingMessageId || !messages?.some((m) => m.id === streamingMessageId));
 
   // 讲解页按阶段切换对话线程（不影响问答页）
   useEffect(() => {
@@ -218,14 +225,12 @@ export default function ChatContainer() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {mode === 'Guided' && <GuidePanel />}
-      
       <div className="flex-1 overflow-hidden">
-        {isStreaming && streamingPhase && streamingPhase !== 'typing' && (
+        {showTopPhaseBanner && (
           <div className="px-4 py-2 border-b border-border bg-surface-light dark:bg-surface-dark">
             <div className="flex items-center gap-2 text-sm text-text-secondary">
               <span className="inline-flex h-2.5 w-2.5 rounded-full bg-primary-500 animate-pulse" />
-              <span>{phaseText[streamingPhase] || '处理中…'}</span>
+              <span>{phaseText[streamingPhase] || '处理中...'}</span>
             </div>
           </div>
         )}

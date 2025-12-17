@@ -31,60 +31,35 @@ export default function GuidePanel() {
 
   return (
     <div className="px-4 py-3 border-b border-border bg-surface-light dark:bg-surface-dark">
-      {/* <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-sm font-medium">阶段讲解</h3>
-          <div className="mt-0.5 text-xs text-text-secondary">
-            先选择阶段，再点击输入框上方的“简介/讲解”开始生成内容
-          </div>
-        </div>
-        <button
-          onClick={handleExit}
-          className="text-xs text-text-secondary hover:text-primary-500"
-        >
-          返回问答
-        </button>
-      </div> */}
-
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
         {steps.map((step) => (
           <button
             key={step.step}
             onClick={() => selectStep(step.step)}
             disabled={isStreaming}
-            className={`flex-1 py-2 px-3 text-xs rounded-lg transition-colors ${
+            className={`group relative flex-shrink-0 min-w-[100px] py-2 px-3 text-xs rounded-lg transition-all duration-200 ${
               guideStep === step.step
-                ? 'bg-primary-500 text-white'
+                ? 'bg-primary-500 text-white shadow-md shadow-primary-500/25'
                 : guideStep > step.step
-                ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
-                : 'bg-gray-100 dark:bg-gray-800 text-text-secondary'
-            } ${isStreaming ? 'opacity-60 cursor-not-allowed' : ''}`}
+                ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-900/50'
+                : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
+            } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
           >
-            <div className="font-medium">阶段 {step.step}</div>
-            <div className="text-[10px] opacity-80 truncate">{getStepTitle(step)}</div>
+            <div className="flex items-center gap-1.5">
+              <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold ${
+                guideStep === step.step
+                  ? 'bg-white/20'
+                  : guideStep > step.step
+                  ? 'bg-primary-500/20'
+                  : 'bg-gray-300 dark:bg-gray-600'
+              }`}>
+                {step.step}
+              </span>
+              <span className="font-medium truncate">{getStepTitle(step)}</span>
+            </div>
           </button>
         ))}
       </div>
-
-      {/* <div className="flex items-center justify-between mt-3">
-        <button
-          onClick={() => selectStep(Math.max(1, guideStep - 1))}
-          disabled={guideStep <= 1}
-          className="px-3 py-1.5 text-sm text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded disabled:opacity-50"
-        >
-          ← 上一步
-        </button>
-        <span className="text-sm text-text-secondary">
-          {guideStep} / 6
-        </span>
-        <button
-          onClick={() => selectStep(Math.min(6, guideStep + 1))}
-          disabled={guideStep >= 6}
-          className="px-3 py-1.5 text-sm text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded disabled:opacity-50"
-        >
-          下一步 →
-        </button>
-      </div> */}
     </div>
   );
 }

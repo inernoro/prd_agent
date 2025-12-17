@@ -121,11 +121,7 @@ export default function MessageList() {
                   // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
                   isStreaming && streamingMessageId === message.id ? (
                     <div>
-                      {(!message.content || message.content.trim().length < 8) && streamingPhase && streamingPhase !== 'typing' ? (
-                        <ThinkingIndicator label={phaseText[streamingPhase] || '处理中…'} />
-                      ) : (
-                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                      )}
+                      <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     </div>
                   ) : (
                     <div className="prose prose-sm dark:prose-invert max-w-none">

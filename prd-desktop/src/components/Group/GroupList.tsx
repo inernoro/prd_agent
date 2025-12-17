@@ -139,40 +139,45 @@ export default function GroupList() {
 
   return (
     // 与 Sidebar 顶部标题区 p-4 对齐：列表行自身使用 px-4，这里不再额外加横向 padding
-    <div className="py-2 space-y-1">
+    <div className="py-2 px-2 space-y-1">
       {groups.map((group) => (
         <div
           key={group.groupId}
           role="button"
           tabIndex={0}
           onClick={() => void openGroup(group)}
+          onFocus={(e) => {
+            // 强制清除 WebView 默认焦点 outline（该环境下仅靠 class 不稳定）
+            (e.currentTarget as HTMLDivElement).style.outline = 'none';
+          }}
           onKeyDown={(e) => handleRowKeyDown(e, group)}
-          className={`group relative w-full px-4 h-14 rounded-xl text-left transition-colors cursor-pointer select-none ${
+          className={`group relative w-full px-3 h-12 rounded-lg text-left transition-colors cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30 focus-visible:ring-inset ${
             activeGroupId === group.groupId
               ? 'bg-primary-50 dark:bg-white/5'
               : 'hover:bg-gray-50 dark:hover:bg-white/5'
           }`}
+          style={{ outline: 'none' }}
         >
           {/* 选中态：不使用 border-left 避免内容抖动 */}
           {activeGroupId === group.groupId ? (
             <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-primary-500 rounded-r" />
           ) : null}
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex h-full items-center justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-3 min-w-0">
                 <div
-                  className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center text-sm font-semibold ${
+                  className={`h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-sm font-semibold ${
                     activeGroupId === group.groupId
                       ? 'bg-primary-500 text-white'
-                      : 'bg-primary-500/15 text-primary-500'
+                      : 'bg-primary-500/10 text-primary-600'
                   }`}
                   aria-hidden="true"
                 >
                   {getGroupInitial(group.groupName)}
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-[15px] font-semibold tracking-tight leading-6">
+                  <div className="truncate text-sm font-medium leading-5">
                     {group.groupName}
                   </div>
                 </div>
@@ -185,7 +190,7 @@ export default function GroupList() {
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className={`h-8 w-8 inline-flex items-center justify-center rounded-lg text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors ${
+                      className={`h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors ${
                         activeGroupId === group.groupId ? 'visible' : 'invisible group-hover:visible group-focus-within:visible'
                       }`}
                       title="群设置"
@@ -219,10 +224,10 @@ export default function GroupList() {
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               ) : (
-                <div className="h-8 w-8" />
+                <div className="h-7 w-7" />
               )}
               <div
-                className="px-2 py-1 rounded-full text-[12px] leading-4 border border-border/70 text-text-secondary bg-white/0 dark:bg-white/5"
+                className="px-2 py-0.5 rounded-full text-[11px] leading-4 text-text-secondary bg-gray-100 dark:bg-white/10"
                 title="成员数"
               >
                 {group.memberCount}人

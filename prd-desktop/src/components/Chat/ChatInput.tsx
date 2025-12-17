@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, useRef, KeyboardEvent, useCallback } from 'react';
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
@@ -24,7 +24,7 @@ const DEMO_RESPONSES = [
 ];
 
 export default function ChatInput() {
-  const { sessionId, currentRole, mode, guideStep, document } = useSessionStore();
+  const { sessionId, currentRole, mode, guideStep, setGuideStep, document } = useSessionStore();
   const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage, qaMessages, guidedThreads } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
@@ -34,6 +34,12 @@ export default function ChatInput() {
   // 检测是否为演示模式
   const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
+
+  // 阶段选择
+  const selectStep = useCallback((step: number) => {
+    if (isStreaming) return;
+    setGuideStep(step);
+  }, [isStreaming, setGuideStep]);
 
   // 旋转发光提示：同一份 PRD 仅一次，且仅在“未发送任何数据前”显示
   useEffect(() => {
@@ -220,47 +226,64 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="p-3 border-t border-border bg-surface-light dark:bg-surface-dark">
+    <div className="border-t border-border bg-surface-light dark:bg-surface-dark">
+      {/* 讲解模式阶段选择栏 */}
       {mode === 'Guided' && (
-        <div className="mb-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+        <div className="px-3 py-2 flex items-center gap-2">
+          {/* 阶段选择按钮 */}
+          <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none">
+            {steps.map((step) => (
               <button
-                onClick={handleIntro}
-                disabled={!sessionId || isStreaming}
-                className="px-2.5 py-1 text-sm rounded-lg border border-border text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="替你发送一句话：简要概括该阶段"
+                key={step.step}
+                onClick={() => selectStep(step.step)}
+                disabled={isStreaming}
+                className={`flex-shrink-0 px-2.5 py-1.5 text-xs rounded-md transition-all ${
+                  guideStep === step.step
+                    ? 'bg-primary-500 text-white shadow-sm'
+                    : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
+                } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
               >
-                简介
+                <span className="font-medium">{step.step}</span>
+                <span className="ml-1 hidden sm:inline">{currentRole === 'DEV' ? step.devTitle : currentRole === 'QA' ? step.qaTitle : step.pmTitle}</span>
               </button>
-              <span className={`relative inline-flex rounded-[10px] ${showExplainGlow ? 'p-[2px]' : ''}`}>
-                {showExplainGlow && (
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute -inset-[6px] rounded-[14px] bg-[conic-gradient(from_0deg,rgba(59,130,246,1),rgba(168,85,247,1),rgba(59,130,246,1))] animate-[spin_2.5s_linear_infinite]"
-                    style={{ filter: 'blur(10px)', opacity: 0.85 }}
-                  />
-                )}
-                <button
-                  onClick={handleExplain}
-                  disabled={!sessionId || isStreaming}
-                  className="relative px-2.5 py-1 text-sm rounded-[10px] bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="替你发送一句话：开始讲解该阶段"
-                >
-                  讲解
-                </button>
-              </span>
-            </div>
+            ))}
           </div>
-          <div className="mt-1 text-xs text-text-secondary">
-            当前阶段：{guideStep} · {getStepTitle}
+
+          {/* 简介/讲解按钮 */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              onClick={handleIntro}
+              disabled={!sessionId || isStreaming}
+              className="px-2.5 py-1.5 text-xs rounded-md border border-border text-text-secondary hover:text-primary-500 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="简要概括该阶段"
+            >
+              简介
+            </button>
+            <span className={`relative inline-flex rounded-md ${showExplainGlow ? 'p-[2px]' : ''}`}>
+              {showExplainGlow && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -inset-[4px] rounded-lg bg-[conic-gradient(from_0deg,rgba(59,130,246,1),rgba(168,85,247,1),rgba(59,130,246,1))] animate-[spin_2.5s_linear_infinite]"
+                  style={{ filter: 'blur(8px)', opacity: 0.85 }}
+                />
+              )}
+              <button
+                onClick={handleExplain}
+                disabled={!sessionId || isStreaming}
+                className="relative px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                title="开始讲解该阶段"
+              >
+                讲解
+              </button>
+            </span>
           </div>
         </div>
       )}
 
-      <div className="flex items-center gap-2">
-        <button className="h-10 w-10 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      {/* 输入区域 */}
+      <div className="px-3 pb-3 pt-2 flex items-end gap-2">
+        <button className="h-9 w-9 flex-shrink-0 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
           </svg>
         </button>
@@ -274,8 +297,8 @@ export default function ChatInput() {
               adjustTextareaHeight();
             }}
             onKeyDown={handleKeyDown}
-            placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问。请先在左侧上传并绑定 PRD"}
-            className="w-full min-h-[40px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+            placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}
+            className="w-full min-h-[36px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm"
             rows={1}
             disabled={isStreaming || !canChat}
           />
@@ -284,14 +307,14 @@ export default function ChatInput() {
         <button
           onClick={isStreaming ? handleCancel : handleSend}
           disabled={isStreaming ? false : (!content.trim() || !canChat)}
-          className="h-10 w-10 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="h-9 w-9 flex-shrink-0 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isStreaming ? (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
             </svg>
           ) : (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           )}
