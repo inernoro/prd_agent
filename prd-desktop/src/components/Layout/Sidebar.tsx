@@ -220,17 +220,23 @@ export default function Sidebar() {
   }, [activeGroupId, isDemoMode]);
 
   const handleFileSelectForBind = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+    const input = e.currentTarget;
+    // 注意：在部分 WebView 中，提前清空 value 会让 files 变空（“选了文件但无反应”）
+    const file = input.files?.[0] ?? null;
     // 允许下次选择同名文件也触发 change
-    e.target.value = '';
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    if (!file.name.endsWith('.md')) {
+    input.value = '';
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.md')) {
       alert('仅支持 .md 格式文件');
       return;
     }
-    const content = await file.text();
-    await uploadAndBindToActiveGroup(content);
+    try {
+      const content = await file.text();
+      await uploadAndBindToActiveGroup(content);
+    } catch (err) {
+      console.error('Failed to read selected file:', err);
+      alert('读取文件失败，请重试');
+    }
   }, [uploadAndBindToActiveGroup]);
 
   useEffect(() => {

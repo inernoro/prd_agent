@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { invoke } from '../../lib/tauri';
 import { ApiResponse, Document, Session, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
@@ -115,6 +115,12 @@ export default function GroupList() {
     }
   };
 
+  const handleRowKeyDown = (e: KeyboardEvent<HTMLDivElement>, group: (typeof groups)[number]) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    void openGroup(group);
+  };
+
   if (loading) {
     return (
       <div className="p-4 text-center text-text-secondary text-sm">
@@ -134,10 +140,13 @@ export default function GroupList() {
   return (
     <div className="py-2">
       {groups.map((group) => (
-        <button
+        <div
           key={group.groupId}
-          onClick={() => openGroup(group)}
-          className={`group relative w-full px-4 h-14 text-left transition-colors ${
+          role="button"
+          tabIndex={0}
+          onClick={() => void openGroup(group)}
+          onKeyDown={(e) => handleRowKeyDown(e, group)}
+          className={`group relative w-full px-4 h-14 text-left transition-colors cursor-pointer select-none ${
             activeGroupId === group.groupId
               ? 'bg-primary-50 dark:bg-white/5'
               : 'hover:bg-gray-50 dark:hover:bg-white/5'
@@ -219,7 +228,7 @@ export default function GroupList() {
               </div>
             </div>
           </div>
-        </button>
+        </div>
       ))}
 
       {/* 解散群确认弹层 */}

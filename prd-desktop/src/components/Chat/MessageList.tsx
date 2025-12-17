@@ -3,6 +3,7 @@ import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import type { MessageBlock } from '../../types';
 
 const phaseText: Record<string, string> = {
@@ -11,6 +12,13 @@ const phaseText: Record<string, string> = {
   receiving: '正在接收信息…',
   typing: '开始输出…',
 };
+
+function unwrapMarkdownFences(text: string) {
+  if (!text) return text;
+  // 兼容：LLM 常用 ```markdown / ```md 包裹“本来就想渲染的 Markdown”，会被当作代码块显示
+  // 这里仅解包 markdown/md 语言标记，其它代码块保持不动
+  return text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+}
 
 export default function MessageList() {
   const { messages, isStreaming, streamingMessageId, streamingPhase } = useMessageStore();
@@ -51,19 +59,43 @@ export default function MessageList() {
               <div>
                 {/* Block Protocol：按块渲染，流式期间也能稳定 Markdown 排版 */}
                 {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
-                  <div className="space-y-2">
-                    {message.blocks.map((b: MessageBlock) => (
-                      <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
-                        {b.kind === 'codeBlock' ? (
-                          <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
-                            <code className="whitespace-pre">{b.content}</code>
-                          </pre>
-                        ) : (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{b.content}</ReactMarkdown>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
+                  !(isStreaming && streamingMessageId === message.id) ? (
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                        {unwrapMarkdownFences(message.content)}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {message.blocks.map((b: MessageBlock) => (
+                        <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
+                          {b.kind === 'codeBlock' ? (
+                            // 如果后端/模型标记为 markdown 代码块，用户通常期望“按 Markdown 渲染”而不是当代码展示
+                            (b.language === 'markdown' || b.language === 'md') ? (
+                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                {unwrapMarkdownFences(b.content)}
+                              </ReactMarkdown>
+                            ) : (
+                              <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
+                                <code className="whitespace-pre">{b.content}</code>
+                              </pre>
+                            )
+                          ) : (
+                            // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式“缺一截”
+                            // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
+                            b.isComplete === false ? (
+                              <p className="whitespace-pre-wrap break-words">{b.content}</p>
+                            ) : (
+                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                {unwrapMarkdownFences(b.content)}
+                              </ReactMarkdown>
+                            )
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
                 ) : (
                   // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
                   isStreaming && streamingMessageId === message.id ? (
@@ -86,7 +118,9 @@ export default function MessageList() {
                     </div>
                   ) : (
                     <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                        {unwrapMarkdownFences(message.content)}
+                      </ReactMarkdown>
                     </div>
                   )
                 )}
