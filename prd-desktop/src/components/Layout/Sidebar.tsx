@@ -6,6 +6,7 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import type { ApiResponse, Document, Session, UserRole } from '../../types';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
@@ -20,6 +21,9 @@ export default function Sidebar() {
   const [busy, setBusy] = useState<null | 'join' | 'create' | 'upload'>(null);
   const [inlineError, setInlineError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const createPrdInputRef = useRef<HTMLInputElement | null>(null);
+  const [createPrdFileName, setCreatePrdFileName] = useState<string>('');
+  const [createPrdContent, setCreatePrdContent] = useState<string>('');
 
   const COLLAPSED_WIDTH = 56; // Tailwind w-14
   const DEFAULT_EXPANDED_WIDTH = 224; // Tailwind w-56
@@ -48,6 +52,8 @@ export default function Sidebar() {
     if (createOpen) {
       setGroupNameInput('');
       setInlineError('');
+      setCreatePrdFileName('');
+      setCreatePrdContent('');
     }
   }, [createOpen]);
 
@@ -162,15 +168,77 @@ export default function Sidebar() {
 
   const submitCreate = async () => {
     setInlineError('');
-    const groupName = groupNameInput.trim() || undefined;
-    // 创建群组默认不携带 PRD（PRD 追随群组，通过上传/绑定进入）
-    const prdDocumentId = undefined;
+    const explicitGroupName = groupNameInput.trim();
+    const hasPrd = !!createPrdContent.trim();
 
     try {
       setBusy('create');
+      if (hasPrd) {
+        // 1) 上传 PRD
+        const uploadResp = await invoke<ApiResponse<{ sessionId: string; document: Document }>>('upload_document', {
+          content: createPrdContent,
+        });
+        if (!uploadResp.success || !uploadResp.data) {
+          if (uploadResp.error?.code === 'UNAUTHORIZED') {
+            alert('登录已过期或无效，请重新登录');
+            logout();
+            return;
+          }
+          setInlineError(uploadResp.error?.message || '上传 PRD 失败');
+          return;
+        }
+
+        // 2) 决定群名：用户手动填写优先；否则文件名有意义用文件名；无意义则调用意图模型
+        let groupNameFinal = explicitGroupName;
+        if (!groupNameFinal) {
+          const base = createPrdFileName ? normalizeCandidateName(stripFileExtension(createPrdFileName)) : '';
+          if (base && !isMeaninglessName(base)) {
+            groupNameFinal = base;
+          } else {
+            const snippet = extractSnippetFromContent(createPrdContent);
+            if (snippet) {
+              try {
+                const suggestResp = await invoke<ApiResponse<{ name: string }>>('suggest_group_name', {
+                  fileName: createPrdFileName || null,
+                  snippet,
+                });
+                const suggested = (suggestResp.success && suggestResp.data?.name) ? String(suggestResp.data.name).trim() : '';
+                if (suggested) groupNameFinal = suggested;
+              } catch {
+                // ignore
+              }
+            }
+            if (!groupNameFinal) {
+              groupNameFinal = extractMarkdownTitle(createPrdContent) || uploadResp.data.document.title || '';
+            }
+          }
+        }
+
+        const resp = await invoke<ApiResponse<{ groupId: string; inviteCode: string }>>('create_group', {
+          prdDocumentId: uploadResp.data.document.id,
+          groupName: groupNameFinal ? groupNameFinal : undefined,
+        });
+
+        if (!resp.success || !resp.data) {
+          if (resp.error?.code === 'UNAUTHORIZED') {
+            alert('登录已过期或无效，请重新登录');
+            logout();
+            return;
+          }
+          setInlineError(resp.error?.message || '创建群组失败');
+          return;
+        }
+
+        await loadGroups();
+        await openGroupSession(resp.data.groupId);
+        setCreateOpen(false);
+        return;
+      }
+
+      // 未上传 PRD：仅创建空群
       const resp = await invoke<ApiResponse<{ groupId: string; inviteCode: string }>>('create_group', {
-        prdDocumentId: prdDocumentId,
-        groupName: groupName,
+        prdDocumentId: undefined,
+        groupName: explicitGroupName || undefined,
       });
 
       if (!resp.success || !resp.data) {
@@ -195,6 +263,24 @@ export default function Sidebar() {
       setBusy(null);
     }
   };
+
+  const handleCreatePrdFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.md')) {
+      setInlineError('仅支持 .md 格式文件');
+      return;
+    }
+    try {
+      const content = await file.text();
+      setCreatePrdFileName(file.name);
+      setCreatePrdContent(content);
+    } catch {
+      setInlineError('读取文件失败，请重试');
+    }
+  }, []);
 
   const uploadAndBindToActiveGroup = useCallback(async (content: string) => {
     if (isDemoMode) {
@@ -463,7 +549,7 @@ export default function Sidebar() {
                 <div className="relative w-full max-w-md mx-4 bg-slate-800 rounded-2xl shadow-2xl border border-white/10">
                   <div className="px-6 py-4 border-b border-white/10">
                     <div className="text-lg font-semibold text-white">创建群组</div>
-                    <div className="mt-1 text-sm text-white/60">群组是容器；PRD 稍后上传/绑定到群组</div>
+                    <div className="mt-1 text-sm text-white/60">群组是容器；可在此处直接上传 PRD 自动创建</div>
                   </div>
                   <div className="p-6 space-y-3">
                     <input
@@ -474,6 +560,37 @@ export default function Sidebar() {
                       disabled={!canSubmit}
                       autoFocus
                     />
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => createPrdInputRef.current?.click()}
+                        disabled={!canSubmit}
+                        className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 transition-colors disabled:opacity-50"
+                        title="选择 PRD（.md）"
+                      >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        上传 PRD
+                      </button>
+                      <div className="min-w-0 flex-1 text-sm text-white/60 truncate">
+                        {createPrdFileName ? (
+                          <span title={createPrdFileName}>{createPrdFileName}</span>
+                        ) : (
+                          <span>未选择文件（可选）</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <input
+                      ref={createPrdInputRef}
+                      type="file"
+                      accept=".md"
+                      className="hidden"
+                      onChange={handleCreatePrdFileSelect}
+                    />
+
                     {inlineError ? (
                       <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
                         {inlineError}

@@ -33,6 +33,9 @@ export type Model = {
   platformId: string;
   enabled: boolean;
   isMain: boolean;
+  isIntent?: boolean;
+  isVision?: boolean;
+  isImageGen?: boolean;
   group?: string;
   enablePromptCache: boolean;
 };

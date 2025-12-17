@@ -10,7 +10,7 @@ import type {
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
-import type { CreateModelContract, DeleteModelContract, GetModelsContract, SetMainModelContract, TestModelContract, UpdateModelContract } from '@/services/contracts/models';
+import type { CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract } from '@/services/contracts/llmLogs';
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
@@ -45,7 +45,7 @@ import {
   updateAdminGroupMock,
 } from '@/services/mock/impl/adminGroups';
 import { createPlatformMock, deletePlatformMock, getPlatformsMock, updatePlatformMock } from '@/services/mock/impl/platforms';
-import { createModelMock, deleteModelMock, getModelsMock, setMainModelMock, testModelMock, updateModelMock } from '@/services/mock/impl/models';
+import { createModelMock, deleteModelMock, getModelsMock, setImageGenModelMock, setIntentModelMock, setMainModelMock, setVisionModelMock, testModelMock, updateModelMock } from '@/services/mock/impl/models';
 import { activateLLMConfigMock, createLLMConfigMock, deleteLLMConfigMock, getLLMConfigsMock, updateLLMConfigMock } from '@/services/mock/impl/llmConfigs';
 import { getLlmLogDetailMock, getLlmLogsMetaMock, getLlmLogsMock } from '@/services/mock/impl/llmLogs';
 import { adminImpersonateMock } from '@/services/mock/impl/lab';
@@ -54,7 +54,7 @@ import { loginReal } from '@/services/real/auth';
 import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
-import { createModelReal, deleteModelReal, getModelsReal, setMainModelReal, testModelReal, updateModelReal } from '@/services/real/models';
+import { createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal } from '@/services/real/llmLogs';
 import { adminImpersonateReal } from '@/services/real/lab';
@@ -124,6 +124,9 @@ export const updateModel: UpdateModelContract = withAuth(useMock ? updateModelMo
 export const deleteModel: DeleteModelContract = withAuth(useMock ? deleteModelMock : deleteModelReal);
 export const testModel: TestModelContract = withAuth(useMock ? testModelMock : testModelReal);
 export const setMainModel: SetMainModelContract = withAuth(useMock ? setMainModelMock : setMainModelReal);
+export const setIntentModel: SetIntentModelContract = withAuth(useMock ? setIntentModelMock : setIntentModelReal);
+export const setVisionModel: SetVisionModelContract = withAuth(useMock ? setVisionModelMock : setVisionModelReal);
+export const setImageGenModel: SetImageGenModelContract = withAuth(useMock ? setImageGenModelMock : setImageGenModelReal);
 
 export const getLLMConfigs: GetLLMConfigsContract = withAuth(useMock ? getLLMConfigsMock : getLLMConfigsReal);
 export const createLLMConfig: CreateLLMConfigContract = withAuth(useMock ? createLLMConfigMock : createLLMConfigReal);

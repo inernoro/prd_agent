@@ -3,7 +3,10 @@ import type {
   CreateModelInput,
   DeleteModelContract,
   GetModelsContract,
+  SetImageGenModelContract,
+  SetIntentModelContract,
   SetMainModelContract,
+  SetVisionModelContract,
   TestModelContract,
   UpdateModelContract,
   UpdateModelInput,
@@ -92,6 +95,33 @@ export const setMainModelReal: SetMainModelContract = async (id: string) => {
     body: { modelId: id },
   });
 
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const setIntentModelReal: SetIntentModelContract = async (id: string) => {
+  const res = await apiRequest<{ modelId: string; isIntent: boolean }>('/api/v1/config/intent-model', {
+    method: 'PUT',
+    body: { modelId: id },
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const setVisionModelReal: SetVisionModelContract = async (id: string) => {
+  const res = await apiRequest<{ modelId: string; isVision: boolean }>('/api/v1/config/vision-model', {
+    method: 'PUT',
+    body: { modelId: id },
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const setImageGenModelReal: SetImageGenModelContract = async (id: string) => {
+  const res = await apiRequest<{ modelId: string; isImageGen: boolean }>('/api/v1/config/image-gen-model', {
+    method: 'PUT',
+    body: { modelId: id },
+  });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);
 };

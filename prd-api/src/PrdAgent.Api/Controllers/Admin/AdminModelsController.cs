@@ -367,6 +367,129 @@ public class AdminModelsController : ControllerBase
     }
 
     /// <summary>
+    /// 设置意图模型
+    /// </summary>
+    [HttpPut("intent-model")]
+    public async Task<IActionResult> SetIntentModel([FromBody] SetPurposeModelRequest request)
+    {
+        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
+        }
+
+        await _db.LLMModels.UpdateManyAsync(_ => true, Builders<LLMModel>.Update.Set(m => m.IsIntent, false));
+        await _db.LLMModels.UpdateOneAsync(
+            m => m.Id == request.ModelId,
+            Builders<LLMModel>.Update.Set(m => m.IsIntent, true).Set(m => m.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("Intent model set: {Id}", request.ModelId);
+        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isIntent = true }));
+    }
+
+    /// <summary>
+    /// 获取意图模型
+    /// </summary>
+    [HttpGet("intent-model")]
+    public async Task<IActionResult> GetIntentModel()
+    {
+        var model = await _db.LLMModels.Find(m => m.IsIntent).FirstOrDefaultAsync();
+        if (model == null) return Ok(ApiResponse<object>.Ok(new { }));
+
+        string? platformName = null;
+        if (model.PlatformId != null)
+        {
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync();
+            platformName = platform?.Name;
+        }
+
+        return Ok(ApiResponse<object>.Ok(MapModelResponse(model,
+            platformName != null ? new Dictionary<string, string> { { model.PlatformId!, platformName } } : new())));
+    }
+
+    /// <summary>
+    /// 设置图片识别模型
+    /// </summary>
+    [HttpPut("vision-model")]
+    public async Task<IActionResult> SetVisionModel([FromBody] SetPurposeModelRequest request)
+    {
+        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
+        }
+
+        await _db.LLMModels.UpdateManyAsync(_ => true, Builders<LLMModel>.Update.Set(m => m.IsVision, false));
+        await _db.LLMModels.UpdateOneAsync(
+            m => m.Id == request.ModelId,
+            Builders<LLMModel>.Update.Set(m => m.IsVision, true).Set(m => m.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("Vision model set: {Id}", request.ModelId);
+        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isVision = true }));
+    }
+
+    /// <summary>
+    /// 获取图片识别模型
+    /// </summary>
+    [HttpGet("vision-model")]
+    public async Task<IActionResult> GetVisionModel()
+    {
+        var model = await _db.LLMModels.Find(m => m.IsVision).FirstOrDefaultAsync();
+        if (model == null) return Ok(ApiResponse<object>.Ok(new { }));
+
+        string? platformName = null;
+        if (model.PlatformId != null)
+        {
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync();
+            platformName = platform?.Name;
+        }
+
+        return Ok(ApiResponse<object>.Ok(MapModelResponse(model,
+            platformName != null ? new Dictionary<string, string> { { model.PlatformId!, platformName } } : new())));
+    }
+
+    /// <summary>
+    /// 设置图片生成模型
+    /// </summary>
+    [HttpPut("image-gen-model")]
+    public async Task<IActionResult> SetImageGenModel([FromBody] SetPurposeModelRequest request)
+    {
+        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
+        }
+
+        await _db.LLMModels.UpdateManyAsync(_ => true, Builders<LLMModel>.Update.Set(m => m.IsImageGen, false));
+        await _db.LLMModels.UpdateOneAsync(
+            m => m.Id == request.ModelId,
+            Builders<LLMModel>.Update.Set(m => m.IsImageGen, true).Set(m => m.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("ImageGen model set: {Id}", request.ModelId);
+        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isImageGen = true }));
+    }
+
+    /// <summary>
+    /// 获取图片生成模型
+    /// </summary>
+    [HttpGet("image-gen-model")]
+    public async Task<IActionResult> GetImageGenModel()
+    {
+        var model = await _db.LLMModels.Find(m => m.IsImageGen).FirstOrDefaultAsync();
+        if (model == null) return Ok(ApiResponse<object>.Ok(new { }));
+
+        string? platformName = null;
+        if (model.PlatformId != null)
+        {
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync();
+            platformName = platform?.Name;
+        }
+
+        return Ok(ApiResponse<object>.Ok(MapModelResponse(model,
+            platformName != null ? new Dictionary<string, string> { { model.PlatformId!, platformName } } : new())));
+    }
+
+    /// <summary>
     /// 从平台批量添加模型
     /// </summary>
     [HttpPost("models/batch-from-platform")]
@@ -477,6 +600,9 @@ public class AdminModelsController : ControllerBase
         m.Enabled,
         m.Priority,
         m.IsMain,
+        m.IsIntent,
+        m.IsVision,
+        m.IsImageGen,
         enablePromptCache = m.EnablePromptCache ?? true,
         m.Remark,
         m.CallCount,
@@ -584,6 +710,11 @@ public class ModelPriorityUpdate
 }
 
 public class SetMainModelRequest
+{
+    public string ModelId { get; set; } = string.Empty;
+}
+
+public class SetPurposeModelRequest
 {
     public string ModelId { get; set; } = string.Empty;
 }

@@ -22,3 +22,6 @@ export type DeleteModelContract = (id: string) => Promise<ApiResponse<true>>;
 
 export type TestModelContract = (id: string) => Promise<ApiResponse<{ success: boolean; duration: number; error?: string }>>;
 export type SetMainModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type SetIntentModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type SetVisionModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type SetImageGenModelContract = (id: string) => Promise<ApiResponse<true>>;

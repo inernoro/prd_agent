@@ -22,6 +22,9 @@ export async function createModelMock(input: CreateModelInput): Promise<ApiRespo
     platformId: input.platformId,
     enabled: input.enabled,
     isMain: false,
+    isIntent: false,
+    isVision: false,
+    isImageGen: false,
     group: input.group,
     enablePromptCache: typeof input.enablePromptCache === 'boolean' ? input.enablePromptCache : true,
   };
@@ -70,6 +73,30 @@ export async function setMainModelMock(id: string): Promise<ApiResponse<true>> {
   const exists = db.models.some((x) => x.id === id);
   if (!exists) return fail('SESSION_NOT_FOUND', '模型不存在');
   db.models.forEach((x) => (x.isMain = x.id === id));
+  return ok(true);
+}
+
+export async function setIntentModelMock(id: string): Promise<ApiResponse<true>> {
+  await sleep(260);
+  const exists = db.models.some((x) => x.id === id);
+  if (!exists) return fail('SESSION_NOT_FOUND', '模型不存在');
+  db.models.forEach((x) => (x.isIntent = x.id === id));
+  return ok(true);
+}
+
+export async function setVisionModelMock(id: string): Promise<ApiResponse<true>> {
+  await sleep(260);
+  const exists = db.models.some((x) => x.id === id);
+  if (!exists) return fail('SESSION_NOT_FOUND', '模型不存在');
+  db.models.forEach((x) => (x.isVision = x.id === id));
+  return ok(true);
+}
+
+export async function setImageGenModelMock(id: string): Promise<ApiResponse<true>> {
+  await sleep(260);
+  const exists = db.models.some((x) => x.id === id);
+  if (!exists) return fail('SESSION_NOT_FOUND', '模型不存在');
+  db.models.forEach((x) => (x.isImageGen = x.id === id));
   return ok(true);
 }
 

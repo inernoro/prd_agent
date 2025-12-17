@@ -32,6 +32,7 @@ pub fn run() {
             commands::document::upload_document,
             commands::document::get_document,
             commands::document::get_document_content,
+            commands::intent::suggest_group_name,
             commands::session::get_session,
             commands::session::get_message_history,
             commands::session::switch_role,

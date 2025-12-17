@@ -31,10 +31,10 @@ export const db = {
     { id: 'p_qwen', name: '通义千问', platformType: 'qwen', apiUrl: 'https://dashscope.aliyuncs.com', apiKeyMasked: 'sk-****************', enabled: false },
   ] as Platform[],
   models: [
-    { id: 'm_1', name: 'GPT-4o', modelName: 'gpt-4o', platformId: 'p_openai', enabled: true, isMain: true, group: 'openai-gpt', enablePromptCache: true },
-    { id: 'm_2', name: 'GPT-4o mini', modelName: 'gpt-4o-mini', platformId: 'p_openai', enabled: true, isMain: false, group: 'openai-gpt', enablePromptCache: true },
-    { id: 'm_3', name: 'Claude 3.5 Sonnet', modelName: 'claude-3-5-sonnet-20241022', platformId: 'p_anthropic', enabled: true, isMain: false, group: 'anthropic-claude', enablePromptCache: true },
-    { id: 'm_4', name: 'Qwen2.5', modelName: 'qwen2.5-72b-instruct', platformId: 'p_qwen', enabled: false, isMain: false, group: 'qwen-qwen2', enablePromptCache: true },
+    { id: 'm_1', name: 'GPT-4o', modelName: 'gpt-4o', platformId: 'p_openai', enabled: true, isMain: true, isIntent: false, isVision: false, isImageGen: false, group: 'openai-gpt', enablePromptCache: true },
+    { id: 'm_2', name: 'GPT-4o mini', modelName: 'gpt-4o-mini', platformId: 'p_openai', enabled: true, isMain: false, isIntent: true, isVision: false, isImageGen: false, group: 'openai-gpt', enablePromptCache: true },
+    { id: 'm_3', name: 'Claude 3.5 Sonnet', modelName: 'claude-3-5-sonnet-20241022', platformId: 'p_anthropic', enabled: true, isMain: false, isIntent: false, isVision: false, isImageGen: false, group: 'anthropic-claude', enablePromptCache: true },
+    { id: 'm_4', name: 'Qwen2.5', modelName: 'qwen2.5-72b-instruct', platformId: 'p_qwen', enabled: false, isMain: false, isIntent: false, isVision: false, isImageGen: false, group: 'qwen-qwen2', enablePromptCache: true },
   ] as Model[],
   llmConfigs: [
     {

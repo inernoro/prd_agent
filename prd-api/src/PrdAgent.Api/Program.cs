@@ -95,6 +95,9 @@ builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAcces
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
 
+// 模型用途选择（主模型/意图模型/图片识别/图片生成）
+builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
+
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);

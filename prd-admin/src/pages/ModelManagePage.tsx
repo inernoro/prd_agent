@@ -11,12 +11,15 @@ import {
   getModels,
   getPlatforms,
   setMainModel,
+  setIntentModel,
+  setVisionModel,
+  setImageGenModel,
   testModel,
   updateModel,
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Check, Eye, EyeOff, Link2, Minus, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-react';
+import { Check, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
@@ -90,6 +93,9 @@ export default function ModelManagePage() {
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ modelId: string; ok: boolean; msg?: string } | null>(null);
   const [mainJustSetId, setMainJustSetId] = useState<string | null>(null);
+  const [intentJustSetId, setIntentJustSetId] = useState<string | null>(null);
+  const [visionJustSetId, setVisionJustSetId] = useState<string | null>(null);
+  const [imageGenJustSetId, setImageGenJustSetId] = useState<string | null>(null);
   const [platformTogglingId, setPlatformTogglingId] = useState<string | null>(null);
   const [modelCacheTogglingId, setModelCacheTogglingId] = useState<string | null>(null);
   const [apiUrlDraft, setApiUrlDraft] = useState('');
@@ -149,6 +155,54 @@ export default function ModelManagePage() {
     const t = window.setTimeout(() => setMainJustSetId(null), 650);
     return () => window.clearTimeout(t);
   }, [mainJustSetId]);
+
+  useEffect(() => {
+    if (!intentJustSetId) return;
+    const t = window.setTimeout(() => setIntentJustSetId(null), 650);
+    return () => window.clearTimeout(t);
+  }, [intentJustSetId]);
+
+  useEffect(() => {
+    if (!visionJustSetId) return;
+    const t = window.setTimeout(() => setVisionJustSetId(null), 650);
+    return () => window.clearTimeout(t);
+  }, [visionJustSetId]);
+
+  useEffect(() => {
+    if (!imageGenJustSetId) return;
+    const t = window.setTimeout(() => setImageGenJustSetId(null), 650);
+    return () => window.clearTimeout(t);
+  }, [imageGenJustSetId]);
+
+  const onSetIntent = async (m: Model) => {
+    setIntentJustSetId(m.id);
+    const res = await setIntentModel(m.id);
+    if (!res.success) {
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  };
+
+  const onSetVision = async (m: Model) => {
+    setVisionJustSetId(m.id);
+    const res = await setVisionModel(m.id);
+    if (!res.success) {
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  };
+
+  const onSetImageGen = async (m: Model) => {
+    setImageGenJustSetId(m.id);
+    const res = await setImageGenModel(m.id);
+    if (!res.success) {
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  };
 
   const closePlatformCtxMenu = () => {
     setPlatformCtxMenu({ open: false, x: 0, y: 0, platform: null });
@@ -1211,6 +1265,46 @@ export default function ModelManagePage() {
                                         className={mainJustSetId === m.id ? 'main-star-pop' : ''}
                                       />
                                     </Button>
+
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => onSetIntent(m)}
+                                      disabled={Boolean(m.isIntent)}
+                                      aria-label={m.isIntent ? '意图模型' : '设为意图模型'}
+                                      title={m.isIntent ? '意图模型' : '设为意图模型'}
+                                      className={m.isIntent ? 'disabled:opacity-100' : ''}
+                                      style={m.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
+                                    >
+                                      <Sparkles size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
+                                    </Button>
+
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => onSetVision(m)}
+                                      disabled={Boolean(m.isVision)}
+                                      aria-label={m.isVision ? '图片识别模型' : '设为图片识别模型'}
+                                      title={m.isVision ? '图片识别模型' : '设为图片识别模型'}
+                                      className={m.isVision ? 'disabled:opacity-100' : ''}
+                                      style={m.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: 'var(--text-secondary)' }}
+                                    >
+                                      <ScanEye size={16} className={visionJustSetId === m.id ? 'main-star-pop' : ''} />
+                                    </Button>
+
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => onSetImageGen(m)}
+                                      disabled={Boolean(m.isImageGen)}
+                                      aria-label={m.isImageGen ? '图片生成模型' : '设为图片生成模型'}
+                                      title={m.isImageGen ? '图片生成模型' : '设为图片生成模型'}
+                                      className={m.isImageGen ? 'disabled:opacity-100' : ''}
+                                      style={m.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: 'var(--text-secondary)' }}
+                                    >
+                                      <ImagePlus size={16} className={imageGenJustSetId === m.id ? 'main-star-pop' : ''} />
+                                    </Button>
+
                                     <Button variant="ghost" size="sm" onClick={() => openEditModel(m)}>
                                       <Pencil size={16} />
                                     </Button>

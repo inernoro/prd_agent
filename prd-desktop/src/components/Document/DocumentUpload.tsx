@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { ApiResponse, Document, Session } from '../../types';
+import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
 interface UploadResponse {
   sessionId: string;
@@ -21,7 +22,31 @@ export default function DocumentUpload() {
   // 检测是否为演示模式
   const isDemoMode = user?.userId === 'demo-user-001';
 
-  const handleUpload = async (content: string) => {
+  const suggestGroupName = async (content: string, fileName?: string | null, docTitle?: string | null) => {
+    const rawFileBase = fileName ? normalizeCandidateName(stripFileExtension(fileName)) : '';
+    if (rawFileBase && !isMeaninglessName(rawFileBase)) return rawFileBase;
+
+    const snippet = extractSnippetFromContent(content);
+    // fileName 无意义时，优先走“意图模型”
+    if (snippet) {
+      try {
+        const resp = await invoke<ApiResponse<{ name: string }>>('suggest_group_name', {
+          fileName: fileName ?? null,
+          snippet,
+        });
+        const name = (resp.success && resp.data?.name) ? String(resp.data.name).trim() : '';
+        if (name) return name;
+      } catch {
+        // ignore
+      }
+    }
+
+    // 兜底：取 Markdown 标题 / 解析后的 docTitle
+    const mdTitle = extractMarkdownTitle(content);
+    return mdTitle || (docTitle || '').trim() || '未命名群组';
+  };
+
+  const handleUpload = async (content: string, fileName?: string | null) => {
     setLoading(true);
     setError('');
 
@@ -61,10 +86,10 @@ export default function DocumentUpload() {
 
       if (response.success && response.data) {
         // 上传 PRD 后默认“一键创建群组”，并将该 PRD 绑定到群组（群组作为容器）
-        const groupName = response.data.document.title || undefined;
+        const groupName = await suggestGroupName(content, fileName ?? null, response.data.document.title || null);
         const createResp = await invoke<ApiResponse<{ groupId: string; inviteCode: string }>>('create_group', {
           prdDocumentId: response.data.document.id,
-          groupName: groupName,
+          groupName: groupName || undefined,
         });
 
         if (!createResp.success || !createResp.data) {
@@ -133,7 +158,7 @@ export default function DocumentUpload() {
       const file = files[0];
       if (file.name.endsWith('.md')) {
         const content = await file.text();
-        handleUpload(content);
+        handleUpload(content, file.name);
       } else {
         setError('仅支持 .md 格式文件');
       }
@@ -143,7 +168,7 @@ export default function DocumentUpload() {
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const text = e.clipboardData.getData('text');
     if (text) {
-      handleUpload(text);
+      handleUpload(text, null);
     }
   }, []);
 
@@ -152,7 +177,7 @@ export default function DocumentUpload() {
     if (files && files.length > 0) {
       const file = files[0];
       const content = await file.text();
-      handleUpload(content);
+      handleUpload(content, file.name);
     }
   };
 
