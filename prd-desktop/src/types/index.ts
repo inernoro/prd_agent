@@ -25,6 +25,12 @@ export interface Document {
   tokenEstimate: number;
 }
 
+export interface DocumentContent {
+  id: string;
+  title: string;
+  content: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;

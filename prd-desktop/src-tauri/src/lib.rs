@@ -31,6 +31,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::document::upload_document,
             commands::document::get_document,
+            commands::document::get_document_content,
             commands::session::get_session,
             commands::session::get_message_history,
             commands::session::switch_role,

@@ -21,6 +21,29 @@ export default function Sidebar() {
   const [inlineError, setInlineError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const COLLAPSED_WIDTH = 56; // Tailwind w-14
+  const DEFAULT_EXPANDED_WIDTH = 224; // Tailwind w-56
+  const MIN_EXPANDED_WIDTH = 180;
+  const MAX_EXPANDED_WIDTH = 420;
+  const SIDEBAR_WIDTH_KEY = 'prdAgent.sidebarWidth';
+
+  const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
+  const [expandedWidth, setExpandedWidth] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      const n = raw ? Number(raw) : NaN;
+      if (Number.isFinite(n)) return clamp(n, MIN_EXPANDED_WIDTH, MAX_EXPANDED_WIDTH);
+    } catch {
+      // ignore
+    }
+    return DEFAULT_EXPANDED_WIDTH;
+  });
+
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStateRef = useRef<{ startX: number; startW: number } | null>(null);
+  const currentWidth = isCollapsed ? COLLAPSED_WIDTH : expandedWidth;
+
   useEffect(() => {
     if (createOpen) {
       setGroupNameInput('');
@@ -34,6 +57,16 @@ export default function Sidebar() {
       setInlineError('');
     }
   }, [joinOpen]);
+
+  useEffect(() => {
+    // 折叠状态不写入；拖拽中也不频繁写入（在 pointerup 时落盘）
+    if (isCollapsed) return;
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(expandedWidth));
+    } catch {
+      // ignore
+    }
+  }, [expandedWidth, isCollapsed]);
 
   const canSubmit = useMemo(() => !busy && !isDemoMode, [busy, isDemoMode]);
 
@@ -245,8 +278,56 @@ export default function Sidebar() {
     return () => window.removeEventListener('prdAgent:openBindPrdPicker', handler as EventListener);
   }, [openBindPrdPicker]);
 
+  const onResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (isCollapsed) return;
+    // 仅主键拖拽
+    if (typeof e.button === 'number' && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+    resizeStateRef.current = { startX: e.clientX, startW: expandedWidth };
+
+    // 捕获指针，避免拖出 handle 后丢事件
+    try {
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+
+    // 拖拽中避免文字被选中，并显示列调整光标
+    try {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } catch {
+      // ignore
+    }
+  }, [expandedWidth, isCollapsed]);
+
+  const onResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isResizing || isCollapsed) return;
+    const s = resizeStateRef.current;
+    if (!s) return;
+    const delta = e.clientX - s.startX;
+    setExpandedWidth(clamp(s.startW + delta, MIN_EXPANDED_WIDTH, MAX_EXPANDED_WIDTH));
+  }, [isResizing, isCollapsed]);
+
+  const endResize = useCallback(() => {
+    if (!isResizing) return;
+    setIsResizing(false);
+    resizeStateRef.current = null;
+    try {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    } catch {
+      // ignore
+    }
+  }, [isResizing]);
+
   return (
-    <aside className={`${isCollapsed ? 'w-14' : 'w-56'} flex-shrink-0 border-r border-border bg-surface-light dark:bg-surface-dark transition-all duration-200`}>
+    <aside
+      className={`relative flex-shrink-0 border-r border-border bg-surface-light dark:bg-surface-dark ${isResizing ? '' : 'transition-[width] duration-150'}`}
+      style={{ width: `${currentWidth}px` }}
+    >
       <div className="h-full flex flex-col">
         {/* 头部：群组标题 + 操作按钮 */}
         <div className="p-3 border-b border-border flex items-center justify-between">
@@ -427,6 +508,25 @@ export default function Sidebar() {
           className="hidden"
           onChange={handleFileSelectForBind}
         />
+      </div>
+
+      {/* 侧边栏拖拽调整宽度的 handle（覆盖在边界线上） */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整侧边栏宽度"
+        className={`absolute top-0 right-0 h-full ${isCollapsed ? 'w-0' : 'w-1'} cursor-col-resize select-none`}
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={endResize}
+        onPointerCancel={endResize}
+        onLostPointerCapture={endResize}
+        style={{
+          touchAction: 'none',
+        }}
+      >
+        {/* hover 提示（不改变边界线颜色，避免视觉跳动） */}
+        <div className={`h-full w-full ${isCollapsed ? '' : 'hover:bg-primary-500/10'}`} />
       </div>
     </aside>
   );

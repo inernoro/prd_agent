@@ -226,12 +226,6 @@ export default function GroupList() {
               ) : (
                 <div className="h-7 w-7" />
               )}
-              <div
-                className="px-2 py-0.5 rounded-full text-[11px] leading-4 text-text-secondary bg-gray-100 dark:bg-white/10"
-                title="成员数"
-              >
-                {group.memberCount}人
-              </div>
             </div>
           </div>
         </div>

@@ -27,6 +27,16 @@ public class DocumentInfo
 }
 
 /// <summary>
+/// 文档内容（用于预览）
+/// </summary>
+public class DocumentContentInfo
+{
+    public string Id { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// 章节信息
 /// </summary>
 public class SectionInfo

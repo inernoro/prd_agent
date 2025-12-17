@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Models.Requests;
@@ -13,19 +15,32 @@ namespace PrdAgent.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1/documents")]
+[Authorize]
 public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;
     private readonly ISessionService _sessionService;
+    private readonly IGroupService _groupService;
     private readonly ILogger<DocumentsController> _logger;
+
+    private static string? GetUserId(ClaimsPrincipal user)
+    {
+        // 兼容 JwtBearer 默认 claim 映射（sub/nameid）与自定义（sub）
+        return user.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+               ?? user.FindFirst("sub")?.Value
+               ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value
+               ?? user.FindFirst("nameid")?.Value;
+    }
 
     public DocumentsController(
         IDocumentService documentService,
         ISessionService sessionService,
+        IGroupService groupService,
         ILogger<DocumentsController> logger)
     {
         _documentService = documentService;
         _sessionService = sessionService;
+        _groupService = groupService;
         _logger = logger;
     }
 
@@ -154,6 +169,66 @@ public class DocumentsController : ControllerBase
         };
 
         return Ok(ApiResponse<DocumentInfo>.Ok(response));
+    }
+
+    /// <summary>
+    /// 获取文档原始内容（用于预览）
+    /// </summary>
+    [HttpGet("{documentId}/content")]
+    [ProducesResponseType(typeof(ApiResponse<DocumentContentInfo>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetDocumentContent(string documentId, [FromQuery] string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 不能为空"));
+        }
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 必须是群组成员且该文档必须是群组当前绑定的 PRD，避免通过 hash 猜测 documentId 越权读取
+        var isMember = await _groupService.IsMemberAsync(groupId, userId);
+        if (!isMember)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+        }
+
+        if (!string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+        }
+
+        var document = await _documentService.GetByIdAsync(documentId);
+        if (document == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.DOCUMENT_NOT_FOUND,
+                "文档不存在或已过期"));
+        }
+
+        // 注意：禁止在日志中记录 Content（PRD 原文）
+        var response = new DocumentContentInfo
+        {
+            Id = document.Id,
+            Title = document.Title,
+            Content = document.RawContent
+        };
+
+        return Ok(ApiResponse<DocumentContentInfo>.Ok(response));
     }
 }
 
