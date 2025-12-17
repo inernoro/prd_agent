@@ -35,6 +35,10 @@ public static class BsonClassMapRegistration
             RegisterLlmRequestLog();
             RegisterInviteCode();
             RegisterParsedPrd();
+            RegisterModelLabExperiment();
+            RegisterModelLabRun();
+            RegisterModelLabRunItem();
+            RegisterModelLabModelSet();
 
             _registered = true;
         }
@@ -195,6 +199,62 @@ public static class BsonClassMapRegistration
             // 以内容 hash 作为主键；不使用 ObjectId 生成器
             cm.MapIdMember(d => d.Id)
                 .SetSerializer(new StringSerializer(BsonType.String));
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterModelLabExperiment()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ModelLabExperiment))) return;
+
+        BsonClassMap.RegisterClassMap<ModelLabExperiment>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterModelLabRun()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ModelLabRun))) return;
+
+        BsonClassMap.RegisterClassMap<ModelLabRun>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterModelLabRunItem()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ModelLabRunItem))) return;
+
+        BsonClassMap.RegisterClassMap<ModelLabRunItem>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterModelLabModelSet()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ModelLabModelSet))) return;
+
+        BsonClassMap.RegisterClassMap<ModelLabModelSet>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }

@@ -17,6 +17,7 @@ using PrdAgent.Infrastructure.Markdown;
 using Serilog.Sinks.SystemConsole.Themes;
 using PrdAgent.Infrastructure.Prompts;
 using PrdAgent.Infrastructure.Repositories;
+using PrdAgent.Infrastructure.Services;
 using Serilog;
 using Serilog.Events;
 
@@ -435,6 +436,12 @@ builder.Services.AddScoped<IMessageRepository>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();
     return new MessageRepository(db.Messages);
+});
+
+builder.Services.AddScoped<IModelLabRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new ModelLabRepository(db.ModelLabExperiments, db.ModelLabRuns, db.ModelLabRunItems, db.ModelLabModelSets);
 });
 
 // 注册登录尝试服务

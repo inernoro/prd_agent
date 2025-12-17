@@ -36,6 +36,10 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
+    public IMongoCollection<ModelLabRun> ModelLabRuns => _database.GetCollection<ModelLabRun>("model_lab_runs");
+    public IMongoCollection<ModelLabRunItem> ModelLabRunItems => _database.GetCollection<ModelLabRunItem>("model_lab_run_items");
+    public IMongoCollection<ModelLabModelSet> ModelLabModelSets => _database.GetCollection<ModelLabModelSet>("model_lab_model_sets");
 
     private void CreateIndexes()
     {
@@ -101,5 +105,30 @@ public class MongoDbContext
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt),
             new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
+
+        // ModelLabExperiments 索引
+        ModelLabExperiments.Indexes.CreateOne(new CreateIndexModel<ModelLabExperiment>(
+            Builders<ModelLabExperiment>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
+        ModelLabExperiments.Indexes.CreateOne(new CreateIndexModel<ModelLabExperiment>(
+            Builders<ModelLabExperiment>.IndexKeys.Descending(x => x.CreatedAt)));
+
+        // ModelLabRuns 索引
+        ModelLabRuns.Indexes.CreateOne(new CreateIndexModel<ModelLabRun>(
+            Builders<ModelLabRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.StartedAt)));
+        ModelLabRuns.Indexes.CreateOne(new CreateIndexModel<ModelLabRun>(
+            Builders<ModelLabRun>.IndexKeys.Ascending(x => x.ExperimentId)));
+
+        // ModelLabRunItems 索引
+        ModelLabRunItems.Indexes.CreateOne(new CreateIndexModel<ModelLabRunItem>(
+            Builders<ModelLabRunItem>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.RunId)));
+        ModelLabRunItems.Indexes.CreateOne(new CreateIndexModel<ModelLabRunItem>(
+            Builders<ModelLabRunItem>.IndexKeys.Ascending(x => x.ModelId)));
+
+        // ModelLabModelSets 索引（同一 Admin 下名称唯一）
+        ModelLabModelSets.Indexes.CreateOne(new CreateIndexModel<ModelLabModelSet>(
+            Builders<ModelLabModelSet>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.Name),
+            new CreateIndexOptions { Unique = true }));
+        ModelLabModelSets.Indexes.CreateOne(new CreateIndexModel<ModelLabModelSet>(
+            Builders<ModelLabModelSet>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
     }
 }
