@@ -1346,7 +1346,7 @@ export default function ModelManagePage() {
             </div>
 
             <div
-              className="rounded-[16px] overflow-hidden"
+              className="rounded-[16px] overflow-hidden flex flex-col flex-1 min-h-0"
               style={{ border: '1px solid var(--border-subtle)' }}
             >
               {availableLoading ? (

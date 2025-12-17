@@ -12,12 +12,12 @@ name = "prd_agent_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2.1", features = [] }
 
 [dependencies]
 tauri = { version = "2.1", features = [] }
-tauri-plugin-fs = "2.0"
-tauri-plugin-clipboard-manager = "2.0"
+tauri-plugin-fs = "2.1"
+tauri-plugin-clipboard-manager = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.12", features = ["json", "stream"] }

@@ -1,6 +1,4 @@
-import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
-import { ApiResponse } from '../../types';
 import { useMessageStore } from '../../stores/messageStore';
 
 const steps = [
@@ -13,7 +11,7 @@ const steps = [
 ];
 
 export default function GuidePanel() {
-  const { sessionId, currentRole, guideStep, setGuideStep, setMode } = useSessionStore();
+  const { currentRole, guideStep, setGuideStep } = useSessionStore();
   const { isStreaming } = useMessageStore();
 
   const getStepTitle = (step: typeof steps[0]) => {
@@ -22,23 +20,6 @@ export default function GuidePanel() {
       case 'DEV': return step.devTitle;
       case 'QA': return step.qaTitle;
       default: return step.pmTitle;
-    }
-  };
-
-  const handleExit = async () => {
-    if (!sessionId) {
-      setMode('QA');
-      return;
-    }
-    try {
-      const response = await invoke<ApiResponse<{ currentStep: number; status: string }>>('control_guide', {
-        sessionId,
-        action: 'stop',
-      });
-      if (response.success) setMode('QA');
-    } catch (err) {
-      console.error('Failed to stop guide:', err);
-      setMode('QA');
     }
   };
 
