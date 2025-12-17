@@ -11,11 +11,17 @@ public class LLMClientFactory : ILLMClientFactory
     private readonly ILLMClient? _fallbackClient;
     private bool _useFallback;
 
-    public LLMClientFactory(ILLMClient primaryClient, ILLMClient? fallbackClient = null)
+    public bool EnablePromptCache { get; }
+
+    public LLMClientFactory(
+        ILLMClient primaryClient, 
+        ILLMClient? fallbackClient = null,
+        bool enablePromptCache = true)
     {
         _primaryClient = primaryClient;
         _fallbackClient = fallbackClient;
         _useFallback = false;
+        EnablePromptCache = enablePromptCache;
     }
 
     public string CurrentProvider => _useFallback && _fallbackClient != null 

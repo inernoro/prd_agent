@@ -47,3 +47,6 @@ coverage/
 *.swp
 *.swo
 *~
+
+# Tauri icons (generated from prd-desktop/icon.png)
+prd-desktop/src-tauri/icons/

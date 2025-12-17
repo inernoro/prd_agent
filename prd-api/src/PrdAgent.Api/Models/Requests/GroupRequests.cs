@@ -8,7 +8,7 @@ namespace PrdAgent.Api.Models.Requests;
 public class CreateGroupRequest
 {
     /// <summary>绑定的PRD文档ID</summary>
-    public string PrdDocumentId { get; set; } = string.Empty;
+    public string? PrdDocumentId { get; set; }
 
     /// <summary>群组名称（可选）</summary>
     public string? GroupName { get; set; }
@@ -16,8 +16,8 @@ public class CreateGroupRequest
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
     {
-        if (string.IsNullOrWhiteSpace(PrdDocumentId))
-            return (false, "PRD文档ID不能为空");
+        // 允许先创建群组，PRD 后续再绑定
+        // 仅校验群组名称本身
         if (GroupName != null && GroupName.Length > 50)
             return (false, "群组名称不能超过50字符");
         return (true, null);
@@ -80,6 +80,22 @@ public class OpenGroupSessionRequest
     {
         if (UserRole is not (UserRole.PM or UserRole.DEV or UserRole.QA or UserRole.ADMIN))
             return (false, "无效的角色");
+        return (true, null);
+    }
+}
+
+/// <summary>
+/// 绑定群组 PRD 请求
+/// </summary>
+public class BindGroupPrdRequest
+{
+    /// <summary>PRD 文档ID</summary>
+    public string PrdDocumentId { get; set; } = string.Empty;
+
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(PrdDocumentId))
+            return (false, "PRD文档ID不能为空");
         return (true, null);
     }
 }

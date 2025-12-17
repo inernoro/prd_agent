@@ -1,5 +1,6 @@
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useGroupListStore } from '../../stores/groupListStore';
 import RoleSelector from '../Role/RoleSelector';
 import ModeToggle from '../Role/ModeToggle';
 
@@ -10,7 +11,8 @@ interface HeaderProps {
 
 export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const { user, logout } = useAuthStore();
-  const { documentLoaded, document } = useSessionStore();
+  const { documentLoaded, document, sessionId } = useSessionStore();
+  const { groups } = useGroupListStore();
 
   return (
     <header className="h-14 px-4 flex items-center justify-between border-b border-border bg-surface-light dark:bg-surface-dark">
@@ -19,17 +21,28 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
           <span className="text-white font-bold text-sm">P</span>
         </div>
         <h1 className="text-lg font-semibold">PRD Agent</h1>
-        {documentLoaded && document && (
-          <span className="text-sm text-text-secondary ml-4 truncate max-w-[300px]">
-            {document.title}
-          </span>
+        {groups.length > 0 && (
+          documentLoaded && document ? (
+            <span className="text-sm text-text-secondary ml-4 truncate max-w-[300px]">
+              {document.title}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event('prdAgent:openBindPrdPicker'))}
+              className="text-sm text-text-secondary ml-4 truncate max-w-[300px] hover:text-primary-500"
+              title="上传并绑定 PRD"
+            >
+              待上传
+            </button>
+          )
         )}
       </div>
 
       <div className="flex items-center gap-4">
-        {documentLoaded && (
+        {groups.length > 0 && (
           <>
-            <RoleSelector />
+            {sessionId ? <RoleSelector /> : null}
             <ModeToggle />
           </>
         )}

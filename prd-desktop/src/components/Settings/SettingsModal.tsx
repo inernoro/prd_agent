@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/tauri';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 interface ApiTestResult {

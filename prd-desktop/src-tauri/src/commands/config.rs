@@ -173,15 +173,16 @@ pub async fn test_api_connection(api_url: String) -> ApiTestResult {
 /// 初始化配置（应用启动时调用）
 #[allow(unused_variables)]
 pub fn init_config(app: &tauri::AppHandle) {
-    // 开发模式下强制使用本地服务器
-    #[cfg(debug_assertions)]
-    {
-        api_client::set_api_base_url("http://localhost:5000".to_string());
-        return;
-    }
-
-    #[cfg(not(debug_assertions))]
+    // 规则（避免“我明明改了配置但请求没打到目标服务器”）：
+    // 1) 优先使用环境变量 API_BASE_URL（在 api_client.rs 中已读取并初始化）
+    // 2) 若有 config.json，则使用其中的 apiBaseUrl 覆盖
+    // 3) 否则保持默认值（DEFAULT_API_URL）
+    //
+    // 注意：debug 模式不再强制写死 localhost:5000，允许你本地/容器映射到其他端口。
     if let Ok(config) = load_config_from_file(app) {
-        api_client::set_api_base_url(config.api_base_url);
+        let trimmed = config.api_base_url.trim().to_string();
+        if !trimmed.is_empty() {
+            api_client::set_api_base_url(trimmed);
+        }
     }
 }

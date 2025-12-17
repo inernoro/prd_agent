@@ -120,7 +120,8 @@ public class AdminModelsController : ControllerBase
             MaxConcurrency = request.MaxConcurrency,
             Enabled = request.Enabled,
             Priority = request.Priority ?? maxPriority + 1,
-            Remark = request.Remark
+            Remark = request.Remark,
+            EnablePromptCache = request.EnablePromptCache
         };
 
         await _db.LLMModels.InsertOneAsync(model);
@@ -153,6 +154,7 @@ public class AdminModelsController : ControllerBase
             .Set(m => m.MaxRetries, request.MaxRetries)
             .Set(m => m.MaxConcurrency, request.MaxConcurrency)
             .Set(m => m.Enabled, request.Enabled)
+            .Set(m => m.EnablePromptCache, request.EnablePromptCache)
             .Set(m => m.Remark, request.Remark)
             .Set(m => m.UpdatedAt, DateTime.UtcNow);
 
@@ -404,7 +406,8 @@ public class AdminModelsController : ControllerBase
                 PlatformId = request.PlatformId,
                 Group = modelInfo.Group,
                 Priority = priority++,
-                Enabled = true
+                Enabled = true,
+                EnablePromptCache = true
             };
 
             await _db.LLMModels.InsertOneAsync(model);
@@ -474,6 +477,7 @@ public class AdminModelsController : ControllerBase
         m.Enabled,
         m.Priority,
         m.IsMain,
+        enablePromptCache = m.EnablePromptCache ?? true,
         m.Remark,
         m.CallCount,
         m.TotalDuration,
@@ -551,6 +555,7 @@ public class CreateModelRequest
     public int MaxRetries { get; set; } = 3;
     public int MaxConcurrency { get; set; } = 5;
     public bool Enabled { get; set; } = true;
+    public bool EnablePromptCache { get; set; } = true;
     public int? Priority { get; set; }
     public string? Remark { get; set; }
 }
@@ -567,6 +572,7 @@ public class UpdateModelRequest
     public int MaxRetries { get; set; } = 3;
     public int MaxConcurrency { get; set; } = 5;
     public bool Enabled { get; set; } = true;
+    public bool EnablePromptCache { get; set; } = true;
     public int? Priority { get; set; }
     public string? Remark { get; set; }
 }

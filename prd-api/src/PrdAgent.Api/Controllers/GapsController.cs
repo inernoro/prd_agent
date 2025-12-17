@@ -1,5 +1,9 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Cryptography;
+using System.Text;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
@@ -20,7 +24,16 @@ public class GapsController : ControllerBase
     private readonly IGroupService _groupService;
     private readonly ILLMClient _llmClient;
     private readonly IPromptManager _promptManager;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<GapsController> _logger;
+
+    private static string? GetUserId(ClaimsPrincipal user)
+    {
+        return user.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+               ?? user.FindFirst("sub")?.Value
+               ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value
+               ?? user.FindFirst("nameid")?.Value;
+    }
 
     public GapsController(
         IGapDetectionService gapService,
@@ -29,6 +42,7 @@ public class GapsController : ControllerBase
         IGroupService groupService,
         ILLMClient llmClient,
         IPromptManager promptManager,
+        ILLMRequestContextAccessor llmRequestContext,
         ILogger<GapsController> logger)
     {
         _gapService = gapService;
@@ -37,6 +51,7 @@ public class GapsController : ControllerBase
         _groupService = groupService;
         _llmClient = llmClient;
         _promptManager = promptManager;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -119,9 +134,20 @@ public class GapsController : ControllerBase
         }
 
         // 使用AI生成报告
+        var userId = GetUserId(User);
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString(),
+            GroupId: groupId,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: "ADMIN",
+            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentHash: Sha256Hex(document.RawContent ?? string.Empty),
+            SystemPromptRedacted: "你是一个专业的产品文档分析师。"));
+
         var detector = new AIGapDetector(_llmClient, _promptManager);
         var report = await detector.GenerateSummaryReportAsync(
-            document.RawContent, 
+            document.RawContent ?? string.Empty, 
             gaps, 
             cancellationToken);
 
@@ -138,6 +164,13 @@ public class GapsController : ControllerBase
         };
 
         return Ok(ApiResponse<GapSummaryResponse>.Ok(response));
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     /// <summary>

@@ -28,11 +28,23 @@ public class ResilientLLMClient : ILLMClient
         _initialDelay = TimeSpan.FromMilliseconds(initialDelayMs);
     }
 
+    public IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
+        string systemPrompt,
+        List<LLMMessage> messages,
+        CancellationToken cancellationToken = default)
+    {
+        return StreamGenerateAsync(systemPrompt, messages, _factory.EnablePromptCache, cancellationToken);
+    }
+
     public async IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
         string systemPrompt,
         List<LLMMessage> messages,
+        bool enablePromptCache,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        systemPrompt ??= string.Empty;
+        messages ??= new List<LLMMessage>();
+
         int attempt = 0;
         bool usedFallback = false;
 
@@ -41,13 +53,13 @@ public class ResilientLLMClient : ILLMClient
             attempt++;
             var client = _factory.GetCurrentClient();
             
-            _logger.LogDebug("LLM request attempt {Attempt}/{MaxRetries} using {Provider}",
-                attempt, _maxRetries, client.Provider);
+            _logger.LogDebug("LLM request attempt {Attempt}/{MaxRetries} using {Provider}, PromptCache: {Cache}",
+                attempt, _maxRetries, client.Provider, enablePromptCache);
 
             bool hasError = false;
             string? errorMessage = null;
 
-            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, enablePromptCache, cancellationToken))
             {
                 if (chunk.Type == "error")
                 {

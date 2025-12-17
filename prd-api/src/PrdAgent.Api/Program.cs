@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Security.Cryptography;
+using MongoDB.Driver;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using PrdAgent.Api.Json;
@@ -89,6 +90,11 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
 
+// LLM 请求上下文与日志（旁路写入，便于后台调试）
+builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
+builder.Services.AddSingleton<LlmRequestLogBackground>();
+builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
+
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);
@@ -112,6 +118,28 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
+        };
+
+        // 统一未授权/无权限响应格式，避免默认 401/403 返回空 body（桌面端会报 "Empty response from server"）
+        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        options.Events = new JwtBearerEvents
+        {
+            OnChallenge = async context =>
+            {
+                // 跳过默认 challenge 响应（会覆盖 body）
+                context.HandleResponse();
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
+                await context.Response.WriteAsync(JsonSerializer.Serialize(payload, jsonOptions));
+            },
+            OnForbidden = async context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                var payload = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限");
+                await context.Response.WriteAsync(JsonSerializer.Serialize(payload, jsonOptions));
+            }
         };
     });
 
@@ -230,6 +258,11 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var config = sp.GetRequiredService<IConfiguration>();
     var jwtSecret = config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+    var globalEnablePromptCache =
+        db.AppSettings.Find(s => s.Id == "global").FirstOrDefault()?.EnablePromptCache ?? true;
+    var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
+    var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
+    var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
     
     // 1. 优先：从数据库获取主模型 (IsMain=true)
     var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
@@ -250,19 +283,19 @@ builder.Services.AddScoped<ILLMClient>(sp =>
             }
             
             // 根据平台类型或API URL判断使用哪个客户端
+            // 获取 Prompt Cache 全局开关（关闭则强制不使用缓存）
+            var enablePromptCache = globalEnablePromptCache && (mainModel.EnablePromptCache ?? true);
+            
             if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
             {
                 httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
-                httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7);
+                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, claudeLogger, logWriter, ctxAccessor);
             }
             else
             {
                 // 默认使用 OpenAI 格式（兼容 openai、google、qwen、zhipu、baidu、other 等）
                 httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7);
+                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, logWriter, ctxAccessor);
             }
         }
     }
@@ -280,15 +313,14 @@ builder.Services.AddScoped<ILLMClient>(sp =>
             if (activeConfig.Provider == "Claude")
             {
                 httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.anthropic.com/");
-                httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
-                httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-                return new ClaudeClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature);
+                var enablePromptCache = globalEnablePromptCache && activeConfig.EnablePromptCache;
+                return new ClaudeClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature, enablePromptCache, claudeLogger, logWriter, ctxAccessor);
             }
             else if (activeConfig.Provider == "OpenAI")
             {
                 httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.openai.com/");
-                httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-                return new OpenAIClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature);
+                var enablePromptCache = globalEnablePromptCache && activeConfig.EnablePromptCache;
+                return new OpenAIClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature, enablePromptCache, logWriter, ctxAccessor);
             }
         }
     }
@@ -299,18 +331,12 @@ builder.Services.AddScoped<ILLMClient>(sp =>
         Log.Warning("No main model or active LLM config found in database and LLM:ClaudeApiKey is not configured. Please set a main model in admin panel or set LLM__ClaudeApiKey environment variable");
         var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-        httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-        return new ClaudeClient(httpClient, "", llmModel);
+        return new ClaudeClient(httpClient, "", llmModel, 4096, 0.7, enablePromptCache: false, claudeLogger, logWriter, ctxAccessor);
     }
     
     var fallbackHttpClient = httpClientFactory.CreateClient("LoggedHttpClient");
     fallbackHttpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-    if (!string.IsNullOrWhiteSpace(llmApiKey))
-    {
-        fallbackHttpClient.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
-    }
-    fallbackHttpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-    return new ClaudeClient(fallbackHttpClient, llmApiKey, llmModel);
+    return new ClaudeClient(fallbackHttpClient, llmApiKey, llmModel, 4096, 0.7, enablePromptCache: globalEnablePromptCache, claudeLogger, logWriter, ctxAccessor);
 });
 
 // 辅助方法：解析模型的 API 配置（与 AdminModelsController 中的逻辑一致）
@@ -384,6 +410,12 @@ builder.Services.AddScoped<IGroupRepository>(sp =>
     return new GroupRepository(db.Groups);
 });
 
+builder.Services.AddScoped<IPrdDocumentRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new PrdDocumentRepository(db.Documents);
+});
+
 builder.Services.AddScoped<IGroupMemberRepository>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();
@@ -421,7 +453,8 @@ builder.Services.AddScoped<IDocumentService>(sp =>
 {
     var cache = sp.GetRequiredService<ICacheManager>();
     var parser = sp.GetRequiredService<IMarkdownParser>();
-    return new DocumentService(cache, parser);
+    var docRepo = sp.GetRequiredService<IPrdDocumentRepository>();
+    return new DocumentService(cache, parser, docRepo);
 });
 
 builder.Services.AddScoped<ISessionService>(sp =>
@@ -434,7 +467,8 @@ builder.Services.AddScoped<IGroupService>(sp =>
 {
     var groupRepo = sp.GetRequiredService<IGroupRepository>();
     var memberRepo = sp.GetRequiredService<IGroupMemberRepository>();
-    return new GroupService(groupRepo, memberRepo);
+    var docRepo = sp.GetRequiredService<IPrdDocumentRepository>();
+    return new GroupService(groupRepo, memberRepo, docRepo);
 });
 
 builder.Services.AddScoped<IGapDetectionService>(sp =>
@@ -452,7 +486,8 @@ builder.Services.AddScoped<IChatService>(sp =>
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, userService, messageRepo);
+    var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, userService, messageRepo, llmCtx);
 });
 
 builder.Services.AddScoped<IGuideService>(sp =>
@@ -461,7 +496,8 @@ builder.Services.AddScoped<IGuideService>(sp =>
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
-    return new GuideService(llmClient, sessionService, documentService, promptManager);
+    var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
+    return new GuideService(llmClient, sessionService, documentService, promptManager, llmCtx);
 });
 
 // 注册引导进度仓储

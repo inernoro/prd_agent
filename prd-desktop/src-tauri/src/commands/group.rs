@@ -7,7 +7,8 @@ use crate::services::ApiClient;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateGroupRequest {
-    prd_document_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prd_document_id: Option<String>,
     group_name: Option<String>,
 }
 
@@ -29,7 +30,7 @@ pub struct JoinGroupResponse {
 
 #[command]
 pub async fn create_group(
-    prd_document_id: String,
+    prd_document_id: Option<String>,
     group_name: Option<String>,
 ) -> Result<ApiResponse<GroupInfo>, String> {
     let client = ApiClient::new();
@@ -77,4 +78,28 @@ pub async fn open_group_session(
     client
         .post(&format!("/groups/{}/session", group_id), &request)
         .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BindGroupPrdRequest {
+    prd_document_id: String,
+}
+
+#[command]
+pub async fn bind_group_prd(
+    group_id: String,
+    prd_document_id: String,
+) -> Result<ApiResponse<GroupInfo>, String> {
+    let client = ApiClient::new();
+    let request = BindGroupPrdRequest { prd_document_id };
+    client
+        .put(&format!("/groups/{}/prd", group_id), &request)
+        .await
+}
+
+#[command]
+pub async fn dissolve_group(group_id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client.delete(&format!("/groups/{}", group_id)).await
 }

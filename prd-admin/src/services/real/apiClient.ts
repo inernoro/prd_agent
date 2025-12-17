@@ -70,7 +70,24 @@ export async function apiRequest<T>(
   const text = await res.text();
   const json = await tryParseJson(text);
 
+  // 处理 401 未授权：清除认证状态并跳转登录页
+  if (res.status === 401) {
+    const authStore = useAuthStore.getState();
+    if (authStore.isAuthenticated) {
+      authStore.logout();
+      window.location.href = '/login';
+    }
+  }
+
   if (isApiResponseLike(json)) {
+    // 处理业务层面的 UNAUTHORIZED 错误（如 token 过期）
+    if (!json.success && (json.error as any)?.code === 'UNAUTHORIZED') {
+      const authStore = useAuthStore.getState();
+      if (authStore.isAuthenticated) {
+        authStore.logout();
+        window.location.href = '/login';
+      }
+    }
     return json as ApiResponse<T>;
   }
 

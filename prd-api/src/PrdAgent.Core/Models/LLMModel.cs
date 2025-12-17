@@ -43,6 +43,13 @@ public class LLMModel
     
     /// <summary>是否为主模型 (全局唯一)</summary>
     public bool IsMain { get; set; } = false;
+
+    /// <summary>
+    /// 是否启用 Prompt Cache（模型级开关）
+    /// - Claude: 启用后使用 anthropic prompt-caching（cache_control + beta header），可返回 cache read/create token 统计
+    /// - OpenAI/兼容: 启用表示允许平台自动缓存；关闭时会注入最小 cache-bust 标记以避免命中缓存
+    /// </summary>
+    public bool? EnablePromptCache { get; set; } = true;
     
     /// <summary>备注</summary>
     public string? Remark { get; set; }

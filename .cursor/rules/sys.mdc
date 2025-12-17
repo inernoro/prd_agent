@@ -2,39 +2,24 @@
 alwaysApply: true
 ---
 
-# PRD Agent 开发规范
+# PRD Agent 技术规范
 
 ## 技术栈
 
-### 桌面客户端 (prd-agent-desktop/)
-- Tauri 2.0+ / Rust 1.70+ / React 18 / TypeScript 5
-- 状态管理: Zustand
-- UI: Tailwind CSS + Radix UI
-- IPC命令放 `src-tauri/src/commands/`
+| 端 | 技术 |
+|----|------|
+| 桌面客户端 | Tauri 2.0+ / Rust 1.70+ / React 18 / TypeScript 5 / Zustand / Tailwind + Radix UI |
+| 后端服务 | .NET 8.0 / ASP.NET Core / C# 12 / MongoDB 8.0+ / Redis / Serilog |
+| Web管理后台 | React 18 / TypeScript 5 / Vite / Ant Design 5 |
 
-### 后端服务 (PrdAgent.Server/)
-- .NET 8.0 / ASP.NET Core / C# 12
-- 分层: Api → Core → Infrastructure
-- 数据库: MongoDB 8.0+（MongoDB.Driver）
-- 缓存: Redis
-- 日志: Serilog（结构化）
+## API 规范
 
-### Web管理后台 (prd-agent-admin/)
-- React 18 / TypeScript 5 / Vite / Ant Design 5
-
-## API规范
-
-- RESTful + SSE流式响应
+- RESTful + SSE 流式响应
 - 基础路径: `/api/v1/`
 - 认证: Bearer JWT
-- 响应格式:
-```json
-{ "success": true, "data": {}, "error": null }
-```
-- 错误响应:
-```json
-{ "success": false, "data": null, "error": { "code": "ERROR_CODE", "message": "描述" } }
-```
+- 成功: `{ "success": true, "data": {}, "error": null }`
+- 失败: `{ "success": false, "data": null, "error": { "code": "ERROR_CODE", "message": "描述" } }`
+- 写接口支持 `Idempotency-Key`
 
 ## 错误码
 
@@ -49,32 +34,38 @@ alwaysApply: true
 | PERMISSION_DENIED | 403 | 无权限 |
 | LLM_ERROR | 502 | LLM调用失败 |
 
-## 安全约束
-
-- PRD内容仅存缓存，不落盘
-- 敏感配置用环境变量，不入仓库
-- 日志脱敏，不记录用户原文/密钥
-- 所有通信HTTPS (TLS 1.2+)
-- 写接口支持 Idempotency-Key
-
 ## 角色枚举
 
-- `PM` - 产品经理（可创建群组、上传PRD）
-- `DEV` - 开发（技术视角）
-- `QA` - 测试（验证视角）
-- `ADMIN` - 超管（Web后台管理）
+| 角色 | 说明 |
+|------|------|
+| `PM` | 产品经理（可创建群组、上传PRD） |
+| `DEV` | 开发（技术视角） |
+| `QA` | 测试（验证视角） |
+| `ADMIN` | 超管（Web后台管理） |
 
 ## 性能指标
 
-- 问答首字延迟 < 2s
-- 文档上传响应 < 3s（10万字内）
-- 会话超时 30分钟
-- LLM调用超时 60s，重试≤3次（指数退避）
+| 指标 | 要求 |
+|------|------|
+| 问答首字延迟 | < 2s |
+| 文档上传响应 | < 3s（10万字内） |
+| 会话超时 | 30分钟 |
+| LLM调用超时 | 60s，重试 <=3 次（指数退避） |
 
 ## 命名约定
 
-- 后端: PascalCase 类/方法，camelCase 变量
-- 前端: camelCase 变量/函数，PascalCase 组件
-- API路径: kebab-case
-- MongoDB集合: 全小写（如 users, groups, messages）
-- 文档字段: camelCase
+| 位置 | 规则 |
+|------|------|
+| 后端类/方法 | PascalCase |
+| 后端变量 | camelCase |
+| 前端变量/函数 | camelCase |
+| React组件 | PascalCase |
+| API路径 | kebab-case |
+| MongoDB集合 | 全小写（users, groups, messages） |
+| MongoDB字段 | camelCase |
+
+## 目录约定
+
+- 后端分层: Api -> Core -> Infrastructure
+- IPC命令: `src-tauri/src/commands/`
+- Prompt模板: `Infrastructure/Prompts/Templates/`

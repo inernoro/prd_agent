@@ -10,13 +10,16 @@ public class GroupService : IGroupService
 {
     private readonly IGroupRepository _groupRepository;
     private readonly IGroupMemberRepository _memberRepository;
+    private readonly IPrdDocumentRepository _documentRepository;
 
     public GroupService(
         IGroupRepository groupRepository,
-        IGroupMemberRepository memberRepository)
+        IGroupMemberRepository memberRepository,
+        IPrdDocumentRepository documentRepository)
     {
         _groupRepository = groupRepository;
         _memberRepository = memberRepository;
+        _documentRepository = documentRepository;
     }
 
     public async Task<Group> CreateAsync(
@@ -131,5 +134,48 @@ public class GroupService : IGroupService
 
         // 获取群组信息
         return await _groupRepository.GetByIdsAsync(groupIds);
+    }
+
+    public async Task BindPrdAsync(
+        string groupId,
+        string prdDocumentId,
+        string? prdTitleSnapshot,
+        int? prdTokenEstimateSnapshot,
+        int? prdCharCountSnapshot)
+    {
+        await _groupRepository.UpdatePrdAsync(
+            groupId,
+            prdDocumentId,
+            prdTitleSnapshot,
+            prdTokenEstimateSnapshot,
+            prdCharCountSnapshot);
+    }
+
+    public async Task UnbindPrdAsync(string groupId)
+    {
+        await _groupRepository.ClearPrdAsync(groupId);
+    }
+
+    public async Task DissolveAsync(string groupId)
+    {
+        // 先读出群组，拿到 prdDocumentId，便于后续做引用清理
+        var group = await _groupRepository.GetByIdAsync(groupId);
+        var prdDocumentId = group?.PrdDocumentId;
+
+        // 删除成员记录（先删成员，避免残留无主成员）
+        await _memberRepository.DeleteByGroupIdAsync(groupId);
+        // 删除群组
+        await _groupRepository.DeleteAsync(groupId);
+
+        // 业务规则：PRD 文档随时可被查看，默认不应“自己消失”；
+        // 只有当群组被人为删除/解散，且无任何群组再引用该 PRD 时，才允许清理文档。
+        if (!string.IsNullOrWhiteSpace(prdDocumentId))
+        {
+            var refs = await _groupRepository.CountByPrdDocumentIdAsync(prdDocumentId);
+            if (refs == 0)
+            {
+                await _documentRepository.DeleteAsync(prdDocumentId);
+            }
+        }
     }
 }

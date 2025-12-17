@@ -31,6 +31,16 @@ public class GroupRepository : IGroupRepository
         await _groups.InsertOneAsync(group);
     }
 
+    public async Task DeleteAsync(string groupId)
+    {
+        await _groups.DeleteOneAsync(g => g.GroupId == groupId);
+    }
+
+    public async Task<long> CountByPrdDocumentIdAsync(string prdDocumentId)
+    {
+        return await _groups.CountDocumentsAsync(g => g.PrdDocumentId == prdDocumentId);
+    }
+
     public async Task UpdateInviteCodeAsync(string groupId, string newCode)
     {
         await _groups.UpdateOneAsync(
@@ -41,6 +51,33 @@ public class GroupRepository : IGroupRepository
     public async Task<List<Group>> GetByIdsAsync(List<string> groupIds)
     {
         return await _groups.Find(g => groupIds.Contains(g.GroupId)).ToListAsync();
+    }
+
+    public async Task UpdatePrdAsync(
+        string groupId,
+        string prdDocumentId,
+        string? prdTitleSnapshot,
+        int? prdTokenEstimateSnapshot,
+        int? prdCharCountSnapshot)
+    {
+        var update = Builders<Group>.Update
+            .Set(g => g.PrdDocumentId, prdDocumentId)
+            .Set(g => g.PrdTitleSnapshot, prdTitleSnapshot)
+            .Set(g => g.PrdTokenEstimateSnapshot, prdTokenEstimateSnapshot)
+            .Set(g => g.PrdCharCountSnapshot, prdCharCountSnapshot);
+
+        await _groups.UpdateOneAsync(g => g.GroupId == groupId, update);
+    }
+
+    public async Task ClearPrdAsync(string groupId)
+    {
+        var update = Builders<Group>.Update
+            .Set(g => g.PrdDocumentId, "")
+            .Set(g => g.PrdTitleSnapshot, null)
+            .Set(g => g.PrdTokenEstimateSnapshot, null)
+            .Set(g => g.PrdCharCountSnapshot, null);
+
+        await _groups.UpdateOneAsync(g => g.GroupId == groupId, update);
     }
 }
 
@@ -79,6 +116,11 @@ public class GroupMemberRepository : IGroupMemberRepository
     public async Task DeleteAsync(string groupId, string userId)
     {
         await _members.DeleteOneAsync(m => m.GroupId == groupId && m.UserId == userId);
+    }
+
+    public async Task DeleteByGroupIdAsync(string groupId)
+    {
+        await _members.DeleteManyAsync(m => m.GroupId == groupId);
     }
 
     public async Task<long> CountByGroupIdAsync(string groupId)

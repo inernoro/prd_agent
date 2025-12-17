@@ -4,6 +4,7 @@ mod services;
 
 use tauri::Manager;
 use tauri::Emitter;
+use commands::session::StreamCancelState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,6 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            app.manage(StreamCancelState::default());
             // 初始化配置（从文件加载 API URL）
             commands::config::init_config(app.handle());
 
@@ -36,6 +38,7 @@ pub fn run() {
             commands::session::start_guide,
             commands::session::get_guide_step_content,
             commands::session::control_guide,
+            commands::session::cancel_stream,
             commands::auth::login,
             commands::auth::register,
             commands::auth::set_auth_token,
@@ -43,6 +46,8 @@ pub fn run() {
             commands::group::join_group,
             commands::group::get_groups,
             commands::group::open_group_session,
+            commands::group::bind_group_prd,
+            commands::group::dissolve_group,
             commands::config::get_config,
             commands::config::save_config,
             commands::config::get_default_api_url,

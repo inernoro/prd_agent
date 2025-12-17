@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '../../lib/tauri';
 import { useAuthStore } from '../../stores/authStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ApiResponse, User } from '../../types';
@@ -33,6 +33,10 @@ export default function LoginPage() {
     setError('');
 
     try {
+      if (!isTauri()) {
+        setError('当前页面运行在浏览器环境，无法登录。请使用桌面窗口启动，或点击“演示模式”。');
+        return;
+      }
       if (isLogin) {
         const response = await invoke<ApiResponse<LoginResponse>>('login', {
           username: form.username,

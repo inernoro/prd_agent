@@ -7,6 +7,8 @@ import UsersPage from '@/pages/UsersPage';
 import ModelManagePage from '@/pages/ModelManagePage';
 import StatsPage from '@/pages/StatsPage';
 import GroupsPage from '@/pages/GroupsPage';
+import LlmLogsPage from '@/pages/LlmLogsPage';
+import LabPage from '@/pages/LabPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -52,6 +54,8 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="groups" element={<GroupsPage />} />
         <Route path="model-manage" element={<ModelManagePage />} />
+        <Route path="llm-logs" element={<LlmLogsPage />} />
+        <Route path="lab" element={<LabPage />} />
         <Route path="stats" element={<StatsPage />} />
       </Route>
 

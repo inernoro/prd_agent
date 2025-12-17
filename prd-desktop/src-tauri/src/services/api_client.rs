@@ -1,9 +1,9 @@
-use reqwest::{Client, Url};
+use reqwest::{Client, StatusCode, Url};
 use serde::{de::DeserializeOwned, Serialize};
 use std::sync::RwLock;
 use std::time::Duration;
 
-use crate::models::ApiResponse;
+use crate::models::{ApiError, ApiResponse};
 
 /// 默认 API 地址，可通过环境变量 API_BASE_URL 覆盖
 const DEFAULT_API_URL: &str = "http://localhost:5000";
@@ -71,6 +71,9 @@ impl ApiClient {
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
 
+        #[cfg(debug_assertions)]
+        eprintln!("[api] GET {}", url);
+
         let mut request = self.client.get(&url);
 
         if let Some(token) = Self::get_token() {
@@ -83,16 +86,37 @@ impl ApiClient {
             .map_err(|e| format!("Request failed: {}", e))?;
 
         let status = response.status();
+        #[cfg(debug_assertions)]
+        eprintln!("[api] <- {} {}", status.as_u16(), url);
+
         let text = response
             .text()
             .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
         if text.is_empty() {
-            return Err(format!(
-                "Empty response from server. Status: {}, URL: {}",
-                status, url
-            ));
+            // 某些中间件/默认认证挑战会返回空 body（401/403），这里做兼容，避免前端看到 "Empty response..."
+            if status == StatusCode::UNAUTHORIZED {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "UNAUTHORIZED".to_string(),
+                        message: "未授权".to_string(),
+                    }),
+                });
+            }
+            if status == StatusCode::FORBIDDEN {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "PERMISSION_DENIED".to_string(),
+                        message: "无权限".to_string(),
+                    }),
+                });
+            }
+            return Err(format!("Empty response from server. Status: {}, URL: {}", status, url));
         }
 
         serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
@@ -112,6 +136,9 @@ impl ApiClient {
     ) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
 
+        #[cfg(debug_assertions)]
+        eprintln!("[api] POST {}", url);
+
         let mut request = self.client.post(&url).json(body);
 
         if let Some(token) = Self::get_token() {
@@ -125,6 +152,8 @@ impl ApiClient {
 
         let status = response.status();
         let headers = format!("{:?}", response.headers());
+        #[cfg(debug_assertions)]
+        eprintln!("[api] <- {} {}", status.as_u16(), url);
 
         let text = response
             .text()
@@ -132,6 +161,26 @@ impl ApiClient {
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
         if text.is_empty() {
+            if status == StatusCode::UNAUTHORIZED {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "UNAUTHORIZED".to_string(),
+                        message: "未授权".to_string(),
+                    }),
+                });
+            }
+            if status == StatusCode::FORBIDDEN {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "PERMISSION_DENIED".to_string(),
+                        message: "无权限".to_string(),
+                    }),
+                });
+            }
             return Err(format!(
                 "Empty response from server. Status: {}, Headers: {}",
                 status, headers
@@ -154,6 +203,9 @@ impl ApiClient {
     ) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
 
+        #[cfg(debug_assertions)]
+        eprintln!("[api] PUT {}", url);
+
         let mut request = self.client.put(&url).json(body);
 
         if let Some(token) = Self::get_token() {
@@ -165,10 +217,106 @@ impl ApiClient {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        response
-            .json::<ApiResponse<T>>()
+        let status = response.status();
+        #[cfg(debug_assertions)]
+        eprintln!("[api] <- {} {}", status.as_u16(), url);
+
+        let text = response
+            .text()
             .await
-            .map_err(|e| format!("Failed to parse response: {}", e))
+            .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        if text.is_empty() {
+            if status == StatusCode::UNAUTHORIZED {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "UNAUTHORIZED".to_string(),
+                        message: "未授权".to_string(),
+                    }),
+                });
+            }
+            if status == StatusCode::FORBIDDEN {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "PERMISSION_DENIED".to_string(),
+                        message: "无权限".to_string(),
+                    }),
+                });
+            }
+            return Err(format!("Empty response from server. Status: {}, URL: {}", status, url));
+        }
+
+        serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+            format!(
+                "Failed to parse response: {}. Status: {}. Response body: {}",
+                e,
+                status,
+                &text[..text.len().min(500)]
+            )
+        })
+    }
+
+    pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>, String> {
+        let url = format!("{}/api/v1{}", Self::get_base_url(), path);
+
+        #[cfg(debug_assertions)]
+        eprintln!("[api] DELETE {}", url);
+
+        let mut request = self.client.delete(&url);
+
+        if let Some(token) = Self::get_token() {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        let status = response.status();
+        #[cfg(debug_assertions)]
+        eprintln!("[api] <- {} {}", status.as_u16(), url);
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        if text.is_empty() {
+            if status == StatusCode::UNAUTHORIZED {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "UNAUTHORIZED".to_string(),
+                        message: "未授权".to_string(),
+                    }),
+                });
+            }
+            if status == StatusCode::FORBIDDEN {
+                return Ok(ApiResponse::<T> {
+                    success: false,
+                    data: None,
+                    error: Some(ApiError {
+                        code: "PERMISSION_DENIED".to_string(),
+                        message: "无权限".to_string(),
+                    }),
+                });
+            }
+            return Err(format!("Empty response from server. Status: {}, URL: {}", status, url));
+        }
+
+        serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+            format!(
+                "Failed to parse response: {}. Status: {}. Response body: {}",
+                e,
+                status,
+                &text[..text.len().min(500)]
+            )
+        })
     }
 }
 

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { invoke, listen } from './lib/tauri';
 import { useSessionStore } from './stores/sessionStore';
 import { useAuthStore } from './stores/authStore';
 import { useGroupListStore } from './stores/groupListStore';
@@ -8,15 +7,15 @@ import Header from './components/Layout/Header';
 import Sidebar from './components/Layout/Sidebar';
 import DocumentUpload from './components/Document/DocumentUpload';
 import ChatContainer from './components/Chat/ChatContainer';
+import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
 import LoginPage from './components/Auth/LoginPage';
 import type { ApiResponse, Document, Session, UserRole } from './types';
 
 function App() {
   const { isAuthenticated, accessToken } = useAuthStore();
-  const { documentLoaded } = useSessionStore();
   const { user } = useAuthStore();
-  const { setSession } = useSessionStore();
-  const { loadGroups } = useGroupListStore();
+  const { setSession, mode } = useSessionStore();
+  const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const [isDark, setIsDark] = useState(false);
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
 
@@ -42,6 +41,13 @@ function App() {
     });
   }, [accessToken]);
 
+  // 登录后预加载群组列表，避免 UI 先闪“上传PRD”
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (user?.userId === 'demo-user-001') return;
+    loadGroups().catch(() => {});
+  }, [isAuthenticated, loadGroups, user?.userId]);
+
   // 监听 deep link：prdagent://join/{inviteCode}
   useEffect(() => {
     const unlistenPromise = listen<string>('deep-link', (event) => {
@@ -55,6 +61,7 @@ function App() {
       }
     }).catch((err) => {
       console.error('Failed to listen to deep-link event:', err);
+      return () => {};
     });
 
     return () => {
@@ -126,10 +133,18 @@ function App() {
         <Sidebar />
         
         <main className="flex-1 flex flex-col">
-          {!documentLoaded ? (
+          {/* 规则：
+              - 没有任何群组：右侧显示上传 PRD（上传后自动建群）
+              - 有群组：右侧进入会话区域；未绑定 PRD 的群组显示“待上传/不可对话”空态（由 ChatContainer/ChatInput 控制）
+          */}
+          {groupsLoading ? (
+            <div className="flex-1 flex items-center justify-center text-text-secondary">
+              加载中...
+            </div>
+          ) : groups.length === 0 ? (
             <DocumentUpload />
           ) : (
-            <ChatContainer />
+            mode === 'Knowledge' ? <KnowledgeBasePage /> : <ChatContainer />
           )}
         </main>
       </div>

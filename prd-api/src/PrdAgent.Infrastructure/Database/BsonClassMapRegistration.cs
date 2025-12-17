@@ -31,7 +31,10 @@ public static class BsonClassMapRegistration
             RegisterContentGap();
             RegisterAttachment();
             RegisterLLMConfig();
+            RegisterAppSettings();
+            RegisterLlmRequestLog();
             RegisterInviteCode();
+            RegisterParsedPrd();
 
             _registered = true;
         }
@@ -152,6 +155,47 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(i => i.Code)
                 .SetSerializer(new StringSerializer(BsonType.String))
                 .SetIdGenerator(StringObjectIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterAppSettings()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(AppSettings))) return;
+
+        BsonClassMap.RegisterClassMap<AppSettings>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(s => s.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterLlmRequestLog()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(LlmRequestLog))) return;
+
+        BsonClassMap.RegisterClassMap<LlmRequestLog>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(l => l.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterParsedPrd()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ParsedPrd))) return;
+
+        BsonClassMap.RegisterClassMap<ParsedPrd>(cm =>
+        {
+            cm.AutoMap();
+            // 以内容 hash 作为主键；不使用 ObjectId 生成器
+            cm.MapIdMember(d => d.Id)
+                .SetSerializer(new StringSerializer(BsonType.String));
+            cm.SetIgnoreExtraElements(true);
         });
     }
 }

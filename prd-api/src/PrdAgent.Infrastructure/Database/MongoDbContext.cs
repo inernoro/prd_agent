@@ -25,6 +25,8 @@ public class MongoDbContext
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
+    // PRD 文档长期存储（原文 + 解析结构）
+    public IMongoCollection<ParsedPrd> Documents => _database.GetCollection<ParsedPrd>("documents");
     public IMongoCollection<Message> Messages => _database.GetCollection<Message>("messages");
     public IMongoCollection<ContentGap> ContentGaps => _database.GetCollection<ContentGap>("contentgaps");
     public IMongoCollection<Attachment> Attachments => _database.GetCollection<Attachment>("attachments");
@@ -32,6 +34,8 @@ public class MongoDbContext
     public IMongoCollection<InviteCode> InviteCodes => _database.GetCollection<InviteCode>("invitecodes");
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
+    public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
+    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
 
     private void CreateIndexes()
     {
@@ -44,6 +48,10 @@ public class MongoDbContext
         Groups.Indexes.CreateOne(new CreateIndexModel<Group>(
             Builders<Group>.IndexKeys.Ascending(g => g.InviteCode),
             new CreateIndexOptions { Unique = true }));
+
+        // Documents：Id 为 _id（内容 hash），天然唯一；额外加一个 CreatedAt 索引便于排序/排查
+        Documents.Indexes.CreateOne(new CreateIndexModel<ParsedPrd>(
+            Builders<ParsedPrd>.IndexKeys.Descending(d => d.CreatedAt)));
 
         // GroupMembers复合索引
         GroupMembers.Indexes.CreateOne(new CreateIndexModel<GroupMember>(
@@ -76,5 +84,22 @@ public class MongoDbContext
             Builders<LLMModel>.IndexKeys.Ascending(m => m.PlatformId)));
         LLMModels.Indexes.CreateOne(new CreateIndexModel<LLMModel>(
             Builders<LLMModel>.IndexKeys.Ascending(m => m.Priority)));
+
+        // LLMRequestLogs 索引（调试与监控）
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Descending(l => l.StartedAt)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.RequestId)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.GroupId)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.SessionId)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
+
+        // TTL（默认保留 7 天）：基于 EndedAt
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt),
+            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
     }
 }

@@ -52,6 +52,7 @@ public class AdminLLMConfigController : ControllerBase
             c.TopP,
             c.RateLimitPerMinute,
             c.IsActive,
+            c.EnablePromptCache,
             c.CreatedAt,
             c.UpdatedAt,
             apiKeyMasked = MaskApiKey(DecryptApiKey(c.ApiKeyEncrypted))
@@ -76,7 +77,8 @@ public class AdminLLMConfigController : ControllerBase
             Temperature = request.Temperature,
             TopP = request.TopP,
             RateLimitPerMinute = request.RateLimitPerMinute,
-            IsActive = request.IsActive
+            IsActive = request.IsActive,
+            EnablePromptCache = request.EnablePromptCache
         };
 
         await _db.LLMConfigs.InsertOneAsync(config);
@@ -100,6 +102,7 @@ public class AdminLLMConfigController : ControllerBase
             .Set(c => c.TopP, request.TopP)
             .Set(c => c.RateLimitPerMinute, request.RateLimitPerMinute)
             .Set(c => c.IsActive, request.IsActive)
+            .Set(c => c.EnablePromptCache, request.EnablePromptCache)
             .Set(c => c.UpdatedAt, DateTime.UtcNow);
 
         if (!string.IsNullOrEmpty(request.ApiKey))
@@ -227,6 +230,8 @@ public class CreateLLMConfigRequest
     public double TopP { get; set; } = 0.95;
     public int RateLimitPerMinute { get; set; } = 60;
     public bool IsActive { get; set; } = false;
+    /// <summary>是否启用Prompt Caching（Claude可节省90%输入token费用）</summary>
+    public bool EnablePromptCache { get; set; } = true;
 }
 
 public class UpdateLLMConfigRequest
@@ -239,4 +244,6 @@ public class UpdateLLMConfigRequest
     public double TopP { get; set; } = 0.95;
     public int RateLimitPerMinute { get; set; } = 60;
     public bool IsActive { get; set; } = false;
+    /// <summary>是否启用Prompt Caching（Claude可节省90%输入token费用）</summary>
+    public bool EnablePromptCache { get; set; } = true;
 }

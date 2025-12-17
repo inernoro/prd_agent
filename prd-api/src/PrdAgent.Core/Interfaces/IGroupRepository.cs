@@ -10,8 +10,19 @@ public interface IGroupRepository
     Task<Group?> GetByIdAsync(string groupId);
     Task<Group?> GetByInviteCodeAsync(string inviteCode);
     Task InsertAsync(Group group);
+    Task DeleteAsync(string groupId);
+    Task<long> CountByPrdDocumentIdAsync(string prdDocumentId);
     Task UpdateInviteCodeAsync(string groupId, string newCode);
     Task<List<Group>> GetByIdsAsync(List<string> groupIds);
+
+    Task UpdatePrdAsync(
+        string groupId,
+        string prdDocumentId,
+        string? prdTitleSnapshot,
+        int? prdTokenEstimateSnapshot,
+        int? prdCharCountSnapshot);
+
+    Task ClearPrdAsync(string groupId);
 }
 
 /// <summary>
@@ -24,5 +35,6 @@ public interface IGroupMemberRepository
     Task<List<GroupMember>> GetByUserIdAsync(string userId);
     Task InsertAsync(GroupMember member);
     Task DeleteAsync(string groupId, string userId);
+    Task DeleteByGroupIdAsync(string groupId);
     Task<long> CountByGroupIdAsync(string groupId);
 }

@@ -47,7 +47,12 @@ public class PromptManager : IPromptManager
 
 ---
 
-请基于上述PRD文档内容回答用户问题。如果问题涉及文档中未提及的内容，请明确告知文档中未找到相关信息。";
+请基于上述PRD文档内容回答用户问题。
+
+# 输出要求（必须遵守）
+- 必须使用 Markdown 输出
+- 先给结论，再给依据（引用 PRD 的章节/要点），最后给下一步/风险（如适用）
+- 如果问题涉及文档中未提及的内容，必须明确写出“PRD 未覆盖/未找到”，并说明需要补充什么信息（不要编造）";
     }
 
     /// <summary>构建缺口检测Prompt</summary>
@@ -99,6 +104,14 @@ public class PromptManager : IPromptManager
 - 用具体案例和场景辅助说明
 - 主动提及可能的风险和权衡
 
+# 输出格式（必须 Markdown）
+请严格按以下结构组织回答（可按需省略不适用小节，但顺序不变）：
+## 结论
+## 依据（来自 PRD）
+## 影响与取舍（可选）
+## 风险与边界（可选）
+## 下一步/需要补充的信息（可选）
+
 # 边界约束
 - 只回答与当前PRD文档相关的问题
 - 如果问题超出PRD范围，友好告知并引导回到文档内容
@@ -125,6 +138,15 @@ public class PromptManager : IPromptManager
 - 关注怎么实现和实现细节
 - 用伪代码、数据结构辅助说明
 - 主动指出可能的技术风险和坑点
+
+# 输出格式（必须 Markdown）
+请严格按以下结构组织回答（可按需省略不适用小节，但顺序不变）：
+## 结论
+## 依据（来自 PRD）
+## 设计要点/数据模型
+## 接口与流程（可选）
+## 边界条件与异常（可选）
+## 风险与建议（可选）
 
 # 边界约束
 - 只回答与当前PRD文档相关的问题
@@ -153,6 +175,15 @@ public class PromptManager : IPromptManager
 - 用测试用例格式辅助说明
 - 主动提出可能遗漏的测试场景
 
+# 输出格式（必须 Markdown）
+请严格按以下结构组织回答（可按需省略不适用小节，但顺序不变）：
+## 结论
+## 依据（来自 PRD）
+## 测试点清单
+## 主路径用例（可选）
+## 异常与边界用例（可选）
+## 风险与补充建议（可选）
+
 # 边界约束
 - 只回答与当前PRD文档相关的问题
 - 如果问题超出PRD范围，友好告知并引导回到文档内容
@@ -164,6 +195,13 @@ public class PromptManager : IPromptManager
 # 回答风格
 - 提供全面、中立的回答
 - 涵盖业务、技术和测试各个角度
+
+# 输出格式（必须 Markdown）
+请严格按以下结构组织回答（可按需省略不适用小节，但顺序不变）：
+## 结论
+## 依据（来自 PRD）
+## 业务/技术/测试视角要点
+## 风险与下一步（可选）
 
 # 边界约束
 - 只回答与当前PRD文档相关的问题
@@ -177,30 +215,30 @@ public class PromptManager : IPromptManager
         {
             [UserRole.PM] = new List<GuideOutlineItem>
             {
-                new() { Step = 1, Title = "项目背景与问题定义", PromptTemplate = "请概述这份PRD的项目背景和要解决的核心问题。" },
-                new() { Step = 2, Title = "核心用户与使用场景", PromptTemplate = "请介绍这份PRD中定义的目标用户群体和主要使用场景。" },
-                new() { Step = 3, Title = "解决方案概述", PromptTemplate = "请概述这份PRD提出的解决方案，包括核心功能和设计思路。" },
-                new() { Step = 4, Title = "核心功能清单", PromptTemplate = "请详细列出这份PRD中的核心功能点，按优先级排列。" },
-                new() { Step = 5, Title = "优先级与迭代规划", PromptTemplate = "请说明这份PRD中的功能优先级划分和迭代规划。" },
-                new() { Step = 6, Title = "成功指标与验收标准", PromptTemplate = "请说明这份PRD定义的成功指标和验收标准。" }
+                new() { Step = 1, Title = "项目背景与问题定义", PromptTemplate = "请用 Markdown 输出：用 3-5 个要点概述项目背景与要解决的核心问题；补充 1-2 个关键假设/风险（如有）。" },
+                new() { Step = 2, Title = "核心用户与使用场景", PromptTemplate = "请用 Markdown 输出：列出目标用户与主要使用场景（列表），并给出 1-2 个典型场景示例（如 PRD 有）。" },
+                new() { Step = 3, Title = "解决方案概述", PromptTemplate = "请用 Markdown 输出：概述解决方案（分点），包含核心功能与设计思路；如果 PRD 有范围/边界，请单独小节说明。" },
+                new() { Step = 4, Title = "核心功能清单", PromptTemplate = "请用 Markdown 输出：按优先级列出核心功能点（列表/表格均可），并标注每项的验收要点（如 PRD 有）。" },
+                new() { Step = 5, Title = "优先级与迭代规划", PromptTemplate = "请用 Markdown 输出：说明功能优先级划分与迭代规划（分点/表格），并指出依赖与风险（如有）。" },
+                new() { Step = 6, Title = "成功指标与验收标准", PromptTemplate = "请用 Markdown 输出：列出成功指标与验收标准（列表），缺失之处要明确写“PRD 未覆盖”。" }
             },
             [UserRole.DEV] = new List<GuideOutlineItem>
             {
-                new() { Step = 1, Title = "技术方案概述", PromptTemplate = "请从技术角度概述这份PRD涉及的技术架构和关键技术点。" },
-                new() { Step = 2, Title = "核心数据模型", PromptTemplate = "请分析这份PRD中涉及的核心数据实体和数据模型设计。" },
-                new() { Step = 3, Title = "主流程与状态流转", PromptTemplate = "请详细说明这份PRD中的主要业务流程和状态流转逻辑。" },
-                new() { Step = 4, Title = "接口清单与规格", PromptTemplate = "请列出这份PRD中涉及的接口清单和接口规格要求。" },
-                new() { Step = 5, Title = "技术约束与依赖", PromptTemplate = "请说明这份PRD中提到的技术约束、依赖和限制条件。" },
-                new() { Step = 6, Title = "开发工作量要点", PromptTemplate = "请从开发角度分析这份PRD的关键工作量要点和技术风险。" }
+                new() { Step = 1, Title = "技术方案概述", PromptTemplate = "请用 Markdown 输出：概述技术架构/关键技术点（分点），并给出 3 条实现建议（如 PRD 可推导）。" },
+                new() { Step = 2, Title = "核心数据模型", PromptTemplate = "请用 Markdown 输出：列出核心数据实体（列表）与关键字段（可用表格）；PRD 未给出的字段请标注为“待确认”。" },
+                new() { Step = 3, Title = "主流程与状态流转", PromptTemplate = "请用 Markdown 输出：用步骤列表描述主流程；如适合请给出状态机表（状态/事件/迁移）。" },
+                new() { Step = 4, Title = "接口清单与规格", PromptTemplate = "请用 Markdown 输出：列出接口清单（表格：路径/方法/入参/出参/错误码）；PRD 缺失要明确写“未覆盖”。" },
+                new() { Step = 5, Title = "技术约束与依赖", PromptTemplate = "请用 Markdown 输出：列出技术约束/依赖/限制（分点），并指出潜在风险与规避建议。" },
+                new() { Step = 6, Title = "开发工作量要点", PromptTemplate = "请用 Markdown 输出：拆解工作量要点（列表），标注高风险点与需要提前验证的事项。" }
             },
             [UserRole.QA] = new List<GuideOutlineItem>
             {
-                new() { Step = 1, Title = "功能模块清单", PromptTemplate = "请列出这份PRD中需要测试的功能模块清单。" },
-                new() { Step = 2, Title = "核心业务流程", PromptTemplate = "请分析这份PRD中的核心业务流程，确定测试主路径。" },
-                new() { Step = 3, Title = "边界条件与约束", PromptTemplate = "请列出这份PRD中的边界条件、输入约束和限制规则。" },
-                new() { Step = 4, Title = "异常场景汇总", PromptTemplate = "请汇总这份PRD中涉及的异常场景和错误处理逻辑。" },
-                new() { Step = 5, Title = "验收标准明细", PromptTemplate = "请详细列出这份PRD中的验收标准和预期结果。" },
-                new() { Step = 6, Title = "测试重点与风险", PromptTemplate = "请总结这份PRD的测试重点和潜在风险点。" }
+                new() { Step = 1, Title = "功能模块清单", PromptTemplate = "请用 Markdown 输出：列出需测试的功能模块（列表/表格），并标注优先级（P0/P1/P2）。" },
+                new() { Step = 2, Title = "核心业务流程", PromptTemplate = "请用 Markdown 输出：给出测试主路径（步骤列表），并在每步标注关键校验点。" },
+                new() { Step = 3, Title = "边界条件与约束", PromptTemplate = "请用 Markdown 输出：列出边界条件/输入约束/限制规则（列表），并给出对应的测试设计建议。" },
+                new() { Step = 4, Title = "异常场景汇总", PromptTemplate = "请用 Markdown 输出：汇总异常场景（列表），包含触发条件/预期提示/恢复方式（如 PRD 有）。" },
+                new() { Step = 5, Title = "验收标准明细", PromptTemplate = "请用 Markdown 输出：逐条列出验收标准与预期结果（列表），缺失项写“PRD 未覆盖”。" },
+                new() { Step = 6, Title = "测试重点与风险", PromptTemplate = "请用 Markdown 输出：总结测试重点与风险（分点），并列出需要产品补充确认的问题清单。" }
             }
         };
     }

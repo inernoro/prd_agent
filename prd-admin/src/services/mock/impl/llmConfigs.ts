@@ -32,6 +32,7 @@ export async function createLLMConfigMock(input: CreateLLMConfigInput): Promise<
     topP: input.topP,
     rateLimitPerMinute: input.rateLimitPerMinute,
     isActive: Boolean(input.isActive),
+    enablePromptCache: input.enablePromptCache ?? true,
     apiKeyMasked: mask(input.apiKey),
   };
 
@@ -55,6 +56,7 @@ export async function updateLLMConfigMock(id: string, input: UpdateLLMConfigInpu
   cfg.temperature = input.temperature ?? cfg.temperature;
   cfg.topP = input.topP ?? cfg.topP;
   cfg.rateLimitPerMinute = input.rateLimitPerMinute ?? cfg.rateLimitPerMinute;
+  cfg.enablePromptCache = input.enablePromptCache ?? cfg.enablePromptCache;
 
   if (typeof input.isActive === 'boolean') {
     if (input.isActive) {

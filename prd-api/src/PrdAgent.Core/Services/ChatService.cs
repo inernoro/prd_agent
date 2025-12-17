@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
@@ -16,6 +18,7 @@ public class ChatService : IChatService
     private readonly IPromptManager _promptManager;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private static readonly TimeSpan ChatHistoryExpiry = TimeSpan.FromMinutes(30);
 
     public ChatService(
@@ -25,7 +28,8 @@ public class ChatService : IChatService
         ICacheManager cache,
         IPromptManager promptManager,
         IUserService userService,
-        IMessageRepository messageRepository)
+        IMessageRepository messageRepository,
+        ILLMRequestContextAccessor llmRequestContext)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
@@ -34,6 +38,7 @@ public class ChatService : IChatService
         _promptManager = promptManager;
         _userService = userService;
         _messageRepository = messageRepository;
+        _llmRequestContext = llmRequestContext;
     }
 
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
@@ -97,6 +102,8 @@ public class ChatService : IChatService
 
         // 构建系统Prompt
         var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, document.RawContent);
+        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_CONTENT_REDACTED]");
+        var docHash = Sha256Hex(document.RawContent);
 
         // 获取对话历史
         var history = await GetHistoryAsync(sessionId, 20);
@@ -117,17 +124,36 @@ public class ChatService : IChatService
         var fullResponse = new System.Text.StringBuilder();
         int inputTokens = 0;
         int outputTokens = 0;
+        var blockTokenizer = new MarkdownBlockTokenizer();
+
+        var llmRequestId = Guid.NewGuid().ToString();
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: llmRequestId,
+            GroupId: session.GroupId,
+            SessionId: sessionId,
+            UserId: userId,
+            ViewRole: session.CurrentRole.ToString(),
+            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentHash: docHash,
+            SystemPromptRedacted: systemPromptRedacted));
 
         await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
                 fullResponse.Append(chunk.Content);
-                yield return new ChatStreamEvent
+                foreach (var bt in blockTokenizer.Push(chunk.Content))
                 {
-                    Type = "delta",
-                    Content = chunk.Content
-                };
+                    yield return new ChatStreamEvent
+                    {
+                        Type = bt.Type,
+                        MessageId = messageId,
+                        Content = bt.Content,
+                        BlockId = bt.BlockId,
+                        BlockKind = bt.BlockKind,
+                        BlockLanguage = bt.Language
+                    };
+                }
             }
             else if (chunk.Type == "done")
             {
@@ -144,6 +170,20 @@ public class ChatService : IChatService
                 };
                 yield break;
             }
+        }
+
+        // 流结束：冲刷尾部（半行/未闭合段落/代码块）
+        foreach (var bt in blockTokenizer.Flush())
+        {
+            yield return new ChatStreamEvent
+            {
+                Type = bt.Type,
+                MessageId = messageId,
+                Content = bt.Content,
+                BlockId = bt.BlockId,
+                BlockKind = bt.BlockKind,
+                BlockLanguage = bt.Language
+            };
         }
 
         // 保存用户消息
@@ -190,6 +230,13 @@ public class ChatService : IChatService
             MessageId = messageId,
             TokenUsage = assistantMessage.TokenUsage
         };
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     public async Task<List<Message>> GetHistoryAsync(string sessionId, int limit = 50)

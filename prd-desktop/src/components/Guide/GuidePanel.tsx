@@ -1,6 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { ApiResponse } from '../../types';
+import { useMessageStore } from '../../stores/messageStore';
 
 const steps = [
   { step: 1, pmTitle: '项目背景', devTitle: '技术方案概述', qaTitle: '功能模块清单' },
@@ -13,6 +14,7 @@ const steps = [
 
 export default function GuidePanel() {
   const { sessionId, currentRole, guideStep, setGuideStep, setMode } = useSessionStore();
+  const { isStreaming } = useMessageStore();
 
   const getStepTitle = (step: typeof steps[0]) => {
     switch (currentRole) {
@@ -23,44 +25,43 @@ export default function GuidePanel() {
     }
   };
 
-  const handleControl = async (action: 'next' | 'prev' | 'goto' | 'stop', targetStep?: number) => {
-    if (!sessionId) return;
-
+  const handleExit = async () => {
+    if (!sessionId) {
+      setMode('QA');
+      return;
+    }
     try {
       const response = await invoke<ApiResponse<{ currentStep: number; status: string }>>('control_guide', {
         sessionId,
-        action,
-        step: targetStep,
+        action: 'stop',
       });
-
-      if (response.success && response.data) {
-        setGuideStep(response.data.currentStep);
-        const status = (response.data.status || '').toLowerCase();
-        if (status === 'stopped') {
-          setMode('QA');
-          return;
-        }
-
-        // 拉取当前步骤内容（SSE流式输出到消息区）
-        await invoke('get_guide_step_content', {
-          sessionId,
-          step: response.data.currentStep,
-        });
-      }
+      if (response.success) setMode('QA');
     } catch (err) {
-      console.error('Failed to control guide:', err);
+      console.error('Failed to stop guide:', err);
+      setMode('QA');
     }
+  };
+
+  // 注意：选择阶段/栏目不触发讲解；讲解由输入框上方悬浮栏显式触发
+  const selectStep = (step: number) => {
+    if (isStreaming) return;
+    setGuideStep(step);
   };
 
   return (
     <div className="px-4 py-3 border-b border-border bg-surface-light dark:bg-surface-dark">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium">引导讲解模式</h3>
+        <div>
+          <h3 className="text-sm font-medium">阶段讲解</h3>
+          <div className="mt-0.5 text-xs text-text-secondary">
+            先选择阶段，再点击输入框上方的“简介/讲解”开始生成内容
+          </div>
+        </div>
         <button
-          onClick={() => handleControl('stop')}
+          onClick={handleExit}
           className="text-xs text-text-secondary hover:text-primary-500"
         >
-          退出引导
+          返回问答
         </button>
       </div>
 
@@ -68,16 +69,17 @@ export default function GuidePanel() {
         {steps.map((step) => (
           <button
             key={step.step}
-            onClick={() => handleControl('goto', step.step)}
+            onClick={() => selectStep(step.step)}
+            disabled={isStreaming}
             className={`flex-1 py-2 px-3 text-xs rounded-lg transition-colors ${
               guideStep === step.step
                 ? 'bg-primary-500 text-white'
                 : guideStep > step.step
                 ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
                 : 'bg-gray-100 dark:bg-gray-800 text-text-secondary'
-            }`}
+            } ${isStreaming ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
-            <div className="font-medium">Step {step.step}</div>
+            <div className="font-medium">阶段 {step.step}</div>
             <div className="text-[10px] opacity-80 truncate">{getStepTitle(step)}</div>
           </button>
         ))}
@@ -85,7 +87,7 @@ export default function GuidePanel() {
 
       <div className="flex items-center justify-between mt-3">
         <button
-          onClick={() => handleControl('prev')}
+          onClick={() => selectStep(Math.max(1, guideStep - 1))}
           disabled={guideStep <= 1}
           className="px-3 py-1.5 text-sm text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded disabled:opacity-50"
         >
@@ -95,7 +97,7 @@ export default function GuidePanel() {
           {guideStep} / 6
         </span>
         <button
-          onClick={() => handleControl('next')}
+          onClick={() => selectStep(Math.min(6, guideStep + 1))}
           disabled={guideStep >= 6}
           className="px-3 py-1.5 text-sm text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded disabled:opacity-50"
         >

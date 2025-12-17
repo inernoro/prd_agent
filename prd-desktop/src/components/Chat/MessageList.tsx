@@ -1,17 +1,38 @@
 import { useRef, useEffect } from 'react';
 import { useMessageStore } from '../../stores/messageStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { MessageBlock } from '../../types';
+
+const phaseText: Record<string, string> = {
+  requesting: '正在请求大模型…',
+  connected: '已连接，等待首包…',
+  receiving: '正在接收信息…',
+  typing: '开始输出…',
+};
 
 export default function MessageList() {
-  const { messages, isStreaming, streamingMessageId } = useMessageStore();
+  const { messages, isStreaming, streamingMessageId, streamingPhase } = useMessageStore();
+  const { sessionId, activeGroupId } = useSessionStore();
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = containerRef.current;
+    if (!el) return;
+
+    // 仅当用户已经在底部附近时才自动滚动，避免打断用户阅读历史消息
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isNearBottom = distanceToBottom < 140;
+    if (!isNearBottom) return;
+
+    // 流式期间使用 auto，避免高频 smooth scroll 导致主线程卡顿
+    bottomRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
   }, [messages, isStreaming, streamingMessageId]);
 
   return (
-    <div className="h-full overflow-y-auto p-4 space-y-4">
+    <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
       {messages.map((message) => (
         <div
           key={message.id}
@@ -27,8 +48,48 @@ export default function MessageList() {
             {message.role === 'User' ? (
               <p className="whitespace-pre-wrap">{message.content}</p>
             ) : (
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
+              <div>
+                {/* Block Protocol：按块渲染，流式期间也能稳定 Markdown 排版 */}
+                {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
+                  <div className="space-y-2">
+                    {message.blocks.map((b: MessageBlock) => (
+                      <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
+                        {b.kind === 'codeBlock' ? (
+                          <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
+                            <code className="whitespace-pre">{b.content}</code>
+                          </pre>
+                        ) : (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{b.content}</ReactMarkdown>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
+                  isStreaming && streamingMessageId === message.id ? (
+                    <div>
+                      {(!message.content || message.content.trim().length < 8) && streamingPhase && streamingPhase !== 'typing' ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-sm text-text-secondary">
+                            <span className="inline-flex h-2.5 w-2.5 rounded-full bg-primary-500 animate-pulse" />
+                            <span>{phaseText[streamingPhase] || '处理中…'}</span>
+                          </div>
+                          <div className="space-y-2 animate-pulse">
+                            <div className="h-3 w-56 rounded bg-gray-200 dark:bg-gray-700" />
+                            <div className="h-3 w-64 rounded bg-gray-200 dark:bg-gray-700" />
+                            <div className="h-3 w-40 rounded bg-gray-200 dark:bg-gray-700" />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                    </div>
+                  )
+                )}
               </div>
             )}
 
@@ -53,8 +114,28 @@ export default function MessageList() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
               </svg>
             </div>
-            <p className="text-lg mb-2">你好!</p>
-            <p className="text-sm">有什么关于这份PRD的问题，尽管问我</p>
+            {!sessionId && activeGroupId ? (
+              <>
+                <p className="text-lg mb-2">待上传</p>
+                <p className="text-sm">该群组未绑定 PRD，无法进行对话。</p>
+                <p className="text-xs mt-2 text-text-secondary">
+                  请在左侧选择/上传 PRD，并点击{' '}
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new Event('prdAgent:openBindPrdPicker'))}
+                    className="underline hover:text-primary-500"
+                    title="上传并绑定 PRD"
+                  >
+                    上传 PRD 并绑定到当前群组
+                  </button>
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-lg mb-2">你好!</p>
+                <p className="text-sm">有什么关于这份PRD的问题，尽管问我</p>
+              </>
+            )}
           </div>
         </div>
       )}

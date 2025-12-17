@@ -23,6 +23,7 @@ export async function createModelMock(input: CreateModelInput): Promise<ApiRespo
     enabled: input.enabled,
     isMain: false,
     group: input.group,
+    enablePromptCache: typeof input.enablePromptCache === 'boolean' ? input.enablePromptCache : true,
   };
 
   db.models.unshift(m);
@@ -43,6 +44,7 @@ export async function updateModelMock(id: string, input: UpdateModelInput): Prom
   m.modelName = input.modelName ?? m.modelName;
   m.group = input.group ?? m.group;
   if (typeof input.enabled === 'boolean') m.enabled = input.enabled;
+  if (typeof (input as any).enablePromptCache === 'boolean') (m as any).enablePromptCache = (input as any).enablePromptCache;
 
   if (typeof input.isMain === 'boolean') {
     if (input.isMain) {

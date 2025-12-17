@@ -10,16 +10,21 @@ namespace PrdAgent.Infrastructure.LLM;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 // Claude API
 [JsonSerializable(typeof(ClaudeRequest))]
+[JsonSerializable(typeof(ClaudeCachedRequest))]
 [JsonSerializable(typeof(ClaudeStreamEvent))]
 [JsonSerializable(typeof(ClaudeMessage))]
 [JsonSerializable(typeof(ClaudeDelta))]
 [JsonSerializable(typeof(ClaudeUsage))]
+[JsonSerializable(typeof(ClaudeCacheControl))]
+[JsonSerializable(typeof(ClaudeSystemBlock))]
+[JsonSerializable(typeof(List<ClaudeSystemBlock>))]
 // OpenAI API
 [JsonSerializable(typeof(OpenAIRequest))]
 [JsonSerializable(typeof(OpenAIStreamEvent))]
 [JsonSerializable(typeof(OpenAIChoice))]
 [JsonSerializable(typeof(OpenAIDelta))]
 [JsonSerializable(typeof(OpenAIUsage))]
+[JsonSerializable(typeof(OpenAIPromptTokensDetails))]
 internal partial class LLMJsonContext : JsonSerializerContext
 {
 }
@@ -27,7 +32,7 @@ internal partial class LLMJsonContext : JsonSerializerContext
 #region Claude API Models
 
 /// <summary>
-/// Claude API 请求
+/// Claude API 请求（普通模式）
 /// </summary>
 internal class ClaudeRequest
 {
@@ -37,6 +42,37 @@ internal class ClaudeRequest
     public string System { get; set; } = string.Empty;
     public List<ClaudeRequestMessage> Messages { get; set; } = new();
     public bool Stream { get; set; }
+}
+
+/// <summary>
+/// Claude API 请求（带 Prompt Caching）
+/// </summary>
+internal class ClaudeCachedRequest
+{
+    public string Model { get; set; } = string.Empty;
+    public int MaxTokens { get; set; }
+    public double Temperature { get; set; }
+    public List<ClaudeSystemBlock> System { get; set; } = new();
+    public List<ClaudeRequestMessage> Messages { get; set; } = new();
+    public bool Stream { get; set; }
+}
+
+/// <summary>
+/// Claude System Block（支持 cache_control）
+/// </summary>
+internal class ClaudeSystemBlock
+{
+    public string Type { get; set; } = "text";
+    public string Text { get; set; } = string.Empty;
+    public ClaudeCacheControl? CacheControl { get; set; }
+}
+
+/// <summary>
+/// Claude Cache Control
+/// </summary>
+internal class ClaudeCacheControl
+{
+    public string Type { get; set; } = "ephemeral";
 }
 
 /// <summary>
@@ -110,6 +146,8 @@ internal class ClaudeUsage
 {
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }
+    public int CacheCreationInputTokens { get; set; }
+    public int CacheReadInputTokens { get; set; }
 }
 
 #endregion
@@ -204,6 +242,16 @@ internal class OpenAIUsage
 {
     public int PromptTokens { get; set; }
     public int CompletionTokens { get; set; }
+    public int? TotalTokens { get; set; }
+    public OpenAIPromptTokensDetails? PromptTokensDetails { get; set; }
+}
+
+/// <summary>
+/// OpenAI prompt_tokens_details（部分平台会返回 cached_tokens）
+/// </summary>
+internal class OpenAIPromptTokensDetails
+{
+    public int? CachedTokens { get; set; }
 }
 
 #endregion

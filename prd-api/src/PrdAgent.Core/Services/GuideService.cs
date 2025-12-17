@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
@@ -13,18 +15,21 @@ public class GuideService : IGuideService
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
     private readonly IPromptManager _promptManager;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private const int TotalSteps = 6;
 
     public GuideService(
         ILLMClient llmClient,
         ISessionService sessionService,
         IDocumentService documentService,
-        IPromptManager promptManager)
+        IPromptManager promptManager,
+        ILLMRequestContextAccessor llmRequestContext)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
         _documentService = documentService;
         _promptManager = promptManager;
+        _llmRequestContext = llmRequestContext;
     }
 
     public async IAsyncEnumerable<GuideStreamEvent> StartGuideAsync(
@@ -158,6 +163,8 @@ public class GuideService : IGuideService
 
         // 构建系统Prompt
         var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, document.RawContent);
+        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_CONTENT_REDACTED]");
+        var docHash = Sha256Hex(document.RawContent);
 
         // 构建讲解请求
         var messages = new List<LLMMessage>
@@ -166,15 +173,34 @@ public class GuideService : IGuideService
         };
 
         // 调用LLM
+        var llmRequestId = Guid.NewGuid().ToString();
+        var blockTokenizer = new MarkdownBlockTokenizer();
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: llmRequestId,
+            GroupId: session.GroupId,
+            SessionId: session.SessionId,
+            UserId: null,
+            ViewRole: session.CurrentRole.ToString(),
+            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentHash: docHash,
+            SystemPromptRedacted: systemPromptRedacted));
+
         await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
-                yield return new GuideStreamEvent
+                foreach (var bt in blockTokenizer.Push(chunk.Content))
                 {
-                    Type = "delta",
-                    Content = chunk.Content
-                };
+                    yield return new GuideStreamEvent
+                    {
+                        Type = bt.Type,
+                        Step = step,
+                        Content = bt.Content,
+                        BlockId = bt.BlockId,
+                        BlockKind = bt.BlockKind,
+                        BlockLanguage = bt.Language
+                    };
+                }
             }
             else if (chunk.Type == "error")
             {
@@ -186,6 +212,19 @@ public class GuideService : IGuideService
                 };
                 yield break;
             }
+        }
+
+        foreach (var bt in blockTokenizer.Flush())
+        {
+            yield return new GuideStreamEvent
+            {
+                Type = bt.Type,
+                Step = step,
+                Content = bt.Content,
+                BlockId = bt.BlockId,
+                BlockKind = bt.BlockKind,
+                BlockLanguage = bt.Language
+            };
         }
 
         // 更新会话步骤
@@ -202,5 +241,12 @@ public class GuideService : IGuideService
     public List<GuideOutlineItem> GetOutline(UserRole role)
     {
         return _promptManager.GetGuideOutline(role);
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

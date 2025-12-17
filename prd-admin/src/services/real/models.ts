@@ -25,6 +25,7 @@ export const createModelReal: CreateModelContract = async (input: CreateModelInp
       platformId: input.platformId,
       group: input.group ?? null,
       enabled: input.enabled,
+      enablePromptCache: typeof input.enablePromptCache === 'boolean' ? input.enablePromptCache : true,
     },
   });
 
@@ -53,6 +54,10 @@ export const updateModelReal: UpdateModelContract = async (id: string, input: Up
     maxRetries: m.maxRetries ?? 3,
     maxConcurrency: m.maxConcurrency ?? 5,
     enabled: typeof input.enabled === 'boolean' ? input.enabled : m.enabled,
+    enablePromptCache:
+      typeof (input as any).enablePromptCache === 'boolean'
+        ? (input as any).enablePromptCache
+        : (typeof m.enablePromptCache === 'boolean' ? m.enablePromptCache : true),
     remark: m.remark ?? null,
   };
 

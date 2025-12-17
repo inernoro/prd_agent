@@ -34,6 +34,7 @@ export type Model = {
   enabled: boolean;
   isMain: boolean;
   group?: string;
+  enablePromptCache: boolean;
 };
 
 export type LLMConfig = {
@@ -46,5 +47,64 @@ export type LLMConfig = {
   topP: number;
   rateLimitPerMinute: number;
   isActive: boolean;
+  enablePromptCache: boolean;
   apiKeyMasked: string;
+};
+
+export type LlmRequestLogListItem = {
+  id: string;
+  requestId: string;
+  provider: string;
+  model: string;
+  groupId?: string | null;
+  sessionId?: string | null;
+  viewRole?: string | null;
+  status: string;
+  startedAt: string;
+  firstByteAt?: string | null;
+  endedAt?: string | null;
+  durationMs?: number | null;
+  statusCode?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  error?: string | null;
+};
+
+export type LlmRequestLog = {
+  id: string;
+  requestId: string;
+  groupId?: string | null;
+  sessionId?: string | null;
+  userId?: string | null;
+  viewRole?: string | null;
+  provider: string;
+  model: string;
+  apiBase?: string | null;
+  path?: string | null;
+  requestHeadersRedacted?: Record<string, string> | null;
+  requestBodyRedacted: string;
+  requestBodyHash?: string | null;
+  systemPromptChars?: number | null;
+  systemPromptHash?: string | null;
+  messageCount?: number | null;
+  documentChars?: number | null;
+  documentHash?: string | null;
+  statusCode?: number | null;
+  responseHeaders?: Record<string, string> | null;
+  rawSse?: string[] | null;
+  rawSseTruncated: boolean;
+  assembledTextChars?: number | null;
+  assembledTextHash?: string | null;
+  error?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  startedAt: string;
+  firstByteAt?: string | null;
+  endedAt?: string | null;
+  durationMs?: number | null;
+  status: string;
 };

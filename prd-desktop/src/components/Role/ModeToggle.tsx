@@ -1,5 +1,5 @@
 import { useSessionStore } from '../../stores/sessionStore';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/tauri';
 
 // 问答图标
 const ChatIcon = ({ className }: { className?: string }) => (
@@ -15,8 +15,15 @@ const BookIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+// 知识库图标
+const FolderIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+  </svg>
+);
+
 export default function ModeToggle() {
-  const { mode, setMode, sessionId, currentRole } = useSessionStore();
+  const { mode, setMode, sessionId } = useSessionStore();
 
   const switchToQa = async () => {
     if (mode === 'Guided' && sessionId) {
@@ -30,13 +37,29 @@ export default function ModeToggle() {
   };
 
   const switchToGuided = async () => {
-    setMode('Guided');
-    if (!sessionId) return;
-    try {
-      await invoke('start_guide', { sessionId, role: currentRole.toLowerCase() });
-    } catch (err) {
-      console.error('Failed to start guide:', err);
+    // 离开讲解时清理后端状态
+    if (mode === 'Guided' && sessionId) {
+      try {
+        await invoke('control_guide', { sessionId, action: 'stop' });
+      } catch {
+        // ignore
+      }
     }
+    setMode('Guided');
+    // 不自动触发任何讲解请求；由输入框上方悬浮栏的“讲解/简介”按钮显式触发
+    // 如需退出时清理后端状态，可在 switchToQa 中 stop。
+    void sessionId;
+  };
+
+  const switchToKnowledge = async () => {
+    if (mode === 'Guided' && sessionId) {
+      try {
+        await invoke('control_guide', { sessionId, action: 'stop' });
+      } catch {
+        // ignore
+      }
+    }
+    setMode('Knowledge');
   };
 
   return (
@@ -61,7 +84,18 @@ export default function ModeToggle() {
         }`}
       >
         <BookIcon className="w-4 h-4" />
-        <span>引导讲解</span>
+        <span>阶段讲解</span>
+      </button>
+      <button
+        onClick={switchToKnowledge}
+        className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
+          mode === 'Knowledge'
+            ? 'bg-primary-500 text-white'
+            : 'text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800'
+        }`}
+      >
+        <FolderIcon className="w-4 h-4" />
+        <span>知识库管理</span>
       </button>
     </div>
   );

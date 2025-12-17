@@ -35,6 +35,7 @@ type ModelForm = {
   platformId: string;
   group: string;
   enabled: boolean;
+  enablePromptCache: boolean;
 };
 
 type AvailableModel = {
@@ -57,6 +58,7 @@ const defaultModelForm: ModelForm = {
   platformId: '',
   group: '',
   enabled: true,
+  enablePromptCache: true,
 };
 
 const isSvgAssetUrl = (url?: string | null) => !!url && /\.svg(\?|#|$)/i.test(url);
@@ -83,6 +85,7 @@ export default function ModelManagePage() {
   const [testResult, setTestResult] = useState<{ modelId: string; ok: boolean; msg?: string } | null>(null);
   const [mainJustSetId, setMainJustSetId] = useState<string | null>(null);
   const [platformTogglingId, setPlatformTogglingId] = useState<string | null>(null);
+  const [modelCacheTogglingId, setModelCacheTogglingId] = useState<string | null>(null);
   const [apiUrlDraft, setApiUrlDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -99,6 +102,11 @@ export default function ModelManagePage() {
   >('all');
   const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
 
+  // 全局设置（Prompt Cache）
+  const [enablePromptCache, setEnablePromptCache] = useState<boolean>(true);
+  const [llmSettingsLoaded, setLlmSettingsLoaded] = useState(false);
+  const [promptCacheToggling, setPromptCacheToggling] = useState(false);
+
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
@@ -108,6 +116,17 @@ export default function ModelManagePage() {
         setSelectedPlatformId((cur) => (cur ? cur : (p.data[0]?.id || '')));
       }
       if (m.success) setModels(m.data);
+      // 全局 LLM 设置：mock 模式下本地默认开启
+      if (useMockMode) {
+        setEnablePromptCache(true);
+        setLlmSettingsLoaded(true);
+      } else {
+        const r = await apiRequest<{ enablePromptCache: boolean; updatedAt?: string }>(`/api/v1/admin/settings/llm`, { method: 'GET' });
+        if (r.success) {
+          setEnablePromptCache(Boolean((r.data as any).enablePromptCache));
+        }
+        setLlmSettingsLoaded(true);
+      }
     } finally {
       if (!opts?.silent) setLoading(false);
     }
@@ -302,6 +321,7 @@ export default function ModelManagePage() {
       platformId: selectedPlatform.id,
       group: m.group || undefined,
       enabled: true,
+      enablePromptCache: true,
     });
     if (!res.success) return;
     await load();
@@ -495,6 +515,7 @@ export default function ModelManagePage() {
       platformId: m.platformId,
       group: m.group || '',
       enabled: m.enabled,
+      enablePromptCache: typeof (m as any).enablePromptCache === 'boolean' ? (m as any).enablePromptCache : true,
     });
     setModelDialogOpen(true);
   };
@@ -507,6 +528,7 @@ export default function ModelManagePage() {
         platformId: modelForm.platformId,
         group: modelForm.group || undefined,
         enabled: modelForm.enabled,
+        enablePromptCache: modelForm.enablePromptCache,
       });
       if (!res.success) return;
     } else {
@@ -516,6 +538,7 @@ export default function ModelManagePage() {
         platformId: modelForm.platformId,
         group: modelForm.group || undefined,
         enabled: modelForm.enabled,
+        enablePromptCache: modelForm.enablePromptCache,
       });
       if (!res.success) return;
     }
@@ -569,6 +592,26 @@ export default function ModelManagePage() {
     }
   };
 
+  const toggleModelPromptCache = async (m: Model) => {
+    if (modelCacheTogglingId) return;
+    setModelCacheTogglingId(m.id);
+    try {
+      const next = !m.enablePromptCache;
+      // 先本地即时更新，提升交互
+      setModels((prev) => prev.map((x) => (x.id === m.id ? { ...x, enablePromptCache: next } : x)));
+      const res = await updateModel(m.id, { enablePromptCache: next } as any);
+      if (!res.success) {
+        // 失败回滚并静默回源
+        setModels((prev) => prev.map((x) => (x.id === m.id ? { ...x, enablePromptCache: m.enablePromptCache } : x)));
+        await load({ silent: true });
+        return;
+      }
+      await load({ silent: true });
+    } finally {
+      setModelCacheTogglingId(null);
+    }
+  };
+
   const inputStyle: React.CSSProperties = {
     background: 'var(--bg-input)',
     border: '1px solid rgba(255,255,255,0.12)',
@@ -585,16 +628,78 @@ export default function ModelManagePage() {
 
   const isAll = selectedPlatformId === '__all__';
 
+  const togglePromptCache = async () => {
+    if (promptCacheToggling) return;
+    setPromptCacheToggling(true);
+    try {
+      const next = !enablePromptCache;
+      if (useMockMode) {
+        setEnablePromptCache(next);
+        return;
+      }
+      const res = await apiRequest<{ enablePromptCache: boolean }>(`/api/v1/admin/settings/llm`, {
+        method: 'PUT',
+        body: { enablePromptCache: next },
+      });
+      if (res.success) {
+        setEnablePromptCache(next);
+      }
+    } finally {
+      setPromptCacheToggling(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div>
-        <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>模型管理</div>
-        <div className="mt-1 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
-          平台 {selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个
-          {selectedPlatformId && selectedPlatformId !== '__all__'
-            ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
-            : ''}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>模型管理</div>
+          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+            平台 {selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个
+            {selectedPlatformId && selectedPlatformId !== '__all__'
+              ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
+              : ''}
+          </div>
         </div>
+
+        {/* Prompt Cache 开关 */}
+        {llmSettingsLoaded && (
+          <div
+            className="flex items-center gap-3 px-4 py-2.5 rounded-[14px]"
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div className="min-w-0">
+              <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                Prompt Cache
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Claude 可节省 90% 输入费用
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={togglePromptCache}
+              disabled={promptCacheToggling}
+              className="relative h-7 w-12 rounded-full transition-colors disabled:opacity-60"
+              style={{
+                background: enablePromptCache ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
+                border: enablePromptCache ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
+              }}
+              aria-label={enablePromptCache ? '已启用，点击关闭' : '已禁用，点击启用'}
+            >
+              <span
+                className="absolute top-1 left-1 h-5 w-5 rounded-full transition-transform"
+                style={{
+                  transform: enablePromptCache ? 'translateX(20px)' : 'translateX(0px)',
+                  background: enablePromptCache ? 'rgba(34,197,94,0.95)' : 'rgba(247,247,251,0.65)',
+                }}
+              />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[320px_1fr]" style={{ minHeight: 720 }}>
@@ -627,10 +732,17 @@ export default function ModelManagePage() {
           </div>
 
           <div className="flex-1 overflow-auto p-2">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setSelectedPlatformId('__all__')}
-              className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedPlatformId('__all__');
+                }
+              }}
+              className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
               style={{
                 background: selectedPlatformId === '__all__' ? 'rgba(255,255,255,0.04)' : 'transparent',
                 border: selectedPlatformId === '__all__' ? '1px solid var(--border-default)' : '1px solid transparent',
@@ -647,18 +759,25 @@ export default function ModelManagePage() {
                 <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>共 {models.length} 个模型</div>
               </div>
               <Badge variant="subtle">{models.length}</Badge>
-            </button>
+            </div>
 
             <div className="mt-2 grid gap-1">
               {filteredPlatforms.map((p) => {
                 const isSelected = selectedPlatformId === p.id;
                 const count = models.filter((m) => m.platformId === p.id).length;
                 return (
-                  <button
+                  <div
                     key={p.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedPlatformId(p.id)}
-                    className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedPlatformId(p.id);
+                      }
+                    }}
+                    className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
                     style={{
                       background: isSelected ? 'rgba(255,255,255,0.04)' : 'transparent',
                       border: isSelected ? '1px solid var(--border-default)' : '1px solid transparent',
@@ -692,7 +811,7 @@ export default function ModelManagePage() {
                     >
                       {platformTogglingId === p.id ? '处理中' : p.enabled ? '启用' : '禁用'}
                     </button>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -920,6 +1039,20 @@ export default function ModelManagePage() {
                                   </div>
 
                                   <div className="flex items-center gap-2">
+                                    <Button
+                                      variant={m.enablePromptCache ? 'secondary' : 'ghost'}
+                                      size="sm"
+                                      onClick={() => toggleModelPromptCache(m)}
+                                      disabled={modelCacheTogglingId === m.id}
+                                      title={m.enablePromptCache ? '已开启 Prompt Cache（模型级）' : '已关闭 Prompt Cache（模型级）'}
+                                      style={
+                                        m.enablePromptCache
+                                          ? { background: 'rgba(34,197,94,0.14)', borderColor: 'rgba(34,197,94,0.26)', color: 'rgba(34,197,94,0.95)' }
+                                          : { color: 'var(--text-secondary)' }
+                                      }
+                                    >
+                                      Cache:{m.enablePromptCache ? '开' : '关'}
+                                    </Button>
                                     <Button
                                       variant="secondary"
                                       size="sm"
@@ -1384,6 +1517,15 @@ export default function ModelManagePage() {
                 onChange={(e) => setModelForm((s) => ({ ...s, enabled: e.target.checked }))}
               />
               启用
+            </label>
+
+            <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={modelForm.enablePromptCache}
+                onChange={(e) => setModelForm((s) => ({ ...s, enablePromptCache: e.target.checked }))}
+              />
+              Prompt Cache（模型级）
             </label>
 
             <div className="flex justify-end gap-2 pt-2">

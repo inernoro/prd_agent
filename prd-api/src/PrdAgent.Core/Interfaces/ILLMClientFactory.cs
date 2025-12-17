@@ -19,4 +19,7 @@ public interface ILLMClientFactory
 
     /// <summary>当前使用的提供商</summary>
     string CurrentProvider { get; }
+    
+    /// <summary>是否启用Prompt Caching</summary>
+    bool EnablePromptCache { get; }
 }

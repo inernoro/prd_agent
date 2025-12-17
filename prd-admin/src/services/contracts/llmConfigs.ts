@@ -13,6 +13,8 @@ export type CreateLLMConfigInput = {
   topP: number;
   rateLimitPerMinute: number;
   isActive?: boolean;
+  /** 是否启用Prompt Caching（Claude可节省90%输入token费用） */
+  enablePromptCache?: boolean;
 };
 
 export type CreateLLMConfigContract = (input: CreateLLMConfigInput) => Promise<ApiResponse<LLMConfig>>;

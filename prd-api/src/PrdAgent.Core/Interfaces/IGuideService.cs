@@ -38,6 +38,12 @@ public class GuideStreamEvent
     public string? Content { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
+
+    // Block Protocol（用于稳定的流式 Markdown 渲染）
+    // type: blockStart / blockDelta / blockEnd
+    public string? BlockId { get; set; }
+    public string? BlockKind { get; set; } // paragraph | heading | listItem | codeBlock
+    public string? BlockLanguage { get; set; } // codeBlock 可选语言
 }
 
 /// <summary>

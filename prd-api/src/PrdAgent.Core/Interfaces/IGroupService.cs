@@ -39,4 +39,18 @@ public interface IGroupService
     
     /// <summary>获取用户的群组列表</summary>
     Task<List<Group>> GetUserGroupsAsync(string userId);
+
+    /// <summary>绑定 PRD 到群组（仅写入元数据快照；不存原文）</summary>
+    Task BindPrdAsync(
+        string groupId,
+        string prdDocumentId,
+        string? prdTitleSnapshot,
+        int? prdTokenEstimateSnapshot,
+        int? prdCharCountSnapshot);
+
+    /// <summary>解绑 PRD（清空绑定与快照）</summary>
+    Task UnbindPrdAsync(string groupId);
+
+    /// <summary>解散群组（删除群组与成员记录）</summary>
+    Task DissolveAsync(string groupId);
 }

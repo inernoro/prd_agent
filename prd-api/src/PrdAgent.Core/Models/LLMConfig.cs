@@ -35,6 +35,9 @@ public class LLMConfig
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
     
+    /// <summary>是否启用Prompt Caching（可节省90%输入token费用）</summary>
+    public bool EnablePromptCache { get; set; } = true;
+    
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     

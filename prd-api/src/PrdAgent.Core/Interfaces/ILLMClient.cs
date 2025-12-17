@@ -11,6 +11,13 @@ public interface ILLMClient
         List<LLMMessage> messages,
         CancellationToken cancellationToken = default);
     
+    /// <summary>流式生成回复（支持 Prompt Caching）</summary>
+    IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
+        string systemPrompt,
+        List<LLMMessage> messages,
+        bool enablePromptCache,
+        CancellationToken cancellationToken = default);
+    
     /// <summary>获取服务商名称</summary>
     string Provider { get; }
 }
@@ -45,5 +52,7 @@ public class LLMStreamChunk
     public string? Content { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? CacheCreationInputTokens { get; set; }
+    public int? CacheReadInputTokens { get; set; }
     public string? ErrorMessage { get; set; }
 }

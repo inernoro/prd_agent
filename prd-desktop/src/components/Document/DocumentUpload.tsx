@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useGroupListStore } from '../../stores/groupListStore';
 import { ApiResponse, Document, Session } from '../../types';
 
 interface UploadResponse {
@@ -11,7 +12,8 @@ interface UploadResponse {
 
 export default function DocumentUpload() {
   const { setSession } = useSessionStore();
-  const { user } = useAuthStore();
+  const { user, logout } = useAuthStore();
+  const { loadGroups } = useGroupListStore();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -58,12 +60,59 @@ export default function DocumentUpload() {
       });
 
       if (response.success && response.data) {
+        // 上传 PRD 后默认“一键创建群组”，并将该 PRD 绑定到群组（群组作为容器）
+        const groupName = response.data.document.title || undefined;
+        const createResp = await invoke<ApiResponse<{ groupId: string; inviteCode: string }>>('create_group', {
+          prdDocumentId: response.data.document.id,
+          groupName: groupName,
+        });
+
+        if (!createResp.success || !createResp.data) {
+          if (createResp.error?.code === 'UNAUTHORIZED') {
+            setError('登录已过期或无效，请退出后重新登录');
+            logout();
+            return;
+          }
+          // 退化：仅进入上传会话（旧行为）
+          const session: Session = {
+            sessionId: response.data.sessionId,
+            documentId: response.data.document.id,
+            currentRole: 'PM',
+            mode: 'QA',
+          };
+          setSession(session, response.data.document);
+          return;
+        }
+
+        await loadGroups();
+
+        // 打开群组会话，后续所有对话都基于该群组/session
+        const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
+          'open_group_session',
+          { groupId: createResp.data.groupId, userRole: 'PM' }
+        );
+
+        if (!openResp.success || !openResp.data) {
+          // 退化：仍然保存文档信息
+          const session: Session = {
+            sessionId: response.data.sessionId,
+            documentId: response.data.document.id,
+            currentRole: 'PM',
+            mode: 'QA',
+            groupId: createResp.data.groupId,
+          };
+          setSession(session, response.data.document);
+          return;
+        }
+
         const session: Session = {
-          sessionId: response.data.sessionId,
-          documentId: response.data.document.id,
+          sessionId: openResp.data.sessionId,
+          groupId: openResp.data.groupId,
+          documentId: openResp.data.documentId,
           currentRole: 'PM',
           mode: 'QA',
         };
+
         setSession(session, response.data.document);
       } else {
         setError(response.error?.message || '上传失败');

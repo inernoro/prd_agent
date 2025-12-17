@@ -51,6 +51,7 @@ export const updateLLMConfigReal: UpdateLLMConfigContract = async (id: string, i
     topP: input.topP ?? current.topP ?? 0.95,
     rateLimitPerMinute: input.rateLimitPerMinute ?? current.rateLimitPerMinute ?? 60,
     isActive: input.isActive ?? current.isActive ?? false,
+    enablePromptCache: input.enablePromptCache ?? current.enablePromptCache ?? true,
   };
 
   const res = await apiRequest<BackendUpdateResponse>(`/api/v1/admin/llm-configs/${encodeURIComponent(id)}`, {
@@ -78,5 +79,7 @@ export const activateLLMConfigReal: ActivateLLMConfigContract = async (id: strin
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);
 };
+
+
 
 

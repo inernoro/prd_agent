@@ -9,7 +9,7 @@ public class GroupResponse
 {
     public string GroupId { get; set; } = string.Empty;
     public string GroupName { get; set; } = string.Empty;
-    public string PrdDocumentId { get; set; } = string.Empty;
+    public string? PrdDocumentId { get; set; }
     public string? PrdTitle { get; set; }
     public string InviteLink { get; set; } = string.Empty;
     public string InviteCode { get; set; } = string.Empty;

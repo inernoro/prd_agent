@@ -9,6 +9,7 @@ export type CreateModelInput = {
   platformId: string;
   enabled: boolean;
   group?: string;
+  enablePromptCache?: boolean;
 };
 
 export type UpdateModelInput = Partial<CreateModelInput> & {
