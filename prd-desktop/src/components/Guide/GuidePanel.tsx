@@ -50,7 +50,7 @@ export default function GuidePanel() {
 
   return (
     <div className="px-4 py-3 border-b border-border bg-surface-light dark:bg-surface-dark">
-      <div className="flex items-center justify-between mb-3">
+      {/* <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="text-sm font-medium">阶段讲解</h3>
           <div className="mt-0.5 text-xs text-text-secondary">
@@ -63,7 +63,7 @@ export default function GuidePanel() {
         >
           返回问答
         </button>
-      </div>
+      </div> */}
 
       <div className="flex items-center gap-2">
         {steps.map((step) => (
@@ -85,7 +85,7 @@ export default function GuidePanel() {
         ))}
       </div>
 
-      <div className="flex items-center justify-between mt-3">
+      {/* <div className="flex items-center justify-between mt-3">
         <button
           onClick={() => selectStep(Math.max(1, guideStep - 1))}
           disabled={guideStep <= 1}
@@ -103,7 +103,7 @@ export default function GuidePanel() {
         >
           下一步 →
         </button>
-      </div>
+      </div> */}
     </div>
   );
 }

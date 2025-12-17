@@ -13,6 +13,19 @@ const phaseText: Record<string, string> = {
   typing: '开始输出…',
 };
 
+function ThinkingIndicator({ label }: { label?: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-text-secondary">
+      <span className="inline-flex items-center gap-1" aria-label={label || '处理中'}>
+        <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '120ms' }} />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '240ms' }} />
+      </span>
+      {label ? <span>{label}</span> : null}
+    </div>
+  );
+}
+
 function unwrapMarkdownFences(text: string) {
   if (!text) return text;
   // 兼容：LLM 常用 ```markdown / ```md 包裹“本来就想渲染的 Markdown”，会被当作代码块显示
@@ -57,6 +70,14 @@ export default function MessageList() {
               <p className="whitespace-pre-wrap">{message.content}</p>
             ) : (
               <div>
+                {isStreaming &&
+                streamingMessageId === message.id &&
+                streamingPhase &&
+                streamingPhase !== 'typing' ? (
+                  <div className="mb-2">
+                    <ThinkingIndicator label={phaseText[streamingPhase] || '处理中…'} />
+                  </div>
+                ) : null}
                 {/* Block Protocol：按块渲染，流式期间也能稳定 Markdown 排版 */}
                 {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
                   // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
@@ -101,17 +122,7 @@ export default function MessageList() {
                   isStreaming && streamingMessageId === message.id ? (
                     <div>
                       {(!message.content || message.content.trim().length < 8) && streamingPhase && streamingPhase !== 'typing' ? (
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2 text-sm text-text-secondary">
-                            <span className="inline-flex h-2.5 w-2.5 rounded-full bg-primary-500 animate-pulse" />
-                            <span>{phaseText[streamingPhase] || '处理中…'}</span>
-                          </div>
-                          <div className="space-y-2 animate-pulse">
-                            <div className="h-3 w-56 rounded bg-gray-200 dark:bg-gray-700" />
-                            <div className="h-3 w-64 rounded bg-gray-200 dark:bg-gray-700" />
-                            <div className="h-3 w-40 rounded bg-gray-200 dark:bg-gray-700" />
-                          </div>
-                        </div>
+                        <ThinkingIndicator label={phaseText[streamingPhase] || '处理中…'} />
                       ) : (
                         <p className="whitespace-pre-wrap break-words">{message.content}</p>
                       )}

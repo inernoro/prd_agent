@@ -220,15 +220,15 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="p-4 border-t border-border bg-surface-light dark:bg-surface-dark">
+    <div className="p-3 border-t border-border bg-surface-light dark:bg-surface-dark">
       {mode === 'Guided' && (
-        <div className="mb-3">
+        <div className="mb-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
               <button
                 onClick={handleIntro}
                 disabled={!sessionId || isStreaming}
-                className="px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2.5 py-1 text-sm rounded-lg border border-border text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 title="替你发送一句话：简要概括该阶段"
               >
                 简介
@@ -244,7 +244,7 @@ export default function ChatInput() {
                 <button
                   onClick={handleExplain}
                   disabled={!sessionId || isStreaming}
-                  className="relative px-3 py-1.5 text-sm rounded-[10px] bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="relative px-2.5 py-1 text-sm rounded-[10px] bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
                   title="替你发送一句话：开始讲解该阶段"
                 >
                   讲解
@@ -252,14 +252,14 @@ export default function ChatInput() {
               </span>
             </div>
           </div>
-          <div className="mt-2 text-xs text-text-secondary">
+          <div className="mt-1 text-xs text-text-secondary">
             当前阶段：{guideStep} · {getStepTitle}
           </div>
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <button className="h-12 w-12 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors">
+      <div className="flex items-center gap-2">
+        <button className="h-10 w-10 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors">
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
           </svg>
@@ -275,7 +275,7 @@ export default function ChatInput() {
             }}
             onKeyDown={handleKeyDown}
             placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问。请先在左侧上传并绑定 PRD"}
-            className="w-full min-h-[48px] px-4 py-3 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+            className="w-full min-h-[40px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50"
             rows={1}
             disabled={isStreaming || !canChat}
           />
@@ -284,7 +284,7 @@ export default function ChatInput() {
         <button
           onClick={isStreaming ? handleCancel : handleSend}
           disabled={isStreaming ? false : (!content.trim() || !canChat)}
-          className="h-12 w-12 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="h-10 w-10 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isStreaming ? (
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

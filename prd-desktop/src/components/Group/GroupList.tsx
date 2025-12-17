@@ -138,7 +138,8 @@ export default function GroupList() {
   }
 
   return (
-    <div className="py-2">
+    // 与 Sidebar 顶部标题区 p-4 对齐：列表行自身使用 px-4，这里不再额外加横向 padding
+    <div className="py-2 space-y-1">
       {groups.map((group) => (
         <div
           key={group.groupId}
@@ -146,7 +147,7 @@ export default function GroupList() {
           tabIndex={0}
           onClick={() => void openGroup(group)}
           onKeyDown={(e) => handleRowKeyDown(e, group)}
-          className={`group relative w-full px-4 h-14 text-left transition-colors cursor-pointer select-none ${
+          className={`group relative w-full px-4 h-14 rounded-xl text-left transition-colors cursor-pointer select-none ${
             activeGroupId === group.groupId
               ? 'bg-primary-50 dark:bg-white/5'
               : 'hover:bg-gray-50 dark:hover:bg-white/5'
@@ -221,7 +222,7 @@ export default function GroupList() {
                 <div className="h-8 w-8" />
               )}
               <div
-                className="px-2 py-1 rounded-full text-[12px] leading-4 border border-border text-text-secondary bg-white/0 dark:bg-white/5"
+                className="px-2 py-1 rounded-full text-[12px] leading-4 border border-border/70 text-text-secondary bg-white/0 dark:bg-white/5"
                 title="成员数"
               >
                 {group.memberCount}人
