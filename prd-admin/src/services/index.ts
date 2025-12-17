@@ -15,6 +15,15 @@ import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfi
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract } from '@/services/contracts/llmLogs';
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
 import type {
+  CreateModelLabExperimentContract,
+  GetModelLabExperimentContract,
+  ListModelLabExperimentsContract,
+  ListModelLabModelSetsContract,
+  RunModelLabStreamContract,
+  UpdateModelLabExperimentContract,
+  UpsertModelLabModelSetContract,
+} from '@/services/contracts/modelLab';
+import type {
   DeleteAdminGroupContract,
   GenerateAdminGapSummaryContract,
   GetAdminGroupGapsContract,
@@ -49,6 +58,15 @@ import { createModelMock, deleteModelMock, getModelsMock, setImageGenModelMock, 
 import { activateLLMConfigMock, createLLMConfigMock, deleteLLMConfigMock, getLLMConfigsMock, updateLLMConfigMock } from '@/services/mock/impl/llmConfigs';
 import { getLlmLogDetailMock, getLlmLogsMetaMock, getLlmLogsMock } from '@/services/mock/impl/llmLogs';
 import { adminImpersonateMock } from '@/services/mock/impl/lab';
+import {
+  createModelLabExperimentMock,
+  getModelLabExperimentMock,
+  listModelLabExperimentsMock,
+  listModelLabModelSetsMock,
+  runModelLabStreamMock,
+  updateModelLabExperimentMock,
+  upsertModelLabModelSetMock,
+} from '@/services/mock/impl/modelLab';
 
 import { loginReal } from '@/services/real/auth';
 import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
@@ -58,6 +76,15 @@ import { createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, 
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal } from '@/services/real/llmLogs';
 import { adminImpersonateReal } from '@/services/real/lab';
+import {
+  createModelLabExperimentReal,
+  getModelLabExperimentReal,
+  listModelLabExperimentsReal,
+  listModelLabModelSetsReal,
+  runModelLabStreamReal,
+  updateModelLabExperimentReal,
+  upsertModelLabModelSetReal,
+} from '@/services/real/modelLab';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -139,3 +166,11 @@ export const getLlmLogDetail: GetLlmLogDetailContract = withAuth(useMock ? getLl
 export const getLlmLogsMeta: GetLlmLogsMetaContract = withAuth(useMock ? getLlmLogsMetaMock : getLlmLogsMetaReal);
 
 export const adminImpersonate: AdminImpersonateContract = withAuth(useMock ? adminImpersonateMock : adminImpersonateReal);
+
+export const listModelLabExperiments: ListModelLabExperimentsContract = withAuth(useMock ? listModelLabExperimentsMock : listModelLabExperimentsReal);
+export const createModelLabExperiment: CreateModelLabExperimentContract = withAuth(useMock ? createModelLabExperimentMock : createModelLabExperimentReal);
+export const getModelLabExperiment: GetModelLabExperimentContract = withAuth(useMock ? getModelLabExperimentMock : getModelLabExperimentReal);
+export const updateModelLabExperiment: UpdateModelLabExperimentContract = withAuth(useMock ? updateModelLabExperimentMock : updateModelLabExperimentReal);
+export const listModelLabModelSets: ListModelLabModelSetsContract = withAuth(useMock ? listModelLabModelSetsMock : listModelLabModelSetsReal);
+export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(useMock ? upsertModelLabModelSetMock : upsertModelLabModelSetReal);
+export const runModelLabStream: RunModelLabStreamContract = withAuth(useMock ? runModelLabStreamMock : runModelLabStreamReal);
