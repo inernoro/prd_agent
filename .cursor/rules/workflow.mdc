@@ -36,6 +36,33 @@ pending -> in_progress -> completed
 - 不主动对全仓库运行 lint（除非用户要求）
 - 发现 lint 错误必须修复后再继续
 
+#### 平台/子项目“前置自检”清单（避免 CI 才爆）
+
+当你改动了下面这些目录/文件时，必须执行对应的本地前置检查（只做局部，不做全仓库）：
+
+- **`prd-admin/`（Web 管理后台）**
+  - **何时需要**：改动 `src/**`、依赖、Vite 配置
+  - **必做**：
+    - `pnpm -C prd-admin lint`
+    - `pnpm -C prd-admin tsc --noEmit`
+
+- **`prd-desktop/`（Tauri 桌面端）**
+  - **何时需要**：改动 `prd-desktop/src-tauri/**`、尤其是 `src-tauri/icons/**`、`tauri.conf.json`、`Cargo.toml`/Rust 代码
+  - **必做**：
+    - `cargo build -p prd-agent-desktop`（或项目约定的 desktop build 命令）
+  - **资源格式硬约束（重点）**：
+    - **Tauri icons 必须是 RGBA（带 alpha 通道）的 PNG**；否则会出现 `icon ... is not RGBA` 并导致 `proc macro panicked`
+    - **改了 icon 时必须做本地校验**（macOS）：
+      - `sips -g hasAlpha prd-desktop/src-tauri/icons/32x32.png`
+      - 若 `hasAlpha: no`，不要手动修补，直接用 Tauri 重新生成：
+        - `cargo tauri icon <source.png>`（使用带透明通道的源图）
+    - **注意**：CI（Linux）对图片格式更严格；本地能跑不代表 CI 一定过，icon 相关必须按上面校验
+
+- **`prd-api/`（.NET 后端）**
+  - **何时需要**：改动 `prd-api/**`
+  - **必做**：
+    - `dotnet build prd-api`
+
 ### 提交纪律
 - commit message 聚焦"为什么改"而非"改了什么"
 - 不在 commit/PR 中包含敏感信息

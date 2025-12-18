@@ -7,6 +7,7 @@ import type { ApiResponse, DocCitation, DocumentContent } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import PrdCommentsPanel from '../Comments/PrdCommentsPanel';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
+import PrdSectionAskPanel from './PrdSectionAskPanel';
 
 export default function PrdPreviewPage() {
   const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
@@ -752,6 +753,14 @@ export default function PrdPreviewPage() {
           </div>
         </div>
       ) : null}
+
+      {/* Figma 式悬浮“本章提问”（一次性回复，不写入消息历史） */}
+      <PrdSectionAskPanel
+        sessionId={sessionId}
+        headingId={activeHeadingId}
+        headingTitle={activeHeadingTitle}
+        onJumpToHeading={(id) => scrollToHeading(id)}
+      />
 
       {/* 划词悬浮入口 */}
       {selectionToolbar ? (

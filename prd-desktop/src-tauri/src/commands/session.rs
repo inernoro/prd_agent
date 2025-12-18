@@ -11,6 +11,7 @@ use crate::services::{api_client, ApiClient};
 pub struct StreamCancelState {
     message: Mutex<CancellationToken>,
     guide: Mutex<CancellationToken>,
+    preview: Mutex<CancellationToken>,
 }
 
 impl StreamCancelState {
@@ -24,9 +25,15 @@ impl StreamCancelState {
         *guard = CancellationToken::new();
         guard.clone()
     }
+    fn new_preview_token(&self) -> CancellationToken {
+        let mut guard = self.preview.lock().unwrap();
+        *guard = CancellationToken::new();
+        guard.clone()
+    }
     fn cancel_all(&self) {
         self.message.lock().unwrap().cancel();
         self.guide.lock().unwrap().cancel();
+        self.preview.lock().unwrap().cancel();
     }
 }
 
@@ -34,7 +41,7 @@ impl StreamCancelState {
 pub async fn cancel_stream(cancel: State<'_, StreamCancelState>, kind: Option<String>) -> Result<(), String> {
     let k = kind.unwrap_or_else(|| "all".to_string()).to_lowercase();
     match k.as_str() {
-        "all" | "message" | "guide" => {
+        "all" | "message" | "guide" | "preview" => {
             // 当前实现统一取消（避免前端判断困难）
             cancel.cancel_all();
             Ok(())
@@ -133,6 +140,14 @@ struct SendMessageRequest {
 #[derive(Serialize)]
 struct StartGuideRequest {
     role: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewAskRequest {
+    question: String,
+    heading_id: String,
+    heading_title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -359,4 +374,68 @@ pub async fn control_guide(
     client
         .post(&format!("/sessions/{}/guide/control", session_id), &request)
         .await
+}
+
+#[command]
+pub async fn preview_ask_in_section(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    session_id: String,
+    heading_id: String,
+    heading_title: Option<String>,
+    question: String,
+) -> Result<(), String> {
+    let base_url = api_client::get_api_base_url();
+    let url = format!(
+        "{}/api/v1/sessions/{}/preview-ask",
+        base_url,
+        session_id
+    );
+
+    let client = api_client::build_streaming_client(&base_url);
+    let request = PreviewAskRequest { question, heading_id, heading_title };
+
+    let token = cancel.new_preview_token();
+    emit_stream_phase(&app, "preview-ask-chunk", "requesting");
+    let mut req = client
+        .post(&url)
+        .header("Accept", "text/event-stream")
+        .header("Content-Type", "application/json")
+        .json(&request);
+
+    if let Some(token) = api_client::get_auth_token() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    emit_stream_phase(&app, "preview-ask-chunk", "connected");
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        emit_stream_error(&app, "preview-ask-chunk", format!("HTTP {}: {}", status, body));
+        return Ok(());
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut sse_buf = String::new();
+    let mut saw_any_data = false;
+
+    while let Some(chunk) = stream.next().await {
+        if token.is_cancelled() {
+            let _ = app.emit("preview-ask-chunk", serde_json::json!({ "type": "done" }));
+            break;
+        }
+        match chunk {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                handle_sse_text(&app, "preview-ask-chunk", &mut sse_buf, &text, &mut saw_any_data);
+            }
+            Err(e) => {
+                emit_stream_error(&app, "preview-ask-chunk", format!("Stream error: {}", e));
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }

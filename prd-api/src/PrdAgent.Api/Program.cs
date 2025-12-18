@@ -517,6 +517,16 @@ builder.Services.AddScoped<IGuideService>(sp =>
     return new GuideService(llmClient, sessionService, documentService, promptManager, llmCtx);
 });
 
+builder.Services.AddScoped<IPreviewAskService>(sp =>
+{
+    var llmClient = sp.GetRequiredService<ILLMClient>();
+    var sessionService = sp.GetRequiredService<ISessionService>();
+    var documentService = sp.GetRequiredService<IDocumentService>();
+    var promptManager = sp.GetRequiredService<IPromptManager>();
+    var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
+    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx);
+});
+
 // 注册引导进度仓储
 builder.Services.AddScoped<IGuideProgressRepository>(sp =>
 {

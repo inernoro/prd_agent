@@ -49,6 +49,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ChatStreamEvent))]
 [JsonSerializable(typeof(GuideStreamEvent))]
 [JsonSerializable(typeof(StreamErrorEvent))]
+[JsonSerializable(typeof(PreviewAskStreamEvent))]
 // 请求类型
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(RegisterRequest))]
@@ -66,6 +67,8 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdatePasswordRequest))]
 [JsonSerializable(typeof(GenerateInviteCodeRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
+// 预览提问请求
+[JsonSerializable(typeof(PreviewAskRequest))]
 // 密码验证响应
 [JsonSerializable(typeof(ApiResponse<PasswordValidationResponse>))]
 [JsonSerializable(typeof(PasswordValidationResponse))]

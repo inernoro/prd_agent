@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Cpu, ImagePlus, Layers, MinusCircle, Play, Plus, RefreshCcw, ScanEye, Sparkles, Star, TimerOff, Trash2 } from 'lucide-react';
+import { Cpu, ImagePlus, Layers, MinusCircle, Play, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2 } from 'lucide-react';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -82,12 +82,10 @@ export default function LlmLabTab() {
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
 
   const [modelSets, setModelSets] = useState<ModelLabModelSet[]>([]);
-  const [modelSetsLoading, setModelSetsLoading] = useState(false);
   const [modelSetName, setModelSetName] = useState('');
 
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const [runId, setRunId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runItems, setRunItems] = useState<Record<string, ViewRunItem>>({});
   const [runError, setRunError] = useState<string | null>(null);
@@ -193,12 +191,10 @@ export default function LlmLabTab() {
   };
 
   const loadModelSets = async () => {
-    setModelSetsLoading(true);
     try {
       const res = await listModelLabModelSets({ limit: 100 });
       if (res.success) setModelSets(res.data.items);
     } finally {
-      setModelSetsLoading(false);
     }
   };
 
@@ -291,7 +287,6 @@ export default function LlmLabTab() {
 
     setRunError(null);
     setRunItems({});
-    setRunId(null);
     stopRun();
     setRunning(true);
     const ac = new AbortController();
@@ -313,7 +308,6 @@ export default function LlmLabTab() {
         try {
           const obj = JSON.parse(evt.data);
           if (evt.event === 'run') {
-            if (obj.type === 'runStart') setRunId(obj.runId || null);
             if (obj.type === 'error') {
               setRunError(obj.errorMessage || '运行失败');
               setRunning(false);

@@ -41,6 +41,7 @@ pub fn run() {
             commands::session::get_guide_step_content,
             commands::session::control_guide,
             commands::session::cancel_stream,
+            commands::session::preview_ask_in_section,
             commands::auth::login,
             commands::auth::register,
             commands::auth::set_auth_token,
