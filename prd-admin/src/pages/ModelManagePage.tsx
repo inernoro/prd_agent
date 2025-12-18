@@ -408,6 +408,30 @@ export default function ModelManagePage() {
     await load();
   };
 
+  const bulkAddAvailableGroup = async (groupName: string, ms: AvailableModel[]) => {
+    if (!selectedPlatform) return;
+    const toAdd = ms.filter((m) => !existingModelByName.get(m.modelName));
+    if (toAdd.length === 0) return;
+    const ok = window.confirm(`确定批量添加 ${toAdd.length} 个模型到平台“${selectedPlatform.name}”？\n分组：${groupName}`);
+    if (!ok) return;
+
+    for (const m of toAdd) {
+      const res = await createModel({
+        name: m.displayName || m.modelName,
+        modelName: m.modelName,
+        platformId: selectedPlatform.id,
+        group: m.group || undefined,
+        enabled: true,
+        enablePromptCache: true,
+      });
+      if (!res.success) {
+        alert(res.error?.message || '批量添加失败');
+        break;
+      }
+    }
+    await load();
+  };
+
   const openCreatePlatform = () => {
     setEditingPlatform(null);
     setPlatformForm(defaultPlatformForm);
@@ -940,7 +964,7 @@ export default function ModelManagePage() {
         {/* 平台右键菜单 */}
         {platformCtxMenu.open && (
           <div
-            className="fixed inset-0 z-[60]"
+            className="fixed inset-0 z-60"
             onMouseDown={(e) => {
               // 点击空白处关闭
               e.preventDefault();
@@ -948,7 +972,7 @@ export default function ModelManagePage() {
             }}
           >
             <div
-              className="fixed z-[61] w-[220px] rounded-[14px] p-1.5"
+              className="fixed z-61 w-[220px] rounded-[14px] p-1.5"
               style={{
                 left: platformCtxMenu.x,
                 top: platformCtxMenu.y,
@@ -1577,7 +1601,22 @@ export default function ModelManagePage() {
                           style={{ background: 'rgba(255,255,255,0.03)' }}
                         >
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
-                          <Badge variant="subtle">{ms.length}</Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="subtle">{ms.length}</Badge>
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center h-[26px] w-[26px] rounded-[10px] hover:bg-white/6"
+                              style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                              title="批量添加该组"
+                              onClick={(e) => {
+                                e.preventDefault(); // 避免触发 summary toggle
+                                e.stopPropagation();
+                                void bulkAddAvailableGroup(g, ms);
+                              }}
+                            >
+                              <Plus size={16} />
+                            </button>
+                          </div>
                         </summary>
                         <div className="divide-y divide-white/30">
                           {ms.map((m) => {

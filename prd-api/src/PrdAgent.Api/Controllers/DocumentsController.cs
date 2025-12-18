@@ -225,7 +225,9 @@ public class DocumentsController : ControllerBase
         {
             Id = document.Id,
             Title = document.Title,
-            Content = document.RawContent
+            Content = document.RawContent,
+            MermaidRenderCacheVersion = document.MermaidRenderCacheVersion,
+            MermaidRenders = document.MermaidRenders
         };
 
         return Ok(ApiResponse<DocumentContentInfo>.Ok(response));

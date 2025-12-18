@@ -74,5 +74,8 @@ public static class ErrorCodes
     public const string RATE_LIMITED = "RATE_LIMITED";
     public const string LLM_ERROR = "LLM_ERROR";
     public const string INTERNAL_ERROR = "INTERNAL_ERROR";
+
+    // 评论相关
+    public const string PRD_COMMENT_NOT_FOUND = "PRD_COMMENT_NOT_FOUND";
 }
 

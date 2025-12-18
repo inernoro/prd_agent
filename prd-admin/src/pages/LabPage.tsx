@@ -14,8 +14,8 @@ export default function LabPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <div className="flex items-center gap-2 shrink-0">
         <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
           大模型实验室
         </Button>
@@ -24,7 +24,9 @@ export default function LabPage() {
         </Button>
       </div>
 
-      {tab === 'llm' ? <LlmLabTab /> : <DesktopLabTab />}
+      <div className="flex-1 min-h-0">
+        {tab === 'llm' ? <LlmLabTab /> : <DesktopLabTab />}
+      </div>
     </div>
   );
 }

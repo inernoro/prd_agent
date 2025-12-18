@@ -36,6 +36,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
     public IMongoCollection<ModelLabRun> ModelLabRuns => _database.GetCollection<ModelLabRun>("model_lab_runs");
     public IMongoCollection<ModelLabRunItem> ModelLabRunItems => _database.GetCollection<ModelLabRunItem>("model_lab_run_items");
@@ -57,6 +58,13 @@ public class MongoDbContext
         // Documents：Id 为 _id（内容 hash），天然唯一；额外加一个 CreatedAt 索引便于排序/排查
         Documents.Indexes.CreateOne(new CreateIndexModel<ParsedPrd>(
             Builders<ParsedPrd>.IndexKeys.Descending(d => d.CreatedAt)));
+
+        // PrdComments：按文档/章节聚合查询
+        PrdComments.Indexes.CreateOne(new CreateIndexModel<PrdComment>(
+            Builders<PrdComment>.IndexKeys
+                .Ascending(x => x.DocumentId)
+                .Ascending(x => x.HeadingId)
+                .Descending(x => x.CreatedAt)));
 
         // GroupMembers复合索引
         GroupMembers.Indexes.CreateOne(new CreateIndexModel<GroupMember>(

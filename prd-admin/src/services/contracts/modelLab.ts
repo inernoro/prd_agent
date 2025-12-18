@@ -58,6 +58,7 @@ export type UpsertModelLabExperimentInput = {
 export type CreateModelLabExperimentContract = (input: UpsertModelLabExperimentInput) => Promise<ApiResponse<ModelLabExperiment>>;
 export type GetModelLabExperimentContract = (id: string) => Promise<ApiResponse<ModelLabExperiment>>;
 export type UpdateModelLabExperimentContract = (id: string, input: UpsertModelLabExperimentInput) => Promise<ApiResponse<ModelLabExperiment>>;
+export type DeleteModelLabExperimentContract = (id: string) => Promise<ApiResponse<true>>;
 
 export type ListModelLabModelSetsContract = (args?: { search?: string; limit?: number }) => Promise<ApiResponse<{ items: ModelLabModelSet[] }>>;
 export type UpsertModelLabModelSetContract = (input: { id?: string; name: string; models: ModelLabSelectedModel[] }) => Promise<ApiResponse<ModelLabModelSet>>;

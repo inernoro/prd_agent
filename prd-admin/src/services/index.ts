@@ -16,6 +16,7 @@ import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContrac
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
 import type {
   CreateModelLabExperimentContract,
+  DeleteModelLabExperimentContract,
   GetModelLabExperimentContract,
   ListModelLabExperimentsContract,
   ListModelLabModelSetsContract,
@@ -61,6 +62,7 @@ import { getLlmLogDetailMock, getLlmLogsMetaMock, getLlmLogsMock } from '@/servi
 import { adminImpersonateMock } from '@/services/mock/impl/lab';
 import {
   createModelLabExperimentMock,
+  deleteModelLabExperimentMock,
   getModelLabExperimentMock,
   listModelLabExperimentsMock,
   listModelLabModelSetsMock,
@@ -80,6 +82,7 @@ import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal } from '@/servi
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
   createModelLabExperimentReal,
+  deleteModelLabExperimentReal,
   getModelLabExperimentReal,
   listModelLabExperimentsReal,
   listModelLabModelSetsReal,
@@ -174,6 +177,7 @@ export const listModelLabExperiments: ListModelLabExperimentsContract = withAuth
 export const createModelLabExperiment: CreateModelLabExperimentContract = withAuth(useMock ? createModelLabExperimentMock : createModelLabExperimentReal);
 export const getModelLabExperiment: GetModelLabExperimentContract = withAuth(useMock ? getModelLabExperimentMock : getModelLabExperimentReal);
 export const updateModelLabExperiment: UpdateModelLabExperimentContract = withAuth(useMock ? updateModelLabExperimentMock : updateModelLabExperimentReal);
+export const deleteModelLabExperiment: DeleteModelLabExperimentContract = withAuth(useMock ? deleteModelLabExperimentMock : deleteModelLabExperimentReal);
 export const listModelLabModelSets: ListModelLabModelSetsContract = withAuth(useMock ? listModelLabModelSetsMock : listModelLabModelSetsReal);
 export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(useMock ? upsertModelLabModelSetMock : upsertModelLabModelSetReal);
 export const runModelLabStream: RunModelLabStreamContract = withAuth(useMock ? runModelLabStreamMock : runModelLabStreamReal);

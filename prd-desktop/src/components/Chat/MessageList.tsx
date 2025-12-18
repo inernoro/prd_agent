@@ -1,10 +1,8 @@
 import { useRef, useEffect } from 'react';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkBreaks from 'remark-breaks';
 import type { MessageBlock } from '../../types';
+import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 
 const phaseText: Record<string, string> = {
   requesting: '正在请求大模型…',
@@ -82,11 +80,10 @@ export default function MessageList() {
                 {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
                   // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
                   !(isStreaming && streamingMessageId === message.id) ? (
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                        {unwrapMarkdownFences(message.content)}
-                      </ReactMarkdown>
-                    </div>
+                    <MarkdownRenderer
+                      className="prose prose-sm dark:prose-invert max-w-none"
+                      content={unwrapMarkdownFences(message.content)}
+                    />
                   ) : (
                     <div className="space-y-2">
                       {message.blocks.map((b: MessageBlock) => (
@@ -94,9 +91,7 @@ export default function MessageList() {
                           {b.kind === 'codeBlock' ? (
                             // 如果后端/模型标记为 markdown 代码块，用户通常期望“按 Markdown 渲染”而不是当代码展示
                             (b.language === 'markdown' || b.language === 'md') ? (
-                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                                {unwrapMarkdownFences(b.content)}
-                              </ReactMarkdown>
+                              <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
                             ) : (
                               <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
                                 <code className="whitespace-pre">{b.content}</code>
@@ -108,9 +103,7 @@ export default function MessageList() {
                             b.isComplete === false ? (
                               <p className="whitespace-pre-wrap break-words">{b.content}</p>
                             ) : (
-                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                                {unwrapMarkdownFences(b.content)}
-                              </ReactMarkdown>
+                              <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
                             )
                           )}
                         </div>
@@ -124,11 +117,10 @@ export default function MessageList() {
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     </div>
                   ) : (
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                        {unwrapMarkdownFences(message.content)}
-                      </ReactMarkdown>
-                    </div>
+                    <MarkdownRenderer
+                      className="prose prose-sm dark:prose-invert max-w-none"
+                      content={unwrapMarkdownFences(message.content)}
+                    />
                   )
                 )}
               </div>

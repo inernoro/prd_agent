@@ -1,6 +1,7 @@
 import { fail, ok, type ApiResponse } from '@/types/api';
 import type {
   CreateModelLabExperimentContract,
+  DeleteModelLabExperimentContract,
   GetModelLabExperimentContract,
   ListModelLabExperimentsContract,
   ListModelLabModelSetsContract,
@@ -22,6 +23,10 @@ export const getModelLabExperimentMock: GetModelLabExperimentContract = async ()
 };
 
 export const updateModelLabExperimentMock: UpdateModelLabExperimentContract = async () => {
+  return fail('MOCK', 'mock 模式未实现大模型实验室') as unknown as ApiResponse<any>;
+};
+
+export const deleteModelLabExperimentMock: DeleteModelLabExperimentContract = async () => {
   return fail('MOCK', 'mock 模式未实现大模型实验室') as unknown as ApiResponse<any>;
 };
 

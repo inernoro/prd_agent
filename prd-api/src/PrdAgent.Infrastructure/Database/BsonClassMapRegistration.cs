@@ -35,6 +35,7 @@ public static class BsonClassMapRegistration
             RegisterLlmRequestLog();
             RegisterInviteCode();
             RegisterParsedPrd();
+            RegisterPrdComment();
             RegisterModelLabExperiment();
             RegisterModelLabRun();
             RegisterModelLabRunItem();
@@ -200,6 +201,20 @@ public static class BsonClassMapRegistration
             // 以内容 hash 作为主键；不使用 ObjectId 生成器
             cm.MapIdMember(d => d.Id)
                 .SetSerializer(new StringSerializer(BsonType.String));
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterPrdComment()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(PrdComment))) return;
+
+        BsonClassMap.RegisterClassMap<PrdComment>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringSerializer(BsonType.ObjectId))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }

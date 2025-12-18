@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Cpu, Layers, MinusCircle, Play, Plus, RefreshCcw, Sparkles, TimerOff, Trash2 } from 'lucide-react';
+
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { ConfirmTip } from '@/components/ui/ConfirmTip';
+import { Dialog } from '@/components/ui/Dialog';
 import type { Platform } from '@/types/admin';
 import type { Model } from '@/types/admin';
 import {
   createModelLabExperiment,
+  deleteModelLabExperiment,
   getModels,
   getPlatforms,
   listModelLabExperiments,
@@ -57,6 +62,10 @@ export default function LlmLabTab() {
   const [experiments, setExperiments] = useState<ModelLabExperiment[]>([]);
   const [experimentsLoading, setExperimentsLoading] = useState(true);
   const [activeExperimentId, setActiveExperimentId] = useState<string>('');
+  const [createExperimentOpen, setCreateExperimentOpen] = useState(false);
+  const [createExperimentName, setCreateExperimentName] = useState('');
+  const [loadExperimentOpen, setLoadExperimentOpen] = useState(false);
+  const [loadExperimentId, setLoadExperimentId] = useState<string>('');
 
   const [suite, setSuite] = useState<ModelLabSuite>('speed');
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
@@ -69,18 +78,69 @@ export default function LlmLabTab() {
 
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const [saving, setSaving] = useState(false);
-
   const [runId, setRunId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runItems, setRunItems] = useState<Record<string, ViewRunItem>>({});
   const [runError, setRunError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const suiteCycleRef = useRef<Record<ModelLabSuite, number>>({} as Record<ModelLabSuite, number>);
 
   const activeExperiment = useMemo(
     () => experiments.find((e) => e.id === activeExperimentId) ?? null,
     [experiments, activeExperimentId]
   );
+
+  const platformNameById = useMemo(() => {
+    return new Map<string, string>((platforms ?? []).map((p) => [p.id, p.name]));
+  }, [platforms]);
+
+  const openCreateExperiment = () => {
+    setCreateExperimentName('');
+    setCreateExperimentOpen(true);
+  };
+
+  const confirmCreateExperiment = async () => {
+    const name = createExperimentName.trim();
+    if (!name) return;
+    const created = await createModelLabExperiment({ name, suite: 'speed', params: defaultParams, selectedModels: [] });
+    if (!created.success) return alert(created.error?.message || '创建失败');
+    setExperiments((p) => [created.data, ...p]);
+    setActiveExperimentId(created.data.id);
+    setCreateExperimentOpen(false);
+    setCreateExperimentName('');
+  };
+
+  const openLoadExperiment = () => {
+    setLoadExperimentId(activeExperimentId);
+    setLoadExperimentOpen(true);
+  };
+
+  const shortId = (id: string) => (id || '').slice(0, 8);
+
+  const formatDateTime = (iso: string | undefined) => {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '-';
+    return d.toLocaleString('zh-CN', { hour12: false });
+  };
+
+  const deleteExperiment = async (id: string) => {
+    const res = await deleteModelLabExperiment(id);
+    if (!res.success) return alert(res.error?.message || '删除失败');
+
+    setExperiments((prev) => {
+      const remaining = prev.filter((x) => x.id !== id);
+      setLoadExperimentId((cur) => (cur === id ? '' : cur));
+      setActiveExperimentId((cur) => (cur === id ? (remaining[0]?.id || '') : cur));
+      return remaining;
+    });
+  };
+
+  const confirmLoadExperiment = () => {
+    if (!loadExperimentId) return;
+    setActiveExperimentId(loadExperimentId);
+    setLoadExperimentOpen(false);
+  };
 
   const load = async () => {
     setModelsLoading(true);
@@ -125,7 +185,6 @@ export default function LlmLabTab() {
   useEffect(() => {
     load();
     loadModelSets();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -134,7 +193,7 @@ export default function LlmLabTab() {
     setParams(activeExperiment.params ?? defaultParams);
     setPromptText(activeExperiment.promptText ?? '');
     setSelectedModels(activeExperiment.selectedModels ?? []);
-  }, [activeExperiment?.id]);
+  }, [activeExperiment]);
 
   const setSelectedModelsDedupe = (list: ModelLabSelectedModel[]) => {
     // 唯一选择：平台 + modelName
@@ -154,7 +213,6 @@ export default function LlmLabTab() {
 
   const saveExperiment = async () => {
     if (!activeExperimentId) return;
-    setSaving(true);
     try {
       const res = await updateModelLabExperiment(activeExperimentId, {
         suite,
@@ -169,7 +227,7 @@ export default function LlmLabTab() {
       // 刷新本地列表
       setExperiments((prev) => prev.map((e) => (e.id === res.data.id ? res.data : e)));
     } finally {
-      setSaving(false);
+      // no-op
     }
   };
 
@@ -302,6 +360,22 @@ export default function LlmLabTab() {
     setPromptText(p);
   };
 
+  const onSuiteClick = (nextSuite: ModelLabSuite) => {
+    if (suite !== nextSuite) {
+      setSuite(nextSuite);
+      suiteCycleRef.current[nextSuite] = 0;
+      return;
+    }
+
+    // 重复点击当前 suite：循环填充内置提示词
+    const list = builtInPrompts[nextSuite] ?? [];
+    if (list.length === 0) return;
+    const cur = suiteCycleRef.current[nextSuite] ?? 0;
+    const idx = ((cur % list.length) + list.length) % list.length;
+    applyBuiltInPrompt(list[idx].promptText);
+    suiteCycleRef.current[nextSuite] = (idx + 1) % list.length;
+  };
+
   const saveModelSet = async () => {
     if (!modelSetName.trim()) return alert('请输入集合名称');
     if (selectedModels.length === 0) return alert('当前没有已选择的模型');
@@ -314,10 +388,11 @@ export default function LlmLabTab() {
   const canRun = !running && selectedModels.length > 0;
 
   return (
-    <div className="grid gap-5" style={{ gridTemplateColumns: '360px 1fr' }}>
-      {/* 左侧：试验区 */}
-      <div className="space-y-4">
-        <Card className="p-4">
+    <div className="h-full min-h-0">
+      <div className="h-full min-h-0 grid gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
+        {/* 左上：试验区 */}
+        <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
+          <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -327,179 +402,38 @@ export default function LlmLabTab() {
                 保存实验配置与历史（Mongo）
               </div>
             </div>
-            <Button variant="secondary" size="xs" className="shrink-0" onClick={() => load()} disabled={experimentsLoading}>
-              刷新
-            </Button>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
+              style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+              onClick={openCreateExperiment}
+              disabled={experimentsLoading}
+            >
+              <Plus size={14} />
+              新建
+            </button>
           </div>
 
           <div className="mt-3">
             <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
               当前实验
             </div>
-            <select
-              value={activeExperimentId}
-              onChange={(e) => setActiveExperimentId(e.target.value)}
-              className="h-10 w-full rounded-[14px] px-3 text-sm"
+            <button
+              type="button"
+              className="h-10 w-full rounded-[14px] px-3 text-sm inline-flex items-center justify-between gap-2"
               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              onClick={openLoadExperiment}
+              disabled={experimentsLoading}
+              title="点击加载实验"
             >
-              {experiments.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
+              <span className="min-w-0 truncate">{activeExperiment?.name || '未选择实验'}</span>
+              <span className="shrink-0 text-xs" style={{ color: 'var(--text-muted)' }}>
+                加载
+              </span>
+            </button>
           </div>
 
-          <div className="mt-4 grid gap-3" style={{ gridTemplateColumns: '1fr 120px' }}>
-            <input
-              value={activeExperiment?.name ?? ''}
-              onChange={(e) => setExperiments((prev) => prev.map((x) => (x.id === activeExperimentId ? { ...x, name: e.target.value } : x)))}
-              className="h-10 rounded-[14px] px-3 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              placeholder="实验名称"
-            />
-            <Button onClick={async () => {
-              const created = await createModelLabExperiment({ name: '新实验', suite: 'speed', params: defaultParams, selectedModels: [] });
-              if (!created.success) return alert(created.error?.message || '创建失败');
-              setExperiments((p) => [created.data, ...p]);
-              setActiveExperimentId(created.data.id);
-            }}>
-              新建
-            </Button>
-          </div>
-
-          <div className="mt-4">
-            <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-              测试类型
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant={suite === 'speed' ? 'primary' : 'secondary'} onClick={() => setSuite('speed')}>
-                速度
-              </Button>
-              <Button size="sm" variant={suite === 'intent' ? 'primary' : 'secondary'} onClick={() => setSuite('intent')}>
-                意图
-              </Button>
-              <Button size="sm" variant={suite === 'custom' ? 'primary' : 'secondary'} onClick={() => setSuite('custom')}>
-                自定义
-              </Button>
-            </div>
-          </div>
-
-          {runId ? (
-            <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-              runId：{runId}
-            </div>
-          ) : null}
-          {runError ? (
-            <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
-              {runError}
-            </div>
-          ) : null}
-        </Card>
-
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              自定义模型集合
-            </div>
-            <Button size="xs" variant="secondary" className="shrink-0" onClick={loadModelSets} disabled={modelSetsLoading}>
-              刷新
-            </Button>
-          </div>
-          <div className="mt-3 flex gap-2">
-            <input
-              value={modelSetName}
-              onChange={(e) => setModelSetName(e.target.value)}
-              className="h-10 flex-1 rounded-[14px] px-3 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              placeholder="集合名称（用于保存当前选择）"
-            />
-            <Button onClick={saveModelSet} disabled={selectedModels.length === 0}>
-              保存
-            </Button>
-          </div>
-
-          <div className="mt-3">
-            {modelSets.length === 0 ? (
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                暂无集合
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {modelSets.map((s) => (
-                  <Button
-                    key={s.id}
-                    size="xs"
-                    variant="secondary"
-                    onClick={() => setSelectedModelsDedupe([...selectedModels, ...(s.models ?? [])])}
-                    title="将该集合模型加入当前实验"
-                  >
-                    {s.name}
-                  </Button>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
-
-        <Card className="p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                大模型实验
-              </div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                选择模型 → 选择内置提示词或自定义 → 运行 → 对比 TTFT/总耗时
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setPickerOpen(true)} disabled={modelsLoading}>
-                添加模型
-              </Button>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="flex items-center justify-between">
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                已选择模型 {selectedModels.length} 个
-              </div>
-              {modelsLoading ? <Badge variant="subtle">加载中</Badge> : null}
-            </div>
-            {selectedModels.length === 0 ? (
-              <div className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>
-                暂无模型。点击“添加模型”从已配置模型中选择。
-              </div>
-            ) : (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {selectedModels.map((m) => (
-                  <button
-                    key={m.modelId}
-                    className="px-3 py-1 rounded-[999px] text-xs"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}
-                    onClick={() => removeSelectedModel(m.modelId)}
-                    title="点击移除"
-                    type="button"
-                  >
-                    {m.name || m.modelName}
-                    <span className="ml-2" style={{ color: 'var(--text-muted)' }}>
-                      ×
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* 右侧：大模型实验 */}
-      <div className="space-y-4 relative">
-        <Card className="p-4">
-          <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-            参数（最小可用）
-          </div>
-          <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
               并发
               <input
@@ -521,136 +455,434 @@ export default function LlmLabTab() {
               />
             </label>
           </div>
-        </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          {runId ? (
+            <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+              runId：{runId}
+            </div>
+          ) : null}
+          {runError ? (
+            <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+              {runError}
+            </div>
+          ) : null}
+          </Card>
+        </div>
+
+        {/* 左下：自定义模型集合 + 大模型实验 */}
+        <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-2">
+          <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                大模型实验
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setPickerOpen(true)} disabled={modelsLoading}>
+                <Plus size={16} />
+                添加模型
+              </Button>
+            </div>
+          </div>
+
+          {/* 分组/集合 */}
+          <div className="mt-4 shrink-0">
+            <div className="flex items-center justify-between">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                自定义模型集合
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                value={modelSetName}
+                onChange={(e) => setModelSetName(e.target.value)}
+                className="h-10 flex-1 rounded-[14px] px-3 text-sm outline-none"
+                style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.12)', color: 'var(--text-primary)' }}
+                placeholder="集合名称（用于保存当前选择）"
+              />
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
+                style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                onClick={saveModelSet}
+                disabled={selectedModels.length === 0}
+              >
+                <Layers size={16} />
+                保存
+              </button>
+            </div>
+
+            <div className="mt-3">
+              {modelSets.length === 0 ? (
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  暂无集合
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {modelSets.map((s) => (
+                    <ConfirmTip
+                      key={s.id}
+                      title="确定将模型增加到试验区?"
+                      description={`将集合“${s.name}”中的模型加入当前实验`}
+                      confirmText="确定"
+                      cancelText="取消"
+                      onConfirm={() => setSelectedModelsDedupe([...selectedModels, ...(s.models ?? [])])}
+                      side="top"
+                      align="start"
+                    >
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
+                        style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                        title="将该集合模型加入当前实验"
+                      >
+                        <Layers size={14} />
+                        {s.name}
+                      </button>
+                    </ConfirmTip>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 已选择模型 */}
+          <div className="mt-4 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                已选择模型 {selectedModels.length} 个
+              </div>
+              {modelsLoading ? <Badge variant="subtle">加载中</Badge> : null}
+            </div>
+            <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1">
+              {selectedModels.length === 0 ? (
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  暂无模型。点击“添加模型”从已配置模型中选择。
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {selectedModels.map((m) => (
+                    <button
+                      key={m.modelId}
+                      className="w-full rounded-[14px] px-3 py-2 text-xs flex items-center justify-between gap-3 min-w-0 whitespace-nowrap"
+                      style={{
+                        border: '1px solid var(--border-subtle)',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        color: 'var(--text-primary)',
+                      }}
+                      onClick={() => removeSelectedModel(m.modelId)}
+                      title={`${platformNameById.get(m.platformId) ? `${platformNameById.get(m.platformId)} ` : ''}${m.name || m.modelName}`}
+                      type="button"
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <label
+                          className="inline-flex items-center gap-1 rounded-[999px] px-2 py-[2px] text-[11px] shrink-0 max-w-[140px] truncate"
+                          style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}
+                          title={platformNameById.get(m.platformId) || m.platformId}
+                        >
+                          <Cpu size={12} className="shrink-0" />
+                          <span className="truncate">{platformNameById.get(m.platformId) || m.platformId}</span>
+                        </label>
+                        <span className="min-w-0 truncate">{m.name || m.modelName}</span>
+                      </span>
+                      <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        ×
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          </Card>
+        </div>
+
+        {/* 右上：提示词 */}
+        <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
+          <Card className="p-4">
+          <div className="flex items-center justify-between gap-3 min-w-0">
+            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
               提示词
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex gap-2">
-                {builtInPrompts[suite].map((p) => (
-                  <Button key={p.label} size="xs" variant="secondary" className="shrink-0" onClick={() => applyBuiltInPrompt(p.promptText)}>
-                    {p.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="ghost" onClick={saveExperiment} disabled={saving || !activeExperimentId}>
-                  保存
-                </Button>
+            <div className="flex gap-2 shrink-0">
+              {!running ? (
                 <button
                   type="button"
-                  className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-[color:var(--text-primary)] hover:bg-white/8 hover:border-white/20"
+                  className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
                   style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
                   onClick={startRun}
                   disabled={!canRun || !activeExperimentId}
                 >
+                  <Play size={16} />
                   一键开始实验
                 </button>
-                <Button variant="ghost" onClick={stopRun} disabled={!running}>
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
+                  style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                  onClick={stopRun}
+                >
+                  <MinusCircle size={16} />
                   停止
-                </Button>
-              </div>
+                </button>
+              )}
             </div>
+          </div>
+
+          <div className="mt-3 flex gap-2 overflow-auto pr-1">
+            <Button size="xs" variant={suite === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('speed')}>
+              <Sparkles size={14} />
+              速度
+            </Button>
+            <Button size="xs" variant={suite === 'intent' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('intent')}>
+              <Sparkles size={14} />
+              意图
+            </Button>
+            <Button size="xs" variant={suite === 'custom' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('custom')}>
+              <Sparkles size={14} />
+              自定义
+            </Button>
           </div>
 
           <textarea
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
-            className="mt-3 h-28 w-full rounded-[14px] px-3 py-2 text-sm outline-none"
+            className="mt-3 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
             placeholder="输入本次对比测试的 prompt（可使用内置模板快速填充）"
           />
-        </Card>
+          </Card>
+        </div>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+        {/* 右下：实时结果 */}
+        <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
+          <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
+          <div className="flex items-center justify-between shrink-0">
+            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
               实时结果（按 TTFT 优先排序）
             </div>
             {running ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
           </div>
 
-          {sortedItems.length === 0 ? (
-            <div className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>
-              暂无结果。点击“一键开始实验”后，会在这里实时展示每个模型的 TTFT、总耗时与输出预览。
-            </div>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {sortedItems.map((it) => (
+          <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
+            {sortedItems.length === 0 ? (
+              <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
                 <div
-                  key={it.itemId}
-                  className="rounded-[14px] p-3"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                  className="h-12 w-12 rounded-full flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                        {it.displayName}
-                      </div>
-                      <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                        {it.modelName} · {it.modelId}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'} · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
-                      </div>
-                      <div className="mt-1 text-xs" style={{ color: it.status === 'error' ? 'rgba(239,68,68,0.95)' : it.status === 'done' ? 'rgba(34,197,94,0.95)' : 'var(--text-muted)' }}>
-                        {it.status === 'running' ? '进行中' : it.status === 'done' ? '完成' : '失败'}
-                      </div>
-                    </div>
-                  </div>
-                  {it.errorMessage ? (
-                    <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                      {it.errorMessage}
-                    </div>
-                  ) : null}
-                  <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
-                    {it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
-                  </pre>
+                  <TimerOff size={22} style={{ color: 'var(--text-muted)' }} />
                 </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* 右下角卡片堆叠（快速扫一眼） */}
-        {sortedItems.length > 0 ? (
-          <div className="absolute right-3 bottom-3 w-[320px] space-y-2 pointer-events-none">
-            {sortedItems.slice(0, 3).map((it) => (
-              <div
-                key={it.itemId}
-                className="rounded-[16px] p-3"
-                style={{ border: '1px solid var(--border-subtle)', background: 'color-mix(in srgb, var(--bg-elevated) 88%, black)', boxShadow: '0 10px 30px rgba(0,0,0,0.35)' }}
-              >
-                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                  {it.displayName}
+                <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  这里将实时展示对比结果
                 </div>
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'} · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
-                </div>
-                <div className="mt-2 text-xs line-clamp-3" style={{ color: 'var(--text-primary)' }}>
-                  {it.preview || '（暂无预览）'}
+                  点击上方“一键开始实验”，会按模型展示 TTFT、总耗时与输出预览
                 </div>
               </div>
-            ))}
+            ) : (
+              <div className="space-y-2">
+                {sortedItems.map((it) => (
+                  <div
+                    key={it.itemId}
+                    className="rounded-[14px] p-3"
+                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                  >
+                    <div className="flex items-center justify-between gap-3 min-w-0">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {it.displayName}
+                        </div>
+                        <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                          {(() => {
+                            const name = (it.modelName ?? '').trim();
+                            const id = (it.modelId ?? '').trim();
+                            if (name && id && name !== id) return `${name} · ${id}`;
+                            return name || id || '-';
+                          })()}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'} · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
+                        </div>
+                        <div
+                          className="mt-1 text-xs"
+                          style={{
+                            color:
+                              it.status === 'error'
+                                ? 'rgba(239,68,68,0.95)'
+                                : it.status === 'done'
+                                  ? 'rgba(34,197,94,0.95)'
+                                  : 'var(--text-muted)',
+                          }}
+                        >
+                          {it.status === 'running' ? '进行中' : it.status === 'done' ? '完成' : '失败'}
+                        </div>
+                      </div>
+                    </div>
+                    {it.errorMessage ? (
+                      <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                        {it.errorMessage}
+                      </div>
+                    ) : null}
+                    <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
+                      {it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ) : null}
-
-        <ModelPickerDialog
-          open={pickerOpen}
-          onOpenChange={(o) => setPickerOpen(o)}
-          allModels={allModels}
-          platforms={platforms}
-          selectedModels={selectedModels}
-          onConfirm={(finalList) => {
-            setSelectedModelsDedupe(finalList);
-          }}
-        />
+          </Card>
+        </div>
       </div>
+
+      {/* 弹窗放在 grid 外，避免参与布局 */}
+      <ModelPickerDialog
+        open={pickerOpen}
+        onOpenChange={(o) => setPickerOpen(o)}
+        allModels={allModels}
+        platforms={platforms}
+        selectedModels={selectedModels}
+        onConfirm={(finalList) => {
+          setSelectedModelsDedupe(finalList);
+        }}
+      />
+
+      <Dialog
+        open={createExperimentOpen}
+        onOpenChange={(o) => setCreateExperimentOpen(o)}
+        title="新建实验"
+        description="输入实验名称后创建"
+        content={
+          <div className="grid gap-3">
+            <input
+              value={createExperimentName}
+              onChange={(e) => setCreateExperimentName(e.target.value)}
+              className="h-10 w-full rounded-[14px] px-3 text-sm outline-none"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              placeholder="例如：默认实验"
+              autoFocus
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
+                style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                onClick={() => setCreateExperimentOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
+                style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                onClick={confirmCreateExperiment}
+                disabled={!createExperimentName.trim()}
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={loadExperimentOpen}
+        onOpenChange={(o) => setLoadExperimentOpen(o)}
+        title="加载实验"
+        description="选择一个实验加载到试验区"
+        content={
+          <div className="grid gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                共 {experiments.length} 个实验
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
+                style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                onClick={load}
+                disabled={experimentsLoading}
+              >
+                刷新列表
+              </button>
+            </div>
+
+            {experiments.length === 0 ? (
+              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                暂无实验
+              </div>
+            ) : (
+              <div className="max-h-[420px] overflow-auto pr-1 rounded-[14px]" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
+                <div className="p-2 grid gap-1">
+                  {experiments.map((e) => (
+                    <div
+                      key={e.id}
+                      className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 hover:bg-white/4"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      <button
+                        type="button"
+                        className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer"
+                        style={{ color: 'inherit' }}
+                        onClick={() => setLoadExperimentId(e.id)}
+                      >
+                        <input type="radio" name="load-experiment" checked={loadExperimentId === e.id} onChange={() => setLoadExperimentId(e.id)} />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold truncate">{e.name}</span>
+                          <span className="block text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                            #{shortId(e.id)} · 模型 {e.selectedModels?.length ?? 0} · {formatDateTime(e.updatedAt)}
+                          </span>
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
+                        style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                        onClick={async (evt) => {
+                          evt.stopPropagation();
+                          if (!window.confirm(`确定删除实验“${e.name}”？（不可恢复）`)) return;
+                          await deleteExperiment(e.id);
+                        }}
+                        title="删除实验"
+                      >
+                        <Trash2 size={14} />
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
+                style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                onClick={() => setLoadExperimentOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
+                style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                onClick={confirmLoadExperiment}
+                disabled={!loadExperimentId}
+              >
+                加载
+              </button>
+            </div>
+          </div>
+        }
+      />
     </div>
   );
 }

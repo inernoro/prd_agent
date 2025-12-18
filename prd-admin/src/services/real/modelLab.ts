@@ -1,5 +1,6 @@
 import type {
   CreateModelLabExperimentContract,
+  DeleteModelLabExperimentContract,
   GetModelLabExperimentContract,
   ListModelLabExperimentsContract,
   ListModelLabModelSetsContract,
@@ -159,6 +160,10 @@ export const updateModelLabExperimentReal: UpdateModelLabExperimentContract = as
   const updated = await apiRequest<ModelLabExperiment>(`/api/v1/admin/model-lab/experiments/${encodeURIComponent(id)}`, { method: 'PUT', body });
   if (!updated.success) return updated;
   return ok(normalizeExperimentFromApi(updated.data));
+};
+
+export const deleteModelLabExperimentReal: DeleteModelLabExperimentContract = async (id: string) => {
+  return await apiRequest<true>(`/api/v1/admin/model-lab/experiments/${encodeURIComponent(id)}`, { method: 'DELETE' });
 };
 
 export const listModelLabModelSetsReal: ListModelLabModelSetsContract = async (args) => {

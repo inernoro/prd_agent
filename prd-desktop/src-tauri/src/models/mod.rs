@@ -39,6 +39,20 @@ pub struct DocumentContentInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PrdCommentInfo {
+    pub id: String,
+    pub document_id: String,
+    pub heading_id: String,
+    pub heading_title_snapshot: String,
+    pub author_user_id: String,
+    pub author_display_name: String,
+    pub content: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub session_id: String,
     pub group_id: Option<String>,

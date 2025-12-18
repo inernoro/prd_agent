@@ -22,9 +22,28 @@ public class ParsedPrd
     
     /// <summary>章节结构</summary>
     public List<Section> Sections { get; set; } = new();
+
+    /// <summary>
+    /// Mermaid 渲染缓存版本（预留入口；本期不生成/不写入）
+    /// </summary>
+    public int? MermaidRenderCacheVersion { get; set; }
+
+    /// <summary>
+    /// Mermaid 渲染缓存（预留入口；本期不生成/不写入）
+    /// key: mermaid code hash
+    /// </summary>
+    public Dictionary<string, MermaidRenderSet>? MermaidRenders { get; set; }
     
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Mermaid 渲染结果（预留入口；本期不生成/不写入）\n/// </summary>
+public class MermaidRenderSet
+{
+    public string? SvgLight { get; set; }
+    public string? SvgDark { get; set; }
 }
 
 /// <summary>

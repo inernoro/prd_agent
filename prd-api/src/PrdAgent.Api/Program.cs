@@ -438,6 +438,12 @@ builder.Services.AddScoped<IMessageRepository>(sp =>
     return new MessageRepository(db.Messages);
 });
 
+builder.Services.AddScoped<IPrdCommentRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new PrdCommentRepository(db.PrdComments);
+});
+
 builder.Services.AddScoped<IModelLabRepository>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();

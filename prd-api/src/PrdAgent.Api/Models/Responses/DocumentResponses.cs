@@ -34,6 +34,10 @@ public class DocumentContentInfo
     public string Id { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+
+    // 预留入口：本期不生成/不写入
+    public int? MermaidRenderCacheVersion { get; set; }
+    public Dictionary<string, MermaidRenderSet>? MermaidRenders { get; set; }
 }
 
 /// <summary>

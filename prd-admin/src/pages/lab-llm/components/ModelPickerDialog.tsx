@@ -217,6 +217,20 @@ function PlatformAvailableDialog({
     return map;
   }, [allModels, platform?.id]);
 
+  const bulkAddGroup = (ms: AvailableModel[]) => {
+    if (!platform?.id) return;
+    const adds = ms.map((m) =>
+      toSelectedModelFromAvailable({
+        platformId: platform.id,
+        modelName: m.modelName,
+        displayName: m.displayName || m.modelName,
+        group: m.group,
+        configuredModel: configuredByModelName.get(m.modelName) ?? null,
+      })
+    );
+    setSelected((prev) => [...prev, ...adds]);
+  };
+
   const togglePoolModel = (m: AvailableModel) => {
     if (!platform?.id) return;
     const k = keyOf({ platformId: platform.id, modelName: m.modelName });
@@ -348,8 +362,23 @@ function PlatformAvailableDialog({
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                           {g}
                         </div>
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {ms.length} 个
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {ms.length} 个
+                          </div>
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center h-[26px] w-[26px] rounded-[10px] hover:bg-white/6"
+                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                            title="批量加入该组"
+                            onClick={(e) => {
+                              e.preventDefault(); // 避免触发 summary toggle
+                              e.stopPropagation();
+                              bulkAddGroup(ms);
+                            }}
+                          >
+                            <Plus size={16} />
+                          </button>
                         </div>
                       </summary>
                       <div className="divide-y divide-white/30">
