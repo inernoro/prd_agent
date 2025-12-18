@@ -1,0 +1,26 @@
+---
+description: prd-api（.NET 后端）约束与自检
+globs: prd-api/**
+---
+
+# prd-api（.NET 后端）规则
+
+## 技术栈
+- .NET 8.0 / ASP.NET Core / C# 12
+- MongoDB 8.0+ / Redis / Serilog
+
+## 命名约定
+- 后端类/方法: PascalCase
+- 后端变量: camelCase
+- MongoDB集合: 全小写（users, groups, messages）
+- MongoDB字段: camelCase
+- API路径: kebab-case
+
+## 目录约定
+- 后端分层: Api -> Core -> Infrastructure
+- Prompt模板: `Infrastructure/Prompts/Templates/`
+
+## 局部前置自检（避免 CI 才爆）
+
+当你改动了 `prd-api/**` 时，必须执行：
+- `dotnet build prd-api`

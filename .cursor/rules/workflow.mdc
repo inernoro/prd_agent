@@ -4,25 +4,12 @@ alwaysApply: true
 
 # 工作流与状态管理
 
-## 任务管理（Todo）
+## 全局偏好与协作约束
 
-### 何时使用 Todo
-- 任务 **>=3 步骤**、跨多个文件、或有明显依赖关系时，必须创建 todo 列表
-- 用户提供多项任务（编号/逗号分隔）时，必须拆分为独立 todo
-- 简单单步任务（如改一行配置、回答问题）可跳过
-
-### Todo 状态规则
-- **同一时间只允许 1 个 `in_progress`**
-- 开始新任务前先标记 `in_progress`
-- 完成后立即标记 `completed`
-- 需求变更时：先取消旧 todo（`cancelled`），再新增
-- 不要为"测试改动"单独加 todo，除非用户明确要求
-
-### 状态流转
-```
-pending -> in_progress -> completed
-                      \-> cancelled
-```
+- 任何内容不允许使用 emoji
+- 今年是 2025 年
+- 我会同时操作多个 agent 修改代码：未得到我的允许或我的明确要求，不允许回滚任何代码
+- 多 agent 并行开发时保持 git 隔离：修改 `prd-desktop/` / `prd-admin/` 时，不能操作 git 影响对方的改动（避免误伤其他 agent）
 
 ## 执行纪律
 
@@ -31,42 +18,62 @@ pending -> in_progress -> completed
 - 优先并行读取多个可能相关的文件（减少往返）
 - 用户指定路径时，必须先打开确认再改
 
+### 任务管理（Todo）
+
+#### 何时使用 Todo
+- 任务 **>=3 步骤**、跨多个文件、或有明显依赖关系时，必须创建 todo 列表
+- 用户提供多项任务（编号/逗号分隔）时，必须拆分为独立 todo
+- 简单单步任务（如改一行配置、回答问题）可跳过
+
+#### Todo 状态规则
+- **同一时间只允许 1 个 `in_progress`**
+- 开始新任务前先标记 `in_progress`
+- 完成后立即标记 `completed`
+- 需求变更时：先取消旧 todo（`cancelled`），再新增
+- 不要为“测试改动”单独加 todo，除非用户明确要求
+
+#### 状态流转
+```
+pending -> in_progress -> completed
+                      \-> cancelled
+```
+
 ### 局部自检
 - 修改后只对改动范围做 lint/类型检查
 - 不主动对全仓库运行 lint（除非用户要求）
 - 发现 lint 错误必须修复后再继续
-
-#### 平台/子项目“前置自检”清单（避免 CI 才爆）
-
-当你改动了下面这些目录/文件时，必须执行对应的本地前置检查（只做局部，不做全仓库）：
-
-- **`prd-admin/`（Web 管理后台）**
-  - **何时需要**：改动 `src/**`、依赖、Vite 配置
-  - **必做**：
-    - `pnpm -C prd-admin lint`
-    - `pnpm -C prd-admin tsc --noEmit`
-
-- **`prd-desktop/`（Tauri 桌面端）**
-  - **何时需要**：改动 `prd-desktop/src-tauri/**`、尤其是 `src-tauri/icons/**`、`tauri.conf.json`、`Cargo.toml`/Rust 代码
-  - **必做**：
-    - `cargo build -p prd-agent-desktop`（或项目约定的 desktop build 命令）
-  - **资源格式硬约束（重点）**：
-    - **Tauri icons 必须是 RGBA（带 alpha 通道）的 PNG**；否则会出现 `icon ... is not RGBA` 并导致 `proc macro panicked`
-    - **改了 icon 时必须做本地校验**（macOS）：
-      - `sips -g hasAlpha prd-desktop/src-tauri/icons/32x32.png`
-      - 若 `hasAlpha: no`，不要手动修补，直接用 Tauri 重新生成：
-        - `cargo tauri icon <source.png>`（使用带透明通道的源图）
-    - **注意**：CI（Linux）对图片格式更严格；本地能跑不代表 CI 一定过，icon 相关必须按上面校验
-
-- **`prd-api/`（.NET 后端）**
-  - **何时需要**：改动 `prd-api/**`
-  - **必做**：
-    - `dotnet build prd-api`
+- 子项目的“必做自检命令”下沉到对应规则文件：
+  - `prd-admin/`：见 `.cursor/rules/prd-admin.mdc`
+  - `prd-desktop/`：见 `.cursor/rules/prd-desktop.mdc`
+  - `prd-api/`：见 `.cursor/rules/prd-api.mdc`
 
 ### 提交纪律
-- commit message 聚焦"为什么改"而非"改了什么"
+- commit message 聚焦“为什么改”而非“改了什么”
 - 不在 commit/PR 中包含敏感信息
 - 使用 HEREDOC 格式传递多行 commit message
+
+## 文档地图（按任务类型优先阅读）
+
+项目文档位于 `doc/` 目录，执行任务前应根据任务类型优先阅读对应文档：
+
+| 文档 | 用途 | 何时阅读 |
+|------|------|----------|
+| `doc/1.why.md` | 项目背景、设计原则（做减法、专精 Agent、Cache>RAG） | 理解产品边界、拒答策略、核心理念 |
+| `doc/2.srs.md` | **需求基线**：架构、接口协议、数据模型、非功能性指标 | 实现接口/数据结构/性能要求时 |
+| `doc/3.prd.md` | **功能基线**：用户场景、功能清单、验收标准、迭代规划 | 新增功能/理解业务流程时 |
+| `doc/4.dev.md` | **开发指南**：目录结构、环境搭建、命名规范、测试与部署 | 写代码/配置环境/提交代码时 |
+| `doc/5.step.md` | 进度跟踪、发布流程、CI/CD 配置清单 | 查看里程碑/发布步骤（敏感信息仅作占位参考） |
+
+### 引用优先级
+1. **需求/规格冲突**：以 `doc/2.srs.md`（技术规格）和 `doc/3.prd.md`（产品需求）为准。
+2. **实现/工程冲突**：以 `doc/4.dev.md` 为准。
+3. **进度/发布**：`doc/5.step.md` 仅作流程参考，其中敏感信息（密钥、证书）禁止复制到代码/commit。
+
+### 快速索引
+- 要改接口/数据模型 -> 先看 `doc/2.srs.md` 第5章（外部接口）、第7章（数据模型）
+- 要加新功能 -> 先看 `doc/3.prd.md` 第4章（详细功能说明）
+- 要改目录结构/命名 -> 先看 `doc/4.dev.md` 第4章（项目结构）、第8章（开发规范）
+- 要理解为什么这么设计 -> 先看 `doc/1.why.md`（四味药/做减法）
 
 ## 并行优化
 - 多个独立读取/搜索操作应并行发起

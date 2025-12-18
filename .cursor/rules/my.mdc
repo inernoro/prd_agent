@@ -1,8 +1,0 @@
----
-alwaysApply: true
----
-
-1.任何内容不允许使用emoji
-2.今年是2025年
-3.我会同时操作多个agent修改代码, 未得到我的允许或我的明确要求, 不允许回滚任何代码
-4.每个agent修改代码之间git隔离, 修改prd-desktop / prd-admin 不能操作git对对方进行操作, 避免多agent修改到其他ai的代码

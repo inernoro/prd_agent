@@ -1,0 +1,19 @@
+---
+description: prd-admin（Web 管理后台）约束与自检
+globs: prd-admin/**
+---
+
+# prd-admin（Web 管理后台）规则
+
+## 技术栈
+- React 18 / TypeScript 5 / Vite / Ant Design 5
+
+## 命名约定
+- 前端变量/函数: camelCase
+- React 组件: PascalCase
+
+## 局部前置自检（避免 CI 才爆）
+
+当你改动了 `prd-admin/src/**`、依赖、Vite 配置时，必须执行：
+- `pnpm -C prd-admin lint`
+- `pnpm -C prd-admin tsc --noEmit`

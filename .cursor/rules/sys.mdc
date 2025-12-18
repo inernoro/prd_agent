@@ -1,71 +1,16 @@
 ---
-alwaysApply: true
+description: 规则索引（已拆分到子项目与全局契约）
 ---
 
-# PRD Agent 技术规范
+# PRD Agent 技术规范（索引）
 
-## 技术栈
+本仓库规则已按“全局契约 + 子项目细则”拆分：
 
-| 端 | 技术 |
-|----|------|
-| 桌面客户端 | Tauri 2.0+ / Rust 1.70+ / React 18 / TypeScript 5 / Zustand / Tailwind + Radix UI |
-| 后端服务 | .NET 8.0 / ASP.NET Core / C# 12 / MongoDB 8.0+ / Redis / Serilog |
-| Web管理后台 | React 18 / TypeScript 5 / Vite / Ant Design 5 |
+- 全局流程/协作：`.cursor/rules/workflow.mdc`
+- 安全约束：`.cursor/rules/security.mdc`
+- API 全局契约（响应结构/错误码/角色/性能指标）：`.cursor/rules/api-contract.mdc`
 
-## API 规范
-
-- RESTful + SSE 流式响应
-- 基础路径: `/api/v1/`
-- 认证: Bearer JWT
-- 成功: `{ "success": true, "data": {}, "error": null }`
-- 失败: `{ "success": false, "data": null, "error": { "code": "ERROR_CODE", "message": "描述" } }`
-- 写接口支持 `Idempotency-Key`
-
-## 错误码
-
-| 码 | HTTP | 说明 |
-|---|---|---|
-| INVALID_FORMAT | 400 | 格式不支持 |
-| CONTENT_EMPTY | 400 | 内容为空 |
-| DOCUMENT_TOO_LARGE | 413 | 文档超10MB |
-| SESSION_NOT_FOUND | 404 | 会话不存在 |
-| SESSION_EXPIRED | 410 | 会话已过期 |
-| RATE_LIMITED | 429 | 限流 |
-| PERMISSION_DENIED | 403 | 无权限 |
-| LLM_ERROR | 502 | LLM调用失败 |
-
-## 角色枚举
-
-| 角色 | 说明 |
-|------|------|
-| `PM` | 产品经理（可创建群组、上传PRD） |
-| `DEV` | 开发（技术视角） |
-| `QA` | 测试（验证视角） |
-| `ADMIN` | 超管（Web后台管理） |
-
-## 性能指标
-
-| 指标 | 要求 |
-|------|------|
-| 问答首字延迟 | < 2s |
-| 文档上传响应 | < 3s（10万字内） |
-| 会话超时 | 30分钟 |
-| LLM调用超时 | 60s，重试 <=3 次（指数退避） |
-
-## 命名约定
-
-| 位置 | 规则 |
-|------|------|
-| 后端类/方法 | PascalCase |
-| 后端变量 | camelCase |
-| 前端变量/函数 | camelCase |
-| React组件 | PascalCase |
-| API路径 | kebab-case |
-| MongoDB集合 | 全小写（users, groups, messages） |
-| MongoDB字段 | camelCase |
-
-## 目录约定
-
-- 后端分层: Api -> Core -> Infrastructure
-- IPC命令: `src-tauri/src/commands/`
-- Prompt模板: `Infrastructure/Prompts/Templates/`
+子项目细则（按路径匹配自动生效）：
+- `prd-api/**`：`.cursor/rules/prd-api.mdc`
+- `prd-admin/**`：`.cursor/rules/prd-admin.mdc`
+- `prd-desktop/**`：`.cursor/rules/prd-desktop.mdc`
