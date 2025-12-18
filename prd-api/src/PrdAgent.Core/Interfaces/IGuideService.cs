@@ -44,6 +44,11 @@ public class GuideStreamEvent
     public string? BlockId { get; set; }
     public string? BlockKind { get; set; } // paragraph | heading | listItem | codeBlock
     public string? BlockLanguage { get; set; } // codeBlock 可选语言
+
+    /// <summary>
+    /// 结构化引用（type=citations 时下发；也可附带在 stepDone 前后事件里）
+    /// </summary>
+    public List<DocCitation>? Citations { get; set; }
 }
 
 /// <summary>

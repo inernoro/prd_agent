@@ -76,6 +76,10 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(DocumentInfo))]
 [JsonSerializable(typeof(SectionInfo))]
 [JsonSerializable(typeof(UserInfo))]
+// 引用模型（SSE citations）
+[JsonSerializable(typeof(DocCitation))]
+// 列表类型（引用）
+[JsonSerializable(typeof(List<DocCitation>))]
 // 列表类型
 [JsonSerializable(typeof(List<MessageResponse>))]
 [JsonSerializable(typeof(List<OutlineItemResponse>))]

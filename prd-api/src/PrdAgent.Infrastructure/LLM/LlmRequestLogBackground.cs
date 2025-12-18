@@ -34,6 +34,7 @@ public sealed class LlmRequestLogBackground
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<LlmRequestLogBackground> _logger;
+    private static readonly int[] RetryDelaysMs = [100, 300, 1000, 2000, 5000];
 
     public LlmRequestLogBackground(MongoDbContext db, ILogger<LlmRequestLogBackground> logger)
     {
@@ -54,14 +55,14 @@ public sealed class LlmRequestLogBackground
                     switch (op.Type)
                     {
                         case LlmLogOpType.MarkFirstByte:
-                            await UpdateFirstByteAsync(op.LogId, (DateTime)op.Payload);
+                            await WithRetryAsync(op, () => UpdateFirstByteAsync(op.LogId, (DateTime)op.Payload));
                             break;
                         case LlmLogOpType.MarkDone:
-                            await UpdateDoneAsync(op.LogId, (LlmLogDone)op.Payload);
+                            await WithRetryAsync(op, () => UpdateDoneAsync(op.LogId, (LlmLogDone)op.Payload));
                             break;
                         case LlmLogOpType.MarkError:
                             var (err, code) = ((string, int?))op.Payload;
-                            await UpdateErrorAsync(op.LogId, err, code);
+                            await WithRetryAsync(op, () => UpdateErrorAsync(op.LogId, err, code));
                             break;
                     }
                 }
@@ -85,6 +86,13 @@ public sealed class LlmRequestLogBackground
 
     private Task UpdateDoneAsync(string logId, LlmLogDone done)
     {
+        // 二次保险：避免超长文本导致 Mongo 文档过大
+        var answerText = done.AnswerText;
+        if (!string.IsNullOrEmpty(answerText) && answerText.Length > 200_000)
+        {
+            answerText = answerText[..200_000] + "...[TRUNCATED]";
+        }
+
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.StatusCode, done.StatusCode)
             .Set(l => l.ResponseHeaders, done.ResponseHeaders)
@@ -92,7 +100,7 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.OutputTokens, done.OutputTokens)
             .Set(l => l.CacheCreationInputTokens, done.CacheCreationInputTokens)
             .Set(l => l.CacheReadInputTokens, done.CacheReadInputTokens)
-            .Set(l => l.AnswerText, done.AnswerText)
+            .Set(l => l.AnswerText, answerText)
             .Set(l => l.AnswerTextChars, done.AssembledTextChars)
             .Set(l => l.AnswerTextHash, done.AssembledTextHash)
             .Set(l => l.AssembledTextChars, done.AssembledTextChars)
@@ -106,6 +114,7 @@ public sealed class LlmRequestLogBackground
 
     private Task UpdateErrorAsync(string logId, string error, int? statusCode)
     {
+        if (!string.IsNullOrEmpty(error) && error.Length > 20_000) error = error[..20_000] + "...[TRUNCATED]";
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.Error, error)
             .Set(l => l.StatusCode, statusCode)
@@ -113,6 +122,26 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.EndedAt, DateTime.UtcNow);
 
         return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
+    }
+
+    private async Task WithRetryAsync(LlmLogOp op, Func<Task> action)
+    {
+        for (var i = 0; i < RetryDelaysMs.Length + 1; i++)
+        {
+            try
+            {
+                await action();
+                return;
+            }
+            catch (Exception ex) when (i < RetryDelaysMs.Length)
+            {
+                _logger.LogDebug(ex, "LLM log update retrying: {Type} {LogId} attempt={Attempt}", op.Type, op.LogId, i + 1);
+                await Task.Delay(RetryDelaysMs[i]);
+            }
+        }
+
+        // 最终失败：交给 watchdog 做兜底纠错
+        _logger.LogWarning("LLM log update failed permanently: {Type} {LogId}", op.Type, op.LogId);
     }
 }
 
