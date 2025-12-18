@@ -40,6 +40,7 @@ public class MongoDbContext
     public IMongoCollection<ModelLabRun> ModelLabRuns => _database.GetCollection<ModelLabRun>("model_lab_runs");
     public IMongoCollection<ModelLabRunItem> ModelLabRunItems => _database.GetCollection<ModelLabRunItem>("model_lab_run_items");
     public IMongoCollection<ModelLabModelSet> ModelLabModelSets => _database.GetCollection<ModelLabModelSet>("model_lab_model_sets");
+    public IMongoCollection<ModelLabGroup> ModelLabGroups => _database.GetCollection<ModelLabGroup>("model_lab_groups");
 
     private void CreateIndexes()
     {
@@ -130,5 +131,12 @@ public class MongoDbContext
             new CreateIndexOptions { Unique = true }));
         ModelLabModelSets.Indexes.CreateOne(new CreateIndexModel<ModelLabModelSet>(
             Builders<ModelLabModelSet>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
+
+        // ModelLabGroups 索引（同一 Admin 下名称唯一）
+        ModelLabGroups.Indexes.CreateOne(new CreateIndexModel<ModelLabGroup>(
+            Builders<ModelLabGroup>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.Name),
+            new CreateIndexOptions { Unique = true }));
+        ModelLabGroups.Indexes.CreateOne(new CreateIndexModel<ModelLabGroup>(
+            Builders<ModelLabGroup>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
     }
 }

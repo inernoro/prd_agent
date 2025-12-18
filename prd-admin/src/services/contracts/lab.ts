@@ -9,3 +9,4 @@ export type AdminImpersonateResponse = {
 
 export type AdminImpersonateContract = (userId: string, expiresInSeconds?: number) => Promise<ApiResponse<AdminImpersonateResponse>>;
 
+

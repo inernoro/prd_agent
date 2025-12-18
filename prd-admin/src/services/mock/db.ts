@@ -1,4 +1,5 @@
 import type { AdminUser, LLMConfig, Model, Platform, UserRole, UserStatus } from '@/types/admin';
+import type { ModelLabSelectedModel } from '@/services/contracts/modelLab';
 
 function nowISO() {
   return new Date().toISOString().slice(0, 16).replace('T', ' ');
@@ -64,4 +65,5 @@ export const db = {
       apiKeyMasked: 'sk-****************',
     },
   ] as LLMConfig[],
+  modelLabGroups: [] as { id: string; ownerAdminId: string; name: string; models: ModelLabSelectedModel[]; createdAt: string; updatedAt: string }[],
 };

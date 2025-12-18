@@ -39,6 +39,7 @@ public static class BsonClassMapRegistration
             RegisterModelLabRun();
             RegisterModelLabRunItem();
             RegisterModelLabModelSet();
+            RegisterModelLabGroup();
 
             _registered = true;
         }
@@ -250,6 +251,20 @@ public static class BsonClassMapRegistration
         if (BsonClassMap.IsClassMapRegistered(typeof(ModelLabModelSet))) return;
 
         BsonClassMap.RegisterClassMap<ModelLabModelSet>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringSerializer(BsonType.String))
+                .SetIdGenerator(StringObjectIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterModelLabGroup()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ModelLabGroup))) return;
+
+        BsonClassMap.RegisterClassMap<ModelLabGroup>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)

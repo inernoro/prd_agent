@@ -134,6 +134,49 @@ public class AdminModelLabController : ControllerBase
         return Ok(ApiResponse<object>.Ok(saved));
     }
 
+    [HttpGet("lab-groups")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ListLabGroups([FromQuery] string? search, [FromQuery] int limit = 50)
+    {
+        var adminId = GetAdminId();
+        var items = await _repo.ListLabGroupsAsync(adminId, search, limit);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpPost("lab-groups")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpsertLabGroup([FromBody] UpsertLabGroupRequest request)
+    {
+        var adminId = GetAdminId();
+        var g = new ModelLabGroup
+        {
+            Id = request.Id ?? Guid.NewGuid().ToString(),
+            OwnerAdminId = adminId,
+            Name = string.IsNullOrWhiteSpace(request.Name) ? "未命名分组" : request.Name.Trim(),
+            Models = request.Models ?? new List<ModelLabSelectedModel>()
+        };
+
+        try
+        {
+            var saved = await _repo.UpsertLabGroupAsync(g);
+            return Ok(ApiResponse<object>.Ok(saved));
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return Ok(ApiResponse<object>.Fail("INVALID_FORMAT", "分组名称已存在"));
+        }
+    }
+
+    [HttpDelete("lab-groups/{id}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DeleteLabGroup(string id)
+    {
+        var adminId = GetAdminId();
+        var ok = await _repo.DeleteLabGroupAsync(id, adminId);
+        if (!ok) return NotFound(ApiResponse<object>.Fail("GROUP_NOT_FOUND", "分组不存在"));
+        return Ok(ApiResponse<object>.Ok(true));
+    }
+
     [HttpPost("runs/stream")]
     [Produces("text/event-stream")]
     public async Task RunStream([FromBody] RunStreamRequest request, CancellationToken cancellationToken)
@@ -232,7 +275,60 @@ public class AdminModelLabController : ControllerBase
         await WriteWithLockAsync(writeLock, "model", new { type = "modelStart", runId = run.Id, itemId = item.Id, modelId = item.ModelId, displayName = item.DisplayName, modelName = item.ModelName }, ct);
 
         var model = await _db.LLMModels.Find(m => m.Id == selected.ModelId).FirstOrDefaultAsync(ct);
-        if (model == null || !model.Enabled)
+        // 兼容“未配置模型”：前端可能传入 modelId=modelName（平台可用模型列表），此时 llmmodels 查不到，需要回退到平台配置直接调用
+        if (model == null)
+        {
+            if (string.IsNullOrWhiteSpace(selected.PlatformId) || string.IsNullOrWhiteSpace(selected.ModelName))
+            {
+                item.Success = false;
+                item.ErrorCode = "MODEL_NOT_FOUND";
+                item.ErrorMessage = "模型不存在";
+                item.EndedAt = DateTime.UtcNow;
+                await _repo.UpdateRunItemAsync(item);
+                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+                return;
+            }
+
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == selected.PlatformId).FirstOrDefaultAsync(ct);
+            if (platform == null || !platform.Enabled)
+            {
+                item.Success = false;
+                item.ErrorCode = "PLATFORM_NOT_FOUND";
+                item.ErrorMessage = "平台不存在或未启用";
+                item.EndedAt = DateTime.UtcNow;
+                await _repo.UpdateRunItemAsync(item);
+                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+                return;
+            }
+
+            var (platformApiUrl, platformApiKey, fallbackPlatformType) = ResolveApiConfigForPlatform(platform, jwtSecret);
+            if (string.IsNullOrWhiteSpace(platformApiUrl) || string.IsNullOrWhiteSpace(platformApiKey))
+            {
+                item.Success = false;
+                item.ErrorCode = "INVALID_CONFIG";
+                item.ErrorMessage = "平台 API 配置不完整";
+                item.EndedAt = DateTime.UtcNow;
+                await _repo.UpdateRunItemAsync(item);
+                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+                return;
+            }
+
+            var enablePromptCacheForPlatform = globalEnablePromptCache && (effective.EnablePromptCache ?? true);
+
+            var httpClient2 = _httpClientFactory.CreateClient("LoggedHttpClient");
+            httpClient2.BaseAddress = new Uri(platformApiUrl.TrimEnd('/'));
+
+            var modelName = selected.ModelName.Trim();
+            ILLMClient client2 = fallbackPlatformType == "anthropic" || platformApiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
+                ? new ClaudeClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _claudeLogger, _logWriter, _ctxAccessor)
+                : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor);
+
+            // 继续使用下方通用逻辑（systemPrompt/prompt/stream）
+            await RunStreamWithClientAsync(client2, selected, run, item, effective, enablePromptCacheForPlatform, writeLock, ct);
+            return;
+        }
+
+        if (!model.Enabled)
         {
             item.Success = false;
             item.ErrorCode = "MODEL_NOT_FOUND";
@@ -264,6 +360,21 @@ public class AdminModelLabController : ControllerBase
             ? new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor)
             : new OpenAIClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _logWriter, _ctxAccessor);
 
+        await RunStreamWithClientAsync(client, selected, run, item, effective, enablePromptCache, writeLock, ct);
+        return;
+
+    }
+
+    private async Task RunStreamWithClientAsync(
+        ILLMClient client,
+        ModelLabSelectedModel selected,
+        ModelLabRun run,
+        ModelLabRunItem item,
+        EffectiveRunRequest effective,
+        bool enablePromptCache,
+        SemaphoreSlim writeLock,
+        CancellationToken ct)
+    {
         var systemPrompt = effective.Suite switch
         {
             ModelLabSuite.Intent =>
@@ -467,6 +578,14 @@ public class AdminModelLabController : ControllerBase
         return (apiUrl, apiKey, platformType);
     }
 
+    private static (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForPlatform(LLMPlatform platform, string jwtSecret)
+    {
+        var apiUrl = platform.ApiUrl;
+        var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+        var platformType = platform.PlatformType?.ToLowerInvariant();
+        return (apiUrl, apiKey, platformType);
+    }
+
     private static string DecryptApiKey(string encryptedKey, string secretKey)
     {
         if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
@@ -506,6 +625,13 @@ public class UpsertExperimentRequest
 }
 
 public class UpsertModelSetRequest
+{
+    public string? Id { get; set; }
+    public string? Name { get; set; }
+    public List<ModelLabSelectedModel>? Models { get; set; }
+}
+
+public class UpsertLabGroupRequest
 {
     public string? Id { get; set; }
     public string? Name { get; set; }

@@ -422,8 +422,9 @@ export default function DesktopLabTab() {
                 演员（冒充用户）
               </div>
               <Button
-                variant="ghost"
-                size="sm"
+                variant="secondary"
+                size="xs"
+                className="shrink-0"
                 onClick={() => loadUsers()}
                 disabled={usersLoading}
                 title="刷新用户列表"
@@ -620,11 +621,11 @@ export default function DesktopLabTab() {
                 <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                   Chat 输出
                 </div>
-                <pre className="text-xs whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>
+                <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                   {chatText || '（等待输出）'}
                 </pre>
                 {chatMeta ? (
-                  <pre className="mt-3 text-xs whitespace-pre-wrap break-words" style={{ color: 'var(--text-muted)' }}>
+                  <pre className="mt-3 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-muted)' }}>
                     {chatMeta}
                   </pre>
                 ) : null}
@@ -639,7 +640,7 @@ export default function DesktopLabTab() {
                     启动
                   </Button>
                 </div>
-                <pre className="mt-2 text-xs whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>
+                <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                   {guideLog || '（等待输出）'}
                 </pre>
               </div>
@@ -662,10 +663,10 @@ export default function DesktopLabTab() {
             </div>
 
             <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <pre className="text-xs whitespace-pre-wrap break-words rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
                 {gapsJson || '（暂无）'}
               </pre>
-              <pre className="text-xs whitespace-pre-wrap break-words rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
                 {gapSummaryJson || '（暂无）'}
               </pre>
             </div>
@@ -675,7 +676,7 @@ export default function DesktopLabTab() {
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               原始返回（最近一次）
             </div>
-            <pre className="mt-3 text-xs whitespace-pre-wrap break-words rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
+            <pre className="mt-3 text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
               {groupInfoJson || '（暂无）'}
             </pre>
           </Card>

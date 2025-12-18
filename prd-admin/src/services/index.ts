@@ -23,6 +23,7 @@ import type {
   UpdateModelLabExperimentContract,
   UpsertModelLabModelSetContract,
 } from '@/services/contracts/modelLab';
+import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
 import type {
   DeleteAdminGroupContract,
   GenerateAdminGapSummaryContract,
@@ -67,6 +68,7 @@ import {
   updateModelLabExperimentMock,
   upsertModelLabModelSetMock,
 } from '@/services/mock/impl/modelLab';
+import { deleteModelLabGroupMock, listModelLabGroupsMock, upsertModelLabGroupMock } from '@/services/mock/impl/modelLabGroups';
 
 import { loginReal } from '@/services/real/auth';
 import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
@@ -85,6 +87,7 @@ import {
   updateModelLabExperimentReal,
   upsertModelLabModelSetReal,
 } from '@/services/real/modelLab';
+import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -174,3 +177,7 @@ export const updateModelLabExperiment: UpdateModelLabExperimentContract = withAu
 export const listModelLabModelSets: ListModelLabModelSetsContract = withAuth(useMock ? listModelLabModelSetsMock : listModelLabModelSetsReal);
 export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(useMock ? upsertModelLabModelSetMock : upsertModelLabModelSetReal);
 export const runModelLabStream: RunModelLabStreamContract = withAuth(useMock ? runModelLabStreamMock : runModelLabStreamReal);
+
+export const listModelLabGroups: ListModelLabGroupsContract = withAuth(useMock ? listModelLabGroupsMock : listModelLabGroupsReal);
+export const upsertModelLabGroup: UpsertModelLabGroupContract = withAuth(useMock ? upsertModelLabGroupMock : upsertModelLabGroupReal);
+export const deleteModelLabGroup: DeleteModelLabGroupContract = withAuth(useMock ? deleteModelLabGroupMock : deleteModelLabGroupReal);

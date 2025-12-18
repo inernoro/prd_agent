@@ -16,6 +16,11 @@ public interface IModelLabRepository
     Task<List<ModelLabModelSet>> ListModelSetsAsync(string ownerAdminId, string? search, int limit);
     Task<ModelLabModelSet?> GetModelSetAsync(string id, string ownerAdminId);
 
+    Task<ModelLabGroup> UpsertLabGroupAsync(ModelLabGroup group);
+    Task<List<ModelLabGroup>> ListLabGroupsAsync(string ownerAdminId, string? search, int limit);
+    Task<ModelLabGroup?> GetLabGroupAsync(string id, string ownerAdminId);
+    Task<bool> DeleteLabGroupAsync(string id, string ownerAdminId);
+
     Task<ModelLabRun> InsertRunAsync(ModelLabRun run);
     Task UpdateRunAsync(ModelLabRun run);
     Task<ModelLabRun?> GetRunAsync(string id, string ownerAdminId);

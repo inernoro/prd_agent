@@ -3,7 +3,7 @@ import * as React from 'react';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
-type Size = 'sm' | 'md';
+type Size = 'xs' | 'sm' | 'md';
 
 export const Button = React.forwardRef<
   HTMLButtonElement,
@@ -20,9 +20,11 @@ export const Button = React.forwardRef<
 
   // 更紧凑的控件高度（更像参照图的“工具型 UI”）
   const sizeCls =
-    size === 'sm'
-      ? 'h-[35px] px-3 rounded-[10px] text-[13px]'
-      : 'h-10 px-4 rounded-[12px] text-[13px]';
+    size === 'xs'
+      ? 'h-[30px] px-3 rounded-[10px] text-[12px]'
+      : size === 'sm'
+        ? 'h-[35px] px-3 rounded-[10px] text-[13px]'
+        : 'h-10 px-4 rounded-[12px] text-[13px]';
 
   const variantCls =
     variant === 'primary'

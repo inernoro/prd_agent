@@ -13,17 +13,20 @@ public class ModelLabRepository : IModelLabRepository
     private readonly IMongoCollection<ModelLabRun> _runs;
     private readonly IMongoCollection<ModelLabRunItem> _items;
     private readonly IMongoCollection<ModelLabModelSet> _modelSets;
+    private readonly IMongoCollection<ModelLabGroup> _labGroups;
 
     public ModelLabRepository(
         IMongoCollection<ModelLabExperiment> experiments,
         IMongoCollection<ModelLabRun> runs,
         IMongoCollection<ModelLabRunItem> items,
-        IMongoCollection<ModelLabModelSet> modelSets)
+        IMongoCollection<ModelLabModelSet> modelSets,
+        IMongoCollection<ModelLabGroup> labGroups)
     {
         _experiments = experiments;
         _runs = runs;
         _items = items;
         _modelSets = modelSets;
+        _labGroups = labGroups;
     }
 
     public async Task<ModelLabExperiment> InsertExperimentAsync(ModelLabExperiment experiment)
@@ -102,6 +105,51 @@ public class ModelLabRepository : IModelLabRepository
     public async Task<ModelLabModelSet?> GetModelSetAsync(string id, string ownerAdminId)
     {
         return await _modelSets.Find(x => x.Id == id && x.OwnerAdminId == ownerAdminId).FirstOrDefaultAsync();
+    }
+
+    public async Task<ModelLabGroup> UpsertLabGroupAsync(ModelLabGroup group)
+    {
+        var now = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(group.Id))
+        {
+            group.Id = Guid.NewGuid().ToString();
+        }
+        if (group.CreatedAt == default) group.CreatedAt = now;
+        group.UpdatedAt = now;
+
+        await _labGroups.ReplaceOneAsync(
+            x => x.Id == group.Id && x.OwnerAdminId == group.OwnerAdminId,
+            group,
+            new ReplaceOptions { IsUpsert = true });
+
+        return group;
+    }
+
+    public async Task<List<ModelLabGroup>> ListLabGroupsAsync(string ownerAdminId, string? search, int limit)
+    {
+        limit = Math.Clamp(limit, 1, 200);
+        var filter = Builders<ModelLabGroup>.Filter.Eq(x => x.OwnerAdminId, ownerAdminId);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            filter &= Builders<ModelLabGroup>.Filter.Regex(x => x.Name, new MongoDB.Bson.BsonRegularExpression(search.Trim(), "i"));
+        }
+
+        return await _labGroups
+            .Find(filter)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(limit)
+            .ToListAsync();
+    }
+
+    public async Task<ModelLabGroup?> GetLabGroupAsync(string id, string ownerAdminId)
+    {
+        return await _labGroups.Find(x => x.Id == id && x.OwnerAdminId == ownerAdminId).FirstOrDefaultAsync();
+    }
+
+    public async Task<bool> DeleteLabGroupAsync(string id, string ownerAdminId)
+    {
+        var res = await _labGroups.DeleteOneAsync(x => x.Id == id && x.OwnerAdminId == ownerAdminId);
+        return res.DeletedCount > 0;
     }
 
     public async Task<ModelLabRun> InsertRunAsync(ModelLabRun run)

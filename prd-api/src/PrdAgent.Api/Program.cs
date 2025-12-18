@@ -441,7 +441,7 @@ builder.Services.AddScoped<IMessageRepository>(sp =>
 builder.Services.AddScoped<IModelLabRepository>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();
-    return new ModelLabRepository(db.ModelLabExperiments, db.ModelLabRuns, db.ModelLabRunItems, db.ModelLabModelSets);
+    return new ModelLabRepository(db.ModelLabExperiments, db.ModelLabRuns, db.ModelLabRunItems, db.ModelLabModelSets, db.ModelLabGroups);
 });
 
 // 注册登录尝试服务

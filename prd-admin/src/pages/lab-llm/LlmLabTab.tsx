@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import type { Platform } from '@/types/admin';
 import type { Model } from '@/types/admin';
 import {
   createModelLabExperiment,
   getModels,
+  getPlatforms,
   listModelLabExperiments,
   listModelLabModelSets,
   runModelLabStream,
@@ -50,6 +52,7 @@ const builtInPrompts: Record<ModelLabSuite, { label: string; promptText: string 
 export default function LlmLabTab() {
   const [allModels, setAllModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
 
   const [experiments, setExperiments] = useState<ModelLabExperiment[]>([]);
   const [experimentsLoading, setExperimentsLoading] = useState(true);
@@ -83,9 +86,10 @@ export default function LlmLabTab() {
     setModelsLoading(true);
     setExperimentsLoading(true);
     try {
-      const [m, exps] = await Promise.all([getModels(), listModelLabExperiments({ page: 1, pageSize: 50 })]);
+      const [m, exps, ps] = await Promise.all([getModels(), listModelLabExperiments({ page: 1, pageSize: 50 }), getPlatforms()]);
       if (m.success) setAllModels(m.data);
       if (exps.success) setExperiments(exps.data.items);
+      if (ps.success) setPlatforms(ps.data);
 
       // 没有实验时，自动创建一个默认实验，方便直接使用
       if (exps.success && exps.data.items.length === 0) {
@@ -132,12 +136,16 @@ export default function LlmLabTab() {
     setSelectedModels(activeExperiment.selectedModels ?? []);
   }, [activeExperiment?.id]);
 
-  const addSelectedModels = (toAdd: ModelLabSelectedModel[]) => {
-    setSelectedModels((prev) => {
-      const map = new Map(prev.map((x) => [x.modelId, x]));
-      for (const m of toAdd) map.set(m.modelId, m);
-      return Array.from(map.values());
-    });
+  const setSelectedModelsDedupe = (list: ModelLabSelectedModel[]) => {
+    // 唯一选择：平台 + modelName
+    const map = new Map<string, ModelLabSelectedModel>();
+    for (const m of list) {
+      const key = `${m.platformId}:${m.modelName}`.toLowerCase();
+      const prev = map.get(key);
+      // 若冲突，优先保留有 name 的那条（更像“配置模型”）
+      if (!prev || (m.name && !prev.name)) map.set(key, m);
+    }
+    setSelectedModels(Array.from(map.values()));
   };
 
   const removeSelectedModel = (modelId: string) => {
@@ -319,7 +327,7 @@ export default function LlmLabTab() {
                 保存实验配置与历史（Mongo）
               </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => load()} disabled={experimentsLoading}>
+            <Button variant="secondary" size="xs" className="shrink-0" onClick={() => load()} disabled={experimentsLoading}>
               刷新
             </Button>
           </div>
@@ -377,46 +385,6 @@ export default function LlmLabTab() {
             </div>
           </div>
 
-          <div className="mt-4">
-            <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-              参数（最小可用）
-            </div>
-            <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                并发
-                <input
-                  type="number"
-                  value={params.maxConcurrency}
-                  onChange={(e) => setParams((p) => ({ ...p, maxConcurrency: Math.max(1, Number(e.target.value || 1)) }))}
-                  className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                />
-              </label>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                重复 N 次
-                <input
-                  type="number"
-                  value={params.repeatN}
-                  onChange={(e) => setParams((p) => ({ ...p, repeatN: Math.max(1, Number(e.target.value || 1)) }))}
-                  className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-4 flex gap-2">
-            <Button variant="ghost" onClick={saveExperiment} disabled={saving || !activeExperimentId}>
-              保存
-            </Button>
-            <Button onClick={startRun} disabled={!canRun || !activeExperimentId}>
-              一键开始实验
-            </Button>
-            <Button variant="ghost" onClick={stopRun} disabled={!running}>
-              停止
-            </Button>
-          </div>
-
           {runId ? (
             <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
               runId：{runId}
@@ -434,7 +402,7 @@ export default function LlmLabTab() {
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               自定义模型集合
             </div>
-            <Button size="sm" variant="ghost" onClick={loadModelSets} disabled={modelSetsLoading}>
+            <Button size="xs" variant="secondary" className="shrink-0" onClick={loadModelSets} disabled={modelSetsLoading}>
               刷新
             </Button>
           </div>
@@ -461,9 +429,9 @@ export default function LlmLabTab() {
                 {modelSets.map((s) => (
                   <Button
                     key={s.id}
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => addSelectedModels(s.models)}
+                    size="xs"
+                    variant="secondary"
+                    onClick={() => setSelectedModelsDedupe([...selectedModels, ...(s.models ?? [])])}
                     title="将该集合模型加入当前实验"
                   >
                     {s.name}
@@ -473,10 +441,7 @@ export default function LlmLabTab() {
             )}
           </div>
         </Card>
-      </div>
 
-      {/* 右侧：大模型实验 */}
-      <div className="space-y-4 relative">
         <Card className="p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -488,7 +453,7 @@ export default function LlmLabTab() {
               </div>
             </div>
             <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setPickerOpen(true)} disabled={modelsLoading}>
+              <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setPickerOpen(true)} disabled={modelsLoading}>
                 添加模型
               </Button>
             </div>
@@ -526,18 +491,68 @@ export default function LlmLabTab() {
             )}
           </div>
         </Card>
+      </div>
+
+      {/* 右侧：大模型实验 */}
+      <div className="space-y-4 relative">
+        <Card className="p-4">
+          <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+            参数（最小可用）
+          </div>
+          <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              并发
+              <input
+                type="number"
+                value={params.maxConcurrency}
+                onChange={(e) => setParams((p) => ({ ...p, maxConcurrency: Math.max(1, Number(e.target.value || 1)) }))}
+                className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              />
+            </label>
+            <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              重复 N 次
+              <input
+                type="number"
+                value={params.repeatN}
+                onChange={(e) => setParams((p) => ({ ...p, repeatN: Math.max(1, Number(e.target.value || 1)) }))}
+                className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              />
+            </label>
+          </div>
+        </Card>
 
         <Card className="p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               提示词
             </div>
-            <div className="flex gap-2">
-              {builtInPrompts[suite].map((p) => (
-                <Button key={p.label} size="sm" variant="ghost" onClick={() => applyBuiltInPrompt(p.promptText)}>
-                  {p.label}
+            <div className="flex items-center gap-2">
+              <div className="flex gap-2">
+                {builtInPrompts[suite].map((p) => (
+                  <Button key={p.label} size="xs" variant="secondary" className="shrink-0" onClick={() => applyBuiltInPrompt(p.promptText)}>
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={saveExperiment} disabled={saving || !activeExperimentId}>
+                  保存
                 </Button>
-              ))}
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-[color:var(--text-primary)] hover:bg-white/8 hover:border-white/20"
+                  style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
+                  onClick={startRun}
+                  disabled={!canRun || !activeExperimentId}
+                >
+                  一键开始实验
+                </button>
+                <Button variant="ghost" onClick={stopRun} disabled={!running}>
+                  停止
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -593,7 +608,7 @@ export default function LlmLabTab() {
                       {it.errorMessage}
                     </div>
                   ) : null}
-                  <pre className="mt-2 text-xs whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>
+                  <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                     {it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
                   </pre>
                 </div>
@@ -629,14 +644,13 @@ export default function LlmLabTab() {
           open={pickerOpen}
           onOpenChange={(o) => setPickerOpen(o)}
           allModels={allModels}
+          platforms={platforms}
           selectedModels={selectedModels}
-          onAdd={(ms) => {
-            addSelectedModels(ms);
+          onConfirm={(finalList) => {
+            setSelectedModelsDedupe(finalList);
           }}
         />
       </div>
     </div>
   );
 }
-
-
