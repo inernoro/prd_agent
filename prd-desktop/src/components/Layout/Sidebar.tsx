@@ -553,13 +553,21 @@ export default function Sidebar() {
             </div>
             <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
 
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => {
                   if (documentLoaded && prdDocument) openPrdPreview();
                   else openBindFromKnowledge();
                 }}
-                className={`w-full px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (documentLoaded && prdDocument) openPrdPreview();
+                    else openBindFromKnowledge();
+                  }
+                }}
+                className={`w-full px-3 py-2 rounded-lg text-left text-sm transition-colors cursor-pointer ${
                   documentLoaded && prdDocument
                     ? 'hover:bg-gray-50 dark:hover:bg-white/5 text-text-secondary hover:text-primary-500'
                     : 'hover:bg-gray-50 dark:hover:bg-white/5 text-text-secondary hover:text-primary-500'
@@ -592,7 +600,7 @@ export default function Sidebar() {
                     </button>
                   ) : null}
                 </div>
-              </button>
+              </div>
             </div>
           </div>
         )}

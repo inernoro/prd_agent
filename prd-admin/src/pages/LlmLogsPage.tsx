@@ -113,7 +113,19 @@ function buildCurlFromLog(detail: LlmRequestLog): string {
 const MARQUEE_GAP_PX = 28;
 const MARQUEE_SPEED_PX_PER_SEC = 64;
 
-function NewsMarquee({ text, title }: { text: string; title?: string }) {
+function NewsMarquee({
+  text,
+  title,
+  align = 'left',
+  style,
+  className,
+}: {
+  text: string;
+  title?: string;
+  align?: 'left' | 'right';
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const measureRef = useRef<HTMLSpanElement | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -156,7 +168,12 @@ function NewsMarquee({ text, title }: { text: string; title?: string }) {
   );
 
   return (
-    <div ref={containerRef} className="prd-marquee" title={title || normalized} style={{ ...vars }}>
+    <div
+      ref={containerRef}
+      className={['prd-marquee', align === 'right' ? 'prd-marquee--right' : '', className || ''].filter(Boolean).join(' ')}
+      title={title || normalized}
+      style={{ ...vars, ...style }}
+    >
       <div className={enabled ? 'prd-marquee__track' : 'prd-marquee__track prd-marquee__track--static'}>
         <span ref={measureRef} className="prd-marquee__item">
           {normalized || '—'}
@@ -329,9 +346,10 @@ export default function LlmLogsPage() {
     <div className="space-y-4">
       <style>{`
         .prd-marquee{position:relative;overflow:hidden;white-space:nowrap}
-        .prd-marquee__track{display:inline-flex;align-items:center;gap:var(--prd-marquee-gap);will-change:transform;animation:prd-marquee var(--prd-marquee-duration) linear infinite}
-        .prd-marquee__track--static{animation:none}
-        .prd-marquee__item{display:inline-block;white-space:nowrap;font-size:11px;line-height:1.2;color:rgba(231,206,151,0.92)}
+        .prd-marquee__track{display:flex;align-items:center;gap:var(--prd-marquee-gap);width:max-content;will-change:transform;animation:prd-marquee var(--prd-marquee-duration) linear infinite}
+        .prd-marquee__track--static{animation:none;width:100%}
+        .prd-marquee--right .prd-marquee__track--static{justify-content:flex-end}
+        .prd-marquee__item{display:inline-block;white-space:nowrap;font-size:inherit;line-height:inherit;color:inherit;font-family:inherit}
         @keyframes prd-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--prd-marquee-shift)))}}
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
@@ -555,48 +573,48 @@ export default function LlmLogsPage() {
                     </Button>
                   </div>
                 </div>
-                <div
-                  className="mt-2 rounded-[14px] px-3 py-2"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-                >
-                  <div className="grid gap-2" style={{ gridTemplateColumns: '120px 1fr' }}>
-                    {[
-                      { k: 'provider', v: detail.provider || '—' },
-                      { k: 'model', v: detail.model || '—' },
-                      { k: 'status', v: detail.status || '—' },
-                      { k: 'requestId', v: detail.requestId || '—' },
-                      { k: 'groupId', v: detail.groupId || '—' },
-                      { k: 'sessionId', v: detail.sessionId || '—' },
-                      { k: 'startedAt', v: formatLocalTime(detail.startedAt) },
-                      { k: 'firstByteAt', v: formatLocalTime(detail.firstByteAt ?? null) },
-                      { k: 'endedAt', v: formatLocalTime(detail.endedAt ?? null) },
-                      {
-                        k: 'TTFB',
-                        v: diffMs(detail.startedAt, detail.firstByteAt ?? null) !== null ? `${diffMs(detail.startedAt, detail.firstByteAt ?? null)}ms` : '—',
-                      },
-                    ].map((row) => (
-                      <div key={row.k} className="contents">
-                        <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-1 grid gap-1.5" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                  {[
+                    { k: 'provider', v: detail.provider || '—' },
+                    { k: 'model', v: detail.model || '—' },
+                    { k: 'status', v: detail.status || '—' },
+                    { k: 'requestId', v: detail.requestId || '—' },
+                    { k: 'groupId', v: detail.groupId || '—' },
+                    { k: 'sessionId', v: detail.sessionId || '—' },
+                    { k: 'startedAt', v: formatLocalTime(detail.startedAt) },
+                    { k: 'firstByteAt', v: formatLocalTime(detail.firstByteAt ?? null) },
+                    { k: 'endedAt', v: formatLocalTime(detail.endedAt ?? null) },
+                    {
+                      k: 'TTFB',
+                      v: diffMs(detail.startedAt, detail.firstByteAt ?? null) !== null ? `${diffMs(detail.startedAt, detail.firstByteAt ?? null)}ms` : '—',
+                    },
+                  ].map((row) => (
+                    <div
+                      key={row.k}
+                      className="rounded-[12px] px-2.5 py-1.5 min-w-0"
+                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="text-[11px] font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>
                           {row.k}
                         </div>
-                        <div
-                          className="text-[12px] font-semibold"
+                        <NewsMarquee
+                          align="right"
+                          text={String(row.v ?? '—')}
                           title={String(row.v ?? '')}
+                          className="flex-1 min-w-0"
                           style={{
                             color: 'var(--text-secondary)',
-                            minWidth: 0,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            fontSize: 12,
+                            lineHeight: '1.2',
+                            fontWeight: 700,
                             fontFamily:
                               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
                           }}
-                        >
-                          {String(row.v ?? '—')}
-                        </div>
+                        />
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">
                   <div>
@@ -625,7 +643,8 @@ export default function LlmLogsPage() {
                     { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
                     { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
                     { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
-                    { k: 'Assembled hash（拼接哈希）', v: fmtHashOrHidden(detail.assembledTextHash) },
+                    // 这里用完整 hash，超长由 marquee 自动循环滚动
+                    { k: 'Assembled hash（拼接哈希）', v: (detail.assembledTextHash ?? '').trim() || '—' },
                   ].map((it) => (
                     <div
                       key={it.k}
@@ -635,19 +654,19 @@ export default function LlmLogsPage() {
                       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         {it.k}
                       </div>
-                      <div
-                        className="mt-1 text-sm font-semibold"
-                        style={{
-                          color: 'var(--text-primary)',
-                          fontFamily:
-                            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                          minWidth: 0,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {it.v}
+                      <div className="mt-1">
+                        <NewsMarquee
+                          text={String(it.v ?? '—')}
+                          title={String(it.v ?? '')}
+                          style={{
+                            color: 'var(--text-primary)',
+                            fontSize: 14,
+                            lineHeight: '1.2',
+                            fontWeight: 700,
+                            fontFamily:
+                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                          }}
+                        />
                       </div>
                     </div>
                   ))}
