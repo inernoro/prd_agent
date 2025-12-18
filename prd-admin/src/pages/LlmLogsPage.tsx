@@ -172,7 +172,8 @@ function NewsMarquee({
       ref={containerRef}
       className={['prd-marquee', align === 'right' ? 'prd-marquee--right' : '', className || ''].filter(Boolean).join(' ')}
       title={title || normalized}
-      style={{ ...vars, ...style }}
+      // 关键：在 Grid/Flex 内必须允许收缩，否则超长不换行内容会撑爆布局
+      style={{ minWidth: 0, width: '100%', ...vars, ...style }}
     >
       <div className={enabled ? 'prd-marquee__track' : 'prd-marquee__track prd-marquee__track--static'}>
         <span ref={measureRef} className="prd-marquee__item">
@@ -636,7 +637,7 @@ export default function LlmLogsPage() {
                 <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                   statusCode: {detail.statusCode ?? '-'} · duration: {detail.durationMs ?? '-'}ms
                 </div>
-                <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
                   {[
                     { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
                     { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
@@ -648,13 +649,13 @@ export default function LlmLogsPage() {
                   ].map((it) => (
                     <div
                       key={it.k}
-                      className="rounded-[12px] px-3 py-2"
-                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                      className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
+                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
                     >
                       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         {it.k}
                       </div>
-                      <div className="mt-1">
+                      <div className="mt-1 min-w-0">
                         <NewsMarquee
                           text={String(it.v ?? '—')}
                           title={String(it.v ?? '')}

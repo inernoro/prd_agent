@@ -201,30 +201,11 @@ public class ClaudeClient : ILLMClient
                 cancellationToken);
         }
 
-        using var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (logId != null)
-            {
-                _logWriter?.MarkError(logId, $"Claude API error: {response.StatusCode}", (int)response.StatusCode);
-            }
-            yield return new LLMStreamChunk
-            {
-                Type = "error",
-                ErrorMessage = $"Claude API error: {response.StatusCode} - {error}"
-            };
-            yield break;
-        }
-
-        yield return new LLMStreamChunk { Type = "start" };
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream);
+        // 重要：任何消费端提前断开/break 都不能影响日志落库（在 finally 写 MarkDone）。
+        var responseStatusCode = (int?)null;
+        Dictionary<string, string>? responseHeaders = null;
+        var logFinalized = false; // true 表示已 MarkError 或 MarkDone
+        var completed = false; // true 表示已 yield done（正常完成）
 
         int inputTokens = 0;
         int outputTokens = 0;
@@ -236,103 +217,140 @@ public class ClaudeClient : ILLMClient
         const int AnswerMaxChars = 200_000;
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
-        while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+        try
         {
-            var line = await reader.ReadLineAsync(cancellationToken);
-            
-            if (string.IsNullOrEmpty(line))
-                continue;
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
 
-            if (!line.StartsWith("data: "))
-                continue;
-
-            var data = line[6..];
-            
-            if (data == "[DONE]")
-                break;
-
-            var eventData = JsonSerializer.Deserialize(data, LLMJsonContext.Default.ClaudeStreamEvent);
-            
-            if (eventData?.Type == "content_block_delta" && eventData.Delta?.Text != null)
-            {
-                if (logId != null && !firstByteMarked)
-                {
-                    firstByteMarked = true;
-                    _logWriter?.MarkFirstByte(logId, DateTime.UtcNow);
-                }
-
-                assembledChars += eventData.Delta.Text.Length;
-                hasher.AppendData(Encoding.UTF8.GetBytes(eventData.Delta.Text));
-                if (answerSb.Length < AnswerMaxChars)
-                {
-                    var remain = AnswerMaxChars - answerSb.Length;
-                    answerSb.Append(eventData.Delta.Text.Length <= remain ? eventData.Delta.Text : eventData.Delta.Text[..remain]);
-                }
-
-                yield return new LLMStreamChunk
-                {
-                    Type = "delta",
-                    Content = eventData.Delta.Text
-                };
-            }
-            else if (eventData?.Type == "message_start" && eventData.Message?.Usage != null)
-            {
-                inputTokens = eventData.Message.Usage.InputTokens;
-                cacheCreationInputTokens = eventData.Message.Usage.CacheCreationInputTokens;
-                cacheReadInputTokens = eventData.Message.Usage.CacheReadInputTokens;
-            }
-            else if (eventData?.Type == "message_delta" && eventData.Usage != null)
-            {
-                outputTokens = eventData.Usage.OutputTokens;
-            }
-        }
-
-        if (enablePromptCache && (cacheCreationInputTokens > 0 || cacheReadInputTokens > 0))
-        {
-            _logger?.LogInformation(
-                "Claude Prompt Cache stats - Created: {Created}, Read: {Read}, Input: {Input}, Output: {Output}",
-                cacheCreationInputTokens, cacheReadInputTokens, inputTokens, outputTokens);
-        }
-
-        yield return new LLMStreamChunk
-        {
-            Type = "done",
-            InputTokens = inputTokens,
-            OutputTokens = outputTokens,
-            CacheCreationInputTokens = cacheCreationInputTokens > 0 ? cacheCreationInputTokens : null,
-            CacheReadInputTokens = cacheReadInputTokens > 0 ? cacheReadInputTokens : null
-        };
-
-        if (logId != null)
-        {
-            var endedAt = DateTime.UtcNow;
-            var headers = new Dictionary<string, string>();
+            responseStatusCode = (int)response.StatusCode;
+            responseHeaders = new Dictionary<string, string>();
             foreach (var h in response.Headers)
             {
-                headers[h.Key] = string.Join(",", h.Value);
+                responseHeaders[h.Key] = string.Join(",", h.Value);
             }
             foreach (var h in response.Content.Headers)
             {
-                headers[h.Key] = string.Join(",", h.Value);
+                responseHeaders[h.Key] = string.Join(",", h.Value);
             }
 
-            var answerText = answerSb.Length > 0 ? answerSb.ToString() : null;
-            var hash = assembledChars > 0 ? Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant() : null;
-            _logWriter!.MarkDone(
-                logId,
-                new LlmLogDone(
-                    StatusCode: (int)response.StatusCode,
-                    ResponseHeaders: headers,
-                    InputTokens: inputTokens,
-                    OutputTokens: outputTokens,
-                    CacheCreationInputTokens: cacheCreationInputTokens > 0 ? cacheCreationInputTokens : null,
-                    CacheReadInputTokens: cacheReadInputTokens > 0 ? cacheReadInputTokens : null,
-                    AnswerText: answerText,
-                    AssembledTextChars: assembledChars,
-                    AssembledTextHash: hash,
-                    Status: "succeeded",
-                    EndedAt: endedAt,
-                    DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, $"Claude API error: {response.StatusCode}", (int)response.StatusCode);
+                    logFinalized = true;
+                }
+                yield return new LLMStreamChunk
+                {
+                    Type = "error",
+                    ErrorMessage = $"Claude API error: {response.StatusCode} - {error}"
+                };
+                yield break;
+            }
+
+            yield return new LLMStreamChunk { Type = "start" };
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var reader = new StreamReader(stream);
+
+            while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(cancellationToken);
+
+                if (string.IsNullOrEmpty(line))
+                    continue;
+
+                if (!line.StartsWith("data: "))
+                    continue;
+
+                var data = line[6..];
+
+                if (data == "[DONE]")
+                    break;
+
+                var eventData = JsonSerializer.Deserialize(data, LLMJsonContext.Default.ClaudeStreamEvent);
+
+                if (eventData?.Type == "content_block_delta" && eventData.Delta?.Text != null)
+                {
+                    if (logId != null && !firstByteMarked)
+                    {
+                        firstByteMarked = true;
+                        _logWriter?.MarkFirstByte(logId, DateTime.UtcNow);
+                    }
+
+                    assembledChars += eventData.Delta.Text.Length;
+                    hasher.AppendData(Encoding.UTF8.GetBytes(eventData.Delta.Text));
+                    if (answerSb.Length < AnswerMaxChars)
+                    {
+                        var remain = AnswerMaxChars - answerSb.Length;
+                        answerSb.Append(eventData.Delta.Text.Length <= remain ? eventData.Delta.Text : eventData.Delta.Text[..remain]);
+                    }
+
+                    yield return new LLMStreamChunk
+                    {
+                        Type = "delta",
+                        Content = eventData.Delta.Text
+                    };
+                }
+                else if (eventData?.Type == "message_start" && eventData.Message?.Usage != null)
+                {
+                    inputTokens = eventData.Message.Usage.InputTokens;
+                    cacheCreationInputTokens = eventData.Message.Usage.CacheCreationInputTokens;
+                    cacheReadInputTokens = eventData.Message.Usage.CacheReadInputTokens;
+                }
+                else if (eventData?.Type == "message_delta" && eventData.Usage != null)
+                {
+                    outputTokens = eventData.Usage.OutputTokens;
+                }
+            }
+
+            if (enablePromptCache && (cacheCreationInputTokens > 0 || cacheReadInputTokens > 0))
+            {
+                _logger?.LogInformation(
+                    "Claude Prompt Cache stats - Created: {Created}, Read: {Read}, Input: {Input}, Output: {Output}",
+                    cacheCreationInputTokens, cacheReadInputTokens, inputTokens, outputTokens);
+            }
+
+            yield return new LLMStreamChunk
+            {
+                Type = "done",
+                InputTokens = inputTokens,
+                OutputTokens = outputTokens,
+                CacheCreationInputTokens = cacheCreationInputTokens > 0 ? cacheCreationInputTokens : null,
+                CacheReadInputTokens = cacheReadInputTokens > 0 ? cacheReadInputTokens : null
+            };
+            completed = true;
+        }
+        finally
+        {
+            if (logId != null && !logFinalized)
+            {
+                var endedAt = DateTime.UtcNow;
+                var answerText = answerSb.Length > 0 ? answerSb.ToString() : null;
+                var hash = assembledChars > 0 ? Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant() : null;
+
+                var status = cancellationToken.IsCancellationRequested
+                    ? "cancelled"
+                    : (completed ? "succeeded" : "failed");
+                _logWriter!.MarkDone(
+                    logId,
+                    new LlmLogDone(
+                        StatusCode: responseStatusCode,
+                        ResponseHeaders: responseHeaders,
+                        InputTokens: inputTokens,
+                        OutputTokens: outputTokens,
+                        CacheCreationInputTokens: cacheCreationInputTokens > 0 ? cacheCreationInputTokens : null,
+                        CacheReadInputTokens: cacheReadInputTokens > 0 ? cacheReadInputTokens : null,
+                        AnswerText: answerText,
+                        AssembledTextChars: assembledChars,
+                        AssembledTextHash: hash,
+                        Status: status,
+                        EndedAt: endedAt,
+                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
+            }
         }
     }
 

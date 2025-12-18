@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, listen } from '../../lib/tauri';
+import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 
 type PreviewAskPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
 
@@ -30,6 +31,7 @@ export default function PrdSectionAskPanel(props: {
   const { sessionId, headingId, headingTitle, onJumpToHeading } = props;
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
+  const [currentQuestion, setCurrentQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [history, setHistory] = useState<PreviewAskHistoryItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -44,6 +46,15 @@ export default function PrdSectionAskPanel(props: {
   const headingTitleRef = useRef<string | null>(headingTitle);
 
   const canAsk = useMemo(() => !!sessionId && !!headingId && !busy, [sessionId, headingId, busy]);
+
+  const phaseText = useMemo(() => {
+    if (!busy || !phase) return '';
+    if (phase === 'typing') return '开始输出…';
+    if (phase === 'receiving') return '正在接收信息…';
+    if (phase === 'connected') return '已连接，等待首包…';
+    if (phase === 'requesting') return '正在请求大模型…';
+    return '';
+  }, [busy, phase]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -80,6 +91,7 @@ export default function PrdSectionAskPanel(props: {
         setBusy(false);
         setPhase(null);
         pendingQuestionRef.current = null;
+        setCurrentQuestion('');
         persistedRef.current = false;
         return;
       }
@@ -161,6 +173,7 @@ export default function PrdSectionAskPanel(props: {
     setBusy(true);
     setError('');
     setAnswer('');
+    setCurrentQuestion(q);
     answerRef.current = '';
     setPhase('requesting');
     reqIdRef.current = null;
@@ -180,6 +193,7 @@ export default function PrdSectionAskPanel(props: {
       setBusy(false);
       setPhase(null);
       pendingQuestionRef.current = null;
+      setCurrentQuestion('');
       persistedRef.current = false;
     }
   };
@@ -196,12 +210,15 @@ export default function PrdSectionAskPanel(props: {
           提问本章
         </button>
       ) : (
-        <div className="w-[520px] max-w-[calc(100vw-24px)] bg-surface-light dark:bg-surface-dark border border-border rounded-2xl shadow-2xl overflow-hidden">
+        <div className="w-[560px] max-w-[calc(100vw-24px)] bg-surface-light dark:bg-surface-dark border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
             <div className="min-w-0">
               <div className="text-xs text-text-secondary">当前章节</div>
               <div className="text-sm font-semibold truncate" title={headingTitle || headingId || ''}>
                 {headingTitle || headingId || '未识别'}
+              </div>
+              <div className="text-[11px] text-text-secondary mt-0.5">
+                跳转：定位到正文该章节；提问：仅基于本章内容回答
               </div>
             </div>
             <div className="flex items-center gap-1.5">
@@ -210,9 +227,9 @@ export default function PrdSectionAskPanel(props: {
                   type="button"
                   onClick={() => onJumpToHeading?.(headingId)}
                   className="h-8 px-2 rounded-md text-xs border border-border text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
-                  title="跳转到本章"
+                  title="跳转到正文该章节"
                 >
-                  跳转
+                  跳转到正文
                 </button>
               ) : null}
               <button
@@ -226,93 +243,91 @@ export default function PrdSectionAskPanel(props: {
             </div>
           </div>
 
-          <div className="p-4 space-y-3">
-            <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              disabled={!canAsk}
-              className="w-full min-h-[72px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/40 text-sm"
-              placeholder={canAsk ? '输入你想问本章的问题…' : (!sessionId ? '未绑定 PRD，无法提问' : '未识别到当前章节')}
-            />
+          <div className="flex-1 min-h-0 flex flex-col">
+            {/* 上：历史 + 当前回复（可滚动） */}
+            <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+              {error ? (
+                <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
+              ) : null}
 
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] text-text-secondary">
-                {busy && phase ? (phase === 'typing' ? '开始输出…' : (phase === 'receiving' ? '正在接收信息…' : phase === 'connected' ? '已连接，等待首包…' : '正在请求大模型…')) : ''}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!sessionId || !headingId) return;
-                    invoke('clear_preview_ask_history', { sessionId, headingId })
-                      .then(() => setHistory([]))
-                      .catch((e: any) => console.error('Failed to clear preview ask history:', e));
-                  }}
-                  disabled={busy || !sessionId || !headingId || history.length === 0}
-                  className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
-                  title="清空本章提问历史（仅清理本机落盘）"
-                >
-                  清空历史
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQuestion('');
-                    setAnswer('');
-                    answerRef.current = '';
-                    setError('');
-                    setPhase(null);
-                    reqIdRef.current = null;
-                    pendingQuestionRef.current = null;
-                    persistedRef.current = false;
-                  }}
-                  disabled={busy}
-                  className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
-                >
-                  清空
-                </button>
-                <button
-                  type="button"
-                  onClick={submit}
-                  disabled={!question.trim() || !sessionId || !headingId || busy}
-                  className="px-3 py-2 text-sm rounded-xl bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50"
-                >
-                  {busy ? '发送中…' : '发送'}
-                </button>
-              </div>
-            </div>
-
-            {error ? (
-              <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
-            ) : null}
-
-            <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="text-xs font-semibold text-text-secondary">历史（仅保存在本机，最多 50 条）</div>
-                <div className="text-[11px] text-text-secondary">
-                  {sessionId && headingId ? (history.length ? `共 ${history.length} 条` : '暂无') : ''}
+              {/* 当前回复 */}
+              <div className="rounded-xl border border-border bg-background-light/40 dark:bg-background-dark/30 overflow-hidden">
+                <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-text-secondary">当前回复</div>
+                  <div className="text-[11px] text-text-secondary">{phaseText}</div>
+                </div>
+                <div className="p-3 space-y-2">
+                  <div className="text-[11px] text-text-secondary">问</div>
+                  <div className="text-sm whitespace-pre-wrap break-words">
+                    {currentQuestion ? currentQuestion : (busy ? '…' : '暂无')}
+                  </div>
+                  <div className="text-[11px] text-text-secondary mt-2">答（Markdown）</div>
+                  <div className="max-h-[34vh] overflow-auto">
+                    {answer ? (
+                      <MarkdownRenderer className="prose prose-sm dark:prose-invert max-w-none" content={answer} />
+                    ) : (
+                      <div className="text-sm text-text-secondary">{busy ? '正在生成…' : '暂无'}</div>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div className="max-h-[26vh] overflow-auto space-y-2">
-                {history.length ? (
-                  history.map((h) => (
-                    <div key={h.id} className="rounded-xl border border-border p-3 bg-background-light/40 dark:bg-background-dark/30">
-                      <div className="text-[11px] text-text-secondary mb-1">问</div>
-                      <div className="text-sm whitespace-pre-wrap break-words">{h.question}</div>
-                      <div className="mt-2 text-[11px] text-text-secondary mb-1">答</div>
-                      <div className="text-sm whitespace-pre-wrap break-words">{h.answer}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-text-secondary">暂无历史</div>
-                )}
-              </div>
             </div>
 
-            <div className="border-t border-border pt-3">
-              <div className="text-xs font-semibold text-text-secondary mb-2">本次回复</div>
-              <div className="max-h-[34vh] overflow-auto text-sm whitespace-pre-wrap break-words">
-                {answer ? answer : (busy ? '正在生成…' : '暂无')}
+            {/* 下：输入框永远在底部 */}
+            <div className="border-t border-border p-4 bg-surface-light dark:bg-surface-dark">
+              <textarea
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                disabled={!canAsk}
+                className="w-full min-h-[72px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/40 text-sm"
+                placeholder={canAsk ? '输入你想问本章的问题…' : (!sessionId ? '未绑定 PRD，无法提问' : '未识别到当前章节')}
+              />
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <div className="text-[11px] text-text-secondary">{phaseText}</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!sessionId || !headingId) return;
+                      invoke('clear_preview_ask_history', { sessionId, headingId })
+                        .then(() => {
+                          setHistory([]);
+                        })
+                        .catch((e: any) => console.error('Failed to clear preview ask history:', e));
+                    }}
+                    disabled={busy || !sessionId || !headingId || history.length === 0}
+                    className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                    title="清空本章提问历史（仅清理本机落盘）"
+                  >
+                    清空历史
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuestion('');
+                      setAnswer('');
+                      setCurrentQuestion('');
+                      answerRef.current = '';
+                      setError('');
+                      setPhase(null);
+                      reqIdRef.current = null;
+                      pendingQuestionRef.current = null;
+                      persistedRef.current = false;
+                    }}
+                    disabled={busy}
+                    className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                  >
+                    清空
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={!question.trim() || !sessionId || !headingId || busy}
+                    className="px-3 py-2 text-sm rounded-xl bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50"
+                  >
+                    {busy ? '发送中…' : '发送'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

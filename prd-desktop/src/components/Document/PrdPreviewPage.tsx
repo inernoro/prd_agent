@@ -134,13 +134,8 @@ export default function PrdPreviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canPreview, prdDocument?.id, activeGroupId]);
 
-  useEffect(() => {
-    // 每次进入页面都重置一些 UI 状态（避免上次折叠/选中残留）
-    setPrdPreviewTocOpen(true);
-    setPrdPreviewCommentsOpen(true);
-    setActiveHeadingId(null);
-    setActiveHeadingTitle(null);
-  }, []);
+  // 注意：PrdPreviewPage 在 mode !== 'PrdPreview' 时会卸载（见 App.tsx），所以初始 state 已足够作为“进入页重置”。
+  // 若在 mount 后再强制重置，会与用户的首次目录点击产生竞态，表现为“需要点两次/右侧不更新/不滚动”。
 
   // 切换文档/群组时：清空引用导航，避免跨文档残留高亮
   useEffect(() => {
@@ -163,12 +158,20 @@ export default function PrdPreviewPage() {
     const container = prdPreviewContentRef.current;
     if (!container) return;
     const esc = (window as any).CSS?.escape ? (window as any).CSS.escape(id) : id.replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
-    const el = container.querySelector(`#${esc}`) as HTMLElement | null;
-    if (!el) return;
-    const containerRect = container.getBoundingClientRect();
-    const elRect = el.getBoundingClientRect();
-    const top = container.scrollTop + (elRect.top - containerRect.top) - 12;
-    container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    const tryScroll = (attempt: number) => {
+      const el = container.querySelector(`#${esc}`) as HTMLElement | null;
+      if (!el) {
+        // 首次进入预览页时，markdown 渲染与布局（尤其是代码块/mermaid）可能尚未稳定，
+        // 目录点击会出现“要点两次才跳”的错觉；这里做少量 rAF 重试兜底。
+        if (attempt < 2) requestAnimationFrame(() => tryScroll(attempt + 1));
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const top = container.scrollTop + (elRect.top - containerRect.top) - 12;
+      container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    };
+    tryScroll(0);
   };
 
   const clearHighlights = useCallback(() => {
@@ -483,10 +486,10 @@ export default function PrdPreviewPage() {
 
       setTocItems(items);
 
-      // 默认选中第一个章节
-      if (!activeHeadingId && items.length > 0) {
-        setActiveHeadingId(items[0].id);
-        setActiveHeadingTitle(items[0].text);
+      // 默认选中第一个章节（函数式更新避免竞态：若用户已点击目录，不要被默认逻辑覆盖）
+      if (items.length > 0) {
+        setActiveHeadingId((prev) => (prev ? prev : items[0].id));
+        setActiveHeadingTitle((prev) => (prev ? prev : items[0].text));
       }
     });
 
@@ -503,12 +506,47 @@ export default function PrdPreviewPage() {
 
     // 缓存 headings（使用两次 rAF，确保 markdown 渲染与图片/代码块布局稳定）
     let raf2: number | null = null;
+    let pendingRebuildRaf: number | null = null;
+    let lateTimer: number | null = null;
+
+    const scheduleRebuild = () => {
+      if (pendingRebuildRaf != null) return;
+      pendingRebuildRaf = requestAnimationFrame(() => {
+        pendingRebuildRaf = null;
+        rebuildHeadingsCache();
+        updateActiveHeadingFromScroll();
+      });
+    };
+
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
         rebuildHeadingsCache();
         updateActiveHeadingFromScroll();
       });
     });
+
+    // 兜底：mermaid/图片等可能在首次渲染后异步改变布局，导致 heading top 缓存失真
+    lateTimer = window.setTimeout(() => scheduleRebuild(), 800) as unknown as number;
+
+    // DOM 结构变化（如 mermaid 注入 SVG）触发布局重算
+    const mo = new MutationObserver(() => {
+      scheduleRebuild();
+    });
+    try {
+      mo.observe(container, { childList: true, subtree: true });
+    } catch {
+      // ignore
+    }
+
+    // 资源加载（图片等）也会改变布局：用捕获阶段监听 load
+    const onLoadCapture = (e: Event) => {
+      const t = e.target as any;
+      const tag = (t?.tagName || '').toUpperCase();
+      if (tag === 'IMG' || tag === 'SVG' || tag === 'VIDEO' || tag === 'IFRAME') {
+        scheduleRebuild();
+      }
+    };
+    container.addEventListener('load', onLoadCapture, true);
 
     const onScroll = () => {
       if (scrollRafRef.current != null) return;
@@ -530,8 +568,16 @@ export default function PrdPreviewPage() {
     return () => {
       cancelAnimationFrame(raf1);
       if (raf2 != null) cancelAnimationFrame(raf2);
+      if (pendingRebuildRaf != null) cancelAnimationFrame(pendingRebuildRaf);
       if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current);
       scrollRafRef.current = null;
+      if (lateTimer != null) window.clearTimeout(lateTimer);
+      try {
+        mo.disconnect();
+      } catch {
+        // ignore
+      }
+      container.removeEventListener('load', onLoadCapture as EventListener, true);
       container.removeEventListener('scroll', onScroll as EventListener);
       window.removeEventListener('resize', onResize);
     };
@@ -629,6 +675,8 @@ export default function PrdPreviewPage() {
                       key={t.id}
                       type="button"
                       onClick={() => {
+                        // 目录点击时先重建 heading 位置缓存，避免 mermaid/代码块等异步渲染导致 scrollspy 章节识别错位
+                        rebuildHeadingsCache();
                         setActiveHeadingId(t.id);
                         setActiveHeadingTitle(t.text);
                         scrollToHeading(t.id);
