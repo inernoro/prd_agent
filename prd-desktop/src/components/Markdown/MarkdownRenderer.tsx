@@ -60,15 +60,29 @@ export default function MarkdownRenderer({ content, className }: MarkdownRendere
         remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
           ...headingComponents,
-          code({ inline, className: codeClassName, children, ...props }: any) {
-            const text = childrenToText(children);
-            const m = /language-(\w+)/.exec(codeClassName || '');
+          pre({ children }: any) {
+            // react-markdown 的 codeBlock 通常是：<pre><code class="language-xxx">...</code></pre>
+            // 我们需要：
+            // 1) mermaid：直接渲染图，不要保留外层 pre（否则会出现不合法嵌套/样式问题）
+            // 2) 其它：统一在这里加 not-prose + 代码块样式（避免在 code renderer 里返回 <div>/<pre> 导致嵌套错误）
+            const child = Array.isArray(children) ? children[0] : children;
+            const codeClassName = child?.props?.className || '';
+            const m = /language-(\w+)/.exec(codeClassName);
             const lang = (m?.[1] || '').toLowerCase();
-
-            if (!inline && lang === 'mermaid') {
+            if (lang === 'mermaid') {
+              const text = childrenToText(child?.props?.children);
               return <MermaidBlock chart={text} />;
             }
-
+            return (
+              <div className="not-prose">
+                <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 p-3">
+                  {children}
+                </pre>
+              </div>
+            );
+          },
+          code({ inline, className: codeClassName, children, ...props }: any) {
+            const text = childrenToText(children);
             if (inline) {
               return (
                 <code className={codeClassName} {...props}>
@@ -77,14 +91,11 @@ export default function MarkdownRenderer({ content, className }: MarkdownRendere
               );
             }
 
+            // 块级 code：外层 <pre> 由 pre renderer 负责包裹/样式
             return (
-              // 注意：放在 prose 容器内时，typography 会给 pre 强行设置“深色背景 + 浅色字”。
-              // 我们这里自定义了浅色背景，因此必须用 not-prose 脱离 typography 的 pre 样式，避免白天模式“浅底浅字”看不清。
-              <div className="not-prose">
-                <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 p-3">
-                  <code className="whitespace-pre">{text}</code>
-                </pre>
-              </div>
+              <code className={`whitespace-pre ${codeClassName || ''}`.trim()} {...props}>
+                {text}
+              </code>
             );
           },
         }}

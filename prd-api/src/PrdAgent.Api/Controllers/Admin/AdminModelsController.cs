@@ -408,6 +408,22 @@ public class AdminModelsController : ControllerBase
     }
 
     /// <summary>
+    /// 取消意图模型（清空 IsIntent 标记；调用侧将自动回退主模型执行）
+    /// </summary>
+    [HttpDelete("intent-model")]
+    public async Task<IActionResult> ClearIntentModel()
+    {
+        await _db.LLMModels.UpdateManyAsync(
+            m => m.IsIntent,
+            Builders<LLMModel>.Update
+                .Set(m => m.IsIntent, false)
+                .Set(m => m.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("Intent model cleared");
+        return Ok(ApiResponse<object>.Ok(new { cleared = true }));
+    }
+
+    /// <summary>
     /// 设置图片识别模型
     /// </summary>
     [HttpPut("vision-model")]

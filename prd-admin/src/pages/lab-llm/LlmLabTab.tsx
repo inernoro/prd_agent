@@ -17,6 +17,7 @@ import {
   listModelLabExperiments,
   listModelLabModelSets,
   runModelLabStream,
+  clearIntentModel,
   setImageGenModel,
   setIntentModel,
   setMainModel,
@@ -191,11 +192,8 @@ export default function LlmLabTab() {
   };
 
   const loadModelSets = async () => {
-    try {
-      const res = await listModelLabModelSets({ limit: 100 });
-      if (res.success) setModelSets(res.data.items);
-    } finally {
-    }
+    const res = await listModelLabModelSets({ limit: 100 });
+    if (res.success) setModelSets(res.data.items);
   };
 
   useEffect(() => {
@@ -428,6 +426,13 @@ export default function LlmLabTab() {
   const onSetIntentFromRun = async (modelId: string) => {
     setUniqueFlagLocal(modelId, 'isIntent');
     const res = await setIntentModel(modelId);
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
+  const onClearIntentFromRun = async () => {
+    setAllModels((prev) => prev.map((m) => ({ ...m, isIntent: false } as any)));
+    const res = await clearIntentModel();
     if (!res.success) return await refreshModelsSilent();
     await refreshModelsSilent();
   };
@@ -968,14 +973,17 @@ export default function LlmLabTab() {
                             <Button
                               variant="ghost"
                               size="xs"
-                              onClick={() => (cfgId ? onSetIntentFromRun(cfgId) : onSetIntentFromItem(it.itemId))}
-                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isIntent)}
-                              title={!cfgId ? reason : (m?.isIntent ? '已是意图模型' : '设为意图模型（全局唯一）')}
+                              onClick={() => {
+                                if (m?.isIntent) return void onClearIntentFromRun();
+                                return cfgId ? void onSetIntentFromRun(cfgId) : void onSetIntentFromItem(it.itemId);
+                              }}
+                              disabled={!cfgId && !canInferPlatform}
+                              title={!cfgId ? reason : (m?.isIntent ? '取消意图模型（将回退主模型执行）' : '设为意图模型（全局唯一）')}
                               className={m?.isIntent ? 'disabled:opacity-100' : ''}
                               style={m?.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
                             >
                               <Sparkles size={14} />
-                              意图
+                              {m?.isIntent ? '取消意图' : '意图'}
                             </Button>
                             <Button
                               variant="ghost"

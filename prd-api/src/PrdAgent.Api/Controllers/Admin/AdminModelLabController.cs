@@ -441,7 +441,11 @@ public class AdminModelLabController : ControllerBase
 
                     if (chunk.Type == "done")
                     {
-                        break;
+                        // 注意：不要在这里 break。
+                        // 原因：OpenAIClient/ClaudeClient 在 yield return "done" 之后才会调用 logWriter.MarkDone 写入 AnswerText；
+                        // 如果消费侧提前 break，会导致 async iterator 被提前 Dispose，从而跳过 MarkDone，出现“实验完成但日志 Answer 未记录”。
+                        // 这里仅作为“完成信号”，继续等待迭代自然结束即可。
+                        continue;
                     }
                 }
             }

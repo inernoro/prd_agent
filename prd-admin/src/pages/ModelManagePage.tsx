@@ -4,6 +4,7 @@ import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import {
+  clearIntentModel,
   createModel,
   createPlatform,
   deleteModel,
@@ -19,7 +20,7 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Check, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Check, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
@@ -66,6 +67,29 @@ const defaultModelForm: ModelForm = {
 
 const isSvgAssetUrl = (url?: string | null) => !!url && /\.svg(\?|#|$)/i.test(url);
 const isRasterAssetUrl = (url?: string | null) => !!url && /\.(png|jpe?g|webp|gif|bmp|ico)(\?|#|$)/i.test(url);
+
+function FlagLabel({
+  icon,
+  text,
+  title,
+  style,
+}: {
+  icon: React.ReactNode;
+  text: string;
+  title?: string;
+  style: React.CSSProperties;
+}) {
+  return (
+    <label
+      className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+      style={style}
+      title={title || text}
+    >
+      <span className="shrink-0">{icon}</span>
+      <span>{text}</span>
+    </label>
+  );
+}
 
 export default function ModelManagePage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -177,6 +201,18 @@ export default function ModelManagePage() {
   const onSetIntent = async (m: Model) => {
     setIntentJustSetId(m.id);
     const res = await setIntentModel(m.id);
+    if (!res.success) {
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  };
+
+  const onClearIntent = async (m: Model) => {
+    // 本地即时更新：避免闪烁
+    setModels((prev) => prev.map((x) => ({ ...x, isIntent: false })));
+    setIntentJustSetId(m.id);
+    const res = await clearIntentModel();
     if (!res.success) {
       await load({ silent: true });
       return;
@@ -1219,8 +1255,62 @@ export default function ModelManagePage() {
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2 min-w-0">
                                       <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
-                                      {m.isMain && <Badge variant="featured">主</Badge>}
-                                      {!m.enabled && <Badge variant="subtle">禁用</Badge>}
+                                      {/* 角色/能力标记（尺寸对齐 Badge featured 的 h-5） */}
+                                      {m.isMain ? (
+                                        <FlagLabel
+                                          icon={<Star size={12} fill="currentColor" />}
+                                          text="主"
+                                          style={{
+                                            background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)',
+                                            border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)',
+                                            color: 'var(--accent-gold-2)',
+                                          }}
+                                        />
+                                      ) : null}
+                                      {m.isIntent ? (
+                                        <FlagLabel
+                                          icon={<Sparkles size={12} />}
+                                          text="意图"
+                                          style={{
+                                            background: 'rgba(34,197,94,0.12)',
+                                            border: '1px solid rgba(34,197,94,0.28)',
+                                            color: 'rgba(34,197,94,0.95)',
+                                          }}
+                                        />
+                                      ) : null}
+                                      {m.isVision ? (
+                                        <FlagLabel
+                                          icon={<ScanEye size={12} />}
+                                          text="识图"
+                                          style={{
+                                            background: 'rgba(59,130,246,0.12)',
+                                            border: '1px solid rgba(59,130,246,0.28)',
+                                            color: 'rgba(59,130,246,0.95)',
+                                          }}
+                                        />
+                                      ) : null}
+                                      {m.isImageGen ? (
+                                        <FlagLabel
+                                          icon={<ImagePlus size={12} />}
+                                          text="生图"
+                                          style={{
+                                            background: 'rgba(168,85,247,0.12)',
+                                            border: '1px solid rgba(168,85,247,0.28)',
+                                            color: 'rgba(168,85,247,0.95)',
+                                          }}
+                                        />
+                                      ) : null}
+                                      {!m.enabled ? (
+                                        <FlagLabel
+                                          icon={<EyeOff size={12} />}
+                                          text="禁用"
+                                          style={{
+                                            background: 'rgba(255,255,255,0.04)',
+                                            border: '1px solid rgba(255,255,255,0.12)',
+                                            color: 'var(--text-secondary)',
+                                          }}
+                                        />
+                                      ) : null}
                                     </div>
                                     <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{m.modelName}</div>
                                   </div>
@@ -1293,14 +1383,17 @@ export default function ModelManagePage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => onSetIntent(m)}
-                                      disabled={Boolean(m.isIntent)}
-                                      aria-label={m.isIntent ? '意图模型' : '设为意图模型'}
-                                      title={m.isIntent ? '意图模型' : '设为意图模型'}
+                                      onClick={() => (m.isIntent ? onClearIntent(m) : onSetIntent(m))}
+                                      aria-label={m.isIntent ? '取消意图模型' : '设为意图模型'}
+                                      title={m.isIntent ? '取消意图模型（将回退到主模型执行）' : '设为意图模型'}
                                       className={m.isIntent ? 'disabled:opacity-100' : ''}
                                       style={m.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
                                     >
-                                      <Sparkles size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
+                                      {m.isIntent ? (
+                                        <X size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
+                                      ) : (
+                                        <Sparkles size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
+                                      )}
                                     </Button>
 
                                     <Button

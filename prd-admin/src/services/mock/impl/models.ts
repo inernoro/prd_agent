@@ -84,6 +84,12 @@ export async function setIntentModelMock(id: string): Promise<ApiResponse<true>>
   return ok(true);
 }
 
+export async function clearIntentModelMock(): Promise<ApiResponse<true>> {
+  await sleep(220);
+  db.models.forEach((x) => (x.isIntent = false));
+  return ok(true);
+}
+
 export async function setVisionModelMock(id: string): Promise<ApiResponse<true>> {
   await sleep(260);
   const exists = db.models.some((x) => x.id === id);

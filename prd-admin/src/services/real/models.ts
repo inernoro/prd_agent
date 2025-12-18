@@ -5,6 +5,7 @@ import type {
   GetModelsContract,
   SetImageGenModelContract,
   SetIntentModelContract,
+  ClearIntentModelContract,
   SetMainModelContract,
   SetVisionModelContract,
   TestModelContract,
@@ -103,6 +104,14 @@ export const setIntentModelReal: SetIntentModelContract = async (id: string) => 
   const res = await apiRequest<{ modelId: string; isIntent: boolean }>('/api/v1/config/intent-model', {
     method: 'PUT',
     body: { modelId: id },
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const clearIntentModelReal: ClearIntentModelContract = async () => {
+  const res = await apiRequest<{ cleared: boolean }>('/api/v1/config/intent-model', {
+    method: 'DELETE',
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);

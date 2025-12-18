@@ -154,13 +154,20 @@ export default function PrdCommentsPanel({ documentId, groupId, headingId, headi
         ) : (
           <div className="space-y-2">
             {items.map((c) => (
-              <button
+              <div
                 key={c.id}
-                type="button"
                 data-heading-id={c.headingId}
                 onClick={() => {
                   if (c.headingId) onJumpToHeading?.(c.headingId);
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (c.headingId) onJumpToHeading?.(c.headingId);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
                 className={`w-full text-left rounded-lg border p-2 transition-colors ${
                   headingId && c.headingId === headingId
                     ? 'border-primary-200 dark:border-white/10 bg-primary-50 dark:bg-white/5'
@@ -180,7 +187,6 @@ export default function PrdCommentsPanel({ documentId, groupId, headingId, headi
                       <button
                         type="button"
                         onClick={(e) => {
-                          e.preventDefault();
                           e.stopPropagation();
                           void removeComment(c.id);
                         }}
@@ -202,7 +208,7 @@ export default function PrdCommentsPanel({ documentId, groupId, headingId, headi
                   </div>
                 </div>
                 <div className="mt-1 text-sm whitespace-pre-wrap break-words">{c.content}</div>
-              </button>
+              </div>
             ))}
           </div>
         )}

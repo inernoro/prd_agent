@@ -89,7 +89,7 @@ public class PreviewAskService : IPreviewAskService
         }
 
         var raw = document.RawContent ?? string.Empty;
-        var sectionMarkdown = ExtractSectionMarkdown(raw, hId);
+        var sectionMarkdown = ExtractSectionMarkdown(raw, hId, headingTitle);
         if (string.IsNullOrWhiteSpace(sectionMarkdown))
         {
             yield return new PreviewAskStreamEvent
@@ -160,7 +160,7 @@ public class PreviewAskService : IPreviewAskService
     /// 从 RawContent 中按 headingId 抽取当前章节的 markdown（含 heading 行）。\n
     /// 规则：按照与前端 github-slugger 相同的 headingId 生成顺序解析 headings。\n
     /// </summary>
-    private static string ExtractSectionMarkdown(string rawMarkdown, string headingId)
+    private static string ExtractSectionMarkdown(string rawMarkdown, string headingId, string? headingTitle)
     {
         if (string.IsNullOrWhiteSpace(rawMarkdown)) return string.Empty;
         var lines = rawMarkdown.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
@@ -169,6 +169,17 @@ public class PreviewAskService : IPreviewAskService
         if (headings.Count == 0) return string.Empty;
 
         var idx = headings.FindIndex(h => string.Equals(h.HeadingId, headingId, StringComparison.Ordinal));
+        if (idx < 0 && !string.IsNullOrWhiteSpace(headingTitle))
+        {
+            // 兼容：前端标题渲染会剥离部分 inline markdown（如 **加粗**、`code`、[link](url)）。
+            // 如果后端原文标题包含这些标记，slug 会不一致，导致找不到 headingId。
+            // 这里用“渲染后的标题文本”回退定位章节。
+            var ht = NormalizeHeadingText(StripInlineMarkdown(headingTitle));
+            if (!string.IsNullOrWhiteSpace(ht))
+            {
+                idx = headings.FindIndex(h => string.Equals(h.Title, ht, StringComparison.Ordinal));
+            }
+        }
         if (idx < 0) return string.Empty;
 
         var start = headings[idx].LineIdx0;
@@ -216,7 +227,7 @@ public class PreviewAskService : IPreviewAskService
             if (!m.Success) continue;
 
             var level = m.Groups[1].Value.Length;
-            var title = NormalizeHeadingText(m.Groups[2].Value);
+            var title = NormalizeHeadingText(StripInlineMarkdown(m.Groups[2].Value));
             if (string.IsNullOrWhiteSpace(title)) continue;
 
             var id = slugger.Slug(title);
@@ -224,6 +235,40 @@ public class PreviewAskService : IPreviewAskService
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// 将标题行中的常见 inline markdown 语法剥离为“渲染后文本”，以便与前端 react-markdown 的 heading 文本一致。
+    /// 目标：修复包含 **强调**、`code`、[link](url)、![img](url)、HTML 标签 等情况下 headingId 生成不一致的问题。
+    /// </summary>
+    private static string StripInlineMarkdown(string raw)
+    {
+        var s = raw ?? string.Empty;
+        if (s.Length == 0) return string.Empty;
+
+        // 图片/链接：保留可见文本
+        s = Regex.Replace(s, @"!\[([^\]]*)\]\([^)]+\)", "$1");
+        s = Regex.Replace(s, @"\[(.*?)\]\([^)]+\)", "$1");
+
+        // inline code：去掉反引号
+        s = Regex.Replace(s, @"`([^`]+)`", "$1");
+
+        // 处理强调（多轮，覆盖简单嵌套）
+        for (var i = 0; i < 2; i++)
+        {
+            s = Regex.Replace(s, @"\*\*([^*]+)\*\*", "$1");
+            s = Regex.Replace(s, @"__([^_]+)__", "$1");
+            s = Regex.Replace(s, @"\*([^*]+)\*", "$1");
+            s = Regex.Replace(s, @"_([^_]+)_", "$1");
+        }
+
+        // HTML 标签
+        s = Regex.Replace(s, @"<[^>]+>", string.Empty);
+
+        // 去掉转义符（保留字符本身）
+        s = Regex.Replace(s, @"\\([\\`*_{}\[\]()#+\-.!])", "$1");
+
+        return s;
     }
 
     private static string NormalizeHeadingText(string raw)
