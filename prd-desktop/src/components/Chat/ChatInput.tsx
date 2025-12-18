@@ -288,7 +288,8 @@ export default function ChatInput() {
           </svg>
         </button>
 
-        <div className="flex-1 relative">
+        {/* 关键：min-w-0 允许在 flex 行内收缩，避免 placeholder 撑宽导致“没对齐/溢出” */}
+        <div className="flex-1 min-w-0 relative">
           <textarea
             ref={textareaRef}
             value={content}
@@ -298,7 +299,7 @@ export default function ChatInput() {
             }}
             onKeyDown={handleKeyDown}
             placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}
-            className="w-full min-h-[36px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm"
+            className="w-full min-w-0 min-h-[36px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm"
             rows={1}
             disabled={isStreaming || !canChat}
           />

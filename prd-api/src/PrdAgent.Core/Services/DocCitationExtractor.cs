@@ -21,6 +21,8 @@ public static class DocCitationExtractor
 
     private sealed record Scored(Candidate Candidate, double Score);
 
+    private sealed record HeadingRow(int Level, string Title, int LineIdx0, string HeadingId);
+
     public static List<DocCitation> Extract(ParsedPrd prd, string assistantText, int maxCitations = MaxCitationsDefault)
     {
         maxCitations = Math.Max(0, Math.Min(50, maxCitations));
@@ -37,7 +39,9 @@ public static class DocCitationExtractor
         var slugger = new GithubSluggerLike();
 
         // 2) 生成候选段落
-        var candidates = BuildCandidates(prd, slugger);
+        // 注意：当前 MarkdownParser 只填充 Sections 的 title/层级/行号，不会填充 Section.Content
+        // 因此这里必须从 RawContent 直接解析 heading+段落，避免 citations 永远为空
+        var candidates = BuildCandidatesFromRaw(prd.RawContent ?? string.Empty, slugger);
         if (candidates.Count == 0) return new List<DocCitation>();
 
         // 3) 从回答抽取关键词
@@ -90,44 +94,85 @@ public static class DocCitationExtractor
         return outList;
     }
 
-    private static List<Candidate> BuildCandidates(ParsedPrd prd, GithubSluggerLike slugger)
+    private static List<Candidate> BuildCandidatesFromRaw(string rawMarkdown, GithubSluggerLike slugger)
     {
-        var candidates = new List<Candidate>(256);
+        var candidates = new List<Candidate>(512);
+        if (string.IsNullOrWhiteSpace(rawMarkdown)) return candidates;
 
-        void WalkSections(IEnumerable<Section> sections)
+        var lines = rawMarkdown.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        var headings = ExtractHeadings(lines, slugger);
+        if (headings.Count == 0) return candidates;
+
+        for (var i = 0; i < headings.Count; i++)
         {
-            foreach (var s in sections)
+            var h = headings[i];
+            var start = h.LineIdx0 + 1;
+            var endExclusive = (i + 1 < headings.Count) ? headings[i + 1].LineIdx0 : lines.Length;
+            if (start < 0 || start >= lines.Length) continue;
+            endExclusive = Math.Max(start, Math.Min(lines.Length, endExclusive));
+
+            var body = string.Join("\n", lines[start..endExclusive]);
+            foreach (var para in SplitParagraphs(body))
             {
-                var title = (s?.Title ?? string.Empty).Trim();
-                if (!string.IsNullOrWhiteSpace(title))
-                {
-                    var headingText = NormalizeHeadingText(title);
-                    var headingId = slugger.Slug(headingText);
+                var raw = para.Trim();
+                if (raw.Length < 12) continue;
 
-                    // Section.Content：通常是该章节正文（不含 heading 行）
-                    var body = s?.Content ?? string.Empty;
-                    foreach (var para in SplitParagraphs(body))
-                    {
-                        var raw = para.Trim();
-                        if (raw.Length < 12) continue;
+                var clean = CleanMarkdownToText(raw);
+                clean = NormalizeWhitespace(clean);
+                if (clean.Length < 18) continue;
 
-                        var clean = CleanMarkdownToText(raw);
-                        clean = NormalizeWhitespace(clean);
-                        if (clean.Length < 18) continue;
-
-                        candidates.Add(new Candidate(headingText, headingId, raw, clean));
-                    }
-                }
-
-                if (s?.Children != null && s.Children.Count > 0)
-                {
-                    WalkSections(s.Children);
-                }
+                candidates.Add(new Candidate(h.Title, h.HeadingId, raw, clean));
             }
         }
 
-        WalkSections(prd.Sections ?? new List<Section>());
         return candidates;
+    }
+
+    private static List<HeadingRow> ExtractHeadings(string[] lines, GithubSluggerLike slugger)
+    {
+        var list = new List<HeadingRow>(128);
+        var headingPattern = new Regex(@"^\s*(#{1,6})\s+(.+?)\s*$", RegexOptions.Compiled);
+
+        // 忽略 fenced code block 内的 heading
+        bool inFence = false;
+        string? fenceToken = null;
+        var fencePattern = new Regex(@"^\s*(```+|~~~+)\s*(\w+)?\s*$", RegexOptions.Compiled);
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i] ?? string.Empty;
+
+            var fence = fencePattern.Match(line);
+            if (fence.Success)
+            {
+                var token = fence.Groups[1].Value;
+                if (!inFence)
+                {
+                    inFence = true;
+                    fenceToken = token;
+                }
+                else if (!string.IsNullOrEmpty(fenceToken) && line.TrimStart().StartsWith(fenceToken, StringComparison.Ordinal))
+                {
+                    inFence = false;
+                    fenceToken = null;
+                }
+                continue;
+            }
+
+            if (inFence) continue;
+
+            var m = headingPattern.Match(line);
+            if (!m.Success) continue;
+
+            var level = m.Groups[1].Value.Length;
+            var title = NormalizeHeadingText(m.Groups[2].Value);
+            if (string.IsNullOrWhiteSpace(title)) continue;
+
+            var id = slugger.Slug(title);
+            list.Add(new HeadingRow(level, title, i, id));
+        }
+
+        return list;
     }
 
     private static IEnumerable<string> SplitParagraphs(string markdown)

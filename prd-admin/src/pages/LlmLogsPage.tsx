@@ -5,7 +5,9 @@ import { Dialog } from '@/components/ui/Dialog';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
 import { Copy, RefreshCw, Search } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function codeBoxStyle(): React.CSSProperties {
   return {
@@ -44,9 +46,11 @@ function fmtNum(v: number | null | undefined): string {
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
 }
 
-function fmtText(v: string | null | undefined): string {
+function fmtHashOrHidden(v: string | null | undefined): string {
   const s = (v ?? '').trim();
-  return s ? s : '—';
+  if (!s) return '—';
+  // 超长哈希会破坏布局：按需求显示“前几位 + …”
+  return s.length > 24 ? `${s.slice(0, 18)}…` : s;
 }
 
 function tryPrettyJsonText(text: string): string {
@@ -106,12 +110,120 @@ function buildCurlFromLog(detail: LlmRequestLog): string {
 
 // rawSse 已移除：管理后台仅展示最终 AnswerText 与统计信息
 
+const MARQUEE_GAP_PX = 28;
+const MARQUEE_SPEED_PX_PER_SEC = 64;
+
+function NewsMarquee({ text, title }: { text: string; title?: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLSpanElement | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [shiftPx, setShiftPx] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+
+  const normalized = (text ?? '').replace(/\s+/g, ' ').trim();
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const measure = measureRef.current;
+    if (!container || !measure) return;
+
+    const recompute = () => {
+      const containerW = container.clientWidth;
+      const contentW = measure.offsetWidth;
+      const need = contentW > containerW + 2; // 避免临界抖动
+      const shift = contentW + MARQUEE_GAP_PX;
+      setEnabled(need);
+      setShiftPx(shift);
+      setDurationSec(Math.max(6, shift / MARQUEE_SPEED_PX_PER_SEC));
+    };
+
+    recompute();
+    const ro = new ResizeObserver(() => recompute());
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [normalized]);
+
+  const vars = useMemo(
+    () => {
+      const v: Record<'--prd-marquee-shift' | '--prd-marquee-duration' | '--prd-marquee-gap', string> = {
+        '--prd-marquee-shift': `${shiftPx}px`,
+        '--prd-marquee-duration': `${durationSec}s`,
+        '--prd-marquee-gap': `${MARQUEE_GAP_PX}px`,
+      };
+      return v as unknown as React.CSSProperties;
+    },
+    [durationSec, shiftPx]
+  );
+
+  return (
+    <div ref={containerRef} className="prd-marquee" title={title || normalized} style={{ ...vars }}>
+      <div className={enabled ? 'prd-marquee__track' : 'prd-marquee__track prd-marquee__track--static'}>
+        <span ref={measureRef} className="prd-marquee__item">
+          {normalized || '—'}
+        </span>
+        {enabled ? (
+          <span aria-hidden className="prd-marquee__item">
+            {normalized || '—'}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
+  const q = (it.questionPreview ?? '').trim();
+  const a = (it.answerPreview ?? '').trim();
+  const ttfb = diffMs(it.startedAt, it.firstByteAt ?? null);
+  const rightText =
+    it.durationMs
+      ? `${it.durationMs}ms${ttfb !== null ? ` · TTFB ${ttfb}ms` : ''}`
+      : ttfb !== null
+        ? `TTFB ${ttfb}ms`
+        : formatLocalTime(it.startedAt);
+
+  return (
+    <div
+      className="mt-2 rounded-[12px] px-3 py-2"
+      style={{
+        border: '1px solid rgba(231,206,151,0.18)',
+        background: 'rgba(231,206,151,0.045)',
+      }}
+    >
+      <div className="grid items-center gap-3" style={{ gridTemplateColumns: '2fr 3fr 1fr' }}>
+        <div className="min-w-0 flex items-center gap-2">
+          <span className="text-[11px] font-semibold shrink-0" style={{ color: '#E7CE97' }}>
+            问题
+          </span>
+          <div className="min-w-0 flex-1">
+            <NewsMarquee text={q ? `：${q}` : '：未记录（已脱敏）'} />
+          </div>
+        </div>
+
+        <div className="min-w-0 flex items-center gap-2">
+          <span className="text-[11px] font-semibold shrink-0" style={{ color: '#E7CE97', opacity: 0.9 }}>
+            回答
+          </span>
+          <div className="min-w-0 flex-1">
+            <NewsMarquee text={a ? `：${a}` : it.status === 'running' ? '：生成中…' : '：未记录'} />
+          </div>
+        </div>
+
+        <div className="min-w-0 text-right text-[11px] truncate" style={{ color: 'rgba(231,206,151,0.75)' }}>
+          {rightText}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LlmLogsPage() {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<LlmRequestLogListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(30);
+  const [answerView, setAnswerView] = useState<'preview' | 'raw'>('preview');
 
   const [qProvider, setQProvider] = useState('');
   const [qModel, setQModel] = useState('');
@@ -191,7 +303,7 @@ export default function LlmLogsPage() {
     const chars = detail.assembledTextChars;
     const hash = (detail.assembledTextHash ?? '').trim();
     if ((chars === null || chars === undefined || chars === 0) && !hash) return '';
-    return `用户可见输出（摘要字段）\nchars=${fmtNum(chars)}\nhash=${hash || '—'}\n\n说明：这里仅保留长度与哈希用于对照；具体内容请查看下方 Answer。`;
+    return `用户可见输出（摘要字段）\nchars=${fmtNum(chars)}\nhash=${hash ? fmtHashOrHidden(hash) : '—'}\n\n说明：这里仅保留长度与哈希用于对照；具体内容请查看下方 Answer。`;
   }, [detail]);
 
   const statusBadge = (s: string) => {
@@ -215,6 +327,14 @@ export default function LlmLogsPage() {
 
   return (
     <div className="space-y-4">
+      <style>{`
+        .prd-marquee{position:relative;overflow:hidden;white-space:nowrap}
+        .prd-marquee__track{display:inline-flex;align-items:center;gap:var(--prd-marquee-gap);will-change:transform;animation:prd-marquee var(--prd-marquee-duration) linear infinite}
+        .prd-marquee__track--static{animation:none}
+        .prd-marquee__item{display:inline-block;white-space:nowrap;font-size:11px;line-height:1.2;color:rgba(231,206,151,0.92)}
+        @keyframes prd-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--prd-marquee-shift)))}}
+        @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
+      `}</style>
       <div className="flex items-end justify-between gap-4">
         <div>
           <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>LLM 请求日志</div>
@@ -309,8 +429,6 @@ export default function LlmLogsPage() {
             items.map((it) => {
               const active = selectedId === it.id;
               const ttfb = diffMs(it.startedAt, it.firstByteAt ?? null);
-              const q = (it.questionPreview ?? '').trim();
-              const a = (it.answerPreview ?? '').trim();
               return (
                 <div
                   key={it.id}
@@ -347,44 +465,6 @@ export default function LlmLogsPage() {
                       </div>
                     </div>
 
-                    {/* 中间：问题/回答预览（填充空白区域） */}
-                    <div className="flex-1 min-w-0 px-2">
-                      <div className="ml-auto max-w-[720px]">
-                        <div
-                          className="rounded-[14px] px-4 py-2"
-                          style={{
-                            border: '1px solid rgba(231,206,151,0.22)',
-                            color: '#E7CE97',
-                          }}
-                        >
-                          <div
-                            className="text-[12px] font-semibold"
-                            style={{
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              textAlign: 'right',
-                            }}
-                          >
-                            {q ? `问题：${q}` : '问题：未记录（已脱敏）'}
-                          </div>
-                          <div
-                            className="mt-1 text-[12px]"
-                            style={{
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              textAlign: 'right',
-                              maxHeight: 56,
-                              overflowY: 'auto',
-                              paddingRight: 2,
-                              opacity: 0.92,
-                            }}
-                          >
-                            {a ? `回答：${a}` : (it.status === 'running' ? '回答：生成中…' : '回答：未记录')}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
                     <div className="text-right">
                       <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                         {it.durationMs ? `${it.durationMs}ms` : '-'}
@@ -403,6 +483,8 @@ export default function LlmLogsPage() {
                       ) : null}
                     </div>
                   </div>
+                  {/* 底部：问题/回答滚动条（新闻样式） */}
+                  <PreviewTickerRow it={it} />
                   {it.error ? (
                     <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
                       {it.error}
@@ -432,6 +514,7 @@ export default function LlmLogsPage() {
             setDetail(null);
             setSelectedId(null);
             setCopiedHint('');
+            setAnswerView('preview');
           }
         }}
         title="LLM 请求详情"
@@ -472,17 +555,48 @@ export default function LlmLogsPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  provider（服务商）: {detail.provider} · model（模型）: {detail.model} · status（状态）: {detail.status}
-                </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  requestId: {detail.requestId}
-                  {detail.groupId ? ` · groupId: ${detail.groupId}` : ''}
-                  {detail.sessionId ? ` · sessionId: ${detail.sessionId}` : ''}
-                </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  startedAt: {formatLocalTime(detail.startedAt)} · firstByteAt: {formatLocalTime(detail.firstByteAt ?? null)} · endedAt: {formatLocalTime(detail.endedAt ?? null)}
-                  {diffMs(detail.startedAt, detail.firstByteAt ?? null) !== null ? ` · TTFB ${diffMs(detail.startedAt, detail.firstByteAt ?? null)}ms` : ''}
+                <div
+                  className="mt-2 rounded-[14px] px-3 py-2"
+                  style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                >
+                  <div className="grid gap-2" style={{ gridTemplateColumns: '120px 1fr' }}>
+                    {[
+                      { k: 'provider', v: detail.provider || '—' },
+                      { k: 'model', v: detail.model || '—' },
+                      { k: 'status', v: detail.status || '—' },
+                      { k: 'requestId', v: detail.requestId || '—' },
+                      { k: 'groupId', v: detail.groupId || '—' },
+                      { k: 'sessionId', v: detail.sessionId || '—' },
+                      { k: 'startedAt', v: formatLocalTime(detail.startedAt) },
+                      { k: 'firstByteAt', v: formatLocalTime(detail.firstByteAt ?? null) },
+                      { k: 'endedAt', v: formatLocalTime(detail.endedAt ?? null) },
+                      {
+                        k: 'TTFB',
+                        v: diffMs(detail.startedAt, detail.firstByteAt ?? null) !== null ? `${diffMs(detail.startedAt, detail.firstByteAt ?? null)}ms` : '—',
+                      },
+                    ].map((row) => (
+                      <div key={row.k} className="contents">
+                        <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                          {row.k}
+                        </div>
+                        <div
+                          className="text-[12px] font-semibold"
+                          title={String(row.v ?? '')}
+                          style={{
+                            color: 'var(--text-secondary)',
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            fontFamily:
+                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
+                          }}
+                        >
+                          {String(row.v ?? '—')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">
                   <div>
@@ -511,7 +625,7 @@ export default function LlmLogsPage() {
                     { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
                     { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
                     { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
-                    { k: 'Assembled hash（拼接哈希）', v: fmtText(detail.assembledTextHash) },
+                    { k: 'Assembled hash（拼接哈希）', v: fmtHashOrHidden(detail.assembledTextHash) },
                   ].map((it) => (
                     <div
                       key={it.k}
@@ -527,6 +641,10 @@ export default function LlmLogsPage() {
                           color: 'var(--text-primary)',
                           fontFamily:
                             'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
                         }}
                       >
                         {it.v}
@@ -541,6 +659,32 @@ export default function LlmLogsPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Answer（最终拼接文本）</div>
                     <div className="flex items-center gap-2">
+                      <div className="flex items-center rounded-[12px] p-1" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                        <button
+                          type="button"
+                          onClick={() => setAnswerView('preview')}
+                          className="h-8 px-3 rounded-[10px] text-xs font-semibold"
+                          style={{
+                            color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
+                            background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
+                            border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          }}
+                        >
+                          预览
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAnswerView('raw')}
+                          className="h-8 px-3 rounded-[10px] text-xs font-semibold"
+                          style={{
+                            color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
+                            background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
+                            border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          }}
+                        >
+                          Raw
+                        </button>
+                      </div>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -563,9 +707,55 @@ export default function LlmLogsPage() {
                   </div>
 
                   <div className="mt-3">
-                    <pre style={codeBoxStyle()}>
-                      {answerText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
-                    </pre>
+                    {answerView === 'raw' ? (
+                      <pre style={codeBoxStyle()}>
+                        {answerText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
+                      </pre>
+                    ) : (
+                      <div
+                        className="rounded-[14px] p-3"
+                        style={{
+                          background: 'rgba(0,0,0,0.22)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-secondary)',
+                          overflow: 'auto',
+                        }}
+                      >
+                        <style>{`
+                          .prd-md { font-size: 13px; line-height: 1.65; color: var(--text-secondary); }
+                          .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 14px 0 8px; }
+                          .prd-md h1 { font-size: 18px; }
+                          .prd-md h2 { font-size: 16px; }
+                          .prd-md h3 { font-size: 14px; }
+                          .prd-md p { margin: 8px 0; }
+                          .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
+                          .prd-md li { margin: 4px 0; }
+                          .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
+                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+                          .prd-md a { color: #E7CE97; text-decoration: underline; }
+                          .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
+                          .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+                          .prd-md pre code { background: transparent; border: 0; padding: 0; }
+                          .prd-md table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+                          .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; }
+                          .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+                        `}</style>
+                        <div className="prd-md">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children, ...props }) => (
+                                <a href={href} target="_blank" rel="noreferrer" {...props}>
+                                  {children}
+                                </a>
+                              ),
+                            }}
+                          >
+                            {answerText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {assembledSummary ? (
