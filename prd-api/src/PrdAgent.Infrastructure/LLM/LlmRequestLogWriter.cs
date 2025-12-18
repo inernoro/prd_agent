@@ -40,15 +40,14 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 RequestHeadersRedacted = start.RequestHeadersRedacted,
                 RequestBodyRedacted = Truncate(start.RequestBodyRedacted, 200_000),
                 RequestBodyHash = start.RequestBodyHash ?? Sha256Hex(start.RequestBodyRedacted),
+                QuestionText = Truncate(start.QuestionText ?? string.Empty, 200_000),
                 SystemPromptChars = start.SystemPromptChars,
                 SystemPromptHash = start.SystemPromptHash,
                 MessageCount = start.MessageCount,
                 DocumentChars = start.DocumentChars,
                 DocumentHash = start.DocumentHash,
                 StartedAt = start.StartedAt,
-                Status = "running",
-                RawSse = new List<string>(0),
-                RawSseTruncated = false
+                Status = "running"
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);
@@ -59,13 +58,6 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             _logger.LogDebug(ex, "StartAsync failed");
             return null;
         }
-    }
-
-    public void AppendRawSse(string logId, string redactedLine)
-    {
-        if (string.IsNullOrWhiteSpace(logId)) return;
-        if (string.IsNullOrEmpty(redactedLine)) return;
-        LlmLogQueue.Queue.Writer.TryWrite(new LlmLogOp(LlmLogOpType.AppendRawSse, logId, redactedLine));
     }
 
     public void MarkFirstByte(string logId, DateTime at)

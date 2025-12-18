@@ -95,6 +95,7 @@ builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDat
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
+builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();

@@ -11,6 +11,7 @@ public record LlmLogStart(
     Dictionary<string, string>? RequestHeadersRedacted,
     string RequestBodyRedacted,
     string? RequestBodyHash,
+    string? QuestionText,
     int? SystemPromptChars,
     string? SystemPromptHash,
     int? MessageCount,
@@ -29,6 +30,7 @@ public record LlmLogDone(
     int? OutputTokens,
     int? CacheCreationInputTokens,
     int? CacheReadInputTokens,
+    string? AnswerText,
     int? AssembledTextChars,
     string? AssembledTextHash,
     string Status,
@@ -38,7 +40,6 @@ public record LlmLogDone(
 public interface ILlmRequestLogWriter
 {
     Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default);
-    void AppendRawSse(string logId, string redactedLine);
     void MarkFirstByte(string logId, DateTime at);
     void MarkDone(string logId, LlmLogDone done);
     void MarkError(string logId, string error, int? statusCode = null);

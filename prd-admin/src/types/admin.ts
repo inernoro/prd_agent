@@ -100,8 +100,10 @@ export type LlmRequestLog = {
   documentHash?: string | null;
   statusCode?: number | null;
   responseHeaders?: Record<string, string> | null;
-  rawSse?: string[] | null;
-  rawSseTruncated: boolean;
+  questionText?: string | null;
+  answerText?: string | null;
+  answerTextChars?: number | null;
+  answerTextHash?: string | null;
   assembledTextChars?: number | null;
   assembledTextHash?: string | null;
   error?: string | null;

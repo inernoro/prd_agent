@@ -107,115 +107,9 @@ public class AdminLlmLogsController : ControllerBase
         return string.Empty;
     }
 
-    private static IEnumerable<string> SplitSseLine(string line)
+    private static string ExtractAnswerPreviewText(string? answerText)
     {
-        var raw = (line ?? string.Empty).Trim();
-        if (string.IsNullOrEmpty(raw)) yield break;
-
-        // 兼容“一个字符串里拼了多个 data: ...”
-        var parts = Regex.Split(raw, @"(?=data:\s)", RegexOptions.Compiled)
-            .Select(x => x.Trim())
-            .Where(x => !string.IsNullOrEmpty(x))
-            .ToArray();
-
-        if (parts.Length >= 2)
-        {
-            foreach (var p in parts) yield return p;
-            yield break;
-        }
-
-        yield return raw;
-    }
-
-    private static string ExtractAnswerPreview(List<string>? rawSse)
-    {
-        if (rawSse == null || rawSse.Count == 0) return string.Empty;
-
-        const int maxChars = 1800;
-        var sb = new StringBuilder();
-
-        foreach (var line in rawSse)
-        {
-            foreach (var seg in SplitSseLine(line))
-            {
-                if (!seg.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) continue;
-                var payload = seg["data:".Length..].Trim();
-                if (string.IsNullOrEmpty(payload) || payload == "[DONE]") continue;
-
-                try
-                {
-                    using var doc = JsonDocument.Parse(payload);
-                    var root = doc.RootElement;
-
-                    // OpenAI: choices[0].delta.content
-                    if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
-                    {
-                        var c0 = choices[0];
-                        if (c0.ValueKind == JsonValueKind.Object && c0.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object)
-                        {
-                            if (delta.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String)
-                            {
-                                var t = content.GetString();
-                                if (!string.IsNullOrEmpty(t))
-                                {
-                                    sb.Append(t);
-                                    if (sb.Length >= maxChars) return TruncatePreview(sb.ToString(), maxChars);
-                                }
-                                continue;
-                            }
-                        }
-                    }
-
-                    // Claude: content_block_delta.delta.text 或 delta.text
-                    if (root.TryGetProperty("content_block_delta", out var cbd) && cbd.ValueKind == JsonValueKind.Object)
-                    {
-                        if (cbd.TryGetProperty("delta", out var cbdDelta) && cbdDelta.ValueKind == JsonValueKind.Object)
-                        {
-                            if (cbdDelta.TryGetProperty("text", out var cbdText) && cbdText.ValueKind == JsonValueKind.String)
-                            {
-                                var t = cbdText.GetString();
-                                if (!string.IsNullOrEmpty(t))
-                                {
-                                    sb.Append(t);
-                                    if (sb.Length >= maxChars) return TruncatePreview(sb.ToString(), maxChars);
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                    if (root.TryGetProperty("delta", out var delta2) && delta2.ValueKind == JsonValueKind.Object)
-                    {
-                        if (delta2.TryGetProperty("text", out var dt) && dt.ValueKind == JsonValueKind.String)
-                        {
-                            var t = dt.GetString();
-                            if (!string.IsNullOrEmpty(t))
-                            {
-                                sb.Append(t);
-                                if (sb.Length >= maxChars) return TruncatePreview(sb.ToString(), maxChars);
-                            }
-                            continue;
-                        }
-                    }
-
-                    // 兜底：自定义 SSE {content:"..."}
-                    if (root.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String)
-                    {
-                        var t = c.GetString();
-                        if (!string.IsNullOrEmpty(t))
-                        {
-                            sb.Append(t);
-                            if (sb.Length >= maxChars) return TruncatePreview(sb.ToString(), maxChars);
-                        }
-                    }
-                }
-                catch
-                {
-                    // ignore bad json
-                }
-            }
-        }
-
-        return sb.ToString().Trim();
+        return TruncatePreview(answerText, 1800);
     }
 
     [HttpGet("meta")]
@@ -294,10 +188,8 @@ public class AdminLlmLogsController : ControllerBase
                 x.CacheCreationInputTokens,
                 x.CacheReadInputTokens,
                 x.Error,
-
-                // 用于列表中的“问题/回答”预览（仅用于 UI 展示；不作为 PRD 正文落盘）
-                x.RequestBodyRedacted,
-                x.RawSse
+                x.QuestionText,
+                x.AnswerText
             })
             .ToListAsync();
 
@@ -322,8 +214,8 @@ public class AdminLlmLogsController : ControllerBase
             x.CacheReadInputTokens,
             x.Error,
 
-            questionPreview = ExtractQuestionPreview(x.RequestBodyRedacted),
-            answerPreview = ExtractAnswerPreview(x.RawSse)
+            questionPreview = TruncatePreview(x.QuestionText, 260),
+            answerPreview = ExtractAnswerPreviewText(x.AnswerText)
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));

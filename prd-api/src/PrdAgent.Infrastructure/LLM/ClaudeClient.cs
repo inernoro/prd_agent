@@ -151,6 +151,7 @@ public class ClaudeClient : ILLMClient
         if (_logWriter != null)
         {
             var systemRedacted = ctx?.SystemPromptRedacted ?? "[SYSTEM_PROMPT_REDACTED]";
+            var questionText = messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content;
             var reqRedacted = new
             {
                 model = _model,
@@ -163,10 +164,10 @@ public class ClaudeClient : ILLMClient
                 messages = messages.Select(m => new
                 {
                     role = m.Role,
-                    content = new object[] { new { type = "text", text = "[REDACTED]" } }
+                    content = new object[] { new { type = "text", text = m.Content } }
                 }).ToArray()
             };
-            var reqRedactedJson = JsonSerializer.Serialize(reqRedacted);
+            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqRedacted));
 
             var headers = new Dictionary<string, string>
             {
@@ -184,8 +185,9 @@ public class ClaudeClient : ILLMClient
                     ApiBase: _httpClient.BaseAddress?.ToString(),
                     Path: "v1/messages",
                     RequestHeadersRedacted: headers,
-                    RequestBodyRedacted: reqRedactedJson,
-                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqRedactedJson),
+                    RequestBodyRedacted: reqLogJson,
+                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
+                    QuestionText: questionText,
                     SystemPromptChars: systemPrompt.Length,
                     SystemPromptHash: LlmLogRedactor.Sha256Hex(systemRedacted),
                     MessageCount: messages.Count,
@@ -230,6 +232,8 @@ public class ClaudeClient : ILLMClient
         int cacheReadInputTokens = 0;
         var firstByteMarked = false;
         var assembledChars = 0;
+        var answerSb = new StringBuilder(capacity: 1024);
+        const int AnswerMaxChars = 200_000;
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
@@ -247,11 +251,6 @@ public class ClaudeClient : ILLMClient
             if (data == "[DONE]")
                 break;
 
-            if (logId != null)
-            {
-                _logWriter?.AppendRawSse(logId, "data: " + LlmLogRedactor.RedactJson(data));
-            }
-
             var eventData = JsonSerializer.Deserialize(data, LLMJsonContext.Default.ClaudeStreamEvent);
             
             if (eventData?.Type == "content_block_delta" && eventData.Delta?.Text != null)
@@ -264,6 +263,11 @@ public class ClaudeClient : ILLMClient
 
                 assembledChars += eventData.Delta.Text.Length;
                 hasher.AppendData(Encoding.UTF8.GetBytes(eventData.Delta.Text));
+                if (answerSb.Length < AnswerMaxChars)
+                {
+                    var remain = AnswerMaxChars - answerSb.Length;
+                    answerSb.Append(eventData.Delta.Text.Length <= remain ? eventData.Delta.Text : eventData.Delta.Text[..remain]);
+                }
 
                 yield return new LLMStreamChunk
                 {
@@ -312,6 +316,7 @@ public class ClaudeClient : ILLMClient
                 headers[h.Key] = string.Join(",", h.Value);
             }
 
+            var answerText = answerSb.Length > 0 ? answerSb.ToString() : null;
             var hash = assembledChars > 0 ? Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant() : null;
             _logWriter!.MarkDone(
                 logId,
@@ -322,6 +327,7 @@ public class ClaudeClient : ILLMClient
                     OutputTokens: outputTokens,
                     CacheCreationInputTokens: cacheCreationInputTokens > 0 ? cacheCreationInputTokens : null,
                     CacheReadInputTokens: cacheReadInputTokens > 0 ? cacheReadInputTokens : null,
+                    AnswerText: answerText,
                     AssembledTextChars: assembledChars,
                     AssembledTextHash: hash,
                     Status: "succeeded",

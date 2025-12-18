@@ -32,13 +32,19 @@ public class LlmRequestLog
     public int? DocumentChars { get; set; }
     public string? DocumentHash { get; set; }
 
-    // 响应（raw SSE 仅隐藏密钥/Token；其它内容用于排障）
+    // 交互内容（仅脱敏 token/密钥；PRD 正文不落盘由上游保证）
+    // - QuestionText/AnswerText 用于管理后台快速查看
+    // - 单条上限 200k 字符（超出会被截断；并记录 hash/长度用于对照）
+    public string? QuestionText { get; set; }
+    public string? AnswerText { get; set; }
+    public int? AnswerTextChars { get; set; }
+    public string? AnswerTextHash { get; set; }
+
+    // 响应（不再记录 rawSSE）
     public int? StatusCode { get; set; }
     public Dictionary<string, string>? ResponseHeaders { get; set; }
-    public List<string>? RawSse { get; set; } // 原始 SSE 行（长度上限；仅隐藏密钥/Token）
-    public bool RawSseTruncated { get; set; }
-    public int? AssembledTextChars { get; set; } // 仅记录长度/哈希，不存原文
-    public string? AssembledTextHash { get; set; }
+    public int? AssembledTextChars { get; set; } // 保留：用于摘要统计（与 AnswerTextChars 一致）
+    public string? AssembledTextHash { get; set; } // 保留：用于摘要统计（与 AnswerTextHash 一致）
     public string? Error { get; set; }
 
     // usage/cache

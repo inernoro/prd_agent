@@ -103,7 +103,7 @@ public class OpenAIClient : ILLMClient
             StreamOptions = new OpenAIStreamOptions { IncludeUsage = true }
         };
 
-        // 日志：请求（脱敏）
+        // 日志：请求（仅 token/密钥脱敏）
         var ctx = _contextAccessor?.Current;
         var requestId = ctx?.RequestId ?? Guid.NewGuid().ToString();
         var startedAt = DateTime.UtcNow;
@@ -111,7 +111,9 @@ public class OpenAIClient : ILLMClient
         if (_logWriter != null)
         {
             var systemRedacted = ctx?.SystemPromptRedacted ?? "[SYSTEM_PROMPT_REDACTED]";
-            var reqRedacted = new
+            var questionText = messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content;
+
+            var reqForLog = new
             {
                 model = _model,
                 max_tokens = _maxTokens,
@@ -124,11 +126,11 @@ public class OpenAIClient : ILLMClient
                 }.Concat(messages.Select(m => new
                 {
                     role = m.Role,
-                    content = "[REDACTED]"
+                    content = m.Content
                 })).ToArray()
             };
 
-            var reqRedactedJson = JsonSerializer.Serialize(reqRedacted);
+            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqForLog));
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
                     RequestId: requestId,
@@ -141,8 +143,9 @@ public class OpenAIClient : ILLMClient
                         ["content-type"] = "application/json",
                         ["authorization"] = "Bearer ***"
                     },
-                    RequestBodyRedacted: reqRedactedJson,
-                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqRedactedJson),
+                    RequestBodyRedacted: reqLogJson,
+                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
+                    QuestionText: questionText,
                     SystemPromptChars: (systemPrompt ?? string.Empty).Length,
                     SystemPromptHash: LlmLogRedactor.Sha256Hex(systemRedacted),
                     MessageCount: messages.Count + 1,
@@ -196,6 +199,8 @@ public class OpenAIClient : ILLMClient
         int cacheReadInputTokens = 0;
         var firstByteMarked = false;
         var assembledChars = 0;
+        var answerSb = new StringBuilder(capacity: 1024);
+        const int AnswerMaxChars = 200_000;
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
@@ -212,12 +217,6 @@ public class OpenAIClient : ILLMClient
             
             if (data == "[DONE]")
                 break;
-
-            if (logId != null)
-            {
-                // 记录原始 SSE（脱敏）
-                _logWriter?.AppendRawSse(logId, "data: " + LlmLogRedactor.RedactJson(data));
-            }
 
             var eventData = TryParseEvent(data);
             if (eventData == null)
@@ -236,6 +235,11 @@ public class OpenAIClient : ILLMClient
 
                     assembledChars += delta.Content.Length;
                     hasher.AppendData(Encoding.UTF8.GetBytes(delta.Content));
+                    if (answerSb.Length < AnswerMaxChars)
+                    {
+                        var remain = AnswerMaxChars - answerSb.Length;
+                        answerSb.Append(delta.Content.Length <= remain ? delta.Content : delta.Content[..remain]);
+                    }
 
                     yield return new LLMStreamChunk
                     {
@@ -275,6 +279,7 @@ public class OpenAIClient : ILLMClient
                 headers[h.Key] = string.Join(",", h.Value);
             }
 
+            var answerText = answerSb.Length > 0 ? answerSb.ToString() : null;
             var hash = assembledChars > 0 ? Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant() : null;
             _logWriter!.MarkDone(
                 logId,
@@ -285,6 +290,7 @@ public class OpenAIClient : ILLMClient
                     OutputTokens: outputTokens,
                     CacheCreationInputTokens: null,
                     CacheReadInputTokens: cacheReadInputTokens > 0 ? cacheReadInputTokens : null,
+                    AnswerText: answerText,
                     AssembledTextChars: assembledChars,
                     AssembledTextHash: hash,
                     Status: "succeeded",
