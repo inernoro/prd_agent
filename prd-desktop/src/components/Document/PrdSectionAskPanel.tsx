@@ -31,7 +31,7 @@ export default function PrdSectionAskPanel(props: {
   const { sessionId, headingId, headingTitle, onJumpToHeading } = props;
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
-  const [currentQuestion, setCurrentQuestion] = useState('');
+  const [lastAskedQuestion, setLastAskedQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [history, setHistory] = useState<PreviewAskHistoryItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -91,7 +91,6 @@ export default function PrdSectionAskPanel(props: {
         setBusy(false);
         setPhase(null);
         pendingQuestionRef.current = null;
-        setCurrentQuestion('');
         persistedRef.current = false;
         return;
       }
@@ -173,12 +172,12 @@ export default function PrdSectionAskPanel(props: {
     setBusy(true);
     setError('');
     setAnswer('');
-    setCurrentQuestion(q);
     answerRef.current = '';
     setPhase('requesting');
     reqIdRef.current = null;
     pendingQuestionRef.current = q;
     persistedRef.current = false;
+    setLastAskedQuestion(q);
     setQuestion('');
 
     try {
@@ -193,7 +192,6 @@ export default function PrdSectionAskPanel(props: {
       setBusy(false);
       setPhase(null);
       pendingQuestionRef.current = null;
-      setCurrentQuestion('');
       persistedRef.current = false;
     }
   };
@@ -253,20 +251,25 @@ export default function PrdSectionAskPanel(props: {
               {/* 当前回复 */}
               <div className="rounded-xl border border-border bg-background-light/40 dark:bg-background-dark/30 overflow-hidden">
                 <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
-                  <div className="text-xs font-semibold text-text-secondary">当前回复</div>
+                  <div className="min-w-0 flex items-center gap-2">
+                    <div className="text-xs font-semibold text-text-secondary shrink-0">用户提问：</div>
+                    <div
+                      className="text-xs text-text-secondary truncate"
+                      title={lastAskedQuestion || ''}
+                    >
+                      {lastAskedQuestion || (busy ? '…' : '')}
+                    </div>
+                  </div>
                   <div className="text-[11px] text-text-secondary">{phaseText}</div>
                 </div>
-                <div className="p-3 space-y-2">
-                  <div className="text-[11px] text-text-secondary">问</div>
-                  <div className="text-sm whitespace-pre-wrap break-words">
-                    {currentQuestion ? currentQuestion : (busy ? '…' : '暂无')}
-                  </div>
-                  <div className="text-[11px] text-text-secondary mt-2">答（Markdown）</div>
-                  <div className="max-h-[34vh] overflow-auto">
+                <div className="p-3">
+                  <div className="max-h-[46vh] overflow-auto">
                     {answer ? (
                       <MarkdownRenderer className="prose prose-sm dark:prose-invert max-w-none" content={answer} />
+                    ) : busy ? (
+                      <div className="text-sm text-text-secondary">正在生成…</div>
                     ) : (
-                      <div className="text-sm text-text-secondary">{busy ? '正在生成…' : '暂无'}</div>
+                      <div className="text-sm text-text-secondary" />
                     )}
                   </div>
                 </div>
@@ -306,7 +309,7 @@ export default function PrdSectionAskPanel(props: {
                     onClick={() => {
                       setQuestion('');
                       setAnswer('');
-                      setCurrentQuestion('');
+                      setLastAskedQuestion('');
                       answerRef.current = '';
                       setError('');
                       setPhase(null);

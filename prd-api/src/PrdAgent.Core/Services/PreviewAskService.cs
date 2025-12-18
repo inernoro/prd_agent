@@ -101,16 +101,27 @@ public class PreviewAskService : IPreviewAskService
             yield break;
         }
 
-        // 控制上下文最大长度（避免过长导致请求膨胀）
+        // 控制上下文长度：
+        // - “本章提问”需要强调本章内容，但也希望模型可参考全文（避免漏掉跨章节信息）
+        // - 若全文过长，会顶爆上下文，因此对“全文参考”做上限截断；本章内容仍优先保留。
         const int maxSectionChars = 24000;
-        if (sectionMarkdown.Length > maxSectionChars)
+        const int maxFullPrdChars = 90000; // 经验值：过大容易导致上下文超限/延迟飙升
+
+        var sectionForPrompt = sectionMarkdown;
+        if (sectionForPrompt.Length > maxSectionChars)
         {
-            sectionMarkdown = sectionMarkdown[..maxSectionChars] + "\n\n（已截断：章节内容过长）\n";
+            sectionForPrompt = sectionForPrompt[..maxSectionChars] + "\n\n（已截断：章节内容过长）\n";
         }
 
-        // 构建 system prompt：仅注入本章节内容
-        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, sectionMarkdown);
-        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[SECTION_CONTENT_REDACTED]");
+        var fullForPrompt = raw;
+        if (fullForPrompt.Length > maxFullPrdChars)
+        {
+            fullForPrompt = fullForPrompt[..maxFullPrdChars] + "\n\n（已截断：PRD 全文过长，仅提供前半部分作为参考）\n";
+        }
+
+        // 构建 system prompt：注入“全文参考”（可能截断）
+        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, fullForPrompt);
+        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_FULL_REDACTED]");
         var docHash = Sha256Hex(raw);
 
         var requestId = Guid.NewGuid().ToString();
@@ -127,10 +138,16 @@ public class PreviewAskService : IPreviewAskService
         yield return new PreviewAskStreamEvent { Type = "start", RequestId = requestId };
 
         var ht = (headingTitle ?? string.Empty).Trim();
+        var displayTitle = string.IsNullOrWhiteSpace(ht) ? hId : ht;
         var userPrompt =
-            $"你正在查看 PRD 的当前章节：{(string.IsNullOrWhiteSpace(ht) ? hId : ht)}。\n" +
-            "请仅基于该章节内容回答；如果该章节缺少信息，请明确说明缺失点，并提出需要补充哪些内容。\n\n" +
-            $"问题：{q}\n";
+            $"你正在查看 PRD 的当前章节：{displayTitle}（headingId={hId}）。\n" +
+            "我会同时提供“PRD 全文参考（可能截断）”与“当前章节原文”。\n" +
+            "回答时请优先依据“当前章节原文”，并明确引用章节要点；若必须引用其他章节才能回答，可引用全文参考中的相关段落并说明来自其他章节。\n" +
+            "如果本章缺少信息且全文参考也未覆盖，必须明确写“PRD 未覆盖/未找到”，并说明需要补充什么信息（不要编造）。\n\n" +
+            "# 当前章节原文（优先依据）\n" +
+            sectionForPrompt + "\n\n" +
+            "# 问题\n" +
+            q + "\n";
 
         var messages = new List<LLMMessage> { new() { Role = "user", Content = userPrompt } };
 
