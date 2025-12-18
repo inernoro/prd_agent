@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Cpu, Layers, MinusCircle, Play, Plus, RefreshCcw, Sparkles, TimerOff, Trash2 } from 'lucide-react';
+import { Cpu, ImagePlus, Layers, MinusCircle, Play, Plus, RefreshCcw, ScanEye, Sparkles, Star, TimerOff, Trash2 } from 'lucide-react';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -9,6 +9,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import type { Platform } from '@/types/admin';
 import type { Model } from '@/types/admin';
 import {
+  createModel,
   createModelLabExperiment,
   deleteModelLabExperiment,
   getModels,
@@ -16,6 +17,10 @@ import {
   listModelLabExperiments,
   listModelLabModelSets,
   runModelLabStream,
+  setImageGenModel,
+  setIntentModel,
+  setMainModel,
+  setVisionModel,
   updateModelLabExperiment,
   upsertModelLabModelSet,
 } from '@/services';
@@ -27,12 +32,16 @@ type ViewRunItem = {
   modelId: string;
   displayName: string;
   modelName: string;
+  /** 配置模型的真实 id（用于“设为主/意图”等全局设置）。如果流里返回的 modelId 不是配置 id，会用 modelName 回查得到 */
+  configModelId?: string;
   status: 'running' | 'done' | 'error';
   ttftMs?: number;
   totalMs?: number;
   preview: string;
   errorMessage?: string;
 };
+
+type SortBy = 'ttft' | 'total';
 
 const defaultParams: ModelLabParams = {
   temperature: 0.2,
@@ -84,6 +93,17 @@ export default function LlmLabTab() {
   const [runError, setRunError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const suiteCycleRef = useRef<Record<ModelLabSuite, number>>({} as Record<ModelLabSuite, number>);
+  const [sortBy, setSortBy] = useState<SortBy>('ttft');
+  const allModelsRef = useRef<Model[]>([]);
+  const selectedModelsRef = useRef<ModelLabSelectedModel[]>([]);
+
+  useEffect(() => {
+    allModelsRef.current = allModels ?? [];
+  }, [allModels]);
+
+  useEffect(() => {
+    selectedModelsRef.current = selectedModels ?? [];
+  }, [selectedModels]);
 
   const activeExperiment = useMemo(
     () => experiments.find((e) => e.id === activeExperimentId) ?? null,
@@ -237,6 +257,34 @@ export default function LlmLabTab() {
     setRunning(false);
   };
 
+  const resolveConfigModelId = (evtModelId: unknown, evtModelName: unknown): string | null => {
+    const id = String(evtModelId ?? '').trim();
+    const name = String(evtModelName ?? '').trim();
+
+    if (!id && !name) return null;
+
+    // 1) 优先：evtModelId 就是配置模型 id
+    if (id && allModelsRef.current.some((m) => m.id === id)) return id;
+
+    // 2) 次优：用 modelName 回查（当前实验里一般唯一）
+    if (name) {
+      const lower = name.toLowerCase();
+      const byName =
+        allModelsRef.current.find((m) => (m.modelName || '').toLowerCase() === lower) ??
+        selectedModelsRef.current.find((m) => (m.modelName || '').toLowerCase() === lower);
+
+      if (byName) return (byName as any).id ?? (byName as any).modelId ?? null;
+    }
+
+    // 3) 兜底：如果实验里恰好有 modelId 与 evtModelId 一致
+    if (id) {
+      const bySelected = selectedModelsRef.current.find((m) => m.modelId === id);
+      if (bySelected) return bySelected.modelId;
+    }
+
+    return null;
+  };
+
   const startRun = async () => {
     if (!activeExperimentId) return alert('请先选择实验');
     if (selectedModels.length === 0) return alert('请先加入至少 1 个模型');
@@ -278,11 +326,13 @@ export default function LlmLabTab() {
 
           if (evt.event === 'model') {
             if (obj.type === 'modelStart') {
+              const configModelId = resolveConfigModelId(obj.modelId, obj.modelName);
               const item: ViewRunItem = {
                 itemId: obj.itemId,
                 modelId: obj.modelId,
                 displayName: obj.displayName || obj.modelName || obj.modelId,
                 modelName: obj.modelName || '',
+                configModelId: configModelId || undefined,
                 status: 'running',
                 preview: '',
               };
@@ -347,14 +397,149 @@ export default function LlmLabTab() {
   const itemsList = useMemo(() => Object.values(runItems), [runItems]);
   const sortedItems = useMemo(() => {
     return [...itemsList].sort((a, b) => {
-      const at = a.ttftMs ?? Number.POSITIVE_INFINITY;
-      const bt = b.ttftMs ?? Number.POSITIVE_INFINITY;
-      if (at !== bt) return at - bt;
-      const aa = a.totalMs ?? Number.POSITIVE_INFINITY;
-      const bb = b.totalMs ?? Number.POSITIVE_INFINITY;
-      return aa - bb;
+      const aTtft = a.ttftMs ?? Number.POSITIVE_INFINITY;
+      const bTtft = b.ttftMs ?? Number.POSITIVE_INFINITY;
+      const aTotal = a.totalMs ?? Number.POSITIVE_INFINITY;
+      const bTotal = b.totalMs ?? Number.POSITIVE_INFINITY;
+
+      if (sortBy === 'total') {
+        if (aTotal !== bTotal) return aTotal - bTotal;
+        return aTtft - bTtft;
+      }
+
+      if (aTtft !== bTtft) return aTtft - bTtft;
+      return aTotal - bTotal;
     });
-  }, [itemsList]);
+  }, [itemsList, sortBy]);
+
+  const modelById = useMemo(() => new Map<string, Model>((allModels ?? []).map((m) => [m.id, m])), [allModels]);
+
+  const refreshModelsSilent = async () => {
+    const m = await getModels();
+    if (m.success) setAllModels(m.data);
+  };
+
+  const setUniqueFlagLocal = (modelId: string, flag: 'isMain' | 'isIntent' | 'isVision' | 'isImageGen') => {
+    // 同类型只允许一个为 true，避免出现多个意图/多个主模型
+    setAllModels((prev) => prev.map((m) => ({ ...m, [flag]: m.id === modelId } as any)));
+  };
+
+  const onSetMainFromRun = async (modelId: string) => {
+    setUniqueFlagLocal(modelId, 'isMain');
+    const res = await setMainModel(modelId);
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
+  const onSetIntentFromRun = async (modelId: string) => {
+    setUniqueFlagLocal(modelId, 'isIntent');
+    const res = await setIntentModel(modelId);
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
+  const onSetVisionFromRun = async (modelId: string) => {
+    setUniqueFlagLocal(modelId, 'isVision');
+    const res = await setVisionModel(modelId);
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
+  const onSetImageGenFromRun = async (modelId: string) => {
+    setUniqueFlagLocal(modelId, 'isImageGen');
+    const res = await setImageGenModel(modelId);
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
+  const normalizeModelNameKey = (s: string) => (s || '').trim().toLowerCase();
+
+  const getPlatformIdForRunItem = (evtModelName: string, evtModelId: string): string | null => {
+    const nameKey = normalizeModelNameKey(evtModelName);
+    const idKey = String(evtModelId ?? '').trim();
+
+    // 优先：从“当前实验已选择模型”里回查 platformId
+    const fromSelected =
+      (nameKey ? selectedModelsRef.current.find((m) => normalizeModelNameKey(m.modelName) === nameKey) : undefined) ??
+      (idKey ? selectedModelsRef.current.find((m) => String(m.modelId ?? '').trim() === idKey) : undefined);
+    if (fromSelected?.platformId) return fromSelected.platformId;
+
+    // 次优：从全量配置模型里回查（同 modelName）
+    const fromAll = nameKey ? allModelsRef.current.find((m) => normalizeModelNameKey(m.modelName) === nameKey) : undefined;
+    if (fromAll?.platformId) return fromAll.platformId;
+
+    return null;
+  };
+
+  const ensureConfigModelId = async (it: ViewRunItem): Promise<string | null> => {
+    // 以“平台 + 模型id（modelName）”为唯一键；不存在则创建后返回 id
+    const evtModelName = (it.modelName || '').trim() || String(it.modelId ?? '').trim();
+    const evtModelId = String(it.modelId ?? '').trim();
+    const platformId = getPlatformIdForRunItem(evtModelName, evtModelId);
+    if (!platformId) return null;
+
+    const nameKey = normalizeModelNameKey(evtModelName);
+    const existing =
+      allModelsRef.current.find((m) => m.platformId === platformId && normalizeModelNameKey(m.modelName) === nameKey) ??
+      null;
+    if (existing?.id) return existing.id;
+
+    const created = await createModel({
+      name: (it.displayName || evtModelName || evtModelId).trim() || evtModelName || evtModelId,
+      modelName: evtModelName,
+      platformId,
+      enabled: true,
+      enablePromptCache: true,
+    });
+    if (!created.success) {
+      await refreshModelsSilent();
+      return null;
+    }
+
+    // 刷新并回查，保证与后端一致
+    await refreshModelsSilent();
+    const now =
+      allModelsRef.current.find((m) => m.platformId === platformId && normalizeModelNameKey(m.modelName) === nameKey) ??
+      (created.data?.id ? allModelsRef.current.find((m) => m.id === created.data.id) : null);
+    return now?.id ?? created.data?.id ?? null;
+  };
+
+  const ensureAndMark = async (itemId: string): Promise<string | null> => {
+    const cur = runItems[itemId];
+    if (!cur) return null;
+    const id = await ensureConfigModelId(cur);
+    if (!id) return null;
+    setRunItems((p) => {
+      const x = p[itemId];
+      if (!x) return p;
+      return { ...p, [itemId]: { ...x, configModelId: id } };
+    });
+    return id;
+  };
+
+  const onSetMainFromItem = async (itemId: string) => {
+    const id = await ensureAndMark(itemId);
+    if (!id) return;
+    await onSetMainFromRun(id);
+  };
+
+  const onSetIntentFromItem = async (itemId: string) => {
+    const id = await ensureAndMark(itemId);
+    if (!id) return;
+    await onSetIntentFromRun(id);
+  };
+
+  const onSetVisionFromItem = async (itemId: string) => {
+    const id = await ensureAndMark(itemId);
+    if (!id) return;
+    await onSetVisionFromRun(id);
+  };
+
+  const onSetImageGenFromItem = async (itemId: string) => {
+    const id = await ensureAndMark(itemId);
+    if (!id) return;
+    await onSetImageGenFromRun(id);
+  };
 
   const applyBuiltInPrompt = (p: string) => {
     setPromptText(p);
@@ -456,11 +641,6 @@ export default function LlmLabTab() {
             </label>
           </div>
 
-          {runId ? (
-            <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-              runId：{runId}
-            </div>
-          ) : null}
           {runError ? (
             <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
               {runError}
@@ -662,9 +842,44 @@ export default function LlmLabTab() {
           <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
           <div className="flex items-center justify-between shrink-0">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-              实时结果（按 TTFT 优先排序）
+              实时结果（按 {sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）
             </div>
-            {running ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
+            <div className="flex items-center gap-2">
+              <div
+                className="inline-flex p-[3px] rounded-[12px]"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSortBy('ttft')}
+                  aria-pressed={sortBy === 'ttft'}
+                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors"
+                  style={{
+                    color: 'var(--text-primary)',
+                    background: sortBy === 'ttft' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                    border: sortBy === 'ttft' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
+                  }}
+                  title="按首字延迟（TTFT）排序"
+                >
+                  首字延迟
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortBy('total')}
+                  aria-pressed={sortBy === 'total'}
+                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors"
+                  style={{
+                    color: 'var(--text-primary)',
+                    background: sortBy === 'total' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                    border: sortBy === 'total' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
+                  }}
+                  title="按总耗时排序"
+                >
+                  总时长
+                </button>
+              </div>
+              {running ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
+            </div>
           </div>
 
           <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
@@ -724,6 +939,78 @@ export default function LlmLabTab() {
                         </div>
                       </div>
                     </div>
+
+                    {(() => {
+                      const cfgId =
+                        (it.configModelId && modelById.has(it.configModelId) ? it.configModelId : null) ??
+                        (modelById.has(it.modelId) ? it.modelId : null);
+                      const m = cfgId ? modelById.get(cfgId) : undefined;
+                      const canInferPlatform = !!getPlatformIdForRunItem((it.modelName || '').trim(), String(it.modelId ?? '').trim());
+                      const reason = !cfgId
+                        ? (canInferPlatform ? '该模型未添加到“模型管理”，点击将自动添加并执行设定' : '未能定位平台信息，无法自动添加模型')
+                        : '';
+                      return (
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {m?.isMain ? <Badge variant="featured">主模型</Badge> : null}
+                            {m?.isIntent ? <Badge variant="success">意图</Badge> : null}
+                            {m?.isVision ? <Badge variant="subtle">视觉</Badge> : null}
+                            {m?.isImageGen ? <Badge variant="subtle">生图</Badge> : null}
+                            {!m ? <Badge variant="subtle">未添加</Badge> : null}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => (cfgId ? onSetMainFromRun(cfgId) : onSetMainFromItem(it.itemId))}
+                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isMain)}
+                              title={!cfgId ? reason : (m?.isMain ? '已是主模型' : '设为主模型（全局唯一）')}
+                              className={m?.isMain ? 'disabled:opacity-100' : ''}
+                              style={m?.isMain ? { color: 'rgba(250,204,21,0.95)' } : { color: 'var(--text-secondary)' }}
+                            >
+                              <Star size={14} fill={m?.isMain ? 'currentColor' : 'none'} />
+                              主
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => (cfgId ? onSetIntentFromRun(cfgId) : onSetIntentFromItem(it.itemId))}
+                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isIntent)}
+                              title={!cfgId ? reason : (m?.isIntent ? '已是意图模型' : '设为意图模型（全局唯一）')}
+                              className={m?.isIntent ? 'disabled:opacity-100' : ''}
+                              style={m?.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
+                            >
+                              <Sparkles size={14} />
+                              意图
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => (cfgId ? onSetVisionFromRun(cfgId) : onSetVisionFromItem(it.itemId))}
+                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isVision)}
+                              title={!cfgId ? reason : (m?.isVision ? '已是视觉模型' : '设为视觉模型（全局唯一）')}
+                              className={m?.isVision ? 'disabled:opacity-100' : ''}
+                              style={m?.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: 'var(--text-secondary)' }}
+                            >
+                              <ScanEye size={14} />
+                              视觉
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => (cfgId ? onSetImageGenFromRun(cfgId) : onSetImageGenFromItem(it.itemId))}
+                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isImageGen)}
+                              title={!cfgId ? reason : (m?.isImageGen ? '已是生图模型' : '设为生图模型（全局唯一）')}
+                              className={m?.isImageGen ? 'disabled:opacity-100' : ''}
+                              style={m?.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: 'var(--text-secondary)' }}
+                            >
+                              <ImagePlus size={14} />
+                              生图
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {it.errorMessage ? (
                       <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
                         {it.errorMessage}

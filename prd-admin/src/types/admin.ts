@@ -73,6 +73,10 @@ export type LlmRequestLogListItem = {
   cacheCreationInputTokens?: number | null;
   cacheReadInputTokens?: number | null;
   error?: string | null;
+  /** 列表预览：用户问题（短文本） */
+  questionPreview?: string | null;
+  /** 列表预览：模型回答（短文本，可用于 UI 滚动） */
+  answerPreview?: string | null;
 };
 
 export type LlmRequestLog = {

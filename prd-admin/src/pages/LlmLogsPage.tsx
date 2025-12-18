@@ -481,6 +481,8 @@ export default function LlmLogsPage() {
             items.map((it) => {
               const active = selectedId === it.id;
               const ttfb = diffMs(it.startedAt, it.firstByteAt ?? null);
+              const q = (it.questionPreview ?? '').trim();
+              const a = (it.answerPreview ?? '').trim();
               return (
                 <div
                   key={it.id}
@@ -502,7 +504,7 @@ export default function LlmLogsPage() {
                     background: active ? 'rgba(255,255,255,0.03)' : 'transparent',
                   }}
                 >
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -516,6 +518,45 @@ export default function LlmLogsPage() {
                         {it.sessionId ? ` · sessionId: ${it.sessionId}` : ''}
                       </div>
                     </div>
+
+                    {/* 中间：问题/回答预览（填充空白区域） */}
+                    <div className="flex-1 min-w-0 px-2">
+                      <div className="ml-auto max-w-[720px]">
+                        <div
+                          className="rounded-[14px] px-4 py-2"
+                          style={{
+                            border: '1px solid rgba(231,206,151,0.22)',
+                            color: '#E7CE97',
+                          }}
+                        >
+                          <div
+                            className="text-[12px] font-semibold"
+                            style={{
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              textAlign: 'right',
+                            }}
+                          >
+                            {q ? `问题：${q}` : '问题：未记录（已脱敏）'}
+                          </div>
+                          <div
+                            className="mt-1 text-[12px]"
+                            style={{
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              textAlign: 'right',
+                              maxHeight: 56,
+                              overflowY: 'auto',
+                              paddingRight: 2,
+                              opacity: 0.92,
+                            }}
+                          >
+                            {a ? `回答：${a}` : (it.status === 'running' ? '回答：生成中…' : '回答：未记录')}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="text-right">
                       <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                         {it.durationMs ? `${it.durationMs}ms` : '-'}
