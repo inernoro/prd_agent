@@ -3,6 +3,15 @@ import { invoke, listen } from '../../lib/tauri';
 
 type PreviewAskPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
 
+type PreviewAskHistoryItem = {
+  id: string;
+  question: string;
+  answer: string;
+  headingId: string;
+  headingTitle?: string | null;
+  createdAtMs: number;
+};
+
 type PreviewAskEvent = {
   type: 'start' | 'delta' | 'done' | 'error' | 'phase';
   requestId?: string;
@@ -22,12 +31,25 @@ export default function PrdSectionAskPanel(props: {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
+  const [history, setHistory] = useState<PreviewAskHistoryItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [phase, setPhase] = useState<PreviewAskPhase>(null);
   const reqIdRef = useRef<string | null>(null);
+  const pendingQuestionRef = useRef<string | null>(null);
+  const answerRef = useRef<string>('');
+  const persistedRef = useRef<boolean>(false);
+  const sessionIdRef = useRef<string | null>(sessionId);
+  const headingIdRef = useRef<string | null>(headingId);
+  const headingTitleRef = useRef<string | null>(headingTitle);
 
   const canAsk = useMemo(() => !!sessionId && !!headingId && !busy, [sessionId, headingId, busy]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    headingIdRef.current = headingId;
+    headingTitleRef.current = headingTitle;
+  }, [sessionId, headingId, headingTitle]);
 
   useEffect(() => {
     // 监听 preview-ask-chunk（一次性窗口，独立于消息历史）
@@ -41,10 +63,15 @@ export default function PrdSectionAskPanel(props: {
       if (t === 'start') {
         reqIdRef.current = p.requestId || null;
         setPhase('typing');
+        persistedRef.current = false;
         return;
       }
       if (t === 'delta' && p.content) {
-        setAnswer((prev) => prev + String(p.content));
+        setAnswer((prev) => {
+          const next = prev + String(p.content);
+          answerRef.current = next;
+          return next;
+        });
         setPhase('typing');
         return;
       }
@@ -52,11 +79,44 @@ export default function PrdSectionAskPanel(props: {
         setError(p.errorMessage || '请求失败');
         setBusy(false);
         setPhase(null);
+        pendingQuestionRef.current = null;
+        persistedRef.current = false;
         return;
       }
       if (t === 'done') {
         setBusy(false);
         setPhase(null);
+        // 将“提问本章”的问答历史落盘（仅本机）
+        const sid = sessionIdRef.current;
+        const hid = headingIdRef.current;
+        const htitle = headingTitleRef.current;
+        if (!persistedRef.current && sid && hid) {
+          const q = (pendingQuestionRef.current || '').trim();
+          const a = (answerRef.current || '').trim();
+          if (q && a) {
+            persistedRef.current = true;
+            const item: PreviewAskHistoryItem = {
+              id: `local-${Date.now()}`,
+              question: q,
+              answer: answerRef.current,
+              headingId: hid,
+              headingTitle: htitle || null,
+              createdAtMs: Date.now(),
+            };
+            setHistory((prev) => [...prev, item]);
+            invoke('append_preview_ask_history', {
+              sessionId: sid,
+              headingId: hid,
+              headingTitle: htitle || undefined,
+              question: q,
+              answer: answerRef.current,
+            }).catch((e: any) => {
+              // 不阻塞 UI；仅记录错误
+              console.error('Failed to persist preview ask history:', e);
+            });
+          }
+        }
+        pendingQuestionRef.current = null;
         return;
       }
     }).catch(() => {
@@ -67,6 +127,24 @@ export default function PrdSectionAskPanel(props: {
       unlistenPromise.then((fn) => fn()).catch(() => {});
     };
   }, []);
+
+  // 打开面板/切换章节时恢复历史（从本机落盘文件读取）
+  useEffect(() => {
+    if (!open) return;
+    if (!sessionId || !headingId) {
+      setHistory([]);
+      return;
+    }
+
+    invoke<PreviewAskHistoryItem[]>('get_preview_ask_history', { sessionId, headingId, limit: 50 })
+      .then((items) => {
+        setHistory(Array.isArray(items) ? items : []);
+      })
+      .catch((e: any) => {
+        console.error('Failed to load preview ask history:', e);
+        setHistory([]);
+      });
+  }, [open, sessionId, headingId]);
 
   const submit = async () => {
     if (!sessionId) {
@@ -83,8 +161,12 @@ export default function PrdSectionAskPanel(props: {
     setBusy(true);
     setError('');
     setAnswer('');
+    answerRef.current = '';
     setPhase('requesting');
     reqIdRef.current = null;
+    pendingQuestionRef.current = q;
+    persistedRef.current = false;
+    setQuestion('');
 
     try {
       await invoke('preview_ask_in_section', {
@@ -97,6 +179,8 @@ export default function PrdSectionAskPanel(props: {
       setError(e?.message || '请求失败');
       setBusy(false);
       setPhase(null);
+      pendingQuestionRef.current = null;
+      persistedRef.current = false;
     }
   };
 
@@ -159,11 +243,28 @@ export default function PrdSectionAskPanel(props: {
                 <button
                   type="button"
                   onClick={() => {
+                    if (!sessionId || !headingId) return;
+                    invoke('clear_preview_ask_history', { sessionId, headingId })
+                      .then(() => setHistory([]))
+                      .catch((e: any) => console.error('Failed to clear preview ask history:', e));
+                  }}
+                  disabled={busy || !sessionId || !headingId || history.length === 0}
+                  className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                  title="清空本章提问历史（仅清理本机落盘）"
+                >
+                  清空历史
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setQuestion('');
                     setAnswer('');
+                    answerRef.current = '';
                     setError('');
                     setPhase(null);
                     reqIdRef.current = null;
+                    pendingQuestionRef.current = null;
+                    persistedRef.current = false;
                   }}
                   disabled={busy}
                   className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
@@ -186,7 +287,30 @@ export default function PrdSectionAskPanel(props: {
             ) : null}
 
             <div className="border-t border-border pt-3">
-              <div className="text-xs font-semibold text-text-secondary mb-2">回复（仅本页一次性展示）</div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-xs font-semibold text-text-secondary">历史（仅保存在本机，最多 50 条）</div>
+                <div className="text-[11px] text-text-secondary">
+                  {sessionId && headingId ? (history.length ? `共 ${history.length} 条` : '暂无') : ''}
+                </div>
+              </div>
+              <div className="max-h-[26vh] overflow-auto space-y-2">
+                {history.length ? (
+                  history.map((h) => (
+                    <div key={h.id} className="rounded-xl border border-border p-3 bg-background-light/40 dark:bg-background-dark/30">
+                      <div className="text-[11px] text-text-secondary mb-1">问</div>
+                      <div className="text-sm whitespace-pre-wrap break-words">{h.question}</div>
+                      <div className="mt-2 text-[11px] text-text-secondary mb-1">答</div>
+                      <div className="text-sm whitespace-pre-wrap break-words">{h.answer}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-text-secondary">暂无历史</div>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-border pt-3">
+              <div className="text-xs font-semibold text-text-secondary mb-2">本次回复</div>
               <div className="max-h-[34vh] overflow-auto text-sm whitespace-pre-wrap break-words">
                 {answer ? answer : (busy ? '正在生成…' : '暂无')}
               </div>

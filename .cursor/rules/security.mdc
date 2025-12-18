@@ -9,7 +9,6 @@ alwaysApply: true
 ### 绝对禁止
 - **禁止将密钥、密码、Token、证书内容写入仓库任何文件**
 - 禁止在 commit message、PR 描述、日志中出现敏感信息
-- 禁止复制 `doc/5.step.md` 中的示例密钥到代码或配置
 
 ### 遇到敏感信息时
 - 仅保留占位符示例（如 `your-api-key-here`、`***`）
@@ -23,11 +22,6 @@ alwaysApply: true
 
 ## 数据安全
 
-### PRD 内容不落盘
-- PRD 原文仅存 Redis 缓存，会话过期后清除
-- MongoDB 只存元数据，不存 PRD 正文
-- 日志不记录用户原文内容
-
 ### 传输加密
 - 所有 API 通信必须 HTTPS（TLS 1.2+）
 - 客户端 WebView 限制外部资源加载（CSP）
@@ -39,7 +33,6 @@ alwaysApply: true
 ## 日志脱敏
 
 ### 禁止记录
-- 用户 PRD 原文
 - API Key、密码、证书
 - 个人身份信息（如手机号、身份证）
 
