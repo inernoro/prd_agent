@@ -214,6 +214,9 @@ public class ChatService : IChatService
             }
         };
 
+        // 引用依据（SSE 事件，仅会话内下发；不落库）
+        var citations = DocCitationExtractor.Extract(document, assistantMessage.Content, maxCitations: 12);
+
         // 更新对话历史缓存
         await SaveMessagesToHistoryAsync(session, userMessage, assistantMessage);
 
@@ -223,6 +226,16 @@ public class ChatService : IChatService
 
         // 刷新会话活跃时间
         await _sessionService.RefreshActivityAsync(sessionId);
+
+        if (citations.Count > 0)
+        {
+            yield return new ChatStreamEvent
+            {
+                Type = "citations",
+                MessageId = messageId,
+                Citations = citations
+            };
+        }
 
         yield return new ChatStreamEvent
         {

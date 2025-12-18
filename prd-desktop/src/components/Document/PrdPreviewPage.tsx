@@ -3,9 +3,10 @@ import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { listen } from '../../lib/tauri';
-import type { ApiResponse, DocumentContent } from '../../types';
+import type { ApiResponse, DocCitation, DocumentContent } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import PrdCommentsPanel from '../Comments/PrdCommentsPanel';
+import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 
 export default function PrdPreviewPage() {
   const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
@@ -36,6 +37,13 @@ export default function PrdPreviewPage() {
   const [askBusy, setAskBusy] = useState(false);
   const [askError, setAskError] = useState('');
   const askMessageIdRef = useRef<string | null>(null);
+
+  // 引用跳转与标黄
+  const navTargetHeadingId = usePrdPreviewNavStore((s) => s.targetHeadingId);
+  const navCitations = usePrdPreviewNavStore((s) => s.citations);
+  const navActiveIndex = usePrdPreviewNavStore((s) => s.activeCitationIndex);
+  const setNavActiveIndex = usePrdPreviewNavStore((s) => s.setActiveCitationIndex);
+  const clearNav = usePrdPreviewNavStore((s) => s.clear);
 
   const canPreview = useMemo(() => {
     return Boolean(documentLoaded && prdDocument && activeGroupId);
@@ -133,6 +141,12 @@ export default function PrdPreviewPage() {
     setActiveHeadingTitle(null);
   }, []);
 
+  // 切换文档/群组时：清空引用导航，避免跨文档残留高亮
+  useEffect(() => {
+    clearNav();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prdDocument?.id, activeGroupId]);
+
   const tocIndentClass = (level: number) => {
     switch (level) {
       case 1: return 'pl-2';
@@ -155,6 +169,103 @@ export default function PrdPreviewPage() {
     const top = container.scrollTop + (elRect.top - containerRect.top) - 12;
     container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
   };
+
+  const clearHighlights = useCallback(() => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return;
+    const marks = Array.from(container.querySelectorAll('mark[data-prd-citation="1"]'));
+    marks.forEach((m) => {
+      const el = m as HTMLElement;
+      const parent = el.parentNode;
+      if (!parent) return;
+      while (el.firstChild) parent.insertBefore(el.firstChild, el);
+      parent.removeChild(el);
+      parent.normalize();
+    });
+  }, []);
+
+  const normalizeExcerptForMatch = (t: string) => {
+    // 不要折叠空白：我们需要字符偏移与 TextNode 对齐
+    const s = String(t || '').replace(/…/g, '').trim();
+    return s.length > 0 ? s : '';
+  };
+
+  const highlightOne = useCallback((excerpt: string, citationIdx: number) => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return false;
+    const needle = normalizeExcerptForMatch(excerpt);
+    if (!needle) return false;
+
+    // 避免超长匹配：截断到 80，减少误跨节点
+    // 为了避免跨节点导致包裹失败，这里刻意用更短的 key（允许多标黄/略模糊）
+    const key = needle.length > 36 ? needle.slice(0, 36) : needle;
+
+    // 优先在常见文本块内匹配，避免跨段落
+    const blocks = Array.from(container.querySelectorAll('p,li,blockquote,td,th')) as HTMLElement[];
+    for (const block of blocks) {
+      // 跳过代码块内部
+      if (block.closest('pre,code')) continue;
+
+      const keyLower = key.toLowerCase();
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const n = walker.currentNode as Text;
+        if (!n.nodeValue) continue;
+        // 避免重复在已经标黄的内容里再标黄
+        if ((n.parentElement as HTMLElement | null)?.closest('mark[data-prd-citation=\"1\"]')) continue;
+
+        const v = n.nodeValue;
+        const idx = v.toLowerCase().indexOf(keyLower);
+        if (idx < 0) continue;
+
+        const before = v.slice(0, idx);
+        const mid = v.slice(idx, idx + key.length);
+        const after = v.slice(idx + key.length);
+
+        const mark = document.createElement('mark');
+        mark.setAttribute('data-prd-citation', '1');
+        mark.setAttribute('data-citation-idx', String(citationIdx));
+        mark.style.backgroundColor = 'rgba(250, 204, 21, 0.55)'; // yellow-400-ish
+        mark.style.borderRadius = '6px';
+        mark.style.padding = '0 2px';
+        mark.textContent = mid;
+
+        const parent = n.parentNode;
+        if (!parent) break;
+        if (before) parent.insertBefore(document.createTextNode(before), n);
+        parent.insertBefore(mark, n);
+        if (after) parent.insertBefore(document.createTextNode(after), n);
+        parent.removeChild(n);
+        return true;
+      }
+    }
+
+    return false;
+  }, [normalizeExcerptForMatch]);
+
+  const applyHighlights = useCallback((citations: DocCitation[]) => {
+    clearHighlights();
+    const list = (citations ?? []).slice(0, 30);
+    list.forEach((c, idx) => {
+      if (c?.excerpt) highlightOne(c.excerpt, idx);
+    });
+  }, [clearHighlights, highlightOne]);
+
+  const focusActiveCitation = useCallback(() => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return;
+    const idx = navActiveIndex ?? 0;
+    const esc = (window as any).CSS?.escape ? (window as any).CSS.escape(String(idx)) : String(idx).replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
+    const target = container.querySelector(`mark[data-prd-citation="1"][data-citation-idx="${esc}"]`) as HTMLElement | null;
+    if (!target) return;
+    // 高亮当前引用：边框更醒目
+    Array.from(container.querySelectorAll('mark[data-prd-citation="1"]')).forEach((m) => {
+      (m as HTMLElement).style.outline = '';
+    });
+    target.style.outline = '2px solid rgba(59,130,246,0.75)';
+    target.style.outlineOffset = '2px';
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [navActiveIndex]);
 
   const clearSelectionToolbar = () => setSelectionToolbar(null);
 
@@ -425,6 +536,31 @@ export default function PrdPreviewPage() {
     };
   }, [canPreview, prdPreviewLoading, prdPreviewError, prdPreview?.content, rebuildHeadingsCache, updateActiveHeadingFromScroll]);
 
+  // 当从聊天/讲解点击“依据”进入预览：跳转并标黄
+  useEffect(() => {
+    if (!navTargetHeadingId) return;
+    if (!canPreview) return;
+    if (prdPreviewLoading || prdPreviewError) return;
+    if (!prdPreview?.content) return;
+
+    const raf = requestAnimationFrame(() => {
+      scrollToHeading(navTargetHeadingId);
+      applyHighlights(navCitations);
+      // 等待 DOM mark 产生后再聚焦
+      requestAnimationFrame(() => {
+        focusActiveCitation();
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [navTargetHeadingId, navCitations, navActiveIndex, canPreview, prdPreviewLoading, prdPreviewError, prdPreview?.content, applyHighlights, focusActiveCitation]);
+
+  // 仅切换引用索引：聚焦到对应 mark
+  useEffect(() => {
+    if (!navTargetHeadingId) return;
+    const raf = requestAnimationFrame(() => focusActiveCitation());
+    return () => cancelAnimationFrame(raf);
+  }, [navActiveIndex, navTargetHeadingId, focusActiveCitation]);
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="h-12 px-4 border-b border-border bg-surface-light dark:bg-surface-dark flex items-center justify-between">
@@ -571,6 +707,51 @@ export default function PrdPreviewPage() {
           ) : null}
         </div>
       </div>
+
+      {/* 引用导航浮层（仅当存在 citations） */}
+      {navTargetHeadingId && Array.isArray(navCitations) && navCitations.length > 0 ? (
+        <div className="fixed z-40 right-4 top-16">
+          <div className="bg-surface-light dark:bg-surface-dark border border-border rounded-xl shadow-lg px-3 py-2 w-[320px]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold">
+                引用 {Math.min((navActiveIndex ?? 0) + 1, navCitations.length)}/{navCitations.length}
+              </div>
+              <button
+                type="button"
+                className="text-xs text-text-secondary hover:text-primary-500"
+                onClick={() => {
+                  clearHighlights();
+                  clearNav();
+                }}
+                title="清除高亮"
+              >
+                清除
+              </button>
+            </div>
+            <div className="mt-2 text-[11px] text-text-secondary line-clamp-3" title={navCitations[navActiveIndex]?.excerpt || ''}>
+              {navCitations[navActiveIndex]?.excerpt || ''}
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                onClick={() => setNavActiveIndex((navActiveIndex ?? 0) - 1)}
+                disabled={(navActiveIndex ?? 0) <= 0}
+              >
+                上一个
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                onClick={() => setNavActiveIndex((navActiveIndex ?? 0) + 1)}
+                disabled={(navActiveIndex ?? 0) >= navCitations.length - 1}
+              >
+                下一个
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 划词悬浮入口 */}
       {selectionToolbar ? (

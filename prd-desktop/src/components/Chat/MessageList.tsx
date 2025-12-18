@@ -1,7 +1,8 @@
 import { useRef, useEffect } from 'react';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import type { MessageBlock } from '../../types';
+import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
+import type { DocCitation, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 
 const phaseText: Record<string, string> = {
@@ -33,7 +34,8 @@ function unwrapMarkdownFences(text: string) {
 
 export default function MessageList() {
   const { messages, isStreaming, streamingMessageId, streamingPhase } = useMessageStore();
-  const { sessionId, activeGroupId } = useSessionStore();
+  const { sessionId, activeGroupId, openPrdPreviewPage } = useSessionStore();
+  const openWithCitations = usePrdPreviewNavStore((s) => s.openWithCitations);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -125,6 +127,30 @@ export default function MessageList() {
                 )}
               </div>
             )}
+
+            {message.role === 'Assistant' && Array.isArray(message.citations) && message.citations.length > 0 ? (
+              <div className="mt-3 pt-3 border-t border-border">
+                <div className="text-[11px] text-text-secondary mb-2">依据（可点击跳转并标黄）</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {message.citations.slice(0, 30).map((c: DocCitation, idx: number) => (
+                    <button
+                      key={`${c.headingId || c.headingTitle}-${idx}`}
+                      type="button"
+                      className="max-w-full inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[11px] text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                      title={c.excerpt || c.headingTitle}
+                      onClick={() => {
+                        const targetHeadingId = c.headingId || '';
+                        if (!targetHeadingId) return;
+                        openWithCitations({ targetHeadingId, citations: message.citations ?? [], activeCitationIndex: idx });
+                        openPrdPreviewPage();
+                      }}
+                    >
+                      <span className="truncate max-w-[220px]">{c.headingTitle || c.headingId}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {isStreaming && streamingMessageId === message.id && (
               <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />

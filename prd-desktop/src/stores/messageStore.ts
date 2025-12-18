@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Message, MessageBlock, MessageBlockKind } from '../types';
+import { DocCitation, Message, MessageBlock, MessageBlockKind } from '../types';
 
 export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
 export type MessageContextMode = 'QA' | 'Guided';
@@ -26,6 +26,8 @@ interface MessageState {
   startStreamingBlock: (block: { id: string; kind: MessageBlockKind; language?: string | null }) => void;
   appendToStreamingBlock: (blockId: string, content: string) => void;
   endStreamingBlock: (blockId: string) => void;
+  setMessageCitations: (messageId: string, citations: DocCitation[]) => void;
+  setStreamingMessageCitations: (citations: DocCitation[]) => void;
   setStreamingPhase: (phase: StreamingPhase) => void;
   stopStreaming: () => void;
   clearMessages: () => void;
@@ -187,6 +189,23 @@ export const useMessageStore = create<MessageState>((set) => ({
       nextBlocks[idx] = { ...nextBlocks[idx], isComplete: true };
       const isCode = nextBlocks[idx].kind === 'codeBlock';
       return { ...m, blocks: nextBlocks, content: isCode ? (m.content ?? '') + '```\n' : (m.content ?? '') };
+    });
+    return { messages: next, ...writeBack(state, next) };
+  }),
+
+  setMessageCitations: (messageId, citations) => set((state) => {
+    const next = state.messages.map((m) => {
+      if (m.id !== messageId) return m;
+      return { ...m, citations: Array.isArray(citations) ? citations : [] };
+    });
+    return { messages: next, ...writeBack(state, next) };
+  }),
+
+  setStreamingMessageCitations: (citations) => set((state) => {
+    if (!state.streamingMessageId) return state;
+    const next = state.messages.map((m) => {
+      if (m.id !== state.streamingMessageId) return m;
+      return { ...m, citations: Array.isArray(citations) ? citations : [] };
     });
     return { messages: next, ...writeBack(state, next) };
   }),

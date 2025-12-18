@@ -2,6 +2,14 @@ export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
 export type InteractionMode = 'QA' | 'Guided' | 'Knowledge' | 'PrdPreview';
 export type MessageRole = 'User' | 'Assistant';
 
+export interface DocCitation {
+  headingTitle: string;
+  headingId: string;
+  excerpt: string;
+  score?: number | null;
+  rank?: number | null;
+}
+
 export interface User {
   userId: string;
   username: string;
@@ -36,6 +44,7 @@ export interface Message {
   role: MessageRole;
   content: string;
   blocks?: MessageBlock[];
+  citations?: DocCitation[];
   viewRole?: UserRole;
   timestamp: Date;
   senderId?: string;
@@ -72,7 +81,7 @@ export interface ApiResponse<T> {
 }
 
 export interface StreamEvent {
-  type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase';
+  type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
   messageId?: string;
   content?: string;
   errorCode?: string;
@@ -81,10 +90,11 @@ export interface StreamEvent {
   blockKind?: MessageBlockKind;
   blockLanguage?: string;
   phase?: string;
+  citations?: DocCitation[];
 }
 
 export interface GuideEvent {
-  type: 'step' | 'delta' | 'stepDone' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase';
+  type: 'step' | 'delta' | 'stepDone' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
   step?: number;
   totalSteps?: number;
   title?: string;
@@ -93,4 +103,5 @@ export interface GuideEvent {
   blockKind?: MessageBlockKind;
   blockLanguage?: string;
   phase?: string;
+  citations?: DocCitation[];
 }

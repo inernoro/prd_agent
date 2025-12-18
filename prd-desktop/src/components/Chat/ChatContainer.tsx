@@ -21,6 +21,8 @@ export default function ChatContainer() {
     startStreamingBlock,
     appendToStreamingBlock,
     endStreamingBlock,
+    setMessageCitations,
+    setStreamingMessageCitations,
     stopStreaming,
     clearMessages,
     setMessages,
@@ -54,8 +56,8 @@ export default function ChatContainer() {
 
   useEffect(() => {
     // 监听消息流事件
-    const unlistenMessage = listen<{ type: string; content?: string; messageId?: string; errorMessage?: string; phase?: string; blockId?: string; blockKind?: any; blockLanguage?: string }>('message-chunk', (event) => {
-      const { type, content, messageId, errorMessage, phase, blockId, blockKind, blockLanguage } = event.payload;
+    const unlistenMessage = listen<any>('message-chunk', (event) => {
+      const { type, content, messageId, errorMessage, phase, blockId, blockKind, blockLanguage, citations } = event.payload || {};
       
       if (type === 'start') {
         startStreaming({
@@ -76,6 +78,8 @@ export default function ChatContainer() {
       } else if (type === 'delta' && content) {
         // 兼容旧协议
         appendToStreamingMessage(content);
+      } else if (type === 'citations' && messageId && Array.isArray(citations)) {
+        setMessageCitations(messageId, citations);
       } else if (type === 'done') {
         stopStreaming();
       } else if (type === 'phase' && phase) {
@@ -102,14 +106,14 @@ export default function ChatContainer() {
         console.error('Failed to unlisten message-chunk event:', err);
       });
     };
-  }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage, setStreamingPhase]);
+  }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage, setStreamingPhase, setMessageCitations]);
 
   useEffect(() => {
     // 监听引导讲解流事件
-    const unlistenGuide = listen<{ type: string; content?: string; step?: number; title?: string; errorMessage?: string; phase?: string }>(
+    const unlistenGuide = listen<any>(
       'guide-chunk',
       (event) => {
-        const { type, content, step, title, errorMessage, phase, blockId, blockKind, blockLanguage } = event.payload as any;
+        const { type, content, step, title, errorMessage, phase, blockId, blockKind, blockLanguage, citations } = event.payload as any;
 
         if (type === 'step') {
           const header = `### 阶段 ${step ?? ''}${title ? `：${title}` : ''}\n\n`;
@@ -155,6 +159,8 @@ export default function ChatContainer() {
           // 兼容旧协议（引导）
           appendToStreamingMessage(content);
           setStreamingPhase('typing');
+        } else if (type === 'citations' && Array.isArray(citations)) {
+          setStreamingMessageCitations(citations);
         } else if (type === 'stepDone') {
           stopStreaming();
         } else if (type === 'phase' && phase) {
@@ -192,7 +198,7 @@ export default function ChatContainer() {
         console.error('Failed to unlisten guide-chunk event:', err);
       });
     };
-  }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage, isStreaming, streamingMessageId, guideStep, setStreamingPhase, upsertMessage]);
+  }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage, isStreaming, streamingMessageId, guideStep, setStreamingPhase, upsertMessage, setStreamingMessageCitations]);
 
   // 会话切换时加载历史消息
   useEffect(() => {

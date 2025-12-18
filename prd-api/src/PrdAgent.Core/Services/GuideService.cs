@@ -175,6 +175,7 @@ public class GuideService : IGuideService
         // 调用LLM
         var llmRequestId = Guid.NewGuid().ToString();
         var blockTokenizer = new MarkdownBlockTokenizer();
+        var fullResponse = new StringBuilder();
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: llmRequestId,
             GroupId: session.GroupId,
@@ -189,6 +190,7 @@ public class GuideService : IGuideService
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
+                fullResponse.Append(chunk.Content);
                 foreach (var bt in blockTokenizer.Push(chunk.Content))
                 {
                     yield return new GuideStreamEvent
@@ -230,6 +232,18 @@ public class GuideService : IGuideService
         // 更新会话步骤
         session.GuideStep = step;
         await _sessionService.UpdateAsync(session);
+
+        // 引用依据（SSE 事件，仅会话内下发；不落库）
+        var citations = DocCitationExtractor.Extract(document, fullResponse.ToString(), maxCitations: 12);
+        if (citations.Count > 0)
+        {
+            yield return new GuideStreamEvent
+            {
+                Type = "citations",
+                Step = step,
+                Citations = citations
+            };
+        }
 
         yield return new GuideStreamEvent
         {
