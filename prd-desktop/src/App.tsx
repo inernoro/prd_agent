@@ -6,6 +6,7 @@ import { useGroupListStore } from './stores/groupListStore';
 import Header from './components/Layout/Header';
 import Sidebar from './components/Layout/Sidebar';
 import DocumentUpload from './components/Document/DocumentUpload';
+import PrdPreviewPage from './components/Document/PrdPreviewPage';
 import ChatContainer from './components/Chat/ChatContainer';
 import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
 import LoginPage from './components/Auth/LoginPage';
@@ -126,13 +127,13 @@ function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background-light dark:bg-background-dark">
+    <div className="h-full flex flex-col bg-background-light dark:bg-background-dark">
       <Header isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} />
       
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />
         
-        <main className="flex-1 flex flex-col">
+        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
           {/* 规则：
               - 没有任何群组：右侧显示上传 PRD（上传后自动建群）
               - 有群组：右侧进入会话区域；未绑定 PRD 的群组显示“待上传/不可对话”空态（由 ChatContainer/ChatInput 控制）
@@ -143,6 +144,8 @@ function App() {
             </div>
           ) : groups.length === 0 ? (
             <DocumentUpload />
+          ) : mode === 'PrdPreview' ? (
+            <PrdPreviewPage />
           ) : (
             mode === 'Knowledge' ? <KnowledgeBasePage /> : <ChatContainer />
           )}

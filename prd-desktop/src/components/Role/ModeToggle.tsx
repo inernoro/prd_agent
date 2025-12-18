@@ -15,18 +15,13 @@ const BookIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-// 知识库图标
-const FolderIcon = ({ className }: { className?: string }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-  </svg>
-);
-
 export default function ModeToggle() {
-  const { mode, setMode, sessionId } = useSessionStore();
+  const { mode, previousMode, setMode, sessionId } = useSessionStore();
+  const modeForUi = mode === 'PrdPreview' ? (previousMode ?? 'QA') : mode;
 
   const switchToQa = async () => {
-    if (mode === 'Guided' && sessionId) {
+    // 从“讲解”离开时需要清理后端状态；若当前在 PRD 预览页，也要按 previousMode 判断
+    if ((mode === 'Guided' || (mode === 'PrdPreview' && previousMode === 'Guided')) && sessionId) {
       try {
         await invoke('control_guide', { sessionId, action: 'stop' });
       } catch (err) {
@@ -51,23 +46,12 @@ export default function ModeToggle() {
     void sessionId;
   };
 
-  const switchToKnowledge = async () => {
-    if (mode === 'Guided' && sessionId) {
-      try {
-        await invoke('control_guide', { sessionId, action: 'stop' });
-      } catch {
-        // ignore
-      }
-    }
-    setMode('Knowledge');
-  };
-
   return (
     <div className="flex items-center gap-2 bg-background-light dark:bg-background-dark rounded-lg p-1">
       <button
         onClick={switchToQa}
         className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
-          mode === 'QA'
+          modeForUi === 'QA'
             ? 'bg-primary-500 text-white'
             : 'text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800'
         }`}
@@ -78,24 +62,13 @@ export default function ModeToggle() {
       <button
         onClick={switchToGuided}
         className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
-          mode === 'Guided'
+          modeForUi === 'Guided'
             ? 'bg-primary-500 text-white'
             : 'text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800'
         }`}
       >
         <BookIcon className="w-4 h-4" />
         <span>阶段讲解</span>
-      </button>
-      <button
-        onClick={switchToKnowledge}
-        className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
-          mode === 'Knowledge'
-            ? 'bg-primary-500 text-white'
-            : 'text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800'
-        }`}
-      >
-        <FolderIcon className="w-4 h-4" />
-        <span>知识库管理</span>
       </button>
     </div>
   );

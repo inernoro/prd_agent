@@ -4,7 +4,7 @@ import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
-import { RefreshCw, Search } from 'lucide-react';
+import { Copy, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 function codeBoxStyle(): React.CSSProperties {
@@ -37,6 +37,16 @@ function diffMs(fromIso: string | null | undefined, toIso: string | null | undef
   const b = new Date(toIso);
   if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
   return b.getTime() - a.getTime();
+}
+
+function fmtNum(v: number | null | undefined): string {
+  // 重要：null/undefined 表示“未知/未上报”，不应显示为 0
+  return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
+}
+
+function fmtText(v: string | null | undefined): string {
+  const s = (v ?? '').trim();
+  return s ? s : '—';
 }
 
 function tryPrettyJsonText(text: string): string {
@@ -350,10 +360,10 @@ export default function LlmLogsPage() {
   const parsedDeltaText = useMemo(() => extractDeltaText(detail?.rawSse), [detail]);
   const assembledSummary = useMemo(() => {
     if (!detail) return '';
-    const chars = detail.assembledTextChars ?? 0;
-    const hash = detail.assembledTextHash ?? '';
-    if (!chars && !hash) return '';
-    return `用户可见输出（摘要字段）\nchars=${chars}\nhash=${hash || '-' }\n\n说明：这里仅保留长度与哈希用于对照；如需排查具体输出内容，请查看右侧响应流（raw/解析视图）。`;
+    const chars = detail.assembledTextChars;
+    const hash = (detail.assembledTextHash ?? '').trim();
+    if ((chars === null || chars === undefined || chars === 0) && !hash) return '';
+    return `用户可见输出（摘要字段）\nchars=${fmtNum(chars)}\nhash=${hash || '—'}\n\n说明：这里仅保留长度与哈希用于对照；如需排查具体输出内容，请查看右侧响应流（raw/解析视图）。`;
   }, [detail]);
 
   const statusBadge = (s: string) => {
@@ -589,12 +599,13 @@ export default function LlmLogsPage() {
                       }}
                       disabled={!detail || !curlText}
                     >
+                      <Copy size={16} />
                       复制 curl
                     </Button>
                   </div>
                 </div>
                 <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  provider: {detail.provider} · model: {detail.model} · status: {detail.status}
+                  provider（服务商）: {detail.provider} · model（模型）: {detail.model} · status（状态）: {detail.status}
                 </div>
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                   requestId: {detail.requestId}
@@ -625,43 +636,90 @@ export default function LlmLogsPage() {
                 <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                   statusCode: {detail.statusCode ?? '-'} · duration: {detail.durationMs ?? '-'}ms
                 </div>
-                <div className="mt-3 grid gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                  <div>inputTokens: {detail.inputTokens ?? '-'}</div>
-                  <div>outputTokens: {detail.outputTokens ?? '-'}</div>
-                  <div>cacheReadInputTokens: {detail.cacheReadInputTokens ?? 0}</div>
-                  <div>cacheCreationInputTokens: {detail.cacheCreationInputTokens ?? 0}</div>
-                  <div>assembledTextChars: {detail.assembledTextChars ?? 0}</div>
-                  <div>assembledTextHash: {detail.assembledTextHash ?? '-'}</div>
+                <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  {[
+                    { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
+                    { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
+                    { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
+                    { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
+                    { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
+                    { k: 'Assembled hash（拼接哈希）', v: fmtText(detail.assembledTextHash) },
+                  ].map((it) => (
+                    <div
+                      key={it.k}
+                      className="rounded-[12px] px-3 py-2"
+                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                    >
+                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        {it.k}
+                      </div>
+                      <div
+                        className="mt-1 text-sm font-semibold"
+                        style={{
+                          color: 'var(--text-primary)',
+                          fontFamily:
+                            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                        }}
+                      >
+                        {it.v}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  说明：`—` 表示未上报/未知；`0` 表示真实为 0。
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>响应流（仅隐藏密钥/Token）</div>
                     <div className="flex items-center gap-2">
-                      <Button variant={respView === 'parsed' ? 'secondary' : 'ghost'} size="sm" onClick={() => setRespView('parsed')}>
-                        解析视图
-                      </Button>
-                      <Button variant={respView === 'raw' ? 'secondary' : 'ghost'} size="sm" onClick={() => setRespView('raw')}>
-                        raw
-                      </Button>
+                      <div
+                        className="inline-flex p-[3px] rounded-[12px]"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)' }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setRespView('parsed')}
+                          aria-pressed={respView === 'parsed'}
+                          className="h-[35px] px-3 rounded-[10px] text-[13px] font-semibold transition-colors"
+                          style={{
+                            color: 'var(--text-primary)',
+                            background: respView === 'parsed' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                            border: respView === 'parsed' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
+                          }}
+                        >
+                          解析视图
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRespView('raw')}
+                          aria-pressed={respView === 'raw'}
+                          className="h-[35px] px-3 rounded-[10px] text-[13px] font-semibold transition-colors"
+                          style={{
+                            color: 'var(--text-primary)',
+                            background: respView === 'raw' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                            border: respView === 'raw' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
+                          }}
+                        >
+                          raw
+                        </button>
+                      </div>
                       <Button
                         variant="secondary"
                         size="sm"
                         onClick={async () => {
-                          const text = respView === 'raw'
-                            ? formattedRawSse
-                            : (parsedDeltaText
-                              ? parsedDeltaText
-                              : parsedSse.rows.map((r) => {
-                                const bits = [
-                                  `#${String(r.idx).padStart(3, '0')}`,
-                                  r.kind,
-                                  r.deltaKeys ? `delta=[${r.deltaKeys}]` : null,
-                                  r.finish ? `finish=${r.finish}` : null,
-                                  r.hasUsage ? (r.usage ? `usage(${r.usage})` : 'usage') : null,
-                                  r.note ? r.note : null,
-                                ].filter(Boolean);
-                                return bits.join(' ');
-                              }).join('\n'));
+                          const shortParsed = [
+                            `events: ${parsedSse.stats.total}`,
+                            `done: ${parsedSse.stats.done ? 'yes' : 'no'}`,
+                            `usageInStream: ${parsedSse.stats.hasUsage ? 'yes' : 'no'}`,
+                          ].join('\n');
+
+                          const text =
+                            respView === 'raw'
+                              ? formattedRawSse
+                              : (parsedDeltaText
+                                ? parsedDeltaText
+                                : `${shortParsed}\n\n（未能从流中提取可见文本：可能是 Provider 格式不匹配或仅返回结构信息）`);
                           try {
                             await navigator.clipboard.writeText(text || '');
                             setCopiedHint('已复制');
@@ -672,6 +730,7 @@ export default function LlmLogsPage() {
                           }
                         }}
                       >
+                        <Copy size={16} />
                         复制
                       </Button>
                     </div>
@@ -685,14 +744,20 @@ export default function LlmLogsPage() {
                       </div>
 
                       <div className="mt-3">
-                        <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>整理后的信息（事件摘要）</div>
+                        <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>统计（Stats）</div>
                         <pre style={codeBoxStyle()}>
                           {[
                             `events: ${parsedSse.stats.total}`,
                             `done: ${parsedSse.stats.done ? 'yes' : 'no'}`,
                             `usageInStream: ${parsedSse.stats.hasUsage ? 'yes' : 'no'}`,
-                            '',
-                            ...parsedSse.rows.map((r) => {
+                          ].join('\n')}
+                        </pre>
+                        <details className="mt-3">
+                          <summary className="text-xs cursor-pointer select-none" style={{ color: 'var(--text-muted)' }}>
+                            调试信息（Debug：事件摘要）
+                          </summary>
+                          <pre className="mt-2" style={codeBoxStyle()}>
+                            {parsedSse.rows.map((r) => {
                               const bits = [
                                 `#${String(r.idx).padStart(3, '0')}`,
                                 r.kind,
@@ -702,9 +767,9 @@ export default function LlmLogsPage() {
                                 r.note ? r.note : null,
                               ].filter(Boolean);
                               return bits.join(' ');
-                            }),
-                          ].join('\n')}
-                        </pre>
+                            }).join('\n')}
+                          </pre>
+                        </details>
                       </div>
                     </>
                   ) : null}

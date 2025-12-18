@@ -8,6 +8,7 @@ interface SessionState {
   document: Document | null;
   currentRole: UserRole;
   mode: InteractionMode;
+  previousMode: InteractionMode | null;
   guideStep: number;
   
   setSession: (session: Session, doc: Document) => void;
@@ -15,6 +16,8 @@ interface SessionState {
   setActiveGroupContext: (groupId: string) => void;
   setRole: (role: UserRole) => void;
   setMode: (mode: InteractionMode) => void;
+  openPrdPreviewPage: () => void;
+  backFromPrdPreview: () => void;
   setGuideStep: (step: number) => void;
   clearSession: () => void;
 }
@@ -26,6 +29,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   document: null,
   currentRole: 'PM',
   mode: 'QA',
+  previousMode: null,
   guideStep: 1,
   
   setSession: (session, doc) => set({
@@ -48,12 +52,27 @@ export const useSessionStore = create<SessionState>((set) => ({
     document: null,
     currentRole: state.currentRole ?? 'PM',
     mode: 'QA',
+    previousMode: null,
     guideStep: 1,
   })),
   
   setRole: (role) => set({ currentRole: role }),
   
-  setMode: (mode) => set({ mode }),
+  setMode: (mode) => set((state) => ({
+    mode,
+    // 只要离开 PRD 预览页，就清空 previousMode，避免“跨页面返回”错乱
+    previousMode: mode === 'PrdPreview' ? state.previousMode : null,
+  })),
+
+  openPrdPreviewPage: () => set((state) => ({
+    previousMode: state.mode,
+    mode: 'PrdPreview',
+  })),
+
+  backFromPrdPreview: () => set((state) => ({
+    mode: (state.previousMode && state.previousMode !== 'PrdPreview') ? state.previousMode : 'QA',
+    previousMode: null,
+  })),
   
   setGuideStep: (step) => set({ guideStep: step }),
   
@@ -64,6 +83,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     document: null,
     currentRole: 'PM',
     mode: 'QA',
+    previousMode: null,
     guideStep: 1,
   }),
 }));

@@ -1,10 +1,19 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { invoke } from '../../lib/tauri';
 import { ApiResponse, Document, Session, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+
+type GroupMemberInfo = {
+  userId: string;
+  username: string;
+  displayName: string;
+  memberRole: string;
+  joinedAt: string;
+  isOwner: boolean;
+};
 
 export default function GroupList() {
   const { user } = useAuthStore();
@@ -13,6 +22,8 @@ export default function GroupList() {
   const [dissolveTarget, setDissolveTarget] = useState<null | { groupId: string; groupName: string }>(null);
   const [dissolveBusy, setDissolveBusy] = useState(false);
   const [dissolveError, setDissolveError] = useState('');
+  const [ownerMap, setOwnerMap] = useState<Record<string, boolean>>({});
+  const [ownerLoadingMap, setOwnerLoadingMap] = useState<Record<string, boolean>>({});
 
   const getGroupInitial = (name: string) => {
     const t = (name || '').trim();
@@ -81,7 +92,39 @@ export default function GroupList() {
     }
   };
 
-  const canDissolve = user?.role === 'PM' || user?.role === 'ADMIN';
+  const isAdmin = user?.role === 'ADMIN';
+
+  const ensureOwnerLoaded = async (groupId: string) => {
+    if (!groupId) return;
+    if (isAdmin) return;
+    if (ownerMap[groupId] != null) return;
+    if (ownerLoadingMap[groupId]) return;
+    if (!user?.userId) return;
+    if (user.userId === 'demo-user-001') return;
+    try {
+      setOwnerLoadingMap((prev) => ({ ...prev, [groupId]: true }));
+      const resp = await invoke<ApiResponse<GroupMemberInfo[]>>('get_group_members', { groupId });
+      if (!resp.success || !resp.data) {
+        // 权限不足/请求失败时：视为非群主，避免误展示
+        setOwnerMap((prev) => ({ ...prev, [groupId]: false }));
+        return;
+      }
+      const isOwner = resp.data.some((m) => m.userId === user.userId && m.isOwner);
+      setOwnerMap((prev) => ({ ...prev, [groupId]: isOwner }));
+    } catch {
+      setOwnerMap((prev) => ({ ...prev, [groupId]: false }));
+    } finally {
+      setOwnerLoadingMap((prev) => ({ ...prev, [groupId]: false }));
+    }
+  };
+
+  const canDissolveGroup = useMemo(() => {
+    return (groupId: string) => {
+      if (isAdmin) return true;
+      if (!groupId) return false;
+      return ownerMap[groupId] === true;
+    };
+  }, [isAdmin, ownerMap]);
 
   const confirmDissolve = async () => {
     if (!dissolveTarget || dissolveBusy) return;
@@ -185,7 +228,7 @@ export default function GroupList() {
             </div>
 
             <div className="shrink-0 flex items-center gap-2">
-              {canDissolve ? (
+              {canDissolveGroup(group.groupId) ? (
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
@@ -195,6 +238,7 @@ export default function GroupList() {
                       }`}
                       title="群设置"
                       onClick={(e) => e.stopPropagation()}
+                      onMouseEnter={() => void ensureOwnerLoaded(group.groupId)}
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path

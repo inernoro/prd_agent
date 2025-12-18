@@ -50,6 +50,7 @@ pub fn run() {
             commands::group::open_group_session,
             commands::group::bind_group_prd,
             commands::group::dissolve_group,
+            commands::group::get_group_members,
             commands::prd_comments::get_prd_comments,
             commands::prd_comments::create_prd_comment,
             commands::prd_comments::delete_prd_comment,

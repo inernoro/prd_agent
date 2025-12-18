@@ -10,7 +10,7 @@ import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, nor
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
-  const { setSession, activeGroupId } = useSessionStore();
+  const { setSession, activeGroupId, documentLoaded, document: prdDocument, mode, sessionId, setMode, openPrdPreviewPage } = useSessionStore();
   const { loadGroups } = useGroupListStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const isDemoMode = user?.userId === 'demo-user-001';
@@ -75,6 +75,27 @@ export default function Sidebar() {
   }, [expandedWidth, isCollapsed]);
 
   const canSubmit = useMemo(() => !busy && !isDemoMode, [busy, isDemoMode]);
+
+  const openKnowledge = useCallback(async () => {
+    // 与顶栏 ModeToggle 行为保持一致：离开讲解时停止后端讲解状态
+    if (mode === 'Guided' && sessionId) {
+      try {
+        await invoke('control_guide', { sessionId, action: 'stop' });
+      } catch {
+        // ignore
+      }
+    }
+    setMode('Knowledge');
+  }, [mode, sessionId, setMode]);
+
+  const openPrdPreview = useCallback(() => {
+    if (!documentLoaded || !prdDocument) return;
+    openPrdPreviewPage();
+  }, [documentLoaded, prdDocument, openPrdPreviewPage]);
+
+  const openBindFromKnowledge = useCallback(() => {
+    window.dispatchEvent(new Event('prdAgent:openBindPrdPicker'));
+  }, []);
 
   const openGroupSession = async (groupId: string) => {
     const role: UserRole =
@@ -493,8 +514,86 @@ export default function Sidebar() {
 
         {/* 群组列表 */}
         {!isCollapsed && (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             <GroupList />
+          </div>
+        )}
+
+        {/* 知识库（侧栏下段，参考 VSCode 分区） */}
+        {!isCollapsed && (
+          <div className="shrink-0 border-t border-border">
+            <div className="px-3 py-2 flex items-center justify-between">
+              <div className="text-xs font-medium text-text-secondary">知识库</div>
+              <button
+                type="button"
+                onClick={openKnowledge}
+                className={`h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors ${
+                  mode === 'Knowledge'
+                    ? 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-white/5'
+                    : 'text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10'
+                }`}
+                title="知识库管理"
+                aria-label="知识库管理"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11.983 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c0 .7.41 1.33 1.04 1.61.3.13.62.2.95.2H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (documentLoaded && prdDocument) openPrdPreview();
+                  else openBindFromKnowledge();
+                }}
+                className={`w-full px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                  documentLoaded && prdDocument
+                    ? 'hover:bg-gray-50 dark:hover:bg-white/5 text-text-secondary hover:text-primary-500'
+                    : 'hover:bg-gray-50 dark:hover:bg-white/5 text-text-secondary hover:text-primary-500'
+                }`}
+                title={prdDocument?.title || '待上传'}
+              >
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6M7 20h10a2 2 0 002-2V6a2 2 0 00-2-2H9l-2 2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <span className="truncate">{prdDocument?.title || '待上传'}</span>
+                  </div>
+                  {documentLoaded && prdDocument ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openPrdPreview();
+                      }}
+                      className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors shrink-0"
+                      title="预览 PRD"
+                      aria-label="预览 PRD"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+              </button>
+            </div>
           </div>
         )}
 

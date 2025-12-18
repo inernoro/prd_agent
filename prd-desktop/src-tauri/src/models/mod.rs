@@ -98,6 +98,17 @@ pub struct GroupInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GroupMemberInfo {
+    pub user_id: String,
+    pub username: String,
+    pub display_name: String,
+    pub member_role: String,
+    pub joined_at: String,
+    pub is_owner: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenGroupSessionResponse {
     pub session_id: String,
     pub group_id: String,

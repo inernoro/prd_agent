@@ -1,5 +1,5 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
-export type InteractionMode = 'QA' | 'Guided' | 'Knowledge';
+export type InteractionMode = 'QA' | 'Guided' | 'Knowledge' | 'PrdPreview';
 export type MessageRole = 'User' | 'Assistant';
 
 export interface User {

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::command;
 
-use crate::models::{ApiResponse, GroupInfo, OpenGroupSessionResponse};
+use crate::models::{ApiResponse, GroupInfo, GroupMemberInfo, OpenGroupSessionResponse};
 use crate::services::ApiClient;
 
 #[derive(Serialize)]
@@ -102,4 +102,10 @@ pub async fn bind_group_prd(
 pub async fn dissolve_group(group_id: String) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     client.delete(&format!("/groups/{}", group_id)).await
+}
+
+#[command]
+pub async fn get_group_members(group_id: String) -> Result<ApiResponse<Vec<GroupMemberInfo>>, String> {
+    let client = ApiClient::new();
+    client.get(&format!("/groups/{}/members", group_id)).await
 }
