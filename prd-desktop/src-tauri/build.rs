@@ -1,8 +1,4 @@
-use std::{
-    env,
-    fs,
-    path::PathBuf,
-};
+use std::{env, fs, path::PathBuf};
 
 fn main() {
     // Ensure bundle icons exist before tauri-build/tauri proc-macros validate the config.
@@ -77,8 +73,8 @@ fn extract_bundle_icon_paths(config_json: &str) -> Vec<String> {
         if bytes[i] == b'"' {
             let start = i + 1;
             if start + 6 < bytes.len()
-                && (&config_json[start..]).starts_with("icons/")
-                    || (&config_json[start..]).starts_with("icons\\")
+                && (config_json[start..].starts_with("icons/")
+                    || config_json[start..].starts_with("icons\\"))
             {
                 if let Some(end_quote) = config_json[start..].find('"') {
                     let raw = &config_json[start..start + end_quote];

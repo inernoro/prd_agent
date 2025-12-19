@@ -67,6 +67,9 @@ pub async fn delete_prd_comment(
 ) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     client
-        .delete(&format!("/prd-comments/{}?groupId={}", comment_id, group_id))
+        .delete(&format!(
+            "/prd-comments/{}?groupId={}",
+            comment_id, group_id
+        ))
         .await
 }

@@ -4,7 +4,9 @@ use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
-use crate::models::{ApiResponse, GuideControlResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse};
+use crate::models::{
+    ApiResponse, GuideControlResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse,
+};
 use crate::services::{api_client, ApiClient};
 
 #[derive(Default)]
@@ -38,7 +40,10 @@ impl StreamCancelState {
 }
 
 #[command]
-pub async fn cancel_stream(cancel: State<'_, StreamCancelState>, kind: Option<String>) -> Result<(), String> {
+pub async fn cancel_stream(
+    cancel: State<'_, StreamCancelState>,
+    kind: Option<String>,
+) -> Result<(), String> {
     let k = kind.unwrap_or_else(|| "all".to_string()).to_lowercase();
     match k.as_str() {
         "all" | "message" | "guide" | "preview" => {
@@ -71,7 +76,13 @@ fn emit_stream_phase(app: &AppHandle, channel: &str, phase: &str) {
     );
 }
 
-fn handle_sse_text(app: &AppHandle, channel: &str, buf: &mut String, incoming: &str, saw_any_data: &mut bool) {
+fn handle_sse_text(
+    app: &AppHandle,
+    channel: &str,
+    buf: &mut String,
+    incoming: &str,
+    saw_any_data: &mut bool,
+) {
     buf.push_str(incoming);
 
     // SSE event delimiter: blank line
@@ -83,8 +94,8 @@ fn handle_sse_text(app: &AppHandle, channel: &str, buf: &mut String, incoming: &
         for raw_line in raw_event.lines() {
             // 保留行尾 \r 的兼容（Windows CRLF）
             let line = raw_line.trim_end_matches('\r');
-            if line.starts_with("data:") {
-                let payload = line["data:".len()..].trim_start();
+            if let Some(stripped) = line.strip_prefix("data:") {
+                let payload = stripped.trim_start();
                 data_lines.push(payload.to_string());
             }
         }
@@ -170,7 +181,10 @@ pub async fn get_message_history(
     let client = ApiClient::new();
     let limit = limit.unwrap_or(50);
     client
-        .get(&format!("/sessions/{}/messages?limit={}", session_id, limit))
+        .get(&format!(
+            "/sessions/{}/messages?limit={}",
+            session_id, limit
+        ))
         .await
 }
 
@@ -196,11 +210,7 @@ pub async fn send_message(
     role: Option<String>,
 ) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
-    let url = format!(
-        "{}/api/v1/sessions/{}/messages",
-        base_url,
-        session_id
-    );
+    let url = format!("{}/api/v1/sessions/{}/messages", base_url, session_id);
 
     let client = api_client::build_streaming_client(&base_url);
     let request = SendMessageRequest { content, role };
@@ -217,7 +227,10 @@ pub async fn send_message(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
     emit_stream_phase(&app, "message-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
@@ -238,7 +251,13 @@ pub async fn send_message(
         match chunk {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
-                handle_sse_text(&app, "message-chunk", &mut sse_buf, &text, &mut saw_any_data);
+                handle_sse_text(
+                    &app,
+                    "message-chunk",
+                    &mut sse_buf,
+                    &text,
+                    &mut saw_any_data,
+                );
             }
             Err(e) => {
                 emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
@@ -251,13 +270,14 @@ pub async fn send_message(
 }
 
 #[command]
-pub async fn start_guide(app: AppHandle, cancel: State<'_, StreamCancelState>, session_id: String, role: String) -> Result<(), String> {
+pub async fn start_guide(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    session_id: String,
+    role: String,
+) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
-    let url = format!(
-        "{}/api/v1/sessions/{}/guide/start",
-        base_url,
-        session_id
-    );
+    let url = format!("{}/api/v1/sessions/{}/guide/start", base_url, session_id);
 
     let client = api_client::build_streaming_client(&base_url);
     let request = StartGuideRequest { role };
@@ -274,7 +294,10 @@ pub async fn start_guide(app: AppHandle, cancel: State<'_, StreamCancelState>, s
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
     emit_stream_phase(&app, "guide-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
@@ -308,28 +331,32 @@ pub async fn start_guide(app: AppHandle, cancel: State<'_, StreamCancelState>, s
 }
 
 #[command]
-pub async fn get_guide_step_content(app: AppHandle, cancel: State<'_, StreamCancelState>, session_id: String, step: i32) -> Result<(), String> {
+pub async fn get_guide_step_content(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    session_id: String,
+    step: i32,
+) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
     let url = format!(
         "{}/api/v1/sessions/{}/guide/step/{}",
-        base_url,
-        session_id,
-        step
+        base_url, session_id, step
     );
 
     let client = api_client::build_streaming_client(&base_url);
 
     let token = cancel.new_guide_token();
     emit_stream_phase(&app, "guide-chunk", "requesting");
-    let mut req = client
-        .get(&url)
-        .header("Accept", "text/event-stream");
+    let mut req = client.get(&url).header("Accept", "text/event-stream");
 
     if let Some(token) = api_client::get_auth_token() {
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
     emit_stream_phase(&app, "guide-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
@@ -386,14 +413,14 @@ pub async fn preview_ask_in_section(
     question: String,
 ) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
-    let url = format!(
-        "{}/api/v1/sessions/{}/preview-ask",
-        base_url,
-        session_id
-    );
+    let url = format!("{}/api/v1/sessions/{}/preview-ask", base_url, session_id);
 
     let client = api_client::build_streaming_client(&base_url);
-    let request = PreviewAskRequest { question, heading_id, heading_title };
+    let request = PreviewAskRequest {
+        question,
+        heading_id,
+        heading_title,
+    };
 
     let token = cancel.new_preview_token();
     emit_stream_phase(&app, "preview-ask-chunk", "requesting");
@@ -407,12 +434,19 @@ pub async fn preview_ask_in_section(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
     emit_stream_phase(&app, "preview-ask-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        emit_stream_error(&app, "preview-ask-chunk", format!("HTTP {}: {}", status, body));
+        emit_stream_error(
+            &app,
+            "preview-ask-chunk",
+            format!("HTTP {}: {}", status, body),
+        );
         return Ok(());
     }
 
@@ -428,7 +462,13 @@ pub async fn preview_ask_in_section(
         match chunk {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
-                handle_sse_text(&app, "preview-ask-chunk", &mut sse_buf, &text, &mut saw_any_data);
+                handle_sse_text(
+                    &app,
+                    "preview-ask-chunk",
+                    &mut sse_buf,
+                    &text,
+                    &mut saw_any_data,
+                );
             }
             Err(e) => {
                 emit_stream_error(&app, "preview-ask-chunk", format!("Stream error: {}", e));

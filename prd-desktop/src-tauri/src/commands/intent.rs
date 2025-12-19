@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::command;
 
-use crate::models::{ApiResponse};
+use crate::models::ApiResponse;
 use crate::services::ApiClient;
 
 #[derive(Serialize)]
@@ -27,5 +27,3 @@ pub async fn suggest_group_name(
     let request = SuggestGroupNameRequest { file_name, snippet };
     client.post("/intent/group-name", &request).await
 }
-
-

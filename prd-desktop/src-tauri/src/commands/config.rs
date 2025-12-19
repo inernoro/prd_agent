@@ -96,10 +96,10 @@ fn is_localhost_url(api_base_url: &str) -> bool {
         Err(_) => return false,
     };
 
-    match parsed.host_str() {
-        Some("localhost") | Some("127.0.0.1") | Some("::1") => true,
-        _ => false,
-    }
+    matches!(
+        parsed.host_str(),
+        Some("localhost") | Some("127.0.0.1") | Some("::1")
+    )
 }
 
 /// 测试 API 连接

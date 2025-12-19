@@ -2,9 +2,9 @@ mod commands;
 mod models;
 mod services;
 
-use tauri::Manager;
-use tauri::Emitter;
 use commands::session::StreamCancelState;
+use tauri::Emitter;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -66,12 +66,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
+    app.run(|_app_handle, _event| {
         // warm-start deep link（macOS/iOS）：应用运行中收到 URL 打开事件
         #[cfg(any(target_os = "macos", target_os = "ios"))]
-        if let tauri::RunEvent::Opened { urls } = event {
+        if let tauri::RunEvent::Opened { urls } = _event {
             for url in urls {
-                let _ = app_handle.emit("deep-link", url.to_string());
+                let _ = _app_handle.emit("deep-link", url.to_string());
             }
         }
     });

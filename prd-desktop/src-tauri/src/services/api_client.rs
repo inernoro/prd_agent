@@ -116,7 +116,10 @@ impl ApiClient {
                     }),
                 });
             }
-            return Err(format!("Empty response from server. Status: {}, URL: {}", status, url));
+            return Err(format!(
+                "Empty response from server. Status: {}, URL: {}",
+                status, url
+            ));
         }
 
         serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
@@ -247,7 +250,10 @@ impl ApiClient {
                     }),
                 });
             }
-            return Err(format!("Empty response from server. Status: {}, URL: {}", status, url));
+            return Err(format!(
+                "Empty response from server. Status: {}, URL: {}",
+                status, url
+            ));
         }
 
         serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
@@ -306,7 +312,10 @@ impl ApiClient {
                     }),
                 });
             }
-            return Err(format!("Empty response from server. Status: {}, URL: {}", status, url));
+            return Err(format!(
+                "Empty response from server. Status: {}, URL: {}",
+                status, url
+            ));
         }
 
         serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
@@ -332,10 +341,10 @@ fn is_localhost_url(api_base_url: &str) -> bool {
         Err(_) => return false,
     };
 
-    match parsed.host_str() {
-        Some("localhost") | Some("127.0.0.1") | Some("::1") => true,
-        _ => false,
-    }
+    matches!(
+        parsed.host_str(),
+        Some("localhost") | Some("127.0.0.1") | Some("::1")
+    )
 }
 
 /// 统一构建 HTTP client：

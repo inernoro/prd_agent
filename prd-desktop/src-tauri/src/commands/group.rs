@@ -105,7 +105,9 @@ pub async fn dissolve_group(group_id: String) -> Result<ApiResponse<serde_json::
 }
 
 #[command]
-pub async fn get_group_members(group_id: String) -> Result<ApiResponse<Vec<GroupMemberInfo>>, String> {
+pub async fn get_group_members(
+    group_id: String,
+) -> Result<ApiResponse<Vec<GroupMemberInfo>>, String> {
     let client = ApiClient::new();
     client.get(&format!("/groups/{}/members", group_id)).await
 }

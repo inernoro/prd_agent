@@ -50,7 +50,8 @@ fn load_history(app: &tauri::AppHandle) -> Result<PreviewAskHistoryFile, String>
     if !path.exists() {
         return Ok(PreviewAskHistoryFile::default());
     }
-    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read history file: {}", e))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read history file: {}", e))?;
     match serde_json::from_str::<PreviewAskHistoryFile>(&content) {
         Ok(v) => Ok(v),
         Err(_) => {
@@ -62,7 +63,8 @@ fn load_history(app: &tauri::AppHandle) -> Result<PreviewAskHistoryFile, String>
 
 fn save_history(app: &tauri::AppHandle, store: &PreviewAskHistoryFile) -> Result<(), String> {
     let path = get_history_path(app)?;
-    let content = serde_json::to_string_pretty(store).map_err(|e| format!("Failed to serialize history: {}", e))?;
+    let content = serde_json::to_string_pretty(store)
+        .map_err(|e| format!("Failed to serialize history: {}", e))?;
     fs::write(&path, content).map_err(|e| format!("Failed to write history file: {}", e))
 }
 
@@ -140,4 +142,3 @@ pub async fn clear_preview_ask_history(
     }
     save_history(&app, &store)
 }
-
