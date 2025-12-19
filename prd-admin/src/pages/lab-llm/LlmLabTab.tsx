@@ -1431,7 +1431,7 @@ export default function LlmLabTab() {
             </Button>
           </div>
           ) : (
-            <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1 pb-1">
+            <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1">
               <div className="flex gap-2 shrink-0">
                 <Button
                   size="xs"
@@ -1465,20 +1465,20 @@ export default function LlmLabTab() {
                 </label>
               ) : null}
               <div className="flex items-center gap-2 shrink-0">
-                <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-xs font-semibold leading-[28px]" style={{ color: 'var(--text-muted)' }}>
                   图片比例
                 </div>
                 <div className="flex items-center gap-2">
                   {ASPECT_OPTIONS.map((opt) => {
                     const active = imgSize === opt.size;
-                    const scale = 0.78;
+                    const scale = 0.55;
                     return (
                       <button
                         key={opt.id}
                         type="button"
-                        className="shrink-0 rounded-[10px] px-2 py-1.5 transition-colors"
+                        className="shrink-0 h-[28px] rounded-[10px] px-2 transition-colors inline-flex items-center justify-center gap-1.5"
                         style={{
-                          width: 60,
+                          width: 64,
                           background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)',
                           border: active ? '1px solid rgba(255,255,255,0.18)' : '1px solid rgba(255,255,255,0.10)',
                           color: 'var(--text-primary)',
@@ -1487,30 +1487,28 @@ export default function LlmLabTab() {
                         title={opt.label}
                         aria-pressed={active}
                       >
-                        <div className="flex flex-col items-center gap-1.5">
-                          <div
-                            className="rounded-[8px] flex items-center justify-center"
+                        <span
+                          className="rounded-[6px] flex items-center justify-center shrink-0"
+                          style={{
+                            width: 16,
+                            height: 16,
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            background: 'rgba(255,255,255,0.02)',
+                          }}
+                        >
+                          <span
                             style={{
-                              width: 26,
-                              height: 26,
-                              border: '1px solid rgba(255,255,255,0.12)',
+                              width: Math.max(6, Math.round(opt.iconW * scale)),
+                              height: Math.max(6, Math.round(opt.iconH * scale)),
+                              borderRadius: 4,
+                              border: '2px solid rgba(255,255,255,0.22)',
                               background: 'rgba(255,255,255,0.02)',
                             }}
-                          >
-                            <div
-                              style={{
-                                width: Math.round(opt.iconW * scale),
-                                height: Math.round(opt.iconH * scale),
-                                borderRadius: 6,
-                                border: '2px solid rgba(255,255,255,0.22)',
-                                background: 'rgba(255,255,255,0.02)',
-                              }}
-                            />
-                          </div>
-                          <div className="text-[11px] font-semibold" style={{ color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                            {opt.label}
-                          </div>
-                        </div>
+                          />
+                        </span>
+                        <span className="text-[11px] font-semibold" style={{ color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                          {opt.label}
+                        </span>
                       </button>
                     );
                   })}
