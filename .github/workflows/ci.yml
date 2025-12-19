@@ -166,7 +166,14 @@ jobs:
         run: |
           echo "fingerprint=$(rustc -Vv | sha256sum | cut -d ' ' -f1)" >> $GITHUB_OUTPUT
 
-      - name: Cache Cargo
+      - name: glibc fingerprint (Linux)
+        id: glibc
+        run: |
+          GLIBC_VER="$(getconf GNU_LIBC_VERSION 2>/dev/null || (ldd --version | head -n1))"
+          GLIBC_FP="$(printf '%s' "$GLIBC_VER" | sha256sum | cut -d ' ' -f1)"
+          echo "fingerprint=$GLIBC_FP" >> $GITHUB_OUTPUT
+
+      - name: Cache Cargo registry/git
         uses: actions/cache@v4
         with:
           path: |
@@ -174,11 +181,17 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            prd-desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ steps.rustc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ steps.rustc.outputs.fingerprint }}-
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo target (platform specific)
+        uses: actions/cache@v4
+        with:
+          path: |
+            prd-desktop/src-tauri/target/
+          key: ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-${{ steps.glibc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
 
       - name: Install system dependencies (Linux)
         run: |
