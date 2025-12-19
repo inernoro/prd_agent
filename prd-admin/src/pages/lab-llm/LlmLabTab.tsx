@@ -72,7 +72,7 @@ type ImageViewItem = {
 function filenameSafe(s: string) {
   const base = (s || '').trim().slice(0, 32) || 'image';
   return base
-    .replace(/[\s\/\\:*?"<>|]+/g, '_')
+    .replace(/[\s/\\:*?"<>|]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
 }
@@ -1359,7 +1359,17 @@ export default function LlmLabTab() {
                     <ImagePlus size={16} />
                     {imageRunning ? '生成中' : `生成 ${Math.max(1, Math.min(20, Number(singleN || 1)))} 张`}
                   </Button>
-                  <Button variant="secondary" size="md" onClick={() => setImageItems([])} disabled={imageRunning || imageItems.length === 0}>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => {
+                      setImageItems([]);
+                      setSingleGroupId('');
+                      setSingleSelected({});
+                      setImageError(null);
+                    }}
+                    disabled={imageRunning || imageItems.length === 0}
+                  >
                     清空
                   </Button>
                 </>
@@ -1744,7 +1754,7 @@ export default function LlmLabTab() {
             <>
               <div className="flex items-center justify-between shrink-0">
                 <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-                  生成图
+                  生图（单张）
                 </div>
                 <div className="flex items-center gap-2">
                   {imageRunning ? <Badge variant="subtle">生成中</Badge> : <Badge variant="subtle">就绪</Badge>}
@@ -1756,7 +1766,7 @@ export default function LlmLabTab() {
                 </div>
               ) : null}
               <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
-                {imageItems.length === 0 ? (
+                {singleList.length === 0 ? (
                   <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
                     <div
                       className="h-12 w-12 rounded-full flex items-center justify-center"
@@ -1772,51 +1782,53 @@ export default function LlmLabTab() {
                     </div>
                   </div>
                 ) : (
-                  <div
-                    ref={imageGridRef}
-                    className="grid gap-2"
-                    style={{ gridTemplateColumns: `repeat(${imageGridCols}, minmax(0, 1fr))` }}
-                  >
-                    {imageItems.map((it) => {
-                      const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                      return (
-                        <div
-                          key={it.key}
-                          className="rounded-[14px] p-3 flex flex-col gap-2"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-                              <span className="block truncate" title={it.prompt}>
-                                {it.prompt}
-                              </span>
-                              {it.revisedPrompt ? (
-                                <span className="block truncate mt-0.5" style={{ color: 'var(--text-muted)' }} title={it.revisedPrompt}>
-                                  修订：{it.revisedPrompt}
-                                </span>
-                              ) : null}
-                            </div>
-                            <div
-                              className="text-xs shrink-0"
-                              style={{
-                                color:
-                                  it.status === 'error'
-                                    ? 'rgba(239,68,68,0.95)'
-                                    : it.status === 'done'
-                                      ? 'rgba(34,197,94,0.95)'
-                                      : 'var(--text-muted)',
-                              }}
-                            >
-                              {it.status === 'running' ? '生成中' : it.status === 'done' ? '完成' : '失败'}
-                            </div>
-                          </div>
+                  <>
+                    {(() => {
+                      const all = singleList;
+                      const done = all.filter((x) => x.status === 'done' && (x.url || x.base64));
+                      const selectedKeys = Object.keys(singleSelected).filter((k) => singleSelected[k]);
+                      const prompt = all[0]?.prompt || '';
+
+                      const srcOf = (it: ImageViewItem) =>
+                        it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+
+                      const downloadSelected = async () => {
+                        const items = all
+                          .filter((x) => singleSelected[x.key])
+                          .map((x) => ({ src: srcOf(x), filename: `${prompt}_${Number(x.variantIndex ?? 0) + 1}` }));
+                        await downloadAllAsZip(items, `${prompt || 'single'}_${Date.now()}`);
+                      };
+
+                      const downloadAll = async () => {
+                        const items = done.map((x) => ({ src: srcOf(x), filename: `${prompt}_${Number(x.variantIndex ?? 0) + 1}` }));
+                        await downloadAllAsZip(items, `${prompt || 'single'}_${Date.now()}`);
+                      };
+
+                      const setAllSelected = (v: boolean) => {
+                        const next: Record<string, boolean> = {};
+                        for (const it of done) next[it.key] = v;
+                        setSingleSelected(next);
+                      };
+
+                      const n = all.length;
+                      const tile = (it: ImageViewItem) => {
+                        const src = srcOf(it);
+                        const selected = !!singleSelected[it.key];
+                        const canSelect = it.status === 'done' && !!src;
+                        return (
                           <div
-                            className="rounded-[12px] overflow-hidden relative"
+                            key={it.key}
+                            className="rounded-[12px] overflow-hidden relative cursor-pointer"
                             style={{
-                              border: '1px solid rgba(255,255,255,0.10)',
+                              border: selected ? '2px solid rgba(250,204,21,0.95)' : '1px solid rgba(255,255,255,0.10)',
                               background: 'rgba(255,255,255,0.02)',
-                              height: imageThumbHeight,
+                              height: '100%',
                             }}
+                            onClick={() => {
+                              if (!canSelect) return;
+                              setSingleSelected((p) => ({ ...p, [it.key]: !p[it.key] }));
+                            }}
+                            title={it.prompt}
                           >
                             {it.status === 'done' && src ? (
                               <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
@@ -1842,7 +1854,10 @@ export default function LlmLabTab() {
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
                                 style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
-                                onClick={() => void copyToClipboard(it.prompt)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void copyToClipboard(it.prompt);
+                                }}
                                 aria-label="复制提示词"
                                 title="复制提示词"
                                 disabled={!it.prompt}
@@ -1854,7 +1869,10 @@ export default function LlmLabTab() {
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
                                 style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
-                                onClick={() => void downloadImage(src, it.prompt)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void downloadImage(src, `${it.prompt}_${Number(it.variantIndex ?? 0) + 1}`);
+                                }}
                                 aria-label="下载图片"
                                 title="下载图片"
                                 disabled={it.status !== 'done' || !src}
@@ -1863,11 +1881,121 @@ export default function LlmLabTab() {
                                 下载
                               </button>
                             </div>
+
+                            {canSelect ? (
+                              <div className="absolute left-2 top-2 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                                #{Number(it.variantIndex ?? 0) + 1}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      };
+
+                      const toolbar = (
+                        <div className="flex items-center justify-between gap-2 pb-2">
+                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            已生成 {done.length}/{n} 张（点击图片可选择）
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button variant="secondary" size="xs" onClick={() => setAllSelected(true)} disabled={done.length === 0}>
+                              全选
+                            </Button>
+                            <Button variant="secondary" size="xs" onClick={() => setAllSelected(false)} disabled={selectedKeys.length === 0}>
+                              清空选择
+                            </Button>
+                            <Button variant="secondary" size="xs" onClick={downloadSelected} disabled={selectedKeys.length === 0}>
+                              <Download size={14} />
+                              下载选中
+                            </Button>
+                            <Button variant="primary" size="xs" onClick={downloadAll} disabled={done.length === 0}>
+                              <Download size={14} />
+                              下载全部
+                            </Button>
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
+
+                      // 预设布局：1~4 使用固定“分割”，>4 使用规则化网格
+                      if (n === 1) {
+                        return (
+                          <div>
+                            {toolbar}
+                            <div className="flex items-center justify-center">
+                              <div ref={imageGridRef} style={{ width: 'min(620px, 80%)' }}>
+                                <div style={{ height: imageThumbHeight }}>{tile(all[0])}</div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (n === 2) {
+                        return (
+                          <div>
+                            {toolbar}
+                            <div ref={imageGridRef} className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                              {all.slice(0, 2).map((x) => (
+                                <div key={x.key} style={{ height: imageThumbHeight }}>
+                                  {tile(x)}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (n === 3) {
+                        return (
+                          <div>
+                            {toolbar}
+                            <div
+                              ref={imageGridRef}
+                              className="grid gap-2"
+                              style={{
+                                gridTemplateColumns: '1.25fr 1fr',
+                                gridTemplateRows: '1fr 1fr',
+                                gridTemplateAreas: `"a b" "a c"`,
+                                height: imageThumbHeight,
+                              }}
+                            >
+                              <div style={{ gridArea: 'a' }}>{tile(all[0])}</div>
+                              <div style={{ gridArea: 'b' }}>{tile(all[1])}</div>
+                              <div style={{ gridArea: 'c' }}>{tile(all[2])}</div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (n === 4) {
+                        return (
+                          <div>
+                            {toolbar}
+                            <div ref={imageGridRef} className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                              {all.slice(0, 4).map((x) => (
+                                <div key={x.key} style={{ height: imageThumbHeight }}>
+                                  {tile(x)}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const cols = n <= 6 ? 3 : n <= 12 ? 4 : 5;
+                      return (
+                        <div>
+                          {toolbar}
+                          <div ref={imageGridRef} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+                            {all.map((x) => (
+                              <div key={x.key} style={{ height: imageThumbHeight }}>
+                                {tile(x)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
                 )}
               </div>
             </>
@@ -1879,6 +2007,26 @@ export default function LlmLabTab() {
                 </div>
                 <div className="flex items-center gap-2">
                   {batchRunning ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={async () => {
+                      const items = batchList
+                        .filter((x) => x.status === 'done' && (x.url || x.base64))
+                        .map((x) => {
+                          const src =
+                            x.url ||
+                            (x.base64 ? (x.base64.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) : '');
+                          return { src, filename: `${x.prompt}_${x.key}` };
+                        });
+                      await downloadAllAsZip(items, `batch_${Date.now()}`);
+                    }}
+                    disabled={batchList.filter((x) => x.status === 'done' && (x.url || x.base64)).length === 0}
+                    title="打包下载当前批量生成的所有已完成图片"
+                  >
+                    <Download size={14} />
+                    一键下载
+                  </Button>
                   <Button variant="secondary" size="xs" onClick={() => setBatchItems({})} disabled={batchRunning || batchList.length === 0}>
                     清空
                   </Button>
