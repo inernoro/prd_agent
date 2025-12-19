@@ -6,6 +6,7 @@
 #   ./quick.sh admin    - 启动Web管理后台
 #   ./quick.sh desktop  - 启动桌面客户端
 #   ./quick.sh all      - 同时启动前后端
+#   ./quick.sh check    - 桌面端本地CI等价检查（fmt/clippy/icons等）
 
 set -e
 
@@ -55,6 +56,41 @@ start_desktop() {
     pnpm tauri:dev
 }
 
+# 桌面端本地CI等价检查（避免 CI desktop 才爆）
+check_desktop() {
+    log_info "Running desktop check (CI-equivalent)..."
+
+    # frontend checks (align with .github/workflows/ci.yml desktop-check)
+    cd "$SCRIPT_DIR/prd-desktop"
+    if [ ! -d "node_modules" ]; then
+        log_warn "node_modules not found, running pnpm install..."
+        pnpm install
+    fi
+
+    log_info "Type check frontend (tsc --noEmit)..."
+    pnpm tsc --noEmit
+
+    log_info "Build frontend..."
+    pnpm build
+
+    log_info "Generate Tauri icons..."
+    pnpm tauri:icons
+
+    # rust checks
+    cd "$SCRIPT_DIR/prd-desktop/src-tauri"
+
+    log_info "Cargo check..."
+    cargo check
+
+    log_info "Rust format check (cargo fmt --check)..."
+    cargo fmt --check
+
+    log_info "Clippy (deny warnings)..."
+    cargo clippy -- -D warnings
+
+    log_success "Desktop check passed!"
+}
+
 # 同时启动前后端
 start_all() {
     log_info "Starting all services..."
@@ -97,6 +133,7 @@ show_help() {
     echo "  admin      Start admin panel (prd-admin)"
     echo "  desktop    Start desktop client (prd-desktop)"
     echo "  all        Start backend and web admin together"
+    echo "  check      Run desktop CI-equivalent checks"
     echo "  help       Show this help message"
     echo ""
 }
@@ -114,6 +151,9 @@ case "${1:-}" in
         ;;
     "all")
         start_all
+        ;;
+    "check")
+        check_desktop
         ;;
     "help"|"-h"|"--help")
         show_help

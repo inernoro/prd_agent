@@ -34,6 +34,9 @@ Thumbs.db
 Cargo.lock
 *.rs.bk
 
+# Track Tauri app lockfile for reproducible CI/builds
+!prd-desktop/src-tauri/Cargo.lock
+
 # .NET
 *.dll
 *.exe

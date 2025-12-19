@@ -126,7 +126,7 @@ jobs:
     name: Desktop Client Check
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     defaults:
       run:
         working-directory: prd-desktop
@@ -161,6 +161,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust toolchain fingerprint
+        id: rustc
+        run: |
+          echo "fingerprint=$(rustc -Vv | sha256sum | cut -d ' ' -f1)" >> $GITHUB_OUTPUT
+
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -170,8 +175,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             prd-desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ steps.rustc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-${{ steps.rustc.outputs.fingerprint }}-
             ${{ runner.os }}-cargo-
 
       - name: Install system dependencies (Linux)

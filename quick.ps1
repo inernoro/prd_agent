@@ -4,10 +4,11 @@
 #   .\quick.ps1 admin    - 启动Web管理后台
 #   .\quick.ps1 desktop  - 启动桌面客户端
 #   .\quick.ps1 all      - 同时启动前后端
+#   .\quick.ps1 check    - 桌面端本地CI等价检查（fmt/clippy/icons等）
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("", "admin", "desktop", "all", "help")]
+    [ValidateSet("", "admin", "desktop", "all", "check", "help")]
     [string]$Command = ""
 )
 
@@ -53,6 +54,40 @@ function Start-Desktop {
     Write-Info "Starting desktop client..."
     Set-Location "$ScriptDir\prd-desktop"
     pnpm tauri:dev
+}
+
+# 桌面端本地CI等价检查（避免 CI desktop 才爆）
+function Check-Desktop {
+    Write-Info "Running desktop check (CI-equivalent)..."
+
+    Set-Location "$ScriptDir\prd-desktop"
+
+    if (-not (Test-Path ".\node_modules")) {
+        Write-Warn "node_modules not found, running pnpm install..."
+        pnpm install
+    }
+
+    Write-Info "Type check frontend (tsc --noEmit)..."
+    pnpm tsc --noEmit
+
+    Write-Info "Build frontend..."
+    pnpm build
+
+    Write-Info "Generate Tauri icons..."
+    pnpm tauri:icons
+
+    Set-Location "$ScriptDir\prd-desktop\src-tauri"
+
+    Write-Info "Cargo check..."
+    cargo check
+
+    Write-Info "Rust format check (cargo fmt --check)..."
+    cargo fmt --check
+
+    Write-Info "Clippy (deny warnings)..."
+    cargo clippy -- -D warnings
+
+    Write-Success "Desktop check passed!"
 }
 
 # 同时启动前后端
@@ -118,6 +153,7 @@ function Show-Help {
     Write-Host "  admin      Start admin panel (prd-admin)"
     Write-Host "  desktop    Start desktop client (prd-desktop)"
     Write-Host "  all        Start backend and web admin together"
+    Write-Host "  check      Run desktop CI-equivalent checks"
     Write-Host "  help       Show this help message"
     Write-Host ""
 }
@@ -128,6 +164,7 @@ switch ($Command) {
     "admin" { Start-Admin }
     "desktop" { Start-Desktop }
     "all" { Start-All }
+    "check" { Check-Desktop }
     "help" { Show-Help }
     default {
         Write-Error "Unknown command: $Command"
