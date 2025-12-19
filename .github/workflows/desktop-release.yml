@@ -76,7 +76,22 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache Cargo
+      - name: Rust toolchain fingerprint
+        id: rustc
+        shell: bash
+        run: |
+          echo "fingerprint=$(rustc -Vv | sha256sum | cut -d ' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: glibc fingerprint (Linux)
+        id: glibc
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          GLIBC_VER="$(getconf GNU_LIBC_VERSION 2>/dev/null || (ldd --version | head -n1))"
+          GLIBC_FP="$(printf '%s' "$GLIBC_VER" | sha256sum | cut -d ' ' -f1)"
+          echo "fingerprint=$GLIBC_FP" >> $GITHUB_OUTPUT
+
+      - name: Cache Cargo registry/git
         uses: actions/cache@v4
         with:
           path: |
@@ -84,10 +99,18 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            prd-desktop/src-tauri/target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-cargo-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-registry-
+
+      - name: Cache Cargo target (platform specific)
+        uses: actions/cache@v4
+        with:
+          path: |
+            prd-desktop/src-tauri/target/
+          key: >-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-${{ steps.glibc.outputs.fingerprint || 'nonlinux' }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
 
       # Linux 依赖
       - name: Install Linux dependencies
@@ -131,6 +154,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install
+
+      - name: Generate Tauri icons
+        run: pnpm tauri:icons
 
       # 构建 Tauri 应用
       - name: Build Tauri app
