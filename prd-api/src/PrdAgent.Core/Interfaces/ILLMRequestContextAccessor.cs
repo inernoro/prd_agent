@@ -8,7 +8,9 @@ public record LlmRequestContext(
     string? ViewRole,
     int? DocumentChars,
     string? DocumentHash,
-    string? SystemPromptRedacted);
+    string? SystemPromptRedacted,
+    string? RequestType = null,
+    string? RequestPurpose = null);
 
 public interface ILLMRequestContextAccessor
 {

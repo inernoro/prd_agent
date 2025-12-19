@@ -62,6 +62,10 @@ export type LlmRequestLogListItem = {
   groupId?: string | null;
   sessionId?: string | null;
   viewRole?: string | null;
+  /** 这次调用的类型：reasoning/intent/vision/imageGen/unknown/... */
+  requestType?: string | null;
+  /** 这次调用的用途：如 chat.sendMessage / previewAsk.section / imageGen.generate */
+  requestPurpose?: string | null;
   status: string;
   startedAt: string;
   firstByteAt?: string | null;
@@ -86,6 +90,8 @@ export type LlmRequestLog = {
   sessionId?: string | null;
   userId?: string | null;
   viewRole?: string | null;
+  requestType?: string | null;
+  requestPurpose?: string | null;
   provider: string;
   model: string;
   apiBase?: string | null;

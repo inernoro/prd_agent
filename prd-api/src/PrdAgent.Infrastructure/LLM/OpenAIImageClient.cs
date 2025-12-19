@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -22,17 +23,23 @@ public class OpenAIImageClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
+    private readonly ILlmRequestLogWriter? _logWriter;
+    private readonly ILLMRequestContextAccessor? _ctxAccessor;
 
     public OpenAIImageClient(
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
-        ILogger<OpenAIImageClient> logger)
+        ILogger<OpenAIImageClient> logger,
+        ILlmRequestLogWriter? logWriter = null,
+        ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
+        _logWriter = logWriter;
+        _ctxAccessor = ctxAccessor;
     }
 
     public async Task<ApiResponse<ImageGenResult>> GenerateAsync(
@@ -49,6 +56,13 @@ public class OpenAIImageClient
 
         if (n <= 0) n = 1;
         if (n > 10) n = 10;
+
+        // 日志上下文：若上游未设置 scope，则使用默认值兜底（仍保证“任何生图调用都有日志”）
+        var ctx = _ctxAccessor?.Current;
+        var requestId = (ctx?.RequestId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
+        var startedAt = DateTime.UtcNow;
+        string? logId = null;
 
         // 选择生图模型（不存在则失败）
         var model = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
@@ -100,6 +114,40 @@ public class OpenAIImageClient
             ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
         };
 
+        // 写入 LLM 请求日志（生图）
+        if (_logWriter != null)
+        {
+            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(req, OpenAIImageJsonContext.Default.OpenAIImageRequest));
+            logId = await _logWriter.StartAsync(
+                new LlmLogStart(
+                    RequestId: requestId,
+                    Provider: "OpenAI",
+                    Model: model.ModelName,
+                    ApiBase: endpointUri != null && endpointUri.IsAbsoluteUri ? $"{endpointUri.Scheme}://{endpointUri.Host}/" : httpClient.BaseAddress?.ToString(),
+                    Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : endpoint.TrimStart('/'),
+                    RequestHeadersRedacted: new Dictionary<string, string>
+                    {
+                        ["content-type"] = "application/json",
+                        ["authorization"] = "Bearer ***"
+                    },
+                    RequestBodyRedacted: reqLogJson,
+                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
+                    QuestionText: req.Prompt,
+                    SystemPromptChars: null,
+                    SystemPromptHash: null,
+                    MessageCount: null,
+                    GroupId: ctx?.GroupId,
+                    SessionId: ctx?.SessionId,
+                    UserId: ctx?.UserId,
+                    ViewRole: ctx?.ViewRole,
+                    DocumentChars: null,
+                    DocumentHash: null,
+                    StartedAt: startedAt,
+                    RequestType: (ctx?.RequestType ?? "imageGen"),
+                    RequestPurpose: (ctx?.RequestPurpose ?? "imageGen.generate")),
+                ct);
+        }
+
         HttpResponseMessage resp;
         try
         {
@@ -112,13 +160,27 @@ public class OpenAIImageClient
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Image generate request failed");
+            if (logId != null)
+            {
+                _logWriter?.MarkError(logId, $"Image generate request failed: {ex.Message}");
+            }
             return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+        }
+
+        if (logId != null)
+        {
+            // 此时已拿到响应头，视为“首字节”已到达
+            _logWriter?.MarkFirstByte(logId, DateTime.UtcNow);
         }
 
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("Image generate failed: {Status} {Body}", (int)resp.StatusCode, body.Length > 500 ? body[..500] : body);
+            if (logId != null)
+            {
+                _logWriter?.MarkError(logId, $"Image generate failed: HTTP {(int)resp.StatusCode}", (int)resp.StatusCode);
+            }
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, $"生图失败：HTTP {(int)resp.StatusCode}");
         }
 
@@ -151,6 +213,16 @@ public class OpenAIImageClient
                     revised = rpEl.GetString();
                 }
 
+                // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
+                if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var comma = b64.IndexOf(',');
+                    if (comma >= 0 && comma + 1 < b64.Length)
+                    {
+                        b64 = b64[(comma + 1)..];
+                    }
+                }
+
                 images.Add(new ImageGenImage
                 {
                     Index = idx++,
@@ -160,11 +232,50 @@ public class OpenAIImageClient
                 });
             }
 
+            if (logId != null)
+            {
+                var endedAt = DateTime.UtcNow;
+                var summary = new
+                {
+                    images = images.Count,
+                    responseFormat = req.ResponseFormat,
+                    size = req.Size,
+                    // 不记录 base64 内容；仅记录是否返回
+                    hasBase64 = images.Any(x => !string.IsNullOrWhiteSpace(x.Base64)),
+                    hasUrl = images.Any(x => !string.IsNullOrWhiteSpace(x.Url)),
+                    revisedPrompt = images.FirstOrDefault()?.RevisedPrompt
+                };
+                var answerText = JsonSerializer.Serialize(summary);
+                var hash = LlmLogRedactor.Sha256Hex(answerText);
+                _logWriter?.MarkDone(
+                    logId,
+                    new LlmLogDone(
+                        StatusCode: (int)resp.StatusCode,
+                        ResponseHeaders: new Dictionary<string, string>
+                        {
+                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
+                        },
+                        InputTokens: null,
+                        OutputTokens: null,
+                        CacheCreationInputTokens: null,
+                        CacheReadInputTokens: null,
+                        AnswerText: answerText,
+                        AssembledTextChars: answerText.Length,
+                        AssembledTextHash: hash,
+                        Status: "succeeded",
+                        EndedAt: endedAt,
+                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
+            }
+
             return ApiResponse<ImageGenResult>.Ok(new ImageGenResult { Images = images });
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Image generate parse failed");
+            if (logId != null)
+            {
+                _logWriter?.MarkError(logId, "Image generate parse failed");
+            }
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图响应解析失败");
         }
     }

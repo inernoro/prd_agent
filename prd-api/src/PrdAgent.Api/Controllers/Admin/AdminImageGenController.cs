@@ -22,6 +22,7 @@ public class AdminImageGenController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly OpenAIImageClient _imageClient;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<AdminImageGenController> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -30,11 +31,13 @@ public class AdminImageGenController : ControllerBase
         MongoDbContext db,
         IModelDomainService modelDomain,
         OpenAIImageClient imageClient,
+        ILLMRequestContextAccessor llmRequestContext,
         ILogger<AdminImageGenController> logger)
     {
         _db = db;
         _modelDomain = modelDomain;
         _imageClient = imageClient;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -80,6 +83,19 @@ public class AdminImageGenController : ControllerBase
 
         try
         {
+            var adminId = GetAdminId();
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null,
+                SessionId: null,
+                UserId: adminId,
+                ViewRole: "ADMIN",
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[IMAGE_GEN_PLAN]",
+                RequestType: "intent",
+                RequestPurpose: "imageGen.plan"));
+
             var client = await _modelDomain.GetClientAsync(ModelPurpose.Intent, ct);
             var messages = new List<LLMMessage> { new() { Role = "user", Content = text } };
 
@@ -127,6 +143,7 @@ public class AdminImageGenController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status502BadGateway)]
     public async Task<IActionResult> Generate([FromBody] ImageGenGenerateRequest request, CancellationToken ct)
     {
+        var adminId = GetAdminId();
         var prompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -139,6 +156,18 @@ public class AdminImageGenController : ControllerBase
 
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: adminId,
+            ViewRole: "ADMIN",
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[IMAGE_GEN_GENERATE]",
+            RequestType: "imageGen",
+            RequestPurpose: "imageGen.generate"));
 
         var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct);
         if (!res.Success)
@@ -216,6 +245,18 @@ public class AdminImageGenController : ControllerBase
 
                 try
                 {
+                    using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                        RequestId: Guid.NewGuid().ToString("N"),
+                        GroupId: null,
+                        SessionId: null,
+                        UserId: adminId,
+                        ViewRole: "ADMIN",
+                        DocumentChars: null,
+                        DocumentHash: null,
+                        SystemPromptRedacted: "[IMAGE_GEN_BATCH_GENERATE]",
+                        RequestType: "imageGen",
+                        RequestPurpose: "imageGen.batch.generate"));
+
                     var res = await _imageClient.GenerateAsync(prompt, n: 1, size, responseFormat, cancellationToken);
                     if (!res.Success)
                     {

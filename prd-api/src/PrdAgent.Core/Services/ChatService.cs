@@ -135,7 +135,9 @@ public class ChatService : IChatService
             ViewRole: session.CurrentRole.ToString(),
             DocumentChars: document.RawContent?.Length ?? 0,
             DocumentHash: docHash,
-            SystemPromptRedacted: systemPromptRedacted));
+            SystemPromptRedacted: systemPromptRedacted,
+            RequestType: "reasoning",
+            RequestPurpose: "chat.sendMessage"));
 
         await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
         {

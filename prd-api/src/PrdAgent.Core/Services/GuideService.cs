@@ -184,7 +184,9 @@ public class GuideService : IGuideService
             ViewRole: session.CurrentRole.ToString(),
             DocumentChars: document.RawContent?.Length ?? 0,
             DocumentHash: docHash,
-            SystemPromptRedacted: systemPromptRedacted));
+            SystemPromptRedacted: systemPromptRedacted,
+            RequestType: "reasoning",
+            RequestPurpose: "guide.step"));
 
         await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
         {

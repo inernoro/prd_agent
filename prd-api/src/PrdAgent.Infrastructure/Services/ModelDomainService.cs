@@ -91,7 +91,9 @@ public class ModelDomainService : IModelDomainService
             ViewRole: null,
             DocumentChars: null,
             DocumentHash: null,
-            SystemPromptRedacted: "[INTENT_GROUP_NAME]"));
+            SystemPromptRedacted: "[INTENT_GROUP_NAME]",
+            RequestType: "intent",
+            RequestPurpose: "groupName.suggest"));
 
         var systemPrompt =
             "你是PRD Agent的意图模型。你的任务：根据给定的文件名与PRD片段，生成一个适合“群组名称”的短标题。\n" +

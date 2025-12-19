@@ -153,6 +153,8 @@ public class OpenAIClient : ILLMClient
                     SessionId: ctx?.SessionId,
                     UserId: ctx?.UserId,
                     ViewRole: ctx?.ViewRole,
+                    RequestType: ctx?.RequestType,
+                    RequestPurpose: ctx?.RequestPurpose,
                     DocumentChars: ctx?.DocumentChars,
                     DocumentHash: ctx?.DocumentHash,
                     StartedAt: startedAt),

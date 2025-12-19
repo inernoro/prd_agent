@@ -14,6 +14,12 @@ public class LlmRequestLog
     public string? UserId { get; set; }
     public string? ViewRole { get; set; }
 
+    // 本次调用类型/用途（用于追溯“这次请求是做什么的”）
+    // - RequestType: 推理/意图/识图/生图/unknown/...
+    // - RequestPurpose: 业务侧用途标识（如 chat.sendMessage / previewAsk.section / imageGen.generate）
+    public string? RequestType { get; set; }
+    public string? RequestPurpose { get; set; }
+
     // Provider / 模型信息
     public string Provider { get; set; } = string.Empty; // Claude/OpenAI/...
     public string Model { get; set; } = string.Empty;

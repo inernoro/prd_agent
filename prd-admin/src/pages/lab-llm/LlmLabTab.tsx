@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Clock3, Copy, Cpu, Expand, ImagePlus, Layers, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
+import { Clock3, Copy, Cpu, Download, Expand, ImagePlus, Layers, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
+import { PrdLoader } from '@/components/ui/PrdLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import type { Platform } from '@/types/admin';
 import type { Model } from '@/types/admin';
@@ -63,6 +64,50 @@ type ImageViewItem = {
   revisedPrompt?: string | null;
   errorMessage?: string;
 };
+
+function filenameSafe(s: string) {
+  const base = (s || '').trim().slice(0, 32) || 'image';
+  return base
+    .replace(/[\s\/\\:*?"<>|]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function downloadImage(src: string, filename: string) {
+  const name = filenameSafe(filename) || 'image';
+  const finalName = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ? name : `${name}.png`;
+
+  // data url / blob url：直接下载
+  if (src.startsWith('data:') || src.startsWith('blob:')) {
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = finalName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return;
+  }
+
+  // http(s)：优先 fetch 成 blob 再下载（跨域可能失败），失败则降级直接打开
+  try {
+    const res = await fetch(src, { mode: 'cors' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = finalName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return;
+  } catch {
+    window.open(src, '_blank', 'noopener,noreferrer');
+  }
+}
 
 const defaultParams: ModelLabParams = {
   temperature: 0.2,
@@ -1562,7 +1607,7 @@ export default function LlmLabTab() {
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {imageItems.map((it) => {
-                      const src = it.url || (it.base64 ? `data:image/png;base64,${it.base64}` : '');
+                      const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
                       return (
                         <div
                           key={it.key}
@@ -1595,16 +1640,54 @@ export default function LlmLabTab() {
                             </div>
                           </div>
                           <div
-                            className="rounded-[12px] overflow-hidden"
+                            className="rounded-[12px] overflow-hidden relative"
                             style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
                           >
                             {it.status === 'done' && src ? (
                               <img src={src} alt={it.prompt} className="w-full h-auto block" />
                             ) : (
-                              <div className="w-full h-[180px] flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                                {it.status === 'error' ? it.errorMessage || '失败' : '等待生成...'}
+                              <div className="w-full h-[180px] flex flex-col items-center justify-center gap-2 px-3 text-center">
+                                {it.status === 'error' ? (
+                                  <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                    {it.errorMessage || '失败'}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <PrdLoader size={40} />
+                                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                      正在生成中…
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             )}
+
+                            <div className="absolute right-2 bottom-2 flex items-center gap-1">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                onClick={() => void copyToClipboard(it.prompt)}
+                                aria-label="复制提示词"
+                                title="复制提示词"
+                                disabled={!it.prompt}
+                              >
+                                <Copy size={12} />
+                                复制
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                onClick={() => void downloadImage(src, it.prompt)}
+                                aria-label="下载图片"
+                                title="下载图片"
+                                disabled={it.status !== 'done' || !src}
+                              >
+                                <Download size={12} />
+                                下载
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1650,7 +1733,7 @@ export default function LlmLabTab() {
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {batchList.map((it) => {
-                      const src = it.url || (it.base64 ? `data:image/png;base64,${it.base64}` : '');
+                      const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
                       return (
                         <div
                           key={it.key}
@@ -1678,16 +1761,54 @@ export default function LlmLabTab() {
                             </div>
                           </div>
                           <div
-                            className="rounded-[12px] overflow-hidden"
+                            className="rounded-[12px] overflow-hidden relative"
                             style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
                           >
                             {it.status === 'done' && src ? (
                               <img src={src} alt={it.prompt} className="w-full h-auto block" />
                             ) : (
-                              <div className="w-full h-[180px] flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                                {it.status === 'error' ? it.errorMessage || '失败' : '等待生成...'}
+                              <div className="w-full h-[180px] flex flex-col items-center justify-center gap-2 px-3 text-center">
+                                {it.status === 'error' ? (
+                                  <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                    {it.errorMessage || '失败'}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <PrdLoader size={40} />
+                                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                      正在生成中…
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             )}
+
+                            <div className="absolute right-2 bottom-2 flex items-center gap-1">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                onClick={() => void copyToClipboard(it.prompt)}
+                                aria-label="复制提示词"
+                                title="复制提示词"
+                                disabled={!it.prompt}
+                              >
+                                <Copy size={12} />
+                                复制
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                onClick={() => void downloadImage(src, it.prompt)}
+                                aria-label="下载图片"
+                                title="下载图片"
+                                disabled={it.status !== 'done' || !src}
+                              >
+                                <Download size={12} />
+                                下载
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );

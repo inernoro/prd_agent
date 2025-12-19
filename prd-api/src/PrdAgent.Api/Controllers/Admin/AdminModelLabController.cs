@@ -392,6 +392,7 @@ public class AdminModelLabController : ControllerBase
 
         // 旁路记录上下文（不记录 prompt 原文）
         var requestId = Guid.NewGuid().ToString("N");
+        var requestType = effective.Suite == ModelLabSuite.Intent ? "intent" : "reasoning";
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: null,
@@ -400,7 +401,9 @@ public class AdminModelLabController : ControllerBase
             ViewRole: null,
             DocumentChars: null,
             DocumentHash: null,
-            SystemPromptRedacted: "[MODEL_LAB]"));
+            SystemPromptRedacted: "[MODEL_LAB]",
+            RequestType: requestType,
+            RequestPurpose: "modelLab.run"));
 
         var ttftSum = 0L;
         var totalSum = 0L;

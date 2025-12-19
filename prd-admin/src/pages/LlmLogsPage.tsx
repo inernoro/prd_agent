@@ -54,6 +54,30 @@ function fmtHashOrHidden(v: string | null | undefined): string {
   return s.length > 24 ? `${s.slice(0, 18)}…` : s;
 }
 
+type RequestTypeTone = 'gold' | 'green' | 'blue' | 'purple' | 'muted';
+
+function normalizeRequestType(t: string | null | undefined): string {
+  return (t ?? '').trim().toLowerCase();
+}
+
+function requestTypeToBadge(t: string | null | undefined): { label: string; title: string; tone: RequestTypeTone } {
+  const v = normalizeRequestType(t);
+  if (v === 'intent') return { label: '意图', title: '意图', tone: 'green' };
+  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue' };
+  if (v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple' };
+  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '推理', tone: 'gold' };
+  if (!v || v === 'unknown') return { label: '未知', title: '未知', tone: 'muted' };
+  return { label: '未知', title: v, tone: 'muted' };
+}
+
+function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
+  if (tone === 'green') return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' };
+  if (tone === 'blue') return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'rgba(59, 130, 246, 0.95)' };
+  if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
+  if (tone === 'gold') return { background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)', color: 'var(--accent-gold-2)' };
+  return { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-muted)' };
+}
+
 function tryPrettyJsonText(text: string): string {
   const raw = (text ?? '').trim();
   if (!raw) return '';
@@ -480,6 +504,29 @@ export default function LlmLogsPage() {
                         {it.groupId ? ` · groupId: ${it.groupId}` : ''}
                         {it.sessionId ? ` · sessionId: ${it.sessionId}` : ''}
                       </div>
+                      <div className="mt-1 flex items-center gap-2 min-w-0">
+                        {(() => {
+                          const b = requestTypeToBadge(it.requestType);
+                          return (
+                            <label
+                              className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+                              title={b.title}
+                              style={requestTypeChipStyle(b.tone)}
+                            >
+                              {b.label}
+                            </label>
+                          );
+                        })()}
+                        {(() => {
+                          const p = String(it.requestPurpose ?? '').trim();
+                          if (!p) return null;
+                          return (
+                            <div className="min-w-0 text-[11px] font-semibold truncate" style={{ color: 'var(--text-muted)' }} title={p}>
+                              {p}
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
 
                     <div className="text-right">
@@ -578,6 +625,8 @@ export default function LlmLogsPage() {
                     { k: 'model', v: detail.model || '—' },
                     { k: 'status', v: detail.status || '—' },
                     { k: 'requestId', v: detail.requestId || '—' },
+                    { k: 'requestType', v: detail.requestType || '—' },
+                    { k: 'requestPurpose', v: detail.requestPurpose || '—' },
                     { k: 'groupId', v: detail.groupId || '—' },
                     { k: 'sessionId', v: detail.sessionId || '—' },
                     { k: 'startedAt', v: formatLocalTime(detail.startedAt) },

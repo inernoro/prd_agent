@@ -21,7 +21,9 @@ public record LlmLogStart(
     string? ViewRole,
     int? DocumentChars,
     string? DocumentHash,
-    DateTime StartedAt);
+    DateTime StartedAt,
+    string? RequestType = null,
+    string? RequestPurpose = null);
 
 public record LlmLogDone(
     int? StatusCode,

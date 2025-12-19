@@ -33,6 +33,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 SessionId = start.SessionId,
                 UserId = start.UserId,
                 ViewRole = start.ViewRole,
+                RequestType = start.RequestType,
+                RequestPurpose = start.RequestPurpose,
                 Provider = start.Provider,
                 Model = start.Model,
                 ApiBase = start.ApiBase,

@@ -133,7 +133,9 @@ public class PreviewAskService : IPreviewAskService
             ViewRole: session.CurrentRole.ToString(),
             DocumentChars: sectionMarkdown.Length,
             DocumentHash: docHash,
-            SystemPromptRedacted: systemPromptRedacted));
+            SystemPromptRedacted: systemPromptRedacted,
+            RequestType: "reasoning",
+            RequestPurpose: "previewAsk.section"));
 
         yield return new PreviewAskStreamEvent { Type = "start", RequestId = requestId };
 
