@@ -137,3 +137,202 @@
   );
   animation: mainRowSweepRtl 1.1s ease-in-out infinite;
 }
+
+/* 模型地图（六芒星）：几何描边 + 节点依次点亮（避免五角星审美问题） */
+@keyframes modelMapLineDraw {
+  0% { stroke-dashoffset: 280; opacity: 0; }
+  12% { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 1; }
+}
+
+@keyframes modelMapNodeIn {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.92); filter: drop-shadow(0 0 0 rgba(0,0,0,0)); }
+  65% { opacity: 1; transform: translate(-50%, -50%) scale(1.02); filter: drop-shadow(0 10px 18px rgba(0,0,0,0.35)); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: drop-shadow(0 10px 18px rgba(0,0,0,0.35)); }
+}
+
+@keyframes modelMapCenterIn {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes modelMapDotBreath {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 10px rgba(255,255,255,0.06)); opacity: 0.92; }
+  50% { transform: scale(1.08); filter: drop-shadow(0 0 18px rgba(255,255,255,0.14)); opacity: 1; }
+}
+
+.model-map-dialog { }
+
+.model-map-stage {
+  position: relative;
+  border-radius: 18px;
+  border: 1px solid var(--border-subtle);
+  background:
+    radial-gradient(500px 320px at 50% 45%, rgba(250, 204, 21, 0.06) 0%, rgba(255,255,255,0.02) 42%, rgba(0,0,0,0) 72%),
+    radial-gradient(520px 360px at 50% 55%, rgba(59, 130, 246, 0.05) 0%, rgba(0,0,0,0) 70%),
+    rgba(255,255,255,0.02);
+  overflow: hidden;
+}
+
+.model-map-frame {
+  position: relative;
+  width: min(560px, 100%);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  display: block;
+}
+
+.model-map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.model-map-line {
+  fill: none;
+  stroke: rgba(255,255,255,0.16);
+  stroke-width: 1.35;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke-dasharray: 280;
+  stroke-dashoffset: 280;
+  filter: drop-shadow(0 10px 22px rgba(0,0,0,0.45));
+}
+
+.model-map-line.line-a {
+  animation: modelMapLineDraw 900ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
+}
+
+.model-map-line.line-b {
+  animation: modelMapLineDraw 900ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
+  animation-delay: 140ms;
+}
+
+.model-map-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(240px, 62%);
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-elevated) 86%, black);
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.42);
+  opacity: 0;
+  animation: modelMapCenterIn 520ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
+  animation-delay: var(--mm-delay, 0ms);
+}
+
+.model-map-center-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.72);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.model-map-center-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+}
+
+.model-map-center-row .k { color: rgba(255,255,255,0.45); font-weight: 700; }
+.model-map-center-row .v { color: rgba(255,255,255,0.86); font-weight: 800; }
+
+.model-map-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  animation: modelMapNodeIn 520ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
+  animation-delay: var(--mm-delay, 0ms);
+}
+
+.model-map-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  margin: 0 auto 8px auto;
+  background: var(--mm-accent, rgba(255,255,255,0.75));
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--mm-accent, rgba(255,255,255,0.75)) 18%, transparent),
+    0 16px 48px rgba(0,0,0,0.35);
+  animation: modelMapDotBreath 2.9s ease-in-out infinite;
+  animation-delay: calc(var(--mm-delay, 0ms) + 520ms);
+}
+
+.model-map-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.86);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.36);
+  max-width: min(240px, 42vw);
+}
+
+.model-map-type {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--mm-accent, rgba(255,255,255,0.75));
+  flex: 0 0 auto;
+}
+
+.model-map-sep {
+  color: rgba(255,255,255,0.35);
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+/* 模型名：强制单行，不越界；超长时横向滚动 */
+.model-map-name {
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 160px;
+  padding-bottom: 1px; /* 让滚动不挤压垂直对齐 */
+  scrollbar-width: none; /* Firefox */
+}
+.model-map-name::-webkit-scrollbar { height: 0; }
+
+/* 角位坐标（相对正方形画布） */
+.model-map-node.pos-top { top: 9%; left: 50%; }
+.model-map-node.pos-top-right { top: 27%; left: 83%; }
+.model-map-node.pos-bottom-right { top: 73%; left: 83%; }
+.model-map-node.pos-bottom { top: 91%; left: 50%; }
+.model-map-node.pos-bottom-left { top: 73%; left: 17%; }
+.model-map-node.pos-top-left { top: 27%; left: 17%; }
+
+/* tone：用更“控色”的点亮方式，不做五角星那种显眼形状 */
+.tone-gold { --mm-accent: rgba(250, 204, 21, 0.95); }
+.tone-green { --mm-accent: rgba(34, 197, 94, 0.95); }
+.tone-blue { --mm-accent: rgba(59, 130, 246, 0.95); }
+.tone-purple { --mm-accent: rgba(168, 85, 247, 0.95); }
+.tone-cyan { --mm-accent: rgba(34, 211, 238, 0.95); }
+.tone-amber { --mm-accent: rgba(245, 158, 11, 0.95); }
+.tone-muted { --mm-accent: rgba(255, 255, 255, 0.55); }
+
+@media (prefers-reduced-motion: reduce) {
+  .model-map-line,
+  .model-map-node,
+  .model-map-center,
+  .model-map-dot {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: translate(-50%, -50%) !important;
+    stroke-dashoffset: 0 !important;
+  }
+}

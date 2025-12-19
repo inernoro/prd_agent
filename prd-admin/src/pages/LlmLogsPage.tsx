@@ -1,10 +1,11 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
-import { Copy, RefreshCw, Search } from 'lucide-react';
+import { Copy, Eraser, Filter, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -338,11 +339,6 @@ export default function LlmLogsPage() {
     color: 'var(--text-primary)',
   };
 
-  const selectStyle: React.CSSProperties = {
-    ...inputStyle,
-    appearance: 'none',
-  };
-
   return (
     <div className="space-y-4">
       <style>{`
@@ -374,24 +370,24 @@ export default function LlmLogsPage() {
 
       <Card className="p-4">
         <div className="grid gap-3 md:grid-cols-6">
-          <select value={qProvider} onChange={(e) => setQProvider(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={selectStyle}>
+          <Select value={qProvider} onChange={(e) => setQProvider(e.target.value)} uiSize="sm" style={inputStyle}>
             <option value="">provider（全部）</option>
             {metaProviders.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
-          </select>
-          <select value={qModel} onChange={(e) => setQModel(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={selectStyle}>
+          </Select>
+          <Select value={qModel} onChange={(e) => setQModel(e.target.value)} uiSize="sm" style={inputStyle}>
             <option value="">model（全部）</option>
             {metaModels.map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
-          </select>
-          <select value={qStatus} onChange={(e) => setQStatus(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={selectStyle}>
+          </Select>
+          <Select value={qStatus} onChange={(e) => setQStatus(e.target.value)} uiSize="sm" style={inputStyle}>
             <option value="">status（全部）</option>
             {metaStatuses.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
-          </select>
+          </Select>
           <input value={qGroupId} onChange={(e) => setQGroupId(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={inputStyle} placeholder="groupId" />
           <input value={qSessionId} onChange={(e) => setQSessionId(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={inputStyle} placeholder="sessionId" />
           <div className="relative">
@@ -411,6 +407,7 @@ export default function LlmLogsPage() {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => load({ resetPage: true })} disabled={loading}>
+              <Filter size={16} />
               应用过滤
             </Button>
             <Button
@@ -429,6 +426,7 @@ export default function LlmLogsPage() {
               }}
               disabled={loading}
             >
+              <Eraser size={16} />
               清空
             </Button>
           </div>

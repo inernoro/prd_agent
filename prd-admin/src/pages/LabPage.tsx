@@ -1,6 +1,7 @@
 import { Button } from '@/components/design/Button';
 import DesktopLabTab from '@/pages/lab-desktop/DesktopLabTab';
 import LlmLabTab from '@/pages/lab-llm/LlmLabTab';
+import { Monitor, Sparkles } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 export default function LabPage() {
@@ -17,9 +18,11 @@ export default function LabPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       <div className="flex items-center gap-2 shrink-0">
         <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
+          <Sparkles size={16} />
           大模型实验室
         </Button>
         <Button variant={tab === 'desktop' ? 'primary' : 'secondary'} onClick={() => setTab('desktop')}>
+          <Monitor size={16} />
           桌面实验室
         </Button>
       </div>

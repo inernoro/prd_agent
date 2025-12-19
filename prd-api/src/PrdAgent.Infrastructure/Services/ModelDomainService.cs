@@ -38,8 +38,8 @@ public class ModelDomainService : IModelDomainService
     public async Task<ILLMClient> GetClientAsync(ModelPurpose purpose, CancellationToken ct = default)
     {
         // 仅选启用模型；用途模型缺失时回退主模型
-        var model = await FindPurposeModelAsync(purpose, ct)
-                   ?? await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
+        var mainModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
+        var model = await FindPurposeModelAsync(purpose, ct) ?? mainModel;
 
         if (model == null)
         {
@@ -48,8 +48,9 @@ public class ModelDomainService : IModelDomainService
         }
 
         var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var globalEnablePromptCache =
-            _db.AppSettings.Find(s => s.Id == "global").FirstOrDefault()?.EnablePromptCache ?? true;
+        // 业务规则：不再使用“全局开关”，而是以“主模型是否启用 Prompt Cache”作为总开关；
+        // 同时仍尊重当前模型的 enablePromptCache（不是所有模型都适合开启 cache）。
+        var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
 
         var (apiUrl, apiKey, platformType) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
@@ -60,7 +61,7 @@ public class ModelDomainService : IModelDomainService
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
 
-        var enablePromptCache = globalEnablePromptCache && (model.EnablePromptCache ?? true);
+        var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true);
         if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
         {
             return new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor);

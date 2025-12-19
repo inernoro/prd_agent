@@ -6,8 +6,10 @@ import type {
   SetImageGenModelContract,
   SetIntentModelContract,
   ClearIntentModelContract,
+  ClearVisionModelContract,
   SetMainModelContract,
   SetVisionModelContract,
+  ClearImageGenModelContract,
   TestModelContract,
   UpdateModelContract,
   UpdateModelInput,
@@ -126,10 +128,26 @@ export const setVisionModelReal: SetVisionModelContract = async (id: string) => 
   return ok(true);
 };
 
+export const clearVisionModelReal: ClearVisionModelContract = async () => {
+  const res = await apiRequest<{ cleared: boolean }>('/api/v1/config/vision-model', {
+    method: 'DELETE',
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
 export const setImageGenModelReal: SetImageGenModelContract = async (id: string) => {
   const res = await apiRequest<{ modelId: string; isImageGen: boolean }>('/api/v1/config/image-gen-model', {
     method: 'PUT',
     body: { modelId: id },
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const clearImageGenModelReal: ClearImageGenModelContract = async () => {
+  const res = await apiRequest<{ cleared: boolean }>('/api/v1/config/image-gen-model', {
+    method: 'DELETE',
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);

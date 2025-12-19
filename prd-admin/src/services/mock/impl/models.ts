@@ -98,11 +98,23 @@ export async function setVisionModelMock(id: string): Promise<ApiResponse<true>>
   return ok(true);
 }
 
+export async function clearVisionModelMock(): Promise<ApiResponse<true>> {
+  await sleep(220);
+  db.models.forEach((x) => (x.isVision = false));
+  return ok(true);
+}
+
 export async function setImageGenModelMock(id: string): Promise<ApiResponse<true>> {
   await sleep(260);
   const exists = db.models.some((x) => x.id === id);
   if (!exists) return fail('SESSION_NOT_FOUND', '模型不存在');
   db.models.forEach((x) => (x.isImageGen = x.id === id));
+  return ok(true);
+}
+
+export async function clearImageGenModelMock(): Promise<ApiResponse<true>> {
+  await sleep(220);
+  db.models.forEach((x) => (x.isImageGen = false));
   return ok(true);
 }
 

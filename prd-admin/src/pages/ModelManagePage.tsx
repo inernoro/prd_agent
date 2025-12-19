@@ -1,10 +1,14 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
+import { ModelMapDialog } from './model-manage/ModelMapDialog';
 import {
   clearIntentModel,
+  clearVisionModel,
+  clearImageGenModel,
   createModel,
   createPlatform,
   deleteModel,
@@ -20,7 +24,7 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Check, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, X } from 'lucide-react';
+import { Check, DatabaseZap, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
@@ -100,6 +104,8 @@ export default function ModelManagePage() {
   const [platformSearch, setPlatformSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
 
+  const [modelMapOpen, setModelMapOpen] = useState(false);
+
   const [platformDialogOpen, setPlatformDialogOpen] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
   const [platformForm, setPlatformForm] = useState<PlatformForm>(defaultPlatformForm);
@@ -137,11 +143,7 @@ export default function ModelManagePage() {
     'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools'
   >('all');
   const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
-
-  // 全局设置（Prompt Cache）
-  const [enablePromptCache, setEnablePromptCache] = useState<boolean>(true);
-  const [llmSettingsLoaded, setLlmSettingsLoaded] = useState(false);
-  const [promptCacheToggling, setPromptCacheToggling] = useState(false);
+  const [openModelGroups, setOpenModelGroups] = useState<Record<string, boolean>>({});
 
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -152,17 +154,6 @@ export default function ModelManagePage() {
         setSelectedPlatformId((cur) => (cur ? cur : (p.data[0]?.id || '')));
       }
       if (m.success) setModels(m.data);
-      // 全局 LLM 设置：mock 模式下本地默认开启
-      if (useMockMode) {
-        setEnablePromptCache(true);
-        setLlmSettingsLoaded(true);
-      } else {
-        const r = await apiRequest<{ enablePromptCache: boolean; updatedAt?: string }>(`/api/v1/admin/settings/llm`, { method: 'GET' });
-        if (r.success) {
-          setEnablePromptCache(Boolean((r.data as any).enablePromptCache));
-        }
-        setLlmSettingsLoaded(true);
-      }
     } finally {
       if (!opts?.silent) setLoading(false);
     }
@@ -213,6 +204,30 @@ export default function ModelManagePage() {
     setModels((prev) => prev.map((x) => ({ ...x, isIntent: false })));
     setIntentJustSetId(m.id);
     const res = await clearIntentModel();
+    if (!res.success) {
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  };
+
+  const onClearVision = async (m: Model) => {
+    // 本地即时更新：避免闪烁
+    setModels((prev) => prev.map((x) => ({ ...x, isVision: false })));
+    setVisionJustSetId(m.id);
+    const res = await clearVisionModel();
+    if (!res.success) {
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  };
+
+  const onClearImageGen = async (m: Model) => {
+    // 本地即时更新：避免闪烁
+    setModels((prev) => prev.map((x) => ({ ...x, isImageGen: false })));
+    setImageGenJustSetId(m.id);
+    const res = await clearImageGenModel();
     if (!res.success) {
       await load({ silent: true });
       return;
@@ -313,6 +328,19 @@ export default function ModelManagePage() {
     }
     return Object.entries(g).sort((a, b) => b[1].length - a[1].length);
   }, [filteredModels]);
+
+  // 默认展开前 6 个分组；之后由用户自行折叠/展开（避免每次渲染重置 open 导致“闪一下”）
+  useEffect(() => {
+    if (grouped.length === 0) return;
+    setOpenModelGroups((prev) => {
+      if (Object.keys(prev).length > 0) return prev;
+      const next: Record<string, boolean> = {};
+      grouped.slice(0, 6).forEach(([k]) => {
+        next[k] = true;
+      });
+      return next;
+    });
+  }, [grouped]);
 
   const existingModelByName = useMemo(() => {
     const map = new Map<string, Model>();
@@ -793,27 +821,6 @@ export default function ModelManagePage() {
 
   const isAll = selectedPlatformId === '__all__';
 
-  const togglePromptCache = async () => {
-    if (promptCacheToggling) return;
-    setPromptCacheToggling(true);
-    try {
-      const next = !enablePromptCache;
-      if (useMockMode) {
-        setEnablePromptCache(next);
-        return;
-      }
-      const res = await apiRequest<{ enablePromptCache: boolean }>(`/api/v1/admin/settings/llm`, {
-        method: 'PUT',
-        body: { enablePromptCache: next },
-      });
-      if (res.success) {
-        setEnablePromptCache(next);
-      }
-    } finally {
-      setPromptCacheToggling(false);
-    }
-  };
-
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <div className="flex items-start justify-between gap-4">
@@ -826,45 +833,6 @@ export default function ModelManagePage() {
               : ''}
           </div>
         </div>
-
-        {/* Prompt Cache 开关 */}
-        {llmSettingsLoaded && (
-          <div
-            className="flex items-center gap-3 px-4 py-2.5 rounded-[14px]"
-            style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div className="min-w-0">
-              <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                Prompt Cache
-              </div>
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Claude 可节省 90% 输入费用
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={togglePromptCache}
-              disabled={promptCacheToggling}
-              className="relative h-7 w-12 rounded-full transition-colors disabled:opacity-60"
-              style={{
-                background: enablePromptCache ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
-                border: enablePromptCache ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
-              }}
-              aria-label={enablePromptCache ? '已启用，点击关闭' : '已禁用，点击启用'}
-            >
-              <span
-                className="absolute top-1 left-1 h-5 w-5 rounded-full transition-transform"
-                style={{
-                  transform: enablePromptCache ? 'translateX(20px)' : 'translateX(0px)',
-                  background: enablePromptCache ? 'rgba(34,197,94,0.95)' : 'rgba(247,247,251,0.65)',
-                }}
-              />
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[320px_1fr] flex-1 min-h-0">
@@ -1069,31 +1037,50 @@ export default function ModelManagePage() {
               )}
             </div>
 
-            {selectedPlatform && (
-              <div className="flex items-center gap-3">
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>启用</div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await savePlatformInline({ enabled: !selectedPlatform.enabled });
-                  }}
-                  className="relative h-7 w-12 rounded-full transition-colors"
-                  style={{
-                    background: selectedPlatform.enabled ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
-                    border: selectedPlatform.enabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
-                  }}
-                  aria-label={selectedPlatform.enabled ? '已启用，点击关闭' : '已禁用，点击启用'}
-                >
-                  <span
-                    className="absolute top-1 left-1 h-5 w-5 rounded-full transition-transform"
-                    style={{
-                      transform: selectedPlatform.enabled ? 'translateX(20px)' : 'translateX(0px)',
-                      background: selectedPlatform.enabled ? 'rgba(34,197,94,0.95)' : 'rgba(247,247,251,0.65)',
+            <div className="flex items-center gap-3 shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setModelMapOpen(true)}
+                title="模型地图"
+                aria-label="打开模型地图"
+                disabled={models.length === 0}
+                className="h-[35px] w-[35px] p-0 rounded-[12px]"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {/* 几何六芒星图标：避免五角星视觉 */}
+                <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true">
+                  <path d="M50 10 L88 78 L12 78 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.92" />
+                  <path d="M50 90 L12 22 L88 22 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.72" />
+                </svg>
+              </Button>
+
+              {selectedPlatform && (
+                <>
+                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>启用</div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await savePlatformInline({ enabled: !selectedPlatform.enabled });
                     }}
-                  />
-                </button>
-              </div>
-            )}
+                    className="relative h-7 w-12 rounded-full transition-colors"
+                    style={{
+                      background: selectedPlatform.enabled ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
+                      border: selectedPlatform.enabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
+                    }}
+                    aria-label={selectedPlatform.enabled ? '已启用，点击关闭' : '已禁用，点击启用'}
+                  >
+                    <span
+                      className="absolute top-1 left-1 h-5 w-5 rounded-full transition-transform"
+                      style={{
+                        transform: selectedPlatform.enabled ? 'translateX(20px)' : 'translateX(0px)',
+                        background: selectedPlatform.enabled ? 'rgba(34,197,94,0.95)' : 'rgba(247,247,251,0.65)',
+                      }}
+                    />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 overflow-auto">
@@ -1233,14 +1220,91 @@ export default function ModelManagePage() {
                             key={g}
                             className="rounded-[16px] overflow-hidden"
                             style={{ border: '1px solid var(--border-subtle)' }}
-                            open={idx < 6}
+                            open={openModelGroups[g] ?? (idx < 6)}
+                            onToggle={(e) => {
+                              const nextOpen = (e.currentTarget as HTMLDetailsElement).open;
+                              setOpenModelGroups((prev) => ({ ...prev, [g]: nextOpen }));
+                            }}
                           >
                             <summary
                               className="px-4 py-3 flex items-center justify-between cursor-pointer select-none"
                               style={{ background: 'rgba(255,255,255,0.03)' }}
                             >
-                              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
-                              <Badge variant="subtle">{ms.length} 个</Badge>
+                              {(() => {
+                                const target = ms.find((x) => x.isMain) ?? ms[0] ?? null;
+                                const cacheOn = Boolean(target?.enablePromptCache);
+
+                                return (
+                                  <>
+                                    <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
+
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {target ? (
+                                        <button
+                                          type="button"
+                                          className="inline-flex items-center justify-center h-[30px] w-[30px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
+                                          style={{
+                                            border: '1px solid rgba(255,255,255,0.10)',
+                                            color: cacheOn ? 'rgba(34,197,94,0.95)' : 'var(--text-secondary)',
+                                          }}
+                                          title={cacheOn ? `Cache 已开（以 ${target.name} 为准）` : `Cache 已关（以 ${target.name} 为准）`}
+                                          aria-label={cacheOn ? '已开启 Prompt Cache（模型级），点击关闭' : '已关闭 Prompt Cache（模型级)，点击开启'}
+                                          disabled={modelCacheTogglingId != null}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            void toggleModelPromptCache(target);
+                                          }}
+                                        >
+                                          <DatabaseZap size={16} />
+                                        </button>
+                                      ) : null}
+
+                                      {target ? (
+                                        <Button
+                                          variant="secondary"
+                                          size="xs"
+                                          disabled={testingModelId != null}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            void onTest(target);
+                                          }}
+                                          className={[
+                                            testingModelId === target.id ? 'test-btn-loading' : '',
+                                            testResult?.modelId === target.id && testResult.ok ? 'test-btn-ok' : '',
+                                          ].filter(Boolean).join(' ')}
+                                          style={
+                                            testResult?.modelId === target.id
+                                              ? testResult.ok
+                                                ? { background: 'rgba(34,197,94,0.18)', borderColor: 'rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
+                                                : { background: 'rgba(239,68,68,0.14)', borderColor: 'rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
+                                              : undefined
+                                          }
+                                          title={testResult?.modelId === target.id && !testResult.ok ? testResult.msg : `测试：${target.name}`}
+                                        >
+                                          {testingModelId === target.id ? (
+                                            <RefreshCw size={16} className="animate-spin" />
+                                          ) : testResult?.modelId === target.id ? (
+                                            testResult.ok ? <Check size={16} /> : <Minus size={16} />
+                                          ) : (
+                                            <Link2 size={16} />
+                                          )}
+                                          {testingModelId === target.id
+                                            ? '测试中'
+                                            : testResult?.modelId === target.id
+                                              ? testResult.ok
+                                                ? 'OK'
+                                                : '失败'
+                                              : '测试'}
+                                        </Button>
+                                      ) : null}
+
+                                      {/* 删除“x 个”徽标 */}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </summary>
 
                             <div className="divide-y divide-white/30">
@@ -1254,115 +1318,77 @@ export default function ModelManagePage() {
                                 >
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2 min-w-0">
-                                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
-                                      {/* 角色/能力标记（尺寸对齐 Badge featured 的 h-5） */}
-                                      {m.isMain ? (
-                                        <FlagLabel
-                                          icon={<Star size={12} fill="currentColor" />}
-                                          text="主"
-                                          style={{
-                                            background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)',
-                                            border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)',
-                                            color: 'var(--accent-gold-2)',
-                                          }}
-                                        />
-                                      ) : null}
-                                      {m.isIntent ? (
-                                        <FlagLabel
-                                          icon={<Sparkles size={12} />}
-                                          text="意图"
-                                          style={{
-                                            background: 'rgba(34,197,94,0.12)',
-                                            border: '1px solid rgba(34,197,94,0.28)',
-                                            color: 'rgba(34,197,94,0.95)',
-                                          }}
-                                        />
-                                      ) : null}
-                                      {m.isVision ? (
-                                        <FlagLabel
-                                          icon={<ScanEye size={12} />}
-                                          text="识图"
-                                          style={{
-                                            background: 'rgba(59,130,246,0.12)',
-                                            border: '1px solid rgba(59,130,246,0.28)',
-                                            color: 'rgba(59,130,246,0.95)',
-                                          }}
-                                        />
-                                      ) : null}
-                                      {m.isImageGen ? (
-                                        <FlagLabel
-                                          icon={<ImagePlus size={12} />}
-                                          text="生图"
-                                          style={{
-                                            background: 'rgba(168,85,247,0.12)',
-                                            border: '1px solid rgba(168,85,247,0.28)',
-                                            color: 'rgba(168,85,247,0.95)',
-                                          }}
-                                        />
-                                      ) : null}
-                                      {!m.enabled ? (
-                                        <FlagLabel
-                                          icon={<EyeOff size={12} />}
-                                          text="禁用"
-                                          style={{
-                                            background: 'rgba(255,255,255,0.04)',
-                                            border: '1px solid rgba(255,255,255,0.12)',
-                                            color: 'var(--text-secondary)',
-                                          }}
-                                        />
-                                      ) : null}
+                                      <div
+                                        className="text-sm font-semibold truncate"
+                                        style={{ color: 'var(--text-primary)' }}
+                                        title={m.modelName}
+                                      >
+                                        {m.name}
+                                      </div>
                                     </div>
-                                    <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{m.modelName}</div>
+                                    {/* 第二行：只用于展示标签（不再显示第二排 modelName） */}
+                                    {(m.isMain || m.isIntent || m.isVision || m.isImageGen || !m.enabled) ? (
+                                      <div className="mt-1 flex items-center gap-2 min-w-0">
+                                        {m.isMain ? (
+                                          <FlagLabel
+                                            icon={<Star size={12} fill="currentColor" />}
+                                            text="主"
+                                            style={{
+                                              background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)',
+                                              border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)',
+                                              color: 'var(--accent-gold-2)',
+                                            }}
+                                          />
+                                        ) : null}
+                                        {m.isIntent ? (
+                                          <FlagLabel
+                                            icon={<Sparkles size={12} />}
+                                            text="意图"
+                                            style={{
+                                              background: 'rgba(34,197,94,0.12)',
+                                              border: '1px solid rgba(34,197,94,0.28)',
+                                              color: 'rgba(34,197,94,0.95)',
+                                            }}
+                                          />
+                                        ) : null}
+                                        {m.isVision ? (
+                                          <FlagLabel
+                                            icon={<ScanEye size={12} />}
+                                            text="识图"
+                                            style={{
+                                              background: 'rgba(59,130,246,0.12)',
+                                              border: '1px solid rgba(59,130,246,0.28)',
+                                              color: 'rgba(59,130,246,0.95)',
+                                            }}
+                                          />
+                                        ) : null}
+                                        {m.isImageGen ? (
+                                          <FlagLabel
+                                            icon={<ImagePlus size={12} />}
+                                            text="生图"
+                                            style={{
+                                              background: 'rgba(168,85,247,0.12)',
+                                              border: '1px solid rgba(168,85,247,0.28)',
+                                              color: 'rgba(168,85,247,0.95)',
+                                            }}
+                                          />
+                                        ) : null}
+                                        {!m.enabled ? (
+                                          <FlagLabel
+                                            icon={<EyeOff size={12} />}
+                                            text="禁用"
+                                            style={{
+                                              background: 'rgba(255,255,255,0.04)',
+                                              border: '1px solid rgba(255,255,255,0.12)',
+                                              color: 'var(--text-secondary)',
+                                            }}
+                                          />
+                                        ) : null}
+                                      </div>
+                                    ) : null}
                                   </div>
 
                                   <div className="flex items-center gap-2">
-                                    <Button
-                                      variant={m.enablePromptCache ? 'secondary' : 'ghost'}
-                                      size="sm"
-                                      onClick={() => toggleModelPromptCache(m)}
-                                      disabled={modelCacheTogglingId === m.id}
-                                      title={m.enablePromptCache ? '已开启 Prompt Cache（模型级）' : '已关闭 Prompt Cache（模型级）'}
-                                      style={
-                                        m.enablePromptCache
-                                          ? { background: 'rgba(34,197,94,0.14)', borderColor: 'rgba(34,197,94,0.26)', color: 'rgba(34,197,94,0.95)' }
-                                          : { color: 'var(--text-secondary)' }
-                                      }
-                                    >
-                                      Cache:{m.enablePromptCache ? '开' : '关'}
-                                    </Button>
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={() => onTest(m)}
-                                      disabled={testingModelId === m.id}
-                                      className={[
-                                        testingModelId === m.id ? 'test-btn-loading' : '',
-                                        testResult?.modelId === m.id && testResult.ok ? 'test-btn-ok' : '',
-                                      ].filter(Boolean).join(' ')}
-                                      style={
-                                        testResult?.modelId === m.id
-                                          ? testResult.ok
-                                            ? { background: 'rgba(34,197,94,0.18)', borderColor: 'rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
-                                            : { background: 'rgba(239,68,68,0.14)', borderColor: 'rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
-                                          : undefined
-                                      }
-                                      title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : undefined}
-                                    >
-                                      {testingModelId === m.id ? (
-                                        <RefreshCw size={16} className="animate-spin" />
-                                      ) : testResult?.modelId === m.id ? (
-                                        testResult.ok ? <Check size={16} /> : <Minus size={16} />
-                                      ) : (
-                                        <Link2 size={16} />
-                                      )}
-                                      {testingModelId === m.id
-                                        ? '测试中'
-                                        : testResult?.modelId === m.id
-                                          ? testResult.ok
-                                            ? 'OK'
-                                            : '失败'
-                                          : '测试'}
-                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1389,20 +1415,15 @@ export default function ModelManagePage() {
                                       className={m.isIntent ? 'disabled:opacity-100' : ''}
                                       style={m.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
                                     >
-                                      {m.isIntent ? (
-                                        <X size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
-                                      ) : (
-                                        <Sparkles size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
-                                      )}
+                                      <Sparkles size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
                                     </Button>
 
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => onSetVision(m)}
-                                      disabled={Boolean(m.isVision)}
+                                      onClick={() => (m.isVision ? onClearVision(m) : onSetVision(m))}
                                       aria-label={m.isVision ? '图片识别模型' : '设为图片识别模型'}
-                                      title={m.isVision ? '图片识别模型' : '设为图片识别模型'}
+                                      title={m.isVision ? '取消图片识别模型（将回退到主模型执行）' : '设为图片识别模型'}
                                       className={m.isVision ? 'disabled:opacity-100' : ''}
                                       style={m.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: 'var(--text-secondary)' }}
                                     >
@@ -1412,10 +1433,9 @@ export default function ModelManagePage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => onSetImageGen(m)}
-                                      disabled={Boolean(m.isImageGen)}
+                                      onClick={() => (m.isImageGen ? onClearImageGen(m) : onSetImageGen(m))}
                                       aria-label={m.isImageGen ? '图片生成模型' : '设为图片生成模型'}
-                                      title={m.isImageGen ? '图片生成模型' : '设为图片生成模型'}
+                                      title={m.isImageGen ? '取消图片生成模型（将回退到主模型执行）' : '设为图片生成模型'}
                                       className={m.isImageGen ? 'disabled:opacity-100' : ''}
                                       style={m.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: 'var(--text-secondary)' }}
                                     >
@@ -1522,11 +1542,10 @@ export default function ModelManagePage() {
 
             <div className="grid gap-2">
               <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>类型</div>
-              <select
+              <Select
                 value={platformForm.platformType}
                 onChange={(e) => setPlatformForm((s) => ({ ...s, platformType: e.target.value }))}
-                className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={inputStyle}
+                className="w-full"
               >
                 <option value="openai">openai</option>
                 <option value="anthropic">anthropic</option>
@@ -1534,7 +1553,7 @@ export default function ModelManagePage() {
                 <option value="qwen">qwen</option>
                 <option value="deepseek">deepseek</option>
                 <option value="other">other</option>
-              </select>
+              </Select>
             </div>
 
             <div className="grid gap-2">
@@ -1822,16 +1841,15 @@ export default function ModelManagePage() {
 
             <div className="grid gap-2">
               <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>平台</div>
-              <select
+              <Select
                 value={modelForm.platformId}
                 onChange={(e) => setModelForm((s) => ({ ...s, platformId: e.target.value }))}
-                className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={inputStyle}
+                className="w-full"
               >
                 {platforms.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="grid gap-2">
@@ -1874,6 +1892,14 @@ export default function ModelManagePage() {
             </div>
           </div>
         }
+      />
+
+      <ModelMapDialog
+        open={modelMapOpen}
+        onOpenChange={setModelMapOpen}
+        models={models}
+        platforms={platforms}
+        selectedPlatformId={selectedPlatformId}
       />
     </div>
   );

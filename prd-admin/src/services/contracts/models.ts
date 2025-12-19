@@ -25,4 +25,6 @@ export type SetMainModelContract = (id: string) => Promise<ApiResponse<true>>;
 export type SetIntentModelContract = (id: string) => Promise<ApiResponse<true>>;
 export type ClearIntentModelContract = () => Promise<ApiResponse<true>>;
 export type SetVisionModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type ClearVisionModelContract = () => Promise<ApiResponse<true>>;
 export type SetImageGenModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type ClearImageGenModelContract = () => Promise<ApiResponse<true>>;

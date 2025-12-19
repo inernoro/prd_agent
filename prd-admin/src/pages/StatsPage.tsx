@@ -2,6 +2,7 @@ import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
 import { Card } from '@/components/design/Card';
 import { KpiCard } from '@/components/design/KpiCard';
+import { Select } from '@/components/design/Select';
 import { getActiveGroups, getGapStats, getMessageTrend, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem } from '@/services/contracts/adminStats';
 import { useEffect, useMemo, useState } from 'react';
@@ -146,20 +147,15 @@ export default function StatsPage() {
             API 使用量与内容缺失分析
           </div>
         </div>
-        <select
+        <Select
           value={days}
           onChange={(e) => setDays(Number(e.target.value))}
-          className="h-10 rounded-[14px] px-4 text-[13px] font-medium transition-all hover:border-(--border-hover)"
-          style={{
-            background: 'var(--bg-input)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'var(--text-primary)',
-          }}
+          className="min-w-[130px] font-medium"
         >
           <option value={7}>最近7天</option>
           <option value={14}>最近14天</option>
           <option value={30}>最近30天</option>
-        </select>
+        </Select>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { Select } from '@/components/design/Select';
 import { adminImpersonate, getUsers, isMockMode } from '@/services';
 import type { AdminUser, UserRole } from '@/types/admin';
 import type { ApiResponse } from '@/types/api';
@@ -481,11 +482,11 @@ export default function DesktopLabTab() {
               <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                 当前操作演员
               </div>
-              <select
+              <Select
                 value={activeActorId}
                 onChange={(e) => setActiveActorId(e.target.value)}
-                className="h-10 w-full rounded-[14px] px-3 text-sm"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="w-full"
+                style={{ background: 'rgba(255,255,255,0.04)' }}
               >
                 <option value="">请选择</option>
                 {actors.map((a) => (
@@ -493,7 +494,7 @@ export default function DesktopLabTab() {
                     {a.displayName}（{a.role}）
                   </option>
                 ))}
-              </select>
+              </Select>
               {activeActor ? (
                 <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                   token 有效期：{Math.max(0, Math.floor((activeActor.issuedAt + activeActor.expiresIn * 1000 - Date.now()) / 1000))} 秒

@@ -465,6 +465,22 @@ public class AdminModelsController : ControllerBase
     }
 
     /// <summary>
+    /// 取消图片识别模型（清空 IsVision 标记；调用侧将自动回退主模型执行）
+    /// </summary>
+    [HttpDelete("vision-model")]
+    public async Task<IActionResult> ClearVisionModel()
+    {
+        await _db.LLMModels.UpdateManyAsync(
+            m => m.IsVision,
+            Builders<LLMModel>.Update
+                .Set(m => m.IsVision, false)
+                .Set(m => m.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("Vision model cleared");
+        return Ok(ApiResponse<object>.Ok(new { cleared = true }));
+    }
+
+    /// <summary>
     /// 设置图片生成模型
     /// </summary>
     [HttpPut("image-gen-model")]
@@ -503,6 +519,22 @@ public class AdminModelsController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(MapModelResponse(model,
             platformName != null ? new Dictionary<string, string> { { model.PlatformId!, platformName } } : new())));
+    }
+
+    /// <summary>
+    /// 取消图片生成模型（清空 IsImageGen 标记；调用侧将自动回退主模型执行）
+    /// </summary>
+    [HttpDelete("image-gen-model")]
+    public async Task<IActionResult> ClearImageGenModel()
+    {
+        await _db.LLMModels.UpdateManyAsync(
+            m => m.IsImageGen,
+            Builders<LLMModel>.Update
+                .Set(m => m.IsImageGen, false)
+                .Set(m => m.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("ImageGen model cleared");
+        return Ok(ApiResponse<object>.Ok(new { cleared = true }));
     }
 
     /// <summary>

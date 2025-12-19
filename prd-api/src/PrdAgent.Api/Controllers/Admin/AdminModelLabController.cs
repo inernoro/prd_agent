@@ -187,7 +187,9 @@ public class AdminModelLabController : ControllerBase
 
         var adminId = GetAdminId();
         var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("JWT Secret not configured");
-        var globalEnablePromptCache = _db.AppSettings.Find(s => s.Id == "global").FirstOrDefault()?.EnablePromptCache ?? true;
+        // 业务规则：不再使用“全局开关”，而是以“主模型 enablePromptCache”作为总开关
+        var mainModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(cancellationToken);
+        var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
 
         var effective = await ResolveEffectiveRunRequestAsync(adminId, request, cancellationToken);
         if (!effective.Success)
@@ -219,7 +221,7 @@ public class AdminModelLabController : ControllerBase
                 await sem.WaitAsync(cancellationToken);
                 try
                 {
-                    await RunOneModelAsync(sm, run, jwtSecret, globalEnablePromptCache, effective, writeLock, cancellationToken);
+                    await RunOneModelAsync(sm, run, jwtSecret, mainEnablePromptCache, effective, writeLock, cancellationToken);
                 }
                 finally
                 {
@@ -254,7 +256,7 @@ public class AdminModelLabController : ControllerBase
         ModelLabSelectedModel selected,
         ModelLabRun run,
         string jwtSecret,
-        bool globalEnablePromptCache,
+        bool mainEnablePromptCache,
         EffectiveRunRequest effective,
         SemaphoreSlim writeLock,
         CancellationToken ct)
@@ -313,7 +315,7 @@ public class AdminModelLabController : ControllerBase
                 return;
             }
 
-            var enablePromptCacheForPlatform = globalEnablePromptCache && (effective.EnablePromptCache ?? true);
+            var enablePromptCacheForPlatform = mainEnablePromptCache && (effective.EnablePromptCache ?? true);
 
             var httpClient2 = _httpClientFactory.CreateClient("LoggedHttpClient");
             httpClient2.BaseAddress = new Uri(platformApiUrl.TrimEnd('/'));
@@ -351,7 +353,7 @@ public class AdminModelLabController : ControllerBase
             return;
         }
 
-        var enablePromptCache = globalEnablePromptCache && (model.EnablePromptCache ?? true) && (effective.EnablePromptCache ?? true);
+        var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true) && (effective.EnablePromptCache ?? true);
 
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));

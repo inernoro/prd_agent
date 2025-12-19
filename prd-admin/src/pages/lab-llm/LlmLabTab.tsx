@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Cpu, ImagePlus, Layers, MinusCircle, Play, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2 } from 'lucide-react';
+import { Clock3, Cpu, ImagePlus, Layers, MinusCircle, Play, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -18,6 +18,8 @@ import {
   listModelLabModelSets,
   runModelLabStream,
   clearIntentModel,
+  clearVisionModel,
+  clearImageGenModel,
   setImageGenModel,
   setIntentModel,
   setMainModel,
@@ -437,6 +439,20 @@ export default function LlmLabTab() {
     await refreshModelsSilent();
   };
 
+  const onClearVisionFromRun = async () => {
+    setAllModels((prev) => prev.map((m) => ({ ...m, isVision: false } as any)));
+    const res = await clearVisionModel();
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
+  const onClearImageGenFromRun = async () => {
+    setAllModels((prev) => prev.map((m) => ({ ...m, isImageGen: false } as any)));
+    const res = await clearImageGenModel();
+    if (!res.success) return await refreshModelsSilent();
+    await refreshModelsSilent();
+  };
+
   const onSetVisionFromRun = async (modelId: string) => {
     setUniqueFlagLocal(modelId, 'isVision');
     const res = await setVisionModel(modelId);
@@ -852,7 +868,7 @@ export default function LlmLabTab() {
                   type="button"
                   onClick={() => setSortBy('ttft')}
                   aria-pressed={sortBy === 'ttft'}
-                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors"
+                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
                   style={{
                     color: 'var(--text-primary)',
                     background: sortBy === 'ttft' ? 'rgba(255,255,255,0.08)' : 'transparent',
@@ -860,13 +876,14 @@ export default function LlmLabTab() {
                   }}
                   title="按首字延迟（TTFT）排序"
                 >
+                  <Zap size={14} />
                   首字延迟
                 </button>
                 <button
                   type="button"
                   onClick={() => setSortBy('total')}
                   aria-pressed={sortBy === 'total'}
-                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors"
+                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
                   style={{
                     color: 'var(--text-primary)',
                     background: sortBy === 'total' ? 'rgba(255,255,255,0.08)' : 'transparent',
@@ -874,6 +891,7 @@ export default function LlmLabTab() {
                   }}
                   title="按总耗时排序"
                 >
+                  <Clock3 size={14} />
                   总时长
                 </button>
               </div>
@@ -919,12 +937,12 @@ export default function LlmLabTab() {
                           })()}
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
+                      <div className="shrink-0 flex items-center justify-end gap-2">
                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                           TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'} · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
                         </div>
                         <div
-                          className="mt-1 text-xs"
+                          className="text-xs"
                           style={{
                             color:
                               it.status === 'error'
@@ -949,14 +967,7 @@ export default function LlmLabTab() {
                         ? (canInferPlatform ? '该模型未添加到“模型管理”，点击将自动添加并执行设定' : '未能定位平台信息，无法自动添加模型')
                         : '';
                       return (
-                        <div className="mt-2 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            {m?.isMain ? <Badge variant="featured">主模型</Badge> : null}
-                            {m?.isIntent ? <Badge variant="success">意图</Badge> : null}
-                            {m?.isVision ? <Badge variant="subtle">视觉</Badge> : null}
-                            {m?.isImageGen ? <Badge variant="subtle">生图</Badge> : null}
-                            {!m ? <Badge variant="subtle">未添加</Badge> : null}
-                          </div>
+                        <div className="mt-2 flex items-center justify-end gap-2">
                           <div className="flex items-center gap-2 shrink-0">
                             <Button
                               variant="ghost"
@@ -979,19 +990,20 @@ export default function LlmLabTab() {
                               }}
                               disabled={!cfgId && !canInferPlatform}
                               title={!cfgId ? reason : (m?.isIntent ? '取消意图模型（将回退主模型执行）' : '设为意图模型（全局唯一）')}
-                              className={m?.isIntent ? 'disabled:opacity-100' : ''}
                               style={m?.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
                             >
                               <Sparkles size={14} />
-                              {m?.isIntent ? '取消意图' : '意图'}
+                              意图
                             </Button>
                             <Button
                               variant="ghost"
                               size="xs"
-                              onClick={() => (cfgId ? onSetVisionFromRun(cfgId) : onSetVisionFromItem(it.itemId))}
-                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isVision)}
-                              title={!cfgId ? reason : (m?.isVision ? '已是视觉模型' : '设为视觉模型（全局唯一）')}
-                              className={m?.isVision ? 'disabled:opacity-100' : ''}
+                              onClick={() => {
+                                if (m?.isVision) return void onClearVisionFromRun();
+                                return cfgId ? void onSetVisionFromRun(cfgId) : void onSetVisionFromItem(it.itemId);
+                              }}
+                              disabled={!cfgId && !canInferPlatform}
+                              title={!cfgId ? reason : (m?.isVision ? '取消视觉模型（将回退主模型执行）' : '设为视觉模型（全局唯一）')}
                               style={m?.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: 'var(--text-secondary)' }}
                             >
                               <ScanEye size={14} />
@@ -1000,10 +1012,12 @@ export default function LlmLabTab() {
                             <Button
                               variant="ghost"
                               size="xs"
-                              onClick={() => (cfgId ? onSetImageGenFromRun(cfgId) : onSetImageGenFromItem(it.itemId))}
-                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isImageGen)}
-                              title={!cfgId ? reason : (m?.isImageGen ? '已是生图模型' : '设为生图模型（全局唯一）')}
-                              className={m?.isImageGen ? 'disabled:opacity-100' : ''}
+                              onClick={() => {
+                                if (m?.isImageGen) return void onClearImageGenFromRun();
+                                return cfgId ? void onSetImageGenFromRun(cfgId) : void onSetImageGenFromItem(it.itemId);
+                              }}
+                              disabled={!cfgId && !canInferPlatform}
+                              title={!cfgId ? reason : (m?.isImageGen ? '取消生图模型（将回退主模型执行）' : '设为生图模型（全局唯一）')}
                               style={m?.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: 'var(--text-secondary)' }}
                             >
                               <ImagePlus size={14} />
@@ -1018,7 +1032,10 @@ export default function LlmLabTab() {
                         {it.errorMessage}
                       </div>
                     ) : null}
-                    <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
+                    <pre
+                      className="mt-2 text-xs whitespace-pre-wrap wrap-break-word max-h-[160px] overflow-auto pr-1"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
                       {it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
                     </pre>
                   </div>

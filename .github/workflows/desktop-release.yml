@@ -158,6 +158,10 @@ jobs:
       - name: Generate Tauri icons
         run: pnpm tauri:icons
 
+      - name: Install NSIS (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: choco install nsis --version=3.11 -y --no-progress
+
       # 构建 Tauri 应用
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
