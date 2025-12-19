@@ -69,6 +69,24 @@ type ImageViewItem = {
   errorMessage?: string;
 };
 
+type AspectOption = {
+  id: '1:1' | '4:3' | '3:4' | '16:9' | '9:16';
+  label: string;
+  // 传给后端 images api 的 size（兼容 openai-like 的宽x高）
+  size: string;
+  // 用于展示的小图标（w/h 比例）
+  iconW: number;
+  iconH: number;
+};
+
+const ASPECT_OPTIONS: AspectOption[] = [
+  { id: '1:1', label: '1:1', size: '1024x1024', iconW: 20, iconH: 20 },
+  { id: '4:3', label: '4:3', size: '1024x768', iconW: 22, iconH: 16 },
+  { id: '3:4', label: '3:4', size: '768x1024', iconW: 16, iconH: 22 },
+  { id: '16:9', label: '16:9', size: '1280x720', iconW: 24, iconH: 14 },
+  { id: '9:16', label: '9:16', size: '720x1280', iconW: 14, iconH: 24 },
+];
+
 function filenameSafe(s: string) {
   const base = (s || '').trim().slice(0, 32) || 'image';
   return base
@@ -320,7 +338,6 @@ export default function LlmLabTab() {
   const [mainMode, setMainMode] = useState<MainMode>('infer');
   const [imageSubMode, setImageSubMode] = useState<ImageSubMode>('single');
   const [imgSize, setImgSize] = useState<string>('1024x1024');
-  const [imgResponseFormat, setImgResponseFormat] = useState<'b64_json' | 'url'>('b64_json');
   const [singleN, setSingleN] = useState<number>(1);
   const [singleGroupId, setSingleGroupId] = useState<string>('');
   const [singleSelected, setSingleSelected] = useState<Record<string, boolean>>({});
@@ -600,7 +617,8 @@ export default function LlmLabTab() {
       return [...placeholders, ...rest];
     });
 
-    const res = await generateImageGen({ prompt, n, size: imgSize, responseFormat: imgResponseFormat });
+    // 这里不暴露给用户选择返回格式：默认 b64_json（更利于直接展示/下载，且避免部分网关跨域问题）
+    const res = await generateImageGen({ prompt, n, size: imgSize, responseFormat: 'b64_json' });
     if (!res.success) {
       setImageError(res.error?.message || '生图失败');
       setImageItems((prev) =>
@@ -661,7 +679,7 @@ export default function LlmLabTab() {
     batchAbortRef.current = ac;
 
     const res = await runImageGenBatchStream({
-      input: { items: (planResult.items ?? []) as ImageGenPlanItem[], size: imgSize, responseFormat: imgResponseFormat },
+      input: { items: (planResult.items ?? []) as ImageGenPlanItem[], size: imgSize, responseFormat: 'b64_json' },
       signal: ac.signal,
       onEvent: (evt) => {
         if (!evt.data) return;
@@ -1335,10 +1353,20 @@ export default function LlmLabTab() {
 
         {/* 右上：提示词 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
-          <Card className="p-4">
+          <Card className="p-4 h-full">
           <div className="flex items-center justify-between gap-3 min-w-0">
-            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-              提示词
+            <div className="flex gap-2 overflow-x-auto pr-1">
+              <Button size="xs" variant={mainMode === 'infer' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onMainModeChange('infer')}>
+                推理测试
+              </Button>
+              <Button
+                size="xs"
+                variant={mainMode === 'image' ? 'primary' : 'secondary'}
+                className="shrink-0"
+                onClick={() => onMainModeChange('image')}
+              >
+                生图
+              </Button>
             </div>
             <div className="flex gap-2 shrink-0">
               {mainMode === 'infer' ? (
@@ -1387,22 +1415,8 @@ export default function LlmLabTab() {
             </div>
           </div>
 
-          <div className="mt-3 flex gap-2 overflow-auto pr-1">
-            <Button size="xs" variant={mainMode === 'infer' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onMainModeChange('infer')}>
-              推理测试
-            </Button>
-            <Button
-              size="xs"
-              variant={mainMode === 'image' ? 'primary' : 'secondary'}
-              className="shrink-0"
-              onClick={() => onMainModeChange('image')}
-            >
-              生图
-            </Button>
-          </div>
-
           {mainMode === 'infer' ? (
-            <div className="mt-3 flex gap-2 overflow-auto pr-1">
+            <div className="mt-2 flex gap-2 overflow-x-auto pr-1">
               <Button size="xs" variant={suite === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('speed')}>
               <Sparkles size={14} />
               速度
@@ -1417,7 +1431,7 @@ export default function LlmLabTab() {
             </Button>
           </div>
           ) : (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1 pb-1">
               <div className="flex gap-2 shrink-0">
                 <Button
                   size="xs"
@@ -1437,7 +1451,7 @@ export default function LlmLabTab() {
                 </Button>
               </div>
               {imageSubMode === 'single' ? (
-                <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
                   数量
                   <input
                     type="number"
@@ -1445,36 +1459,63 @@ export default function LlmLabTab() {
                     min={1}
                     max={20}
                     onChange={(e) => setSingleN(Math.max(1, Math.min(20, Number(e.target.value || 1))))}
-                    className="ml-2 h-[30px] w-[72px] rounded-[10px] px-2 text-[12px] outline-none"
+                    className="ml-2 h-[28px] w-[64px] rounded-[10px] px-2 text-[12px] outline-none"
                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   />
                 </label>
               ) : null}
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                尺寸
-                <select
-                  value={imgSize}
-                  onChange={(e) => setImgSize(e.target.value)}
-                  className="ml-2 h-[30px] rounded-[10px] px-2 text-[12px] outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                >
-                  <option value="1024x1024">1024x1024</option>
-                  <option value="1024x1536">1024x1536</option>
-                  <option value="1536x1024">1536x1024</option>
-                </select>
-              </label>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                返回
-                <select
-                  value={imgResponseFormat}
-                  onChange={(e) => setImgResponseFormat(e.target.value as any)}
-                  className="ml-2 h-[30px] rounded-[10px] px-2 text-[12px] outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                >
-                  <option value="b64_json">base64</option>
-                  <option value="url">url</option>
-                </select>
-              </label>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
+                  图片比例
+                </div>
+                <div className="flex items-center gap-2">
+                  {ASPECT_OPTIONS.map((opt) => {
+                    const active = imgSize === opt.size;
+                    const scale = 0.78;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        className="shrink-0 rounded-[10px] px-2 py-1.5 transition-colors"
+                        style={{
+                          width: 60,
+                          background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)',
+                          border: active ? '1px solid rgba(255,255,255,0.18)' : '1px solid rgba(255,255,255,0.10)',
+                          color: 'var(--text-primary)',
+                        }}
+                        onClick={() => setImgSize(opt.size)}
+                        title={opt.label}
+                        aria-pressed={active}
+                      >
+                        <div className="flex flex-col items-center gap-1.5">
+                          <div
+                            className="rounded-[8px] flex items-center justify-center"
+                            style={{
+                              width: 26,
+                              height: 26,
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              background: 'rgba(255,255,255,0.02)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: Math.round(opt.iconW * scale),
+                                height: Math.round(opt.iconH * scale),
+                                borderRadius: 6,
+                                border: '2px solid rgba(255,255,255,0.22)',
+                                background: 'rgba(255,255,255,0.02)',
+                              }}
+                            />
+                          </div>
+                          <div className="text-[11px] font-semibold" style={{ color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                            {opt.label}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               {imageSubMode === 'batch' && planResult?.total ? (
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   已解析：{planResult.total} 张
@@ -1486,7 +1527,7 @@ export default function LlmLabTab() {
           <textarea
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
-            className="mt-3 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
+            className="mt-2 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
             placeholder={
               mainMode === 'infer'
@@ -1766,25 +1807,20 @@ export default function LlmLabTab() {
                 </div>
               ) : null}
               <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
-                {singleList.length === 0 ? (
-                  <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
-                    <div
-                      className="h-12 w-12 rounded-full flex items-center justify-center"
-                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
-                    >
-                      <ImagePlus size={22} style={{ color: 'var(--text-muted)' }} />
-                    </div>
-                    <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      这里将展示生成的图片
-                    </div>
-                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                      在上方输入描述，点击“生成”
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {(() => {
-                      const all = singleList;
+                {(() => {
+                      const wantN = Math.max(1, Math.min(20, Number(singleN || 1)));
+                      const hasAny = singleList.length > 0;
+                      const all: ImageViewItem[] = hasAny
+                        ? singleList
+                        : Array.from({ length: wantN }).map((_, i) => ({
+                            key: `preview_${i}`,
+                            groupId: 'preview',
+                            variantIndex: i,
+                            status: 'running' as const,
+                            prompt: (promptText || '').trim() || DEFAULT_IMAGE_PROMPT,
+                            createdAt: Date.now(),
+                          }));
+
                       const done = all.filter((x) => x.status === 'done' && (x.url || x.base64));
                       const selectedKeys = Object.keys(singleSelected).filter((k) => singleSelected[k]);
                       const prompt = all[0]?.prompt || '';
@@ -1840,10 +1876,26 @@ export default function LlmLabTab() {
                                   </div>
                                 ) : (
                                   <>
-                                    <PrdLoader size={40} />
-                                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                      正在生成中…
-                                    </div>
+                                    {hasAny ? (
+                                      <>
+                                        <PrdLoader size={40} />
+                                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                          正在生成中…
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div
+                                          className="w-10 h-10 rounded-full flex items-center justify-center"
+                                          style={{ border: '1px dashed rgba(255,255,255,0.22)', background: 'rgba(255,255,255,0.01)' }}
+                                        >
+                                          <ImagePlus size={18} style={{ color: 'var(--text-muted)' }} />
+                                        </div>
+                                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                          预览位置
+                                        </div>
+                                      </>
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -1894,7 +1946,7 @@ export default function LlmLabTab() {
                       const toolbar = (
                         <div className="flex items-center justify-between gap-2 pb-2">
                           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            已生成 {done.length}/{n} 张（点击图片可选择）
+                            {hasAny ? `已生成 ${done.length}/${n} 张（点击图片可选择）` : `布局预览：将生成 ${n} 张`}
                           </div>
                           <div className="flex items-center gap-2">
                             <Button variant="secondary" size="xs" onClick={() => setAllSelected(true)} disabled={done.length === 0}>
@@ -1995,8 +2047,6 @@ export default function LlmLabTab() {
                         </div>
                       );
                     })()}
-                  </>
-                )}
               </div>
             </>
           ) : (
