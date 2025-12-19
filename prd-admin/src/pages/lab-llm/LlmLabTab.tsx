@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Clock3, Copy, Cpu, Download, Expand, ImagePlus, Layers, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
+import JSZip from 'jszip';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -52,13 +53,16 @@ type ViewRunItem = {
 
 type SortBy = 'ttft' | 'total';
 
-type LabMode = 'compare' | 'image' | 'batchImage';
+type MainMode = 'infer' | 'image';
+type ImageSubMode = 'single' | 'batch';
 
 type ImageViewItem = {
   key: string;
   status: 'running' | 'done' | 'error';
   prompt: string;
   createdAt: number;
+  groupId?: string;
+  variantIndex?: number;
   base64?: string | null;
   url?: string | null;
   revisedPrompt?: string | null;
@@ -107,6 +111,62 @@ async function downloadImage(src: string, filename: string) {
   } catch {
     window.open(src, '_blank', 'noopener,noreferrer');
   }
+}
+
+function base64ToUint8Array(b64: string) {
+  const clean = (b64 || '').trim();
+  const comma = clean.indexOf(',');
+  const data = clean.startsWith('data:') && comma >= 0 ? clean.slice(comma + 1) : clean;
+  const binStr = atob(data);
+  const len = binStr.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i);
+  return bytes;
+}
+
+async function downloadAllAsZip(items: { src: string; filename: string }[], zipName: string) {
+  const zip = new JSZip();
+  let okCount = 0;
+
+  for (const it of items) {
+    const src = (it.src || '').trim();
+    const name = filenameSafe(it.filename) || 'image';
+    const finalName = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ? name : `${name}.png`;
+    if (!src) continue;
+
+    try {
+      if (src.startsWith('data:') || /^[A-Za-z0-9+/=]+$/.test(src)) {
+        const bytes = base64ToUint8Array(src);
+        zip.file(finalName, bytes);
+        okCount++;
+        continue;
+      }
+
+      const res = await fetch(src, { mode: 'cors' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      zip.file(finalName, blob);
+      okCount++;
+    } catch {
+      // ignore failed file
+    }
+  }
+
+  if (okCount === 0) {
+    alert('没有可下载的图片（可能被跨域限制）');
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (filenameSafe(zipName) || 'images') + '.zip';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 const defaultParams: ModelLabParams = {
@@ -257,9 +317,13 @@ export default function LlmLabTab() {
   const [promptText, setPromptText] = useState<string>('');
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
 
-  const [mode, setMode] = useState<LabMode>('compare');
+  const [mainMode, setMainMode] = useState<MainMode>('infer');
+  const [imageSubMode, setImageSubMode] = useState<ImageSubMode>('single');
   const [imgSize, setImgSize] = useState<string>('1024x1024');
   const [imgResponseFormat, setImgResponseFormat] = useState<'b64_json' | 'url'>('b64_json');
+  const [singleN, setSingleN] = useState<number>(1);
+  const [singleGroupId, setSingleGroupId] = useState<string>('');
+  const [singleSelected, setSingleSelected] = useState<Record<string, boolean>>({});
 
   const [imageRunning, setImageRunning] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -273,6 +337,11 @@ export default function LlmLabTab() {
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchItems, setBatchItems] = useState<Record<string, ImageViewItem>>({});
   const batchAbortRef = useRef<AbortController | null>(null);
+
+  const [imageGridEl, setImageGridEl] = useState<HTMLDivElement | null>(null);
+  const imageGridRef = useCallback((el: HTMLDivElement | null) => setImageGridEl(el), []);
+  const [imageGridCols, setImageGridCols] = useState(3);
+  const [imageThumbHeight, setImageThumbHeight] = useState(220);
 
   const [modelSets, setModelSets] = useState<ModelLabModelSet[]>([]);
   const [modelSetName, setModelSetName] = useState('');
@@ -399,6 +468,42 @@ export default function LlmLabTab() {
     loadModelSets();
   }, []);
 
+  useLayoutEffect(() => {
+    const el = imageGridEl;
+    if (!el) return;
+
+    const parseRatio = (s: string) => {
+      const m = String(s || '').trim().match(/^(\d+)\s*x\s*(\d+)$/i);
+      const w = m ? Number(m[1]) : 1;
+      const h = m ? Number(m[2]) : 1;
+      const ww = Number.isFinite(w) && w > 0 ? w : 1;
+      const hh = Number.isFinite(h) && h > 0 ? h : 1;
+      return { w: ww, h: hh };
+    };
+
+    const GAP = 8; // 对应 gap-2
+    const MIN_CARD_W = 240;
+    const MAX_COLS = 4;
+
+    const recompute = () => {
+      const w = el.clientWidth || 0;
+      if (w <= 0) return;
+
+      const cols = Math.max(1, Math.min(MAX_COLS, Math.floor((w + GAP) / (MIN_CARD_W + GAP)) || 1));
+      const cardW = (w - GAP * (cols - 1)) / cols;
+      const ratio = parseRatio(imgSize);
+      const h = Math.round(cardW * (ratio.h / ratio.w));
+
+      setImageGridCols(cols);
+      setImageThumbHeight(Math.max(160, Math.min(420, h)));
+    };
+
+    recompute();
+    const ro = new ResizeObserver(() => recompute());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [imageGridEl, imgSize, mainMode, imageSubMode]);
+
   useEffect(() => {
     if (!activeExperiment) return;
     setSuite(activeExperiment.suite);
@@ -455,11 +560,18 @@ export default function LlmLabTab() {
     setBatchRunning(false);
   };
 
-  const onModeChange = (m: LabMode) => {
+  const DEFAULT_IMAGE_PROMPT = '生成一张 Hello Kitty 的图片，卡通风格，纯色背景，高清。';
+
+  const onMainModeChange = (m: MainMode) => {
     // 切换模式时，尽量停止正在进行的流式任务，避免 UI 混乱
-    if (m !== 'compare' && running) stopRun();
-    if (m !== 'batchImage' && batchRunning) stopBatchRun();
-    setMode(m);
+    if (m !== 'infer' && running) stopRun();
+    if (m !== 'image' && batchRunning) stopBatchRun();
+    setMainMode(m);
+
+    // 生图给一个默认示例 prompt（仅在空文本时）
+    if (m === 'image') {
+      setPromptText((cur) => (cur && cur.trim() ? cur : DEFAULT_IMAGE_PROMPT));
+    }
   };
 
   const startGenerateImage = async () => {
@@ -468,40 +580,51 @@ export default function LlmLabTab() {
 
     setImageError(null);
     setImageRunning(true);
+    setSingleSelected({});
 
-    const tempKey = `single_${Date.now()}`;
-    setImageItems((prev) => [
-      {
-        key: tempKey,
+    const groupId = `single_${Date.now()}`;
+    setSingleGroupId(groupId);
+
+    const n = Math.max(1, Math.min(20, Number(singleN || 1)));
+    // 先放占位（让布局按数量立即生效）
+    setImageItems((prev) => {
+      const rest = prev.filter((x) => x.groupId !== groupId);
+      const placeholders: ImageViewItem[] = Array.from({ length: n }).map((_, i) => ({
+        key: `${groupId}_${i}`,
+        groupId,
+        variantIndex: i,
         status: 'running',
         prompt,
         createdAt: Date.now(),
-      },
-      ...prev,
-    ]);
+      }));
+      return [...placeholders, ...rest];
+    });
 
-    const res = await generateImageGen({ prompt, n: 1, size: imgSize, responseFormat: imgResponseFormat });
+    const res = await generateImageGen({ prompt, n, size: imgSize, responseFormat: imgResponseFormat });
     if (!res.success) {
       setImageError(res.error?.message || '生图失败');
-      setImageItems((prev) => prev.map((x) => (x.key === tempKey ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x)));
+      setImageItems((prev) =>
+        prev.map((x) => (x.groupId === groupId ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x))
+      );
       setImageRunning(false);
       return;
     }
 
     const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
-    const first = images[0];
     setImageItems((prev) => {
-      const withoutTemp = prev.filter((x) => x.key !== tempKey);
-      const doneItem: ImageViewItem = {
-        key: `img_${Date.now()}`,
-        status: 'done',
-        prompt,
-        createdAt: Date.now(),
-        base64: first?.base64 ?? null,
-        url: first?.url ?? null,
-        revisedPrompt: first?.revisedPrompt ?? null,
-      };
-      return [doneItem, ...withoutTemp];
+      return prev.map((x) => {
+        if (x.groupId !== groupId) return x;
+        const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
+        const img = images[idx];
+        if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
+        return {
+          ...x,
+          status: 'done',
+          base64: (img as any).base64 ?? null,
+          url: (img as any).url ?? null,
+          revisedPrompt: (img as any).revisedPrompt ?? null,
+        };
+      });
     });
     setImageRunning(false);
   };
@@ -768,6 +891,11 @@ export default function LlmLabTab() {
     return Object.values(batchItems).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }, [batchItems]);
 
+  const singleList = useMemo(() => {
+    const list = (imageItems ?? []).filter((x) => x.groupId === singleGroupId);
+    return list.sort((a, b) => (Number(a.variantIndex ?? 0) - Number(b.variantIndex ?? 0)));
+  }, [imageItems, singleGroupId]);
+
   const modelById = useMemo(() => new Map<string, Model>((allModels ?? []).map((m) => [m.id, m])), [allModels]);
 
   const refreshModelsSilent = async () => {
@@ -933,7 +1061,12 @@ export default function LlmLabTab() {
   const onSuiteClick = (nextSuite: ModelLabSuite) => {
     if (suite !== nextSuite) {
       setSuite(nextSuite);
-      suiteCycleRef.current[nextSuite] = 0;
+      // 单击切换 suite 时也要立即替换提示词（避免需要点第二下才生效）
+      const list = builtInPrompts[nextSuite] ?? [];
+      const first = list[0]?.promptText ?? '';
+      applyBuiltInPrompt(first);
+      // 下一次再点时，从第二条开始循环（若只有 1 条则继续 0）
+      suiteCycleRef.current[nextSuite] = list.length > 1 ? 1 : 0;
       return;
     }
 
@@ -1208,7 +1341,7 @@ export default function LlmLabTab() {
               提示词
             </div>
             <div className="flex gap-2 shrink-0">
-              {mode === 'compare' ? (
+              {mainMode === 'infer' ? (
                 <SuccessConfettiButton
                   title="一键开始实验"
                   size="md"
@@ -1220,11 +1353,11 @@ export default function LlmLabTab() {
                   onCancel={stopRun}
                   disabled={!canRun || !activeExperimentId}
                 />
-              ) : mode === 'image' ? (
+              ) : imageSubMode === 'single' ? (
                 <>
                   <Button variant="primary" size="md" onClick={startGenerateImage} disabled={imageRunning}>
                     <ImagePlus size={16} />
-                    {imageRunning ? '生成中' : '生成 1 张'}
+                    {imageRunning ? '生成中' : `生成 ${Math.max(1, Math.min(20, Number(singleN || 1)))} 张`}
                   </Button>
                   <Button variant="secondary" size="md" onClick={() => setImageItems([])} disabled={imageRunning || imageItems.length === 0}>
                     清空
@@ -1245,18 +1378,20 @@ export default function LlmLabTab() {
           </div>
 
           <div className="mt-3 flex gap-2 overflow-auto pr-1">
-            <Button size="xs" variant={mode === 'compare' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeChange('compare')}>
-              对比实验
+            <Button size="xs" variant={mainMode === 'infer' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onMainModeChange('infer')}>
+              推理测试
             </Button>
-            <Button size="xs" variant={mode === 'image' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeChange('image')}>
-              生成图
-            </Button>
-            <Button size="xs" variant={mode === 'batchImage' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeChange('batchImage')}>
-              批量生图
+            <Button
+              size="xs"
+              variant={mainMode === 'image' ? 'primary' : 'secondary'}
+              className="shrink-0"
+              onClick={() => onMainModeChange('image')}
+            >
+              生图
             </Button>
           </div>
 
-          {mode === 'compare' ? (
+          {mainMode === 'infer' ? (
             <div className="mt-3 flex gap-2 overflow-auto pr-1">
               <Button size="xs" variant={suite === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('speed')}>
               <Sparkles size={14} />
@@ -1273,6 +1408,38 @@ export default function LlmLabTab() {
           </div>
           ) : (
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  size="xs"
+                  variant={imageSubMode === 'single' ? 'primary' : 'secondary'}
+                  className="shrink-0"
+                  onClick={() => setImageSubMode('single')}
+                >
+                  单张
+                </Button>
+                <Button
+                  size="xs"
+                  variant={imageSubMode === 'batch' ? 'primary' : 'secondary'}
+                  className="shrink-0"
+                  onClick={() => setImageSubMode('batch')}
+                >
+                  批量
+                </Button>
+              </div>
+              {imageSubMode === 'single' ? (
+                <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  数量
+                  <input
+                    type="number"
+                    value={singleN}
+                    min={1}
+                    max={20}
+                    onChange={(e) => setSingleN(Math.max(1, Math.min(20, Number(e.target.value || 1))))}
+                    className="ml-2 h-[30px] w-[72px] rounded-[10px] px-2 text-[12px] outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  />
+                </label>
+              ) : null}
               <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 尺寸
                 <select
@@ -1298,7 +1465,7 @@ export default function LlmLabTab() {
                   <option value="url">url</option>
                 </select>
               </label>
-              {mode === 'batchImage' && planResult?.total ? (
+              {imageSubMode === 'batch' && planResult?.total ? (
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   已解析：{planResult.total} 张
                 </span>
@@ -1312,9 +1479,9 @@ export default function LlmLabTab() {
             className="mt-3 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
             placeholder={
-              mode === 'compare'
+              mainMode === 'infer'
                 ? '输入本次对比测试的 prompt（可使用内置模板快速填充）'
-                : mode === 'image'
+                : imageSubMode === 'single'
                   ? '输入要生成的图片描述（将直接交给生图模型）'
                   : '输入需求描述（将先用意图模型解析出图片清单并提示数量）'
             }
@@ -1325,7 +1492,7 @@ export default function LlmLabTab() {
         {/* 右下：实时结果 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
           <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
-          {mode === 'compare' ? (
+          {mainMode === 'infer' ? (
             <>
           <div className="flex items-center justify-between shrink-0">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
@@ -1573,7 +1740,7 @@ export default function LlmLabTab() {
             )}
           </div>
           </>
-          ) : mode === 'image' ? (
+          ) : imageSubMode === 'single' ? (
             <>
               <div className="flex items-center justify-between shrink-0">
                 <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
@@ -1601,11 +1768,15 @@ export default function LlmLabTab() {
                       这里将展示生成的图片
                     </div>
                     <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                      在上方输入描述，点击“生成 1 张”
+                      在上方输入描述，点击“生成”
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <div
+                    ref={imageGridRef}
+                    className="grid gap-2"
+                    style={{ gridTemplateColumns: `repeat(${imageGridCols}, minmax(0, 1fr))` }}
+                  >
                     {imageItems.map((it) => {
                       const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
                       return (
@@ -1641,12 +1812,16 @@ export default function LlmLabTab() {
                           </div>
                           <div
                             className="rounded-[12px] overflow-hidden relative"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
+                            style={{
+                              border: '1px solid rgba(255,255,255,0.10)',
+                              background: 'rgba(255,255,255,0.02)',
+                              height: imageThumbHeight,
+                            }}
                           >
                             {it.status === 'done' && src ? (
-                              <img src={src} alt={it.prompt} className="w-full h-auto block" />
+                              <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
                             ) : (
-                              <div className="w-full h-[180px] flex flex-col items-center justify-center gap-2 px-3 text-center">
+                              <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
                                 {it.status === 'error' ? (
                                   <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
                                     {it.errorMessage || '失败'}
@@ -1731,7 +1906,11 @@ export default function LlmLabTab() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <div
+                    ref={imageGridRef}
+                    className="grid gap-2"
+                    style={{ gridTemplateColumns: `repeat(${imageGridCols}, minmax(0, 1fr))` }}
+                  >
                     {batchList.map((it) => {
                       const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
                       return (
@@ -1762,12 +1941,16 @@ export default function LlmLabTab() {
                           </div>
                           <div
                             className="rounded-[12px] overflow-hidden relative"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
+                            style={{
+                              border: '1px solid rgba(255,255,255,0.10)',
+                              background: 'rgba(255,255,255,0.02)',
+                              height: imageThumbHeight,
+                            }}
                           >
                             {it.status === 'done' && src ? (
-                              <img src={src} alt={it.prompt} className="w-full h-auto block" />
+                              <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
                             ) : (
-                              <div className="w-full h-[180px] flex flex-col items-center justify-center gap-2 px-3 text-center">
+                              <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
                                 {it.status === 'error' ? (
                                   <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
                                     {it.errorMessage || '失败'}

@@ -150,9 +150,9 @@ public class AdminImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
         }
 
-        // 单次默认生成 1 张；仍允许前端透传 n（<=4）以便将来扩展
+        // 单次允许一个提示词生成多张（上限 20；与“批量生图总上限”一致）
         var n = request?.N ?? 1;
-        n = Math.Clamp(n, 1, 4);
+        n = Math.Clamp(n, 1, 20);
 
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
