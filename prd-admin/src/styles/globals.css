@@ -145,6 +145,11 @@
   100% { stroke-dashoffset: 0; opacity: 1; }
 }
 
+@keyframes modelMapLineGlow {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.45)); }
+  50% { opacity: 1; filter: drop-shadow(0 16px 32px color-mix(in srgb, var(--accent-gold) 26%, rgba(0,0,0,0.35))); }
+}
+
 @keyframes modelMapNodeIn {
   0% { opacity: 0; transform: translate(-50%, -50%) scale(0.92); filter: drop-shadow(0 0 0 rgba(0,0,0,0)); }
   65% { opacity: 1; transform: translate(-50%, -50%) scale(1.02); filter: drop-shadow(0 10px 18px rgba(0,0,0,0.35)); }
@@ -168,10 +173,44 @@
   border-radius: 18px;
   border: 1px solid var(--border-subtle);
   background:
-    radial-gradient(500px 320px at 50% 45%, rgba(250, 204, 21, 0.06) 0%, rgba(255,255,255,0.02) 42%, rgba(0,0,0,0) 72%),
-    radial-gradient(520px 360px at 50% 55%, rgba(59, 130, 246, 0.05) 0%, rgba(0,0,0,0) 70%),
+    radial-gradient(520px 360px at 50% 46%, rgba(250, 204, 21, 0.07) 0%, rgba(255,255,255,0.02) 44%, rgba(0,0,0,0) 74%),
+    radial-gradient(560px 420px at 50% 58%, rgba(59, 130, 246, 0.055) 0%, rgba(0,0,0,0) 72%),
+    radial-gradient(900px 700px at 50% 50%, rgba(255,255,255,0.018) 0%, rgba(0,0,0,0) 68%),
     rgba(255,255,255,0.02);
   overflow: hidden;
+}
+
+.model-map-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    radial-gradient(circle at 18px 22px, rgba(255,255,255,0.10) 0 1px, transparent 2px),
+    radial-gradient(circle at 72px 64px, rgba(255,255,255,0.08) 0 1px, transparent 2px),
+    radial-gradient(circle at 46px 92px, rgba(250,204,21,0.12) 0 1px, transparent 2px),
+    radial-gradient(circle at 108px 36px, rgba(59,130,246,0.10) 0 1px, transparent 2px);
+  background-size: 140px 140px;
+  background-repeat: repeat;
+  mix-blend-mode: screen;
+  filter: blur(0.1px);
+  animation: modelMapStarDrift 14s linear infinite;
+}
+
+.model-map-stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(closest-side at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0.32) 92%, rgba(0,0,0,0.42) 100%);
+  opacity: 0.55;
+}
+
+@keyframes modelMapStarDrift {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-140px, -140px, 0); }
 }
 
 .model-map-frame {
@@ -202,12 +241,16 @@
 }
 
 .model-map-line.line-a {
-  animation: modelMapLineDraw 900ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
+  animation:
+    modelMapLineDraw 980ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards,
+    modelMapLineGlow 2.8s ease-in-out 1.0s infinite;
 }
 
 .model-map-line.line-b {
-  animation: modelMapLineDraw 900ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
-  animation-delay: 140ms;
+  animation:
+    modelMapLineDraw 980ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards,
+    modelMapLineGlow 2.8s ease-in-out 1.2s infinite;
+  animation-delay: 160ms, 0ms;
 }
 
 .model-map-center {
@@ -249,6 +292,10 @@
 
 .model-map-node {
   position: absolute;
+  /* 顶点对齐：node 本身不再 translate，避免被 chip 宽度“拖偏” */
+}
+
+.model-map-anchor {
   transform: translate(-50%, -50%);
   opacity: 0;
   animation: modelMapNodeIn 520ms cubic-bezier(0.2, 0.9, 0.2, 1) 1 forwards;
@@ -282,6 +329,14 @@
   max-width: min(240px, 42vw);
 }
 
+.model-map-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--mm-accent, rgba(255,255,255,0.75));
+  opacity: 0.95;
+}
+
 .model-map-type {
   font-size: 12px;
   font-weight: 900;
@@ -302,9 +357,13 @@
   white-space: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
-  max-width: 160px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 180px;
   padding-bottom: 1px; /* 让滚动不挤压垂直对齐 */
   scrollbar-width: none; /* Firefox */
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
 }
 .model-map-name::-webkit-scrollbar { height: 0; }
 
@@ -315,6 +374,15 @@
 .model-map-node.pos-bottom { top: 91%; left: 50%; }
 .model-map-node.pos-bottom-left { top: 73%; left: 17%; }
 .model-map-node.pos-top-left { top: 27%; left: 17%; }
+
+/* chip 外扩：让 dot 锚点精确落在六芒星顶点上 */
+.model-map-node.pos-bottom .model-map-dot { margin: 8px auto 0 auto; }
+.model-map-node.pos-bottom .model-map-chip { order: -1; margin-bottom: 8px; }
+
+.model-map-node.pos-top-left .model-map-anchor,
+.model-map-node.pos-bottom-left .model-map-anchor { transform: translate(-50%, -50%) translateX(-10px); }
+.model-map-node.pos-top-right .model-map-anchor,
+.model-map-node.pos-bottom-right .model-map-anchor { transform: translate(-50%, -50%) translateX(10px); }
 
 /* tone：用更“控色”的点亮方式，不做五角星那种显眼形状 */
 .tone-gold { --mm-accent: rgba(250, 204, 21, 0.95); }
@@ -327,12 +395,210 @@
 
 @media (prefers-reduced-motion: reduce) {
   .model-map-line,
-  .model-map-node,
-  .model-map-center,
+  .model-map-anchor,
   .model-map-dot {
     animation: none !important;
     opacity: 1 !important;
     transform: translate(-50%, -50%) !important;
     stroke-dashoffset: 0 !important;
   }
+}
+
+/* success.html 参考：三态按钮 + confetti（局部复用组件） */
+@keyframes saLoading {
+  0% { cy: 10; }
+  25% { cy: 3; }
+  50% { cy: 10; }
+}
+
+.sa-confetti-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.sa-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--sa-font, 12px);
+  font-weight: 700;
+  height: var(--sa-h, 30px);
+  outline: none;
+  overflow: hidden;
+  padding: 0 var(--sa-px, 14px);
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+  min-width: var(--sa-minw, 86px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: width 220ms ease, transform 260ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.sa-btn.sa-breathe {
+  animation: saPillBreath 320ms cubic-bezier(0.2, 0.9, 0.2, 1) 1;
+}
+
+@keyframes saPillBreath {
+  0% { transform: scale(1); }
+  45% { transform: scale(0.965); }
+  100% { transform: scale(1); }
+}
+
+.sa-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--sa-radius, 10px);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25) inset;
+  transform: scaleX(1);
+  transform-origin: 50% 50%;
+  transition: transform 0.22s cubic-bezier(0.39, 1.86, 0.64, 1) 0.3s;
+  z-index: 0;
+}
+
+.sa-sizer {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+  box-sizing: border-box;
+  padding: 0 var(--sa-px, 14px);
+  height: var(--sa-h, 30px);
+}
+
+.sa-btn:hover::before {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.20);
+}
+
+.sa-message {
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.sa-icon { color: rgba(92, 134, 255, 0.95); }
+.sa-successIcon { color: rgba(92, 255, 161, 0.95); }
+
+/* 默认全部隐藏，避免三层重叠 */
+.sa-submitMessage,
+.sa-loadingMessage,
+.sa-successMessage {
+  opacity: 0;
+}
+
+.sa-button-text span {
+  opacity: 0;
+  position: relative;
+}
+
+.sa-submitMessage .sa-button-text span {
+  top: 8px;
+  transition: all 0.2s ease var(--d);
+}
+
+.sa-submitMessage .sa-icon {
+  opacity: 0;
+  position: relative;
+  top: 30px;
+  transition: top 0.4s ease, opacity 0.3s linear;
+}
+
+.sa-loadingMessage { transition: opacity 0.3s linear 0.3s, top 0.4s cubic-bezier(0.22, 0, 0.41, -0.57); }
+
+.sa-loadingSvg {
+  fill: rgba(92, 134, 255, 0.95);
+  width: 22px;
+  height: 22px;
+}
+
+.sa-loadingText {
+  color: rgba(255,255,255,0.78);
+  font-weight: 800;
+  font-size: inherit;
+  letter-spacing: 0.01em;
+}
+
+.sa-cancelHint {
+  color: rgba(255,255,255,0.55);
+}
+
+.sa-loadingCircle { }
+.sa-loadingCircle:nth-child(2) { animation-delay: 0.1s; }
+.sa-loadingCircle:nth-child(3) { animation-delay: 0.2s; }
+
+.sa-successMessage .sa-button-text span {
+  left: 5px;
+  transition: all 0.2s ease var(--dr);
+}
+
+.sa-ready .sa-submitMessage .sa-icon {
+  opacity: 1;
+  top: 0;
+  transition: top 0.4s ease 600ms, opacity 0.3s linear 600ms;
+}
+
+.sa-ready .sa-submitMessage { opacity: 1; }
+
+.sa-ready .sa-submitMessage .sa-button-text span {
+  top: 0;
+  opacity: 1;
+  transition: all 0.2s ease calc(var(--dr) + 600ms);
+}
+
+.sa-loading::before {
+  transition: transform 0.28s ease;
+  transform: scaleX(0.92);
+}
+
+.sa-loading .sa-loadingMessage { opacity: 1; }
+.sa-loading .sa-loadingCircle {
+  animation-duration: 1s;
+  animation-iteration-count: infinite;
+  animation-name: saLoading;
+  cy: 10;
+}
+
+.sa-complete .sa-submitMessage .sa-icon { top: -30px; transition: none; opacity: 0; }
+.sa-complete .sa-submitMessage .sa-button-text span { top: -8px; transition: none; opacity: 0; }
+.sa-complete .sa-loadingMessage { top: 80px; opacity: 0; }
+
+.sa-complete .sa-successMessage { opacity: 1; }
+
+.sa-complete .sa-successMessage .sa-button-text span {
+  left: 0;
+  opacity: 1;
+  transition: all 0.2s ease calc(var(--d) + 1000ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sa-confetti-canvas { display: none; }
+  .sa-btn::before { transition: none; }
+  .sa-btn * { transition: none !important; animation: none !important; }
+  .sa-button-text span { opacity: 1; top: 0 !important; left: 0 !important; }
+  .sa-submitMessage .sa-icon { opacity: 1; top: 0; }
+  .sa-loadingMessage { display: none; }
 }

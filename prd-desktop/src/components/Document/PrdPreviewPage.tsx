@@ -21,6 +21,8 @@ export default function PrdPreviewPage() {
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
   const [activeHeadingTitle, setActiveHeadingTitle] = useState<string | null>(null);
   const [tocItems, setTocItems] = useState<Array<{ id: string; text: string; level: number }>>([]);
+  const [highlightReady, setHighlightReady] = useState(false);
+  const [isCitationExcerptExpanded, setIsCitationExcerptExpanded] = useState(false);
   const prdPreviewContentRef = useRef<HTMLDivElement>(null);
   const headingsRef = useRef<Array<{ id: string; el: HTMLElement; title: string; top: number }>>([]);
   const scrollRafRef = useRef<number | null>(null);
@@ -41,9 +43,11 @@ export default function PrdPreviewPage() {
 
   // 引用跳转与标黄
   const navTargetHeadingId = usePrdPreviewNavStore((s) => s.targetHeadingId);
+  const navTargetHeadingTitle = usePrdPreviewNavStore((s) => s.targetHeadingTitle);
   const navCitations = usePrdPreviewNavStore((s) => s.citations);
   const navActiveIndex = usePrdPreviewNavStore((s) => s.activeCitationIndex);
   const setNavActiveIndex = usePrdPreviewNavStore((s) => s.setActiveCitationIndex);
+  const consumeNavTarget = usePrdPreviewNavStore((s) => s.consumeTarget);
   const clearNav = usePrdPreviewNavStore((s) => s.clear);
 
   const canPreview = useMemo(() => {
@@ -138,10 +142,17 @@ export default function PrdPreviewPage() {
   // 若在 mount 后再强制重置，会与用户的首次目录点击产生竞态，表现为“需要点两次/右侧不更新/不滚动”。
 
   // 切换文档/群组时：清空引用导航，避免跨文档残留高亮
+  // 注意：不要在首次 mount 就清空，否则会与“从聊天点击依据 -> 打开预览并跳转”产生竞态，导致永远跳不到目标章节。
+  const lastDocGroupRef = useRef<{ docId: string | null; groupId: string | null } | null>(null);
   useEffect(() => {
-    clearNav();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prdDocument?.id, activeGroupId]);
+    const cur = { docId: prdDocument?.id ?? null, groupId: activeGroupId ?? null };
+    const prev = lastDocGroupRef.current;
+    lastDocGroupRef.current = cur;
+    if (!prev) return;
+    if (prev.docId !== cur.docId || prev.groupId !== cur.groupId) {
+      clearNav();
+    }
+  }, [prdDocument?.id, activeGroupId, clearNav]);
 
   const tocIndentClass = (level: number) => {
     switch (level) {
@@ -174,6 +185,136 @@ export default function PrdPreviewPage() {
     tryScroll(0);
   };
 
+  const resolveHeadingIdForNav = useCallback((args: { headingId?: string | null; headingTitle?: string | null }) => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return null;
+
+    const stripInlineMarkdownLike = (raw: string) => {
+      let s = String(raw || '');
+      if (!s) return '';
+      // images: ![alt](url) -> alt
+      s = s.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+      // links: [text](url) -> text
+      s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+      // inline code
+      s = s.replace(/`([^`]+)`/g, '$1');
+      // emphasis/bold (多轮覆盖简单嵌套)
+      for (let i = 0; i < 2; i += 1) {
+        s = s.replace(/\*\*([^*]+)\*\*/g, '$1');
+        s = s.replace(/__([^_]+)__/g, '$1');
+        s = s.replace(/\*([^*]+)\*/g, '$1');
+        s = s.replace(/_([^_]+)_/g, '$1');
+      }
+      // html tags
+      s = s.replace(/<[^>]+>/g, '');
+      // escaped markdown chars
+      s = s.replace(/\\([\\`*_{}\[\]()#+\-.!])/g, '$1');
+      return s;
+    };
+
+    const normalizeHeadingTextForMatch = (raw: string) => {
+      let s = stripInlineMarkdownLike(raw);
+      // 与 MarkdownRenderer 保持一致：去掉尾部 "###" 等
+      s = s.replace(/\s+#+\s*$/, '').trim();
+      s = s.replace(/\s+/g, ' ');
+      return s;
+    };
+
+    const looseKey = (raw: string) => {
+      // 更宽松的匹配 key：去空白+去常见标点，解决“全角/半角/括号/冒号”等差异
+      const s = normalizeHeadingTextForMatch(raw);
+      if (!s) return '';
+      return s
+        .toLowerCase()
+        .replace(/[\s\p{P}\p{S}]+/gu, '') // 标点/符号
+        .trim();
+    };
+
+    const rawId = (args.headingId || '').trim();
+    const rawTitle = (args.headingTitle || '').trim();
+
+    const normalizeId = (id: string) => {
+      const s = String(id || '').trim();
+      if (!s) return '';
+      return s.startsWith('#') ? s.slice(1) : s;
+    };
+
+    const safeDecode = (id: string) => {
+      try {
+        return decodeURIComponent(id);
+      } catch {
+        return id;
+      }
+    };
+
+    const tryFindId = (id: string) => {
+      const norm = normalizeId(id);
+      if (!norm) return null;
+      const esc = (window as any).CSS?.escape
+        ? (window as any).CSS.escape(norm)
+        : norm.replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
+      const el = container.querySelector(`#${esc}`) as HTMLElement | null;
+      return el ? norm : null;
+    };
+
+    // 1) 优先按传入 headingId 精确匹配
+    if (rawId) {
+      // 尝试多种等价形式（避免 #、编码、大小写、空白等差异）
+      const candidates = [
+        rawId,
+        normalizeId(rawId),
+        safeDecode(rawId),
+        normalizeId(safeDecode(rawId)),
+        safeDecode(rawId).toLowerCase(),
+        normalizeId(safeDecode(rawId).toLowerCase()),
+      ].filter(Boolean);
+
+      for (const c of candidates) {
+        const hit = tryFindId(c);
+        if (hit) return hit;
+      }
+    }
+
+    // 2) 兜底：按 headingTitle 匹配渲染出来的真实标题文本（避免后端 slug 算法不同导致跳转失败）
+    if (rawTitle) {
+      const needle = normalizeHeadingTextForMatch(rawTitle);
+      if (!needle) return null;
+      const needleLoose = looseKey(rawTitle);
+      const hs = Array.from(container.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[];
+      for (const h of hs) {
+        const text = normalizeHeadingTextForMatch(h.textContent || '');
+        if (text && text === needle) {
+          const id = (h.id || '').trim();
+          if (id) return id;
+        }
+      }
+
+      // 3) 宽松匹配：去标点/去空白（适配 “：”“-”“（）” 等差异）
+      if (needleLoose) {
+        for (const h of hs) {
+          const t2 = h.textContent || '';
+          const key = looseKey(t2);
+          if (key && key === needleLoose) {
+            const id = (h.id || '').trim();
+            if (id) return id;
+          }
+        }
+      }
+
+      // 4) 退一步：包含匹配（避免标题前后多了编号/前缀）
+      for (const h of hs) {
+        const t2 = normalizeHeadingTextForMatch(h.textContent || '');
+        if (!t2) continue;
+        if (t2.includes(needle) || needle.includes(t2)) {
+          const id = (h.id || '').trim();
+          if (id) return id;
+        }
+      }
+    }
+
+    return null;
+  }, []);
+
   const clearHighlights = useCallback(() => {
     const container = prdPreviewContentRef.current;
     if (!container) return;
@@ -185,6 +326,18 @@ export default function PrdPreviewPage() {
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
       parent.removeChild(el);
       parent.normalize();
+    });
+
+    // 清理“块级高亮”（当无法精确包裹文本时的兜底方案）
+    const blocks = Array.from(container.querySelectorAll('[data-prd-citation-block="1"]')) as HTMLElement[];
+    blocks.forEach((b) => {
+      b.removeAttribute('data-prd-citation-block');
+      b.removeAttribute('data-citation-idx');
+      b.style.backgroundColor = '';
+      b.style.borderRadius = '';
+      b.style.padding = '';
+      b.style.outline = '';
+      b.style.outlineOffset = '';
     });
   }, []);
 
@@ -247,13 +400,155 @@ export default function PrdPreviewPage() {
     return false;
   }, [normalizeExcerptForMatch]);
 
+  const normalizeLoose = (raw: string) => {
+    const s = String(raw || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+    // 去掉常见标点/符号（提高跨节点/格式差异的命中率）
+    return s.replace(/[\p{P}\p{S}]+/gu, '');
+  };
+
+  const highlightBlockFallback = useCallback((excerpt: string, citationIdx: number) => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return false;
+    const needle = normalizeExcerptForMatch(excerpt);
+    if (!needle) return false;
+
+    // 更短的 key，避免误匹配；同时做“宽松归一化”以跨越 inline markdown 分割节点的问题
+    const key = needle.length > 28 ? needle.slice(0, 28) : needle;
+    const keyLoose = normalizeLoose(key);
+    if (!keyLoose) return false;
+
+    const blocks = Array.from(container.querySelectorAll('p,li,blockquote,td,th,h1,h2,h3,h4,h5,h6')) as HTMLElement[];
+    for (const block of blocks) {
+      if (block.closest('pre,code')) continue;
+      const text = block.textContent || '';
+      const tLoose = normalizeLoose(text);
+      if (!tLoose) continue;
+      if (!tLoose.includes(keyLoose)) continue;
+
+      // 使用块级高亮：不破坏 DOM 结构（避免跨节点包裹的复杂度）
+      block.setAttribute('data-prd-citation-block', '1');
+      block.setAttribute('data-citation-idx', String(citationIdx));
+      block.style.backgroundColor = 'rgba(250, 204, 21, 0.22)'; // 更淡一些，避免影响阅读
+      block.style.borderRadius = '10px';
+      block.style.padding = '2px 4px';
+      return true;
+    }
+
+    return false;
+  }, [normalizeExcerptForMatch]);
+
+  const highlightFuzzyFallback = useCallback((excerpt: string, citationIdx: number) => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return false;
+    const needle = normalizeExcerptForMatch(excerpt);
+    if (!needle) return false;
+
+    const e = normalizeLoose(needle);
+    if (!e || e.length < 10) return false;
+
+    // 取多个窗口片段，做“包含计分”，避免必须完整子串
+    const windowLen = Math.min(16, Math.max(10, Math.floor(e.length / 4)));
+    const picks = new Set<string>();
+    const steps = Math.min(6, Math.max(2, Math.floor(e.length / windowLen)));
+    for (let i = 0; i < steps; i += 1) {
+      const start = Math.floor((i * (e.length - windowLen)) / Math.max(1, steps - 1));
+      const seg = e.slice(start, start + windowLen);
+      if (seg.length >= 10) picks.add(seg);
+    }
+    const segs = Array.from(picks);
+    if (segs.length === 0) return false;
+
+    const blocks = Array.from(container.querySelectorAll('p,li,blockquote,td,th,h1,h2,h3,h4,h5,h6')) as HTMLElement[];
+    let best: { el: HTMLElement; score: number } | null = null;
+    for (const block of blocks) {
+      if (block.closest('pre,code')) continue;
+      const t = normalizeLoose(block.textContent || '');
+      if (!t || t.length < 10) continue;
+      let score = 0;
+      for (const seg of segs) {
+        if (t.includes(seg)) score += 1;
+      }
+      if (score <= 0) continue;
+      if (!best || score > best.score) best = { el: block, score };
+      // 快速退出：满分不必继续
+      if (best && best.score >= segs.length) break;
+    }
+
+    // 至少命中 2 个片段才认为可靠
+    if (!best || best.score < 2) return false;
+
+    best.el.setAttribute('data-prd-citation-block', '1');
+    best.el.setAttribute('data-citation-idx', String(citationIdx));
+    best.el.style.backgroundColor = 'rgba(250, 204, 21, 0.18)';
+    best.el.style.borderRadius = '10px';
+    best.el.style.padding = '2px 4px';
+    return true;
+  }, [normalizeExcerptForMatch]);
+
+  const highlightHeadingFallback = useCallback((citation: DocCitation, citationIdx: number) => {
+    const container = prdPreviewContentRef.current;
+    if (!container) return false;
+    const hid = (citation?.headingId || '').trim();
+    const htitle = (citation?.headingTitle || '').trim();
+    const resolved = resolveHeadingIdForNav({ headingId: hid || null, headingTitle: htitle || null });
+    if (!resolved) return false;
+    const esc = (window as any).CSS?.escape
+      ? (window as any).CSS.escape(resolved)
+      : resolved.replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
+    const el = container.querySelector(`#${esc}`) as HTMLElement | null;
+    if (!el) return false;
+    // 只高亮 heading 节点（视觉更稳定），并复用 block 高亮属性供 focusActiveCitation 使用
+    el.setAttribute('data-prd-citation-block', '1');
+    el.setAttribute('data-citation-idx', String(citationIdx));
+    el.style.backgroundColor = 'rgba(250, 204, 21, 0.18)';
+    el.style.borderRadius = '10px';
+    el.style.padding = '2px 4px';
+    return true;
+  }, [resolveHeadingIdForNav]);
+
   const applyHighlights = useCallback((citations: DocCitation[]) => {
     clearHighlights();
     const list = (citations ?? []).slice(0, 30);
+    let ok = 0;
+    let okBlock = 0;
+    let okFuzzy = 0;
+    let okHeading = 0;
+    const failed: number[] = [];
     list.forEach((c, idx) => {
-      if (c?.excerpt) highlightOne(c.excerpt, idx);
+      if (!c?.excerpt) {
+        // 没 excerpt 仍然尝试用章节标题兜底标黄
+        const hitHeading = highlightHeadingFallback(c, idx);
+        if (hitHeading) okHeading += 1;
+        else failed.push(idx);
+        return;
+      }
+      const hit = highlightOne(c.excerpt, idx);
+      if (hit) {
+        ok += 1;
+        return;
+      }
+      const hitBlock = highlightBlockFallback(c.excerpt, idx);
+      if (hitBlock) {
+        okBlock += 1;
+        return;
+      }
+      const hitFuzzy = highlightFuzzyFallback(c.excerpt, idx);
+      if (hitFuzzy) {
+        okFuzzy += 1;
+        return;
+      }
+      const hitHeading = highlightHeadingFallback(c, idx);
+      if (hitHeading) {
+        okHeading += 1;
+        return;
+      }
+      failed.push(idx);
     });
-  }, [clearHighlights, highlightOne]);
+    setHighlightReady(true);
+  }, [clearHighlights, highlightOne, highlightBlockFallback, highlightFuzzyFallback, highlightHeadingFallback]);
 
   const focusActiveCitation = useCallback(() => {
     const container = prdPreviewContentRef.current;
@@ -261,15 +556,32 @@ export default function PrdPreviewPage() {
     const idx = navActiveIndex ?? 0;
     const esc = (window as any).CSS?.escape ? (window as any).CSS.escape(String(idx)) : String(idx).replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
     const target = container.querySelector(`mark[data-prd-citation="1"][data-citation-idx="${esc}"]`) as HTMLElement | null;
-    if (!target) return;
+    const blockTarget = container.querySelector(`[data-prd-citation-block="1"][data-citation-idx="${esc}"]`) as HTMLElement | null;
+    if (!target && !blockTarget) {
+      // 兜底：没找到标黄（多为 excerpt 无法定位），至少跳到该引用所属章节，避免“下一条没反应”的体验
+      const c = Array.isArray(navCitations) ? navCitations[idx] : null;
+      const hid = (c?.headingId || '').trim();
+      const htitle = (c?.headingTitle || '').trim();
+      const resolved = resolveHeadingIdForNav({ headingId: hid || null, headingTitle: htitle || null });
+      if (resolved) scrollToHeading(resolved);
+      return;
+    }
+    const chosen = target || blockTarget;
     // 高亮当前引用：边框更醒目
     Array.from(container.querySelectorAll('mark[data-prd-citation="1"]')).forEach((m) => {
       (m as HTMLElement).style.outline = '';
     });
-    target.style.outline = '2px solid rgba(59,130,246,0.75)';
-    target.style.outlineOffset = '2px';
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [navActiveIndex]);
+    Array.from(container.querySelectorAll('[data-prd-citation-block="1"]')).forEach((m) => {
+      (m as HTMLElement).style.outline = '';
+    });
+    chosen!.style.outline = '2px solid rgba(59,130,246,0.75)';
+    chosen!.style.outlineOffset = '2px';
+    // 不用 scrollIntoView：在某些 WebView/嵌套滚动容器下会触发“滚动到奇怪位置”的乱跳
+    const containerRect = container.getBoundingClientRect();
+    const elRect = chosen!.getBoundingClientRect();
+    const top = container.scrollTop + (elRect.top - containerRect.top) - Math.max(12, (container.clientHeight / 2 - elRect.height / 2));
+    container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }, [navActiveIndex, navCitations, resolveHeadingIdForNav]);
 
   const clearSelectionToolbar = () => setSelectionToolbar(null);
 
@@ -585,28 +897,102 @@ export default function PrdPreviewPage() {
 
   // 当从聊天/讲解点击“依据”进入预览：跳转并标黄
   useEffect(() => {
-    if (!navTargetHeadingId) return;
+    if (!navTargetHeadingId && !navTargetHeadingTitle) return;
     if (!canPreview) return;
     if (prdPreviewLoading || prdPreviewError) return;
     if (!prdPreview?.content) return;
 
-    const raf = requestAnimationFrame(() => {
-      scrollToHeading(navTargetHeadingId);
+    let cancelled = false;
+    let done = false;
+    let timer: number | null = null;
+    let attempt = 0;
+    const delays = [0, 120, 300, 800, 1500];
+    let mo: MutationObserver | null = null;
+
+    const tryRunOnce = () => {
+      if (cancelled || done) return true;
+      const resolved = resolveHeadingIdForNav({ headingId: navTargetHeadingId, headingTitle: navTargetHeadingTitle });
+      if (!resolved) return false;
+      done = true;
+      // 成功后立刻清掉所有后续触发源，避免“目录点击无效/引用下一页乱跳”
+      if (timer != null) window.clearTimeout(timer);
+      timer = null;
+      try {
+        mo?.disconnect();
+      } catch {
+        // ignore
+      }
+      mo = null;
+      scrollToHeading(resolved);
       applyHighlights(navCitations);
-      // 等待 DOM mark 产生后再聚焦
-      requestAnimationFrame(() => {
-        focusActiveCitation();
-      });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [navTargetHeadingId, navCitations, navActiveIndex, canPreview, prdPreviewLoading, prdPreviewError, prdPreview?.content, applyHighlights, focusActiveCitation]);
+      requestAnimationFrame(() => focusActiveCitation());
+      // 关键：只“消费掉一次性跳转目标”，保留 citations/activeIndex，
+      // 从而避免该 effect 之后因为任何重渲染/索引变化再次把滚动拉回，导致“目录点不动/引用无效/乱跳”。
+      consumeNavTarget();
+      return true;
+    };
+
+    const run = () => {
+      if (tryRunOnce()) return;
+      // 内容刚渲染/布局未稳定时兜底重试（尤其是长文档 + mermaid/图片）
+      attempt += 1;
+      if (attempt >= delays.length) return;
+      timer = window.setTimeout(() => run(), delays[attempt]) as unknown as number;
+    };
+
+    // DOM 变化兜底：mermaid 注入/图片加载/ReactMarkdown 分批渲染都会影响 headings 是否存在
+    const container = prdPreviewContentRef.current;
+    if (container) {
+      try {
+        mo = new MutationObserver(() => {
+          if (tryRunOnce()) {
+            try {
+              mo?.disconnect();
+            } catch {
+              // ignore
+            }
+            mo = null;
+          }
+        });
+        mo.observe(container, { childList: true, subtree: true });
+      } catch {
+        mo = null;
+      }
+    }
+
+    const raf = requestAnimationFrame(() => run());
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      if (timer != null) window.clearTimeout(timer);
+      try {
+        mo?.disconnect();
+      } catch {
+        // ignore
+      }
+      mo = null;
+    };
+  }, [
+    navTargetHeadingId,
+    navTargetHeadingTitle,
+    navCitations,
+    canPreview,
+    prdPreviewLoading,
+    prdPreviewError,
+    prdPreview?.content,
+    applyHighlights,
+    focusActiveCitation,
+    resolveHeadingIdForNav,
+    consumeNavTarget,
+  ]);
 
   // 仅切换引用索引：聚焦到对应 mark
   useEffect(() => {
-    if (!navTargetHeadingId) return;
+    if (!Array.isArray(navCitations) || navCitations.length === 0) return;
+    if (!highlightReady) return;
     const raf = requestAnimationFrame(() => focusActiveCitation());
     return () => cancelAnimationFrame(raf);
-  }, [navActiveIndex, navTargetHeadingId, focusActiveCitation]);
+  }, [navActiveIndex, navCitations?.length, focusActiveCitation, highlightReady]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -758,42 +1144,64 @@ export default function PrdPreviewPage() {
       </div>
 
       {/* 引用导航浮层（仅当存在 citations） */}
-      {navTargetHeadingId && Array.isArray(navCitations) && navCitations.length > 0 ? (
+      {Array.isArray(navCitations) && navCitations.length > 0 ? (
         <div className="fixed z-40 right-4 top-16">
           <div className="bg-surface-light dark:bg-surface-dark border border-border rounded-xl shadow-lg px-3 py-2 w-[320px]">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold">
                 引用 {Math.min((navActiveIndex ?? 0) + 1, navCitations.length)}/{navCitations.length}
               </div>
-              <button
-                type="button"
-                className="text-xs text-text-secondary hover:text-primary-500"
-                onClick={() => {
-                  clearHighlights();
-                  clearNav();
-                }}
-                title="清除高亮"
-              >
-                清除
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="text-xs text-text-secondary hover:text-primary-500"
+                  onClick={() => {
+                    setIsCitationExcerptExpanded((v) => !v);
+                  }}
+                  title={isCitationExcerptExpanded ? '收起' : '展开'}
+                >
+                  {isCitationExcerptExpanded ? '收起' : '展开'}
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-text-secondary hover:text-primary-500"
+                  onClick={() => {
+                    clearHighlights();
+                    clearNav();
+                    setIsCitationExcerptExpanded(false);
+                  }}
+                  title="清除高亮"
+                >
+                  清除
+                </button>
+              </div>
             </div>
-            <div className="mt-2 text-[11px] text-text-secondary line-clamp-3" title={navCitations[navActiveIndex]?.excerpt || ''}>
+            <div
+              className={`mt-2 text-[11px] text-text-secondary whitespace-pre-wrap break-words ${
+                isCitationExcerptExpanded ? 'max-h-[220px] overflow-auto pr-1' : 'line-clamp-3'
+              }`}
+              title={navCitations[navActiveIndex]?.excerpt || ''}
+            >
               {navCitations[navActiveIndex]?.excerpt || ''}
             </div>
             <div className="mt-2 flex items-center justify-between gap-2">
               <button
                 type="button"
                 className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
-                onClick={() => setNavActiveIndex((navActiveIndex ?? 0) - 1)}
-                disabled={(navActiveIndex ?? 0) <= 0}
+                onClick={() => {
+                  setNavActiveIndex((navActiveIndex ?? 0) - 1);
+                }}
+                disabled={!highlightReady || (navActiveIndex ?? 0) <= 0}
               >
                 上一个
               </button>
               <button
                 type="button"
                 className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
-                onClick={() => setNavActiveIndex((navActiveIndex ?? 0) + 1)}
-                disabled={(navActiveIndex ?? 0) >= navCitations.length - 1}
+                onClick={() => {
+                  setNavActiveIndex((navActiveIndex ?? 0) + 1);
+                }}
+                disabled={!highlightReady || (navActiveIndex ?? 0) >= navCitations.length - 1}
               >
                 下一个
               </button>

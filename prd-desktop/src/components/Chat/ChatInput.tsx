@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
 import { Message } from '../../types';
+import ClickMeRefWidget from '../Effects/ClickMeRefWidget';
 
 const steps = [
   { step: 1, pmTitle: '项目背景', devTitle: '技术方案概述', qaTitle: '功能模块清单' },
@@ -41,45 +42,13 @@ export default function ChatInput() {
     setGuideStep(step);
   }, [isStreaming, setGuideStep]);
 
-  // 旋转发光提示：同一份 PRD 仅一次，且仅在“未发送任何数据前”显示
+  // 旋转发光提示：强制常驻（便于调效果）
   useEffect(() => {
-    if (mode !== 'Guided') {
-      setShowExplainGlow(false);
-      return;
-    }
-    const docId = document?.id;
-    if (!docId) {
-      setShowExplainGlow(false);
-      return;
-    }
-    const key = `prdAgent:explainHintSeen:doc:${docId}`;
-    try {
-      const seen = localStorage.getItem(key) === '1';
-      // “发送任何数据前”= 本地还没有任何对话内容（问答或各阶段）
-      const hasAny = (qaMessages?.length ?? 0) > 0 || Object.values(guidedThreads ?? {}).some((arr) => (arr?.length ?? 0) > 0);
-      if (hasAny) {
-        // 有内容则视为已提示过（防止历史会话重复出现）
-        localStorage.setItem(key, '1');
-        setShowExplainGlow(false);
-      } else {
-        setShowExplainGlow(!seen);
-      }
-    } catch {
-      // localStorage 不可用时：仍提示一次（仅当前内存）
-      setShowExplainGlow(true);
-    }
-  }, [mode, document?.id, qaMessages, guidedThreads]);
+    setShowExplainGlow(mode === 'Guided' && !!document?.id);
+  }, [mode, document?.id]);
 
   const markExplainHintSeen = () => {
-    const docId = document?.id;
-    if (!docId) return;
-    const key = `prdAgent:explainHintSeen:doc:${docId}`;
-    try {
-      localStorage.setItem(key, '1');
-    } catch {
-      // ignore
-    }
-    setShowExplainGlow(false);
+    // 强制常驻时不关闭动效
   };
 
   // 演示模式下的模拟流式回复
@@ -259,23 +228,26 @@ export default function ChatInput() {
             >
               简介
             </button>
-            <span className={`relative inline-flex rounded-md ${showExplainGlow ? 'p-[2px]' : ''}`}>
-              {showExplainGlow && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -inset-[4px] rounded-lg bg-[conic-gradient(from_0deg,rgba(59,130,246,1),rgba(168,85,247,1),rgba(59,130,246,1))] animate-[spin_2.5s_linear_infinite]"
-                  style={{ filter: 'blur(8px)', opacity: 0.85 }}
-                />
-              )}
+            {showExplainGlow ? (
               <button
                 onClick={handleExplain}
                 disabled={!sessionId || isStreaming}
-                className="relative px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="开始讲解该阶段"
+              >
+                <span className="sr-only">讲解</span>
+                <ClickMeRefWidget effect="spin" label="讲解" size={64} scale={0.3} />
+              </button>
+            ) : (
+              <button
+                onClick={handleExplain}
+                disabled={!sessionId || isStreaming}
+                className="px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 title="开始讲解该阶段"
               >
                 讲解
               </button>
-            </span>
+            )}
           </div>
         </div>
       )}

@@ -334,7 +334,8 @@ public static class DocCitationExtractor
             }
         }
 
-        const int targetLen = 120;
+        // 前端引用浮层需要“更完整”的上下文；120 过短会导致用户误以为信息不全。
+        const int targetLen = 240;
         if (bestIdx < 0)
         {
             // 无明确关键词：直接截断

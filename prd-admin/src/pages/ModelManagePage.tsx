@@ -4,6 +4,7 @@ import { Card } from '@/components/design/Card';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelMapDialog } from './model-manage/ModelMapDialog';
 import {
   clearIntentModel,
@@ -218,6 +219,7 @@ export default function ModelManagePage() {
     const res = await clearVisionModel();
     if (!res.success) {
       await load({ silent: true });
+      alert(res.error?.message || '取消图片识别模型失败');
       return;
     }
     await load({ silent: true });
@@ -230,6 +232,7 @@ export default function ModelManagePage() {
     const res = await clearImageGenModel();
     if (!res.success) {
       await load({ silent: true });
+      alert(res.error?.message || '取消图片生成模型失败');
       return;
     }
     await load({ silent: true });
@@ -1038,22 +1041,34 @@ export default function ModelManagePage() {
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setModelMapOpen(true)}
-                title="模型地图"
-                aria-label="打开模型地图"
-                disabled={models.length === 0}
-                className="h-[35px] w-[35px] p-0 rounded-[12px]"
-                style={{ color: 'var(--text-secondary)' }}
+              <Tooltip
+                content={
+                  <div className="leading-snug">
+                    <div className="font-semibold">模型地图</div>
+                    <div style={{ color: 'var(--text-muted)' }}>查看主/意图/识图/生图/嵌入/重排的当前选择</div>
+                  </div>
+                }
+                side="bottom"
+                align="end"
               >
-                {/* 几何六芒星图标：避免五角星视觉 */}
-                <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true">
-                  <path d="M50 10 L88 78 L12 78 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.92" />
-                  <path d="M50 90 L12 22 L88 22 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.72" />
-                </svg>
-              </Button>
+                <span className="inline-flex">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setModelMapOpen(true)}
+                    aria-label="打开模型地图"
+                    disabled={models.length === 0}
+                    className="h-[35px] w-[35px] p-0 rounded-[12px]"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    {/* 几何六芒星图标：避免五角星视觉 */}
+                    <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true">
+                      <path d="M50 10 L88 78 L12 78 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.92" />
+                      <path d="M50 90 L12 22 L88 22 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.72" />
+                    </svg>
+                  </Button>
+                </span>
+              </Tooltip>
 
               {selectedPlatform && (
                 <>

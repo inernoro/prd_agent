@@ -1,10 +1,13 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { DocCitation, Message, MessageBlock, MessageBlockKind } from '../types';
 
 export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
 export type MessageContextMode = 'QA' | 'Guided';
 
 interface MessageState {
+  boundSessionId: string | null;
+  isPinnedToBottom: boolean;
   contextMode: MessageContextMode;
   qaMessages: Message[];
   guidedThreads: Record<number, Message[]>;
@@ -17,6 +20,8 @@ interface MessageState {
   
   setContext: (mode: MessageContextMode, guidedStep?: number) => void;
   setGuidedStep: (step: number) => void;
+  bindSession: (sessionId: string | null) => void;
+  setPinnedToBottom: (pinned: boolean) => void;
 
   addMessage: (message: Message) => void;
   setMessages: (messages: Message[]) => void;
@@ -49,16 +54,43 @@ function writeBack(state: Pick<MessageState, 'contextMode' | 'qaMessages' | 'gui
   };
 }
 
-export const useMessageStore = create<MessageState>((set) => ({
-  contextMode: 'QA',
-  qaMessages: [],
-  guidedThreads: {},
-  activeGuidedStep: 1,
+function reviveMessage(m: any): Message {
+  const ts = m?.timestamp;
+  const t = ts instanceof Date ? ts : new Date(ts || Date.now());
+  const blocks = Array.isArray(m?.blocks) ? m.blocks : undefined;
+  const citations = Array.isArray(m?.citations) ? m.citations : undefined;
+  return {
+    id: String(m?.id ?? ''),
+    role: (m?.role === 'User' ? 'User' : 'Assistant'),
+    content: String(m?.content ?? ''),
+    blocks,
+    citations,
+    viewRole: m?.viewRole ?? undefined,
+    timestamp: t,
+    senderId: m?.senderId ?? undefined,
+    senderName: m?.senderName ?? undefined,
+  };
+}
 
-  messages: [],
-  isStreaming: false,
-  streamingMessageId: null,
-  streamingPhase: null,
+function reviveMessages(list: any): Message[] {
+  if (!Array.isArray(list)) return [];
+  return list.map(reviveMessage).filter((x) => x.id);
+}
+
+export const useMessageStore = create<MessageState>()(
+  persist(
+    (set) => ({
+      boundSessionId: null,
+      isPinnedToBottom: true,
+      contextMode: 'QA',
+      qaMessages: [],
+      guidedThreads: {},
+      activeGuidedStep: 1,
+
+      messages: [],
+      isStreaming: false,
+      streamingMessageId: null,
+      streamingPhase: null,
 
   setContext: (mode, guidedStep) => set((state) => {
     const back = writeBack(state, state.messages);
@@ -92,6 +124,46 @@ export const useMessageStore = create<MessageState>((set) => ({
       activeGuidedStep: nextStep,
       messages: nextMessages,
     };
+  }),
+
+  // 绑定“当前消息所属的 sessionId”，用于：
+  // - 避免 ChatContainer 因卸载/重挂载而误清空同一会话的对话（看起来像“不持久化”）
+  // - 在切换群组/会话时，确保不会把旧会话消息串到新会话
+  bindSession: (sessionId) => set((state) => {
+    const next = sessionId ? String(sessionId).trim() : null;
+    if (state.boundSessionId === next) return state;
+    if (!next) {
+      return {
+        boundSessionId: null,
+        isPinnedToBottom: true,
+        contextMode: 'QA',
+        qaMessages: [],
+        guidedThreads: {},
+        activeGuidedStep: 1,
+        messages: [],
+        isStreaming: false,
+        streamingMessageId: null,
+        streamingPhase: null,
+      };
+    }
+    return {
+      boundSessionId: next,
+      isPinnedToBottom: true,
+      contextMode: 'QA',
+      qaMessages: [],
+      guidedThreads: {},
+      activeGuidedStep: 1,
+      messages: [],
+      isStreaming: false,
+      streamingMessageId: null,
+      streamingPhase: null,
+    };
+  }),
+
+  setPinnedToBottom: (pinned) => set((state) => {
+    const next = !!pinned;
+    if (state.isPinnedToBottom === next) return state;
+    return { isPinnedToBottom: next };
   }),
   
   addMessage: (message) => set((state) => {
@@ -214,14 +286,49 @@ export const useMessageStore = create<MessageState>((set) => ({
   
   stopStreaming: () => set({ isStreaming: false, streamingMessageId: null, streamingPhase: null }),
   
-  clearMessages: () => set({
-    contextMode: 'QA',
-    qaMessages: [],
-    guidedThreads: {},
-    activeGuidedStep: 1,
-    messages: [],
-    isStreaming: false,
-    streamingMessageId: null,
-    streamingPhase: null,
-  }),
-}));
+      clearMessages: () => set({
+        boundSessionId: null,
+        isPinnedToBottom: true,
+        contextMode: 'QA',
+        qaMessages: [],
+        guidedThreads: {},
+        activeGuidedStep: 1,
+        messages: [],
+        isStreaming: false,
+        streamingMessageId: null,
+        streamingPhase: null,
+      }),
+    }),
+    {
+      name: 'message-storage',
+      version: 1,
+      partialize: (s) => ({
+        boundSessionId: s.boundSessionId,
+        isPinnedToBottom: s.isPinnedToBottom,
+        contextMode: s.contextMode,
+        qaMessages: s.qaMessages,
+        guidedThreads: s.guidedThreads,
+        activeGuidedStep: s.activeGuidedStep,
+        messages: s.messages,
+      }),
+      merge: (persisted: any, current) => {
+        const p = (persisted as any) || {};
+        const next: any = {
+          ...current,
+          ...p,
+        };
+        next.qaMessages = reviveMessages(p.qaMessages);
+        next.messages = reviveMessages(p.messages);
+        const gt: Record<string, any> = (p.guidedThreads && typeof p.guidedThreads === 'object') ? p.guidedThreads : {};
+        const revivedThreads: Record<number, Message[]> = {};
+        Object.keys(gt).forEach((k) => {
+          const n = Number(k);
+          if (!Number.isFinite(n)) return;
+          revivedThreads[n] = reviveMessages(gt[k]);
+        });
+        next.guidedThreads = revivedThreads;
+        return next as MessageState;
+      },
+    }
+  )
+);

@@ -33,24 +33,60 @@ function unwrapMarkdownFences(text: string) {
 }
 
 export default function MessageList() {
-  const { messages, isStreaming, streamingMessageId, streamingPhase } = useMessageStore();
+  const { messages, isStreaming, streamingMessageId, streamingPhase, isPinnedToBottom, setPinnedToBottom } = useMessageStore();
   const { sessionId, activeGroupId, openPrdPreviewPage } = useSessionStore();
   const openWithCitations = usePrdPreviewNavStore((s) => s.openWithCitations);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // 记录用户是否“锁定在底部”：用于从预览页返回时恢复到最新对话
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    // 仅当用户已经在底部附近时才自动滚动，避免打断用户阅读历史消息
+    let raf: number | null = null;
+    const onScroll = () => {
+      if (raf != null) return;
+      raf = requestAnimationFrame(() => {
+        raf = null;
+        const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        // 近底阈值稍微放宽，避免用户轻微滚动就“解锁”
+        setPinnedToBottom(distanceToBottom < 180);
+      });
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    // mount 时立即同步一次（防止初始状态不一致）
+    onScroll();
+    return () => {
+      el.removeEventListener('scroll', onScroll as EventListener);
+      if (raf != null) cancelAnimationFrame(raf);
+    };
+  }, [setPinnedToBottom]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    // 若用户“锁底”，则无条件滚到最新；否则沿用“接近底部才滚动”的策略
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isNearBottom = distanceToBottom < 140;
-    if (!isNearBottom) return;
+    if (!isPinnedToBottom && !isNearBottom) return;
 
     // 流式期间使用 auto，避免高频 smooth scroll 导致主线程卡顿
     bottomRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
-  }, [messages, isStreaming, streamingMessageId]);
+  }, [messages, isStreaming, streamingMessageId, isPinnedToBottom]);
+
+  // 重挂载（例如从预览页返回）时：如果用户此前锁底，则直接滚到最新
+  useEffect(() => {
+    if (!isPinnedToBottom) return;
+    if (!messages || messages.length === 0) return;
+    const raf = requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
@@ -139,9 +175,15 @@ export default function MessageList() {
                       className="max-w-full inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[11px] text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
                       title={c.excerpt || c.headingTitle}
                       onClick={() => {
-                        const targetHeadingId = c.headingId || '';
-                        if (!targetHeadingId) return;
-                        openWithCitations({ targetHeadingId, citations: message.citations ?? [], activeCitationIndex: idx });
+                        const targetHeadingId = (c.headingId || '').trim();
+                        const targetHeadingTitle = (c.headingTitle || '').trim();
+                        if (!targetHeadingId && !targetHeadingTitle) return;
+                        openWithCitations({
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations: message.citations ?? [],
+                          activeCitationIndex: idx,
+                        });
                         openPrdPreviewPage();
                       }}
                     >

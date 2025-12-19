@@ -24,6 +24,7 @@ import type {
   UpdateModelLabExperimentContract,
   UpsertModelLabModelSetContract,
 } from '@/services/contracts/modelLab';
+import type { GenerateImageGenContract, PlanImageGenContract, RunImageGenBatchStreamContract } from '@/services/contracts/imageGen';
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
 import type {
   DeleteAdminGroupContract,
@@ -70,6 +71,7 @@ import {
   updateModelLabExperimentMock,
   upsertModelLabModelSetMock,
 } from '@/services/mock/impl/modelLab';
+import { generateImageGenMock, planImageGenMock, runImageGenBatchStreamMock } from '@/services/mock/impl/imageGen';
 import { deleteModelLabGroupMock, listModelLabGroupsMock, upsertModelLabGroupMock } from '@/services/mock/impl/modelLabGroups';
 
 import { loginReal } from '@/services/real/auth';
@@ -90,6 +92,7 @@ import {
   updateModelLabExperimentReal,
   upsertModelLabModelSetReal,
 } from '@/services/real/modelLab';
+import { generateImageGenReal, planImageGenReal, runImageGenBatchStreamReal } from '@/services/real/imageGen';
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
 import {
   deleteAdminGroupReal,
@@ -184,6 +187,10 @@ export const deleteModelLabExperiment: DeleteModelLabExperimentContract = withAu
 export const listModelLabModelSets: ListModelLabModelSetsContract = withAuth(useMock ? listModelLabModelSetsMock : listModelLabModelSetsReal);
 export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(useMock ? upsertModelLabModelSetMock : upsertModelLabModelSetReal);
 export const runModelLabStream: RunModelLabStreamContract = withAuth(useMock ? runModelLabStreamMock : runModelLabStreamReal);
+
+export const planImageGen: PlanImageGenContract = withAuth(useMock ? planImageGenMock : planImageGenReal);
+export const generateImageGen: GenerateImageGenContract = withAuth(useMock ? generateImageGenMock : generateImageGenReal);
+export const runImageGenBatchStream: RunImageGenBatchStreamContract = withAuth(useMock ? runImageGenBatchStreamMock : runImageGenBatchStreamReal);
 
 export const listModelLabGroups: ListModelLabGroupsContract = withAuth(useMock ? listModelLabGroupsMock : listModelLabGroupsReal);
 export const upsertModelLabGroup: UpsertModelLabGroupContract = withAuth(useMock ? upsertModelLabGroupMock : upsertModelLabGroupReal);

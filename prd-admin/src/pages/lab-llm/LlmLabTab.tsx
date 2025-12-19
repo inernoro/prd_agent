@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock3, Cpu, ImagePlus, Layers, MinusCircle, Play, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Clock3, Copy, Cpu, Expand, ImagePlus, Layers, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
+import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import type { Platform } from '@/types/admin';
 import type { Model } from '@/types/admin';
 import {
@@ -17,6 +18,9 @@ import {
   listModelLabExperiments,
   listModelLabModelSets,
   runModelLabStream,
+  planImageGen,
+  generateImageGen,
+  runImageGenBatchStream,
   clearIntentModel,
   clearVisionModel,
   clearImageGenModel,
@@ -28,6 +32,7 @@ import {
   upsertModelLabModelSet,
 } from '@/services';
 import type { ModelLabExperiment, ModelLabModelSet, ModelLabParams, ModelLabSelectedModel, ModelLabSuite } from '@/services/contracts/modelLab';
+import type { ImageGenGenerateResponse, ImageGenPlanItem, ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import { ModelPickerDialog } from '@/pages/lab-llm/components/ModelPickerDialog';
 
 type ViewRunItem = {
@@ -46,6 +51,19 @@ type ViewRunItem = {
 
 type SortBy = 'ttft' | 'total';
 
+type LabMode = 'compare' | 'image' | 'batchImage';
+
+type ImageViewItem = {
+  key: string;
+  status: 'running' | 'done' | 'error';
+  prompt: string;
+  createdAt: number;
+  base64?: string | null;
+  url?: string | null;
+  revisedPrompt?: string | null;
+  errorMessage?: string;
+};
+
 const defaultParams: ModelLabParams = {
   temperature: 0.2,
   maxTokens: null,
@@ -53,6 +71,116 @@ const defaultParams: ModelLabParams = {
   maxConcurrency: 3,
   repeatN: 1,
 };
+
+const HMARQUEE_GAP_PX = 28;
+const HMARQUEE_SPEED_PX_PER_SEC = 64;
+
+function InlineMarquee({
+  text,
+  title,
+  className,
+  style,
+}: {
+  text: string;
+  title?: string;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLSpanElement | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [shiftPx, setShiftPx] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  const normalized = (text ?? '').replace(/\s+/g, ' ').trim() || '（无输出）';
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const measure = measureRef.current;
+    if (!container || !measure) return;
+
+    const recompute = () => {
+      const containerW = container.clientWidth;
+      const contentW = measure.offsetWidth;
+      const need = contentW > containerW + 2;
+      const shift = contentW + HMARQUEE_GAP_PX;
+      setEnabled(need);
+      setShiftPx(shift);
+      setDurationSec(Math.max(6, shift / HMARQUEE_SPEED_PX_PER_SEC));
+    };
+
+    recompute();
+    const ro = new ResizeObserver(() => recompute());
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [normalized]);
+
+  const vars = useMemo(() => {
+    const v: Record<'--prd-hmarquee-shift' | '--prd-hmarquee-duration' | '--prd-hmarquee-gap', string> = {
+      '--prd-hmarquee-shift': `${shiftPx}px`,
+      '--prd-hmarquee-duration': `${durationSec}s`,
+      '--prd-hmarquee-gap': `${HMARQUEE_GAP_PX}px`,
+    };
+    return v as unknown as React.CSSProperties;
+  }, [durationSec, shiftPx]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={className}
+      title={title || normalized}
+      style={{
+        minWidth: 0,
+        width: '100%',
+        overflow: 'hidden',
+        ...vars,
+        ...style,
+      }}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <style>{`
+@keyframes prd-hmarquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(calc(-1 * var(--prd-hmarquee-shift))); }
+}
+`}</style>
+
+      {enabled ? (
+        <div
+          style={{
+            display: 'flex',
+            gap: `var(--prd-hmarquee-gap)`,
+            whiteSpace: 'nowrap',
+            animation: 'prd-hmarquee var(--prd-hmarquee-duration) linear infinite',
+            animationPlayState: paused ? 'paused' : 'running',
+            willChange: 'transform',
+          }}
+        >
+          <span ref={measureRef} style={{ whiteSpace: 'nowrap' }}>
+            {normalized}
+          </span>
+          <span aria-hidden style={{ whiteSpace: 'nowrap' }}>
+            {normalized}
+          </span>
+        </div>
+      ) : (
+        <div
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <span ref={measureRef} style={{ whiteSpace: 'nowrap' }}>
+            {normalized}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const builtInPrompts: Record<ModelLabSuite, { label: string; promptText: string }[]> = {
   speed: [
@@ -84,6 +212,23 @@ export default function LlmLabTab() {
   const [promptText, setPromptText] = useState<string>('');
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
 
+  const [mode, setMode] = useState<LabMode>('compare');
+  const [imgSize, setImgSize] = useState<string>('1024x1024');
+  const [imgResponseFormat, setImgResponseFormat] = useState<'b64_json' | 'url'>('b64_json');
+
+  const [imageRunning, setImageRunning] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageItems, setImageItems] = useState<ImageViewItem[]>([]);
+
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planDialogOpen, setPlanDialogOpen] = useState(false);
+  const [planResult, setPlanResult] = useState<ImageGenPlanResponse | null>(null);
+
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchItems, setBatchItems] = useState<Record<string, ImageViewItem>>({});
+  const batchAbortRef = useRef<AbortController | null>(null);
+
   const [modelSets, setModelSets] = useState<ModelLabModelSet[]>([]);
   const [modelSetName, setModelSetName] = useState('');
 
@@ -97,6 +242,12 @@ export default function LlmLabTab() {
   const [sortBy, setSortBy] = useState<SortBy>('ttft');
   const allModelsRef = useRef<Model[]>([]);
   const selectedModelsRef = useRef<ModelLabSelectedModel[]>([]);
+
+  const [previewDialog, setPreviewDialog] = useState<{ open: boolean; title: string; text: string }>({
+    open: false,
+    title: '输出预览',
+    text: '',
+  });
 
   useEffect(() => {
     allModelsRef.current = allModels ?? [];
@@ -253,6 +404,168 @@ export default function LlmLabTab() {
     setRunning(false);
   };
 
+  const stopBatchRun = () => {
+    batchAbortRef.current?.abort();
+    batchAbortRef.current = null;
+    setBatchRunning(false);
+  };
+
+  const onModeChange = (m: LabMode) => {
+    // 切换模式时，尽量停止正在进行的流式任务，避免 UI 混乱
+    if (m !== 'compare' && running) stopRun();
+    if (m !== 'batchImage' && batchRunning) stopBatchRun();
+    setMode(m);
+  };
+
+  const startGenerateImage = async () => {
+    const prompt = (promptText ?? '').trim();
+    if (!prompt) return alert('请输入要生图的描述');
+
+    setImageError(null);
+    setImageRunning(true);
+
+    const tempKey = `single_${Date.now()}`;
+    setImageItems((prev) => [
+      {
+        key: tempKey,
+        status: 'running',
+        prompt,
+        createdAt: Date.now(),
+      },
+      ...prev,
+    ]);
+
+    const res = await generateImageGen({ prompt, n: 1, size: imgSize, responseFormat: imgResponseFormat });
+    if (!res.success) {
+      setImageError(res.error?.message || '生图失败');
+      setImageItems((prev) => prev.map((x) => (x.key === tempKey ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x)));
+      setImageRunning(false);
+      return;
+    }
+
+    const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
+    const first = images[0];
+    setImageItems((prev) => {
+      const withoutTemp = prev.filter((x) => x.key !== tempKey);
+      const doneItem: ImageViewItem = {
+        key: `img_${Date.now()}`,
+        status: 'done',
+        prompt,
+        createdAt: Date.now(),
+        base64: first?.base64 ?? null,
+        url: first?.url ?? null,
+        revisedPrompt: first?.revisedPrompt ?? null,
+      };
+      return [doneItem, ...withoutTemp];
+    });
+    setImageRunning(false);
+  };
+
+  const parseBatchPlan = async () => {
+    const text = (promptText ?? '').trim();
+    if (!text) return alert('请输入要批量生图的描述');
+
+    setBatchError(null);
+    setPlanLoading(true);
+    try {
+      const res = await planImageGen({ text, maxItems: 10 });
+      if (!res.success) {
+        setBatchError(res.error?.message || '解析失败');
+        return;
+      }
+      setPlanResult(res.data);
+      setPlanDialogOpen(true);
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  const startBatchFromPlan = async () => {
+    if (!planResult) return;
+
+    stopBatchRun();
+    setBatchError(null);
+    setBatchItems({});
+    setPlanDialogOpen(false);
+    setBatchRunning(true);
+
+    const ac = new AbortController();
+    batchAbortRef.current = ac;
+
+    const res = await runImageGenBatchStream({
+      input: { items: (planResult.items ?? []) as ImageGenPlanItem[], size: imgSize, responseFormat: imgResponseFormat },
+      signal: ac.signal,
+      onEvent: (evt) => {
+        if (!evt.data) return;
+        try {
+          const obj = JSON.parse(evt.data);
+          if (evt.event === 'run') {
+            if (obj.type === 'error') {
+              setBatchError(obj.errorMessage || '批量生图失败');
+              setBatchRunning(false);
+              return;
+            }
+            if (obj.type === 'runDone') {
+              setBatchRunning(false);
+              return;
+            }
+            return;
+          }
+          if (evt.event === 'image') {
+            const key = `${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
+            if (obj.type === 'imageStart') {
+              const item: ImageViewItem = {
+                key,
+                status: 'running',
+                prompt: String(obj.prompt ?? ''),
+                createdAt: Date.now(),
+              };
+              setBatchItems((p) => ({ ...p, [key]: item }));
+              return;
+            }
+            if (obj.type === 'imageDone') {
+              setBatchItems((p) => {
+                const cur = p[key] || { key, createdAt: Date.now(), prompt: String(obj.prompt ?? ''), status: 'running' as const };
+                return {
+                  ...p,
+                  [key]: {
+                    ...cur,
+                    status: 'done',
+                    base64: obj.base64 ?? null,
+                    url: obj.url ?? null,
+                    revisedPrompt: obj.revisedPrompt ?? null,
+                  },
+                };
+              });
+              return;
+            }
+            if (obj.type === 'imageError') {
+              setBatchItems((p) => {
+                const cur = p[key] || { key, createdAt: Date.now(), prompt: String(obj.prompt ?? ''), status: 'running' as const };
+                return {
+                  ...p,
+                  [key]: {
+                    ...cur,
+                    status: 'error',
+                    errorMessage: obj.errorMessage || '失败',
+                  },
+                };
+              });
+              return;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      },
+    });
+
+    if (!res.success) {
+      setBatchError(res.error?.message || '批量生图失败');
+      setBatchRunning(false);
+    }
+  };
+
   const resolveConfigModelId = (evtModelId: unknown, evtModelName: unknown): string | null => {
     const id = String(evtModelId ?? '').trim();
     const name = String(evtModelName ?? '').trim();
@@ -406,6 +719,10 @@ export default function LlmLabTab() {
     });
   }, [itemsList, sortBy]);
 
+  const batchList = useMemo(() => {
+    return Object.values(batchItems).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }, [batchItems]);
+
   const modelById = useMemo(() => new Map<string, Model>((allModels ?? []).map((m) => [m.id, m])), [allModels]);
 
   const refreshModelsSilent = async () => {
@@ -442,14 +759,22 @@ export default function LlmLabTab() {
   const onClearVisionFromRun = async () => {
     setAllModels((prev) => prev.map((m) => ({ ...m, isVision: false } as any)));
     const res = await clearVisionModel();
-    if (!res.success) return await refreshModelsSilent();
+    if (!res.success) {
+      await refreshModelsSilent();
+      alert(res.error?.message || '取消视觉模型失败');
+      return;
+    }
     await refreshModelsSilent();
   };
 
   const onClearImageGenFromRun = async () => {
     setAllModels((prev) => prev.map((m) => ({ ...m, isImageGen: false } as any)));
     const res = await clearImageGenModel();
-    if (!res.success) return await refreshModelsSilent();
+    if (!res.success) {
+      await refreshModelsSilent();
+      alert(res.error?.message || '取消生图模型失败');
+      return;
+    }
     await refreshModelsSilent();
   };
 
@@ -586,6 +911,42 @@ export default function LlmLabTab() {
   };
 
   const canRun = !running && selectedModels.length > 0;
+
+  const formatParamChips = useMemo(() => {
+    const chips: { key: string; label: string }[] = [];
+    chips.push({ key: 'suite', label: `套件：${suite === 'speed' ? '速度' : suite === 'intent' ? '意图' : '自定义'}` });
+    chips.push({ key: 'temperature', label: `温度：${Number.isFinite(params.temperature as any) ? params.temperature : '-'}` });
+    if (params.maxTokens != null) chips.push({ key: 'maxTokens', label: `MaxTokens：${params.maxTokens}` });
+    chips.push({ key: 'timeout', label: `超时：${Math.round((params.timeoutMs ?? 0) / 1000)}s` });
+    chips.push({ key: 'concurrency', label: `并发：${params.maxConcurrency ?? '-'}` });
+    chips.push({ key: 'repeat', label: `重复：${params.repeatN ?? '-'}` });
+    return chips;
+  }, [params, suite]);
+
+  const copyToClipboard = async (text: string) => {
+    const t = text ?? '';
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(t);
+        return;
+      }
+    } catch {
+      // ignore and fallback
+    }
+    try {
+      const el = document.createElement('textarea');
+      el.value = t;
+      el.setAttribute('readonly', 'true');
+      el.style.position = 'fixed';
+      el.style.left = '-9999px';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    } catch {
+      // ignore
+    }
+  };
 
   return (
     <div className="h-full min-h-0">
@@ -802,33 +1163,57 @@ export default function LlmLabTab() {
               提示词
             </div>
             <div className="flex gap-2 shrink-0">
-              {!running ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                  style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
-                  onClick={startRun}
+              {mode === 'compare' ? (
+                <SuccessConfettiButton
+                  title="一键开始实验"
+                  size="md"
+                  readyText="一键开始实验"
+                  loadingText="运行中"
+                  showLoadingText
+                  successText="OK"
+                  onAction={startRun}
+                  onCancel={stopRun}
                   disabled={!canRun || !activeExperimentId}
-                >
-                  <Play size={16} />
-                  一键开始实验
-                </button>
+                />
+              ) : mode === 'image' ? (
+                <>
+                  <Button variant="primary" size="md" onClick={startGenerateImage} disabled={imageRunning}>
+                    <ImagePlus size={16} />
+                    {imageRunning ? '生成中' : '生成 1 张'}
+                  </Button>
+                  <Button variant="secondary" size="md" onClick={() => setImageItems([])} disabled={imageRunning || imageItems.length === 0}>
+                    清空
+                  </Button>
+                </>
               ) : (
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                  style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
-                  onClick={stopRun}
-                >
-                  <MinusCircle size={16} />
-                  停止
-                </button>
+                <>
+                  <Button variant="primary" size="md" onClick={parseBatchPlan} disabled={planLoading || batchRunning}>
+                    <Sparkles size={16} />
+                    {planLoading ? '解析中' : '解析并预览'}
+                  </Button>
+                  <Button variant="danger" size="md" onClick={stopBatchRun} disabled={!batchRunning}>
+                    停止
+                  </Button>
+                </>
               )}
             </div>
           </div>
 
           <div className="mt-3 flex gap-2 overflow-auto pr-1">
-            <Button size="xs" variant={suite === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('speed')}>
+            <Button size="xs" variant={mode === 'compare' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeChange('compare')}>
+              对比实验
+            </Button>
+            <Button size="xs" variant={mode === 'image' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeChange('image')}>
+              生成图
+            </Button>
+            <Button size="xs" variant={mode === 'batchImage' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeChange('batchImage')}>
+              批量生图
+            </Button>
+          </div>
+
+          {mode === 'compare' ? (
+            <div className="mt-3 flex gap-2 overflow-auto pr-1">
+              <Button size="xs" variant={suite === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('speed')}>
               <Sparkles size={14} />
               速度
             </Button>
@@ -841,13 +1226,53 @@ export default function LlmLabTab() {
               自定义
             </Button>
           </div>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                尺寸
+                <select
+                  value={imgSize}
+                  onChange={(e) => setImgSize(e.target.value)}
+                  className="ml-2 h-[30px] rounded-[10px] px-2 text-[12px] outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                >
+                  <option value="1024x1024">1024x1024</option>
+                  <option value="1024x1536">1024x1536</option>
+                  <option value="1536x1024">1536x1024</option>
+                </select>
+              </label>
+              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                返回
+                <select
+                  value={imgResponseFormat}
+                  onChange={(e) => setImgResponseFormat(e.target.value as any)}
+                  className="ml-2 h-[30px] rounded-[10px] px-2 text-[12px] outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                >
+                  <option value="b64_json">base64</option>
+                  <option value="url">url</option>
+                </select>
+              </label>
+              {mode === 'batchImage' && planResult?.total ? (
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  已解析：{planResult.total} 张
+                </span>
+              ) : null}
+            </div>
+          )}
 
           <textarea
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
             className="mt-3 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-            placeholder="输入本次对比测试的 prompt（可使用内置模板快速填充）"
+            placeholder={
+              mode === 'compare'
+                ? '输入本次对比测试的 prompt（可使用内置模板快速填充）'
+                : mode === 'image'
+                  ? '输入要生成的图片描述（将直接交给生图模型）'
+                  : '输入需求描述（将先用意图模型解析出图片清单并提示数量）'
+            }
           />
           </Card>
         </div>
@@ -855,6 +1280,8 @@ export default function LlmLabTab() {
         {/* 右下：实时结果 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
           <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
+          {mode === 'compare' ? (
+            <>
           <div className="flex items-center justify-between shrink-0">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
               实时结果（按 {sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）
@@ -967,7 +1394,22 @@ export default function LlmLabTab() {
                         ? (canInferPlatform ? '该模型未添加到“模型管理”，点击将自动添加并执行设定' : '未能定位平台信息，无法自动添加模型')
                         : '';
                       return (
-                        <div className="mt-2 flex items-center justify-end gap-2">
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            {formatParamChips.map((c) => (
+                              <span
+                                key={c.key}
+                                className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                                style={{
+                                  background: 'rgba(255,255,255,0.04)',
+                                  border: '1px solid rgba(255,255,255,0.12)',
+                                  color: 'var(--text-secondary)',
+                                }}
+                              >
+                                {c.label}
+                              </span>
+                            ))}
+                          </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <Button
                               variant="ghost"
@@ -1032,20 +1474,314 @@ export default function LlmLabTab() {
                         {it.errorMessage}
                       </div>
                     ) : null}
-                    <pre
-                      className="mt-2 text-xs whitespace-pre-wrap wrap-break-word max-h-[160px] overflow-auto pr-1"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      {it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
-                    </pre>
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                          输出预览
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
+                            onClick={() => {
+                              const text = it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
+                              void copyToClipboard(text);
+                            }}
+                            aria-label="复制输出"
+                            title="复制输出"
+                          >
+                            <Copy size={12} />
+                            复制
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
+                            onClick={() => {
+                              const text = it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
+                              setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
+                            }}
+                            aria-label="展开查看完整输出"
+                            title="展开查看完整输出"
+                          >
+                            <Expand size={12} />
+                            展开
+                          </button>
+                        </div>
+                      </div>
+                      <div
+                        className="mt-1 rounded-[12px] px-2.5 py-2 min-w-0"
+                        style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
+                      >
+                        <InlineMarquee
+                          text={it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
+                          title={it.preview || ''}
+                          className="text-xs font-semibold"
+                          style={{ color: 'var(--text-primary)' }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
+          </>
+          ) : mode === 'image' ? (
+            <>
+              <div className="flex items-center justify-between shrink-0">
+                <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                  生成图
+                </div>
+                <div className="flex items-center gap-2">
+                  {imageRunning ? <Badge variant="subtle">生成中</Badge> : <Badge variant="subtle">就绪</Badge>}
+                </div>
+              </div>
+              {imageError ? (
+                <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                  {imageError}
+                </div>
+              ) : null}
+              <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
+                {imageItems.length === 0 ? (
+                  <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
+                    <div
+                      className="h-12 w-12 rounded-full flex items-center justify-center"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
+                    >
+                      <ImagePlus size={22} style={{ color: 'var(--text-muted)' }} />
+                    </div>
+                    <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      这里将展示生成的图片
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      在上方输入描述，点击“生成 1 张”
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {imageItems.map((it) => {
+                      const src = it.url || (it.base64 ? `data:image/png;base64,${it.base64}` : '');
+                      return (
+                        <div
+                          key={it.key}
+                          className="rounded-[14px] p-3 flex flex-col gap-2"
+                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                              <span className="block truncate" title={it.prompt}>
+                                {it.prompt}
+                              </span>
+                              {it.revisedPrompt ? (
+                                <span className="block truncate mt-0.5" style={{ color: 'var(--text-muted)' }} title={it.revisedPrompt}>
+                                  修订：{it.revisedPrompt}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div
+                              className="text-xs shrink-0"
+                              style={{
+                                color:
+                                  it.status === 'error'
+                                    ? 'rgba(239,68,68,0.95)'
+                                    : it.status === 'done'
+                                      ? 'rgba(34,197,94,0.95)'
+                                      : 'var(--text-muted)',
+                              }}
+                            >
+                              {it.status === 'running' ? '生成中' : it.status === 'done' ? '完成' : '失败'}
+                            </div>
+                          </div>
+                          <div
+                            className="rounded-[12px] overflow-hidden"
+                            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
+                          >
+                            {it.status === 'done' && src ? (
+                              <img src={src} alt={it.prompt} className="w-full h-auto block" />
+                            ) : (
+                              <div className="w-full h-[180px] flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                                {it.status === 'error' ? it.errorMessage || '失败' : '等待生成...'}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between shrink-0">
+                <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                  批量生图
+                </div>
+                <div className="flex items-center gap-2">
+                  {batchRunning ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
+                  <Button variant="secondary" size="xs" onClick={() => setBatchItems({})} disabled={batchRunning || batchList.length === 0}>
+                    清空
+                  </Button>
+                </div>
+              </div>
+              {batchError ? (
+                <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                  {batchError}
+                </div>
+              ) : null}
+              <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
+                {batchList.length === 0 ? (
+                  <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
+                    <div
+                      className="h-12 w-12 rounded-full flex items-center justify-center"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
+                    >
+                      <Layers size={22} style={{ color: 'var(--text-muted)' }} />
+                    </div>
+                    <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      这里将展示批量生图结果
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      点击上方“解析并预览”，确认后开始生成
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {batchList.map((it) => {
+                      const src = it.url || (it.base64 ? `data:image/png;base64,${it.base64}` : '');
+                      return (
+                        <div
+                          key={it.key}
+                          className="rounded-[14px] p-3 flex flex-col gap-2"
+                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                              <span className="block truncate" title={it.prompt}>
+                                {it.prompt}
+                              </span>
+                            </div>
+                            <div
+                              className="text-xs shrink-0"
+                              style={{
+                                color:
+                                  it.status === 'error'
+                                    ? 'rgba(239,68,68,0.95)'
+                                    : it.status === 'done'
+                                      ? 'rgba(34,197,94,0.95)'
+                                      : 'var(--text-muted)',
+                              }}
+                            >
+                              {it.status === 'running' ? '生成中' : it.status === 'done' ? '完成' : '失败'}
+                            </div>
+                          </div>
+                          <div
+                            className="rounded-[12px] overflow-hidden"
+                            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
+                          >
+                            {it.status === 'done' && src ? (
+                              <img src={src} alt={it.prompt} className="w-full h-auto block" />
+                            ) : (
+                              <div className="w-full h-[180px] flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                                {it.status === 'error' ? it.errorMessage || '失败' : '等待生成...'}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           </Card>
         </div>
       </div>
+
+      <Dialog
+        open={planDialogOpen}
+        onOpenChange={(open) => setPlanDialogOpen(open)}
+        title="批量生图确认"
+        description={planResult ? `将生成 ${planResult.total} 张图片` : '确认生成数量后开始'}
+        maxWidth={900}
+        contentStyle={{ height: 'min(80vh, 680px)' }}
+        content={
+          <div className="h-full min-h-0 flex flex-col">
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {planResult?.usedPurpose === 'fallbackMain'
+                ? '提示：当前未配置意图模型，已回退使用主模型进行解析'
+                : '解析模型：意图模型'}
+            </div>
+
+            <div className="mt-3 flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
+              {planResult?.items?.length ? (
+                <div className="grid gap-2">
+                  {planResult.items.map((it, idx) => (
+                    <div
+                      key={`${idx}_${it.prompt}`}
+                      className="rounded-[12px] px-3 py-2"
+                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.10)' }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold min-w-0 truncate" style={{ color: 'var(--text-primary)' }} title={it.prompt}>
+                          {it.prompt}
+                        </div>
+                        <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                          × {it.count}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  暂无解析结果
+                </div>
+              )}
+            </div>
+
+            <div className="pt-3 flex items-center justify-end gap-2">
+              <Button variant="secondary" size="md" onClick={() => setPlanDialogOpen(false)}>
+                取消
+              </Button>
+              <Button variant="primary" size="md" onClick={startBatchFromPlan} disabled={!planResult?.items?.length}>
+                开始生成
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={previewDialog.open}
+        onOpenChange={(open) => setPreviewDialog((p) => ({ ...p, open }))}
+        title={previewDialog.title || '输出预览'}
+        description="查看完整输出内容"
+        maxWidth={900}
+        contentStyle={{ height: 'min(80vh, 680px)' }}
+        content={
+          <div className="h-full min-h-0 flex flex-col">
+            <div className="flex items-center justify-end gap-2 pb-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void copyToClipboard(previewDialog.text || '')}
+              >
+                <Copy size={16} />
+                复制
+              </Button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
+                {previewDialog.text || '（无输出）'}
+              </pre>
+            </div>
+          </div>
+        }
+      />
 
       {/* 弹窗放在 grid 外，避免参与布局 */}
       <ModelPickerDialog

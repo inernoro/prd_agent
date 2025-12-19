@@ -34,6 +34,7 @@ export default function ChatContainer() {
     upsertMessage,
     setContext,
     setGuidedStep,
+    bindSession,
   } = useMessageStore();
 
   const showTopPhaseBanner =
@@ -203,11 +204,15 @@ export default function ChatContainer() {
   // 会话切换时加载历史消息
   useEffect(() => {
     if (!sessionId) {
-      clearMessages();
+      bindSession(null);
       return;
     }
 
-    clearMessages();
+    const prevBound = useMessageStore.getState().boundSessionId;
+    bindSession(sessionId);
+    // 同一 session：不要重复加载/清空（包括“切到预览页再返回”的重挂载场景）
+    if (prevBound === sessionId) return;
+
     invoke<{ success: boolean; data?: Array<{ id: string; role: string; content: string; viewRole?: string; timestamp: string }>; error?: { message: string } }>(
       'get_message_history',
       { sessionId, limit: 50 }
@@ -227,7 +232,7 @@ export default function ChatContainer() {
       .catch((err) => {
         console.error('Failed to load message history:', err);
       });
-  }, [sessionId, clearMessages, setMessages]);
+  }, [sessionId, bindSession, setMessages]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">

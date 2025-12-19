@@ -3,28 +3,48 @@ import type { DocCitation } from '../types';
 
 type PrdPreviewNavState = {
   targetHeadingId: string | null;
+  targetHeadingTitle: string | null;
   citations: DocCitation[];
   activeCitationIndex: number;
 
-  openWithCitations: (args: { targetHeadingId: string; citations: DocCitation[]; activeCitationIndex?: number }) => void;
+  openWithCitations: (args: {
+    targetHeadingId?: string | null;
+    targetHeadingTitle?: string | null;
+    citations: DocCitation[];
+    activeCitationIndex?: number;
+  }) => void;
+  consumeTarget: () => void;
   setActiveCitationIndex: (idx: number) => void;
   clear: () => void;
 };
 
 export const usePrdPreviewNavStore = create<PrdPreviewNavState>((set) => ({
   targetHeadingId: null,
+  targetHeadingTitle: null,
   citations: [],
   activeCitationIndex: 0,
 
-  openWithCitations: ({ targetHeadingId, citations, activeCitationIndex }) => set({
-    targetHeadingId,
-    citations: Array.isArray(citations) ? citations : [],
-    activeCitationIndex: typeof activeCitationIndex === 'number' && Number.isFinite(activeCitationIndex) ? Math.max(0, activeCitationIndex) : 0,
+  openWithCitations: ({ targetHeadingId, targetHeadingTitle, citations, activeCitationIndex }) => set((state) => {
+    const next = {
+      targetHeadingId: targetHeadingId ? String(targetHeadingId).trim() : null,
+      targetHeadingTitle: targetHeadingTitle ? String(targetHeadingTitle).trim() : null,
+      citations: Array.isArray(citations) ? citations : [],
+      activeCitationIndex: typeof activeCitationIndex === 'number' && Number.isFinite(activeCitationIndex) ? Math.max(0, activeCitationIndex) : 0,
+    };
+    return next;
   }),
 
-  setActiveCitationIndex: (idx) => set((state) => ({
-    activeCitationIndex: Math.max(0, Math.min((state.citations?.length ?? 0) - 1, idx)),
-  })),
+  consumeTarget: () => set((state) => {
+    return { targetHeadingId: null, targetHeadingTitle: null };
+  }),
 
-  clear: () => set({ targetHeadingId: null, citations: [], activeCitationIndex: 0 }),
+  setActiveCitationIndex: (idx) => set((state) => {
+    return {
+      activeCitationIndex: Math.max(0, Math.min((state.citations?.length ?? 0) - 1, idx)),
+    };
+  }),
+
+  clear: () => set((state) => {
+    return { targetHeadingId: null, targetHeadingTitle: null, citations: [], activeCitationIndex: 0 };
+  }),
 }));
