@@ -34,12 +34,15 @@ export const generateImageGenMock: GenerateImageGenContract = async ({ prompt, n
 };
 
 export const runImageGenBatchStreamMock: RunImageGenBatchStreamContract = async ({ input, onEvent, signal }) => {
+  const modelId = String((input as any)?.modelId ?? '').trim() || null;
+  const platformId = String((input as any)?.platformId ?? '').trim() || null;
+  const modelName = String((input as any)?.modelName ?? '').trim() || null;
   const items = input?.items ?? [];
   if (items.length === 0) return fail('INVALID_FORMAT', 'items 不能为空') as unknown as ApiResponse<true>;
 
   const total = items.reduce((sum, it) => sum + Math.max(1, it.count || 1), 0);
   const runId = `mock_${Date.now()}`;
-  onEvent({ event: 'run', data: JSON.stringify({ type: 'runStart', runId, total }) });
+  onEvent({ event: 'run', data: JSON.stringify({ type: 'runStart', runId, total, modelId, platformId, modelName }) });
 
   let done = 0;
   let failed = 0;
@@ -49,20 +52,20 @@ export const runImageGenBatchStreamMock: RunImageGenBatchStreamContract = async 
     const count = Math.max(1, Math.min(5, items[itemIndex].count || 1));
     for (let imageIndex = 0; imageIndex < count; imageIndex++) {
       if (signal.aborted) break;
-      onEvent({ event: 'image', data: JSON.stringify({ type: 'imageStart', runId, itemIndex, imageIndex, prompt }) });
+      onEvent({ event: 'image', data: JSON.stringify({ type: 'imageStart', runId, itemIndex, imageIndex, prompt, modelId, platformId, modelName }) });
       await new Promise((r) => setTimeout(r, 60));
       if (!prompt) {
         failed += 1;
         onEvent({
           event: 'image',
-          data: JSON.stringify({ type: 'imageError', runId, itemIndex, imageIndex, prompt, errorCode: 'INVALID_FORMAT', errorMessage: 'prompt 不能为空' }),
+          data: JSON.stringify({ type: 'imageError', runId, itemIndex, imageIndex, prompt, modelId, platformId, modelName, errorCode: 'INVALID_FORMAT', errorMessage: 'prompt 不能为空' }),
         });
         continue;
       }
       done += 1;
       onEvent({
         event: 'image',
-        data: JSON.stringify({ type: 'imageDone', runId, itemIndex, imageIndex, prompt, base64: TINY_PNG_BASE64, url: null, revisedPrompt: null }),
+        data: JSON.stringify({ type: 'imageDone', runId, itemIndex, imageIndex, prompt, modelId, platformId, modelName, base64: TINY_PNG_BASE64, url: null, revisedPrompt: null }),
       });
     }
   }

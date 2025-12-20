@@ -57,6 +57,9 @@ export const generateImageGenReal: GenerateImageGenContract = async (input) => {
   return await apiRequest('/api/v1/admin/image-gen/generate', {
     method: 'POST',
     body: {
+      modelId: input.modelId,
+      platformId: input.platformId,
+      modelName: input.modelName,
       prompt: input.prompt,
       n: input.n,
       size: input.size,

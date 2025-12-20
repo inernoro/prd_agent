@@ -25,6 +25,9 @@ export type ImageGenGenerateResponse = {
 export type PlanImageGenContract = (input: { text: string; maxItems?: number }) => Promise<ApiResponse<ImageGenPlanResponse>>;
 
 export type GenerateImageGenContract = (input: {
+  modelId: string;
+  platformId?: string;
+  modelName?: string;
   prompt: string;
   n?: number;
   size?: string;
@@ -32,6 +35,9 @@ export type GenerateImageGenContract = (input: {
 }) => Promise<ApiResponse<ImageGenGenerateResponse>>;
 
 export type ImageGenBatchStreamInput = {
+  modelId: string;
+  platformId?: string;
+  modelName?: string;
   items: ImageGenPlanItem[];
   size?: string;
   responseFormat?: 'b64_json' | 'url';

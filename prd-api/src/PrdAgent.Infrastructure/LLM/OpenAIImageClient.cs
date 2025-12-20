@@ -47,7 +47,10 @@ public class OpenAIImageClient
         int n,
         string? size,
         string? responseFormat,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? modelId = null,
+        string? platformId = null,
+        string? modelName = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -64,15 +67,70 @@ public class OpenAIImageClient
         var startedAt = DateTime.UtcNow;
         string? logId = null;
 
-        // 选择生图模型（不存在则失败）
-        var model = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
-        if (model == null)
+        // 选择生图模型（支持按请求指定；支持“平台回退调用”）
+        var requestedModelId = (modelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(requestedModelId)) requestedModelId = null;
+        var requestedPlatformId = (platformId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(requestedPlatformId)) requestedPlatformId = null;
+        var requestedModelName = (modelName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(requestedModelName)) requestedModelName = null;
+
+        LLMModel? model = null;
+        LLMPlatform? platform = null;
+        if (!string.IsNullOrWhiteSpace(requestedModelId))
+        {
+            // 1) 优先：按“已配置模型 id”命中
+            model = await _db.LLMModels.Find(m => m.Id == requestedModelId && m.Enabled).FirstOrDefaultAsync(ct);
+
+            // 2) 回退：如果没命中配置模型，允许把 modelId 当成“模型名”，并通过 platformId 解析平台配置
+            if (model == null && !string.IsNullOrWhiteSpace(requestedPlatformId))
+            {
+                platform = await _db.LLMPlatforms.Find(p => p.Id == requestedPlatformId && p.Enabled).FirstOrDefaultAsync(ct);
+                if (platform == null)
+                {
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "指定的平台不存在或未启用");
+                }
+                requestedModelName ??= requestedModelId; // modelId 兜底当作 modelName
+            }
+            else if (model == null)
+            {
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用");
+            }
+        }
+        else
+        {
+            model = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
+        }
+        if (model == null && platform == null)
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未配置可用的生图模型（请在模型管理中设置“生图”）");
         }
 
         var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var (apiUrl, apiKey, platformType) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+        string? apiUrl;
+        string? apiKey;
+        string? platformType;
+        string effectiveModelName;
+        if (model != null)
+        {
+            var cfg = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+            apiUrl = cfg.apiUrl;
+            apiKey = cfg.apiKey;
+            platformType = cfg.platformType;
+            effectiveModelName = model.ModelName;
+        }
+        else
+        {
+            // 平台回退调用：直接用平台 API 配置 + 指定 modelName
+            apiUrl = platform!.ApiUrl;
+            apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+            platformType = platform.PlatformType?.ToLowerInvariant();
+            effectiveModelName = requestedModelName ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(effectiveModelName))
+            {
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未提供 modelName（平台回退调用需要 modelName）");
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
@@ -107,7 +165,7 @@ public class OpenAIImageClient
 
         var req = new OpenAIImageRequest
         {
-            Model = model.ModelName,
+            Model = effectiveModelName,
             Prompt = prompt.Trim(),
             N = n,
             Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
@@ -122,7 +180,7 @@ public class OpenAIImageClient
                 new LlmLogStart(
                     RequestId: requestId,
                     Provider: "OpenAI",
-                    Model: model.ModelName,
+                    Model: effectiveModelName,
                     ApiBase: endpointUri != null && endpointUri.IsAbsoluteUri ? $"{endpointUri.Scheme}://{endpointUri.Host}/" : httpClient.BaseAddress?.ToString(),
                     Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : endpoint.TrimStart('/'),
                     RequestHeadersRedacted: new Dictionary<string, string>

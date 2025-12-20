@@ -150,6 +150,13 @@ public class AdminImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
         }
 
+        var modelId = (request?.ModelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
+        var platformId = (request?.PlatformId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
+        var modelName = (request?.ModelName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
+
         // 单次允许一个提示词生成多张（上限 20；与“批量生图总上限”一致）
         var n = request?.N ?? 1;
         n = Math.Clamp(n, 1, 20);
@@ -169,7 +176,7 @@ public class AdminImageGenController : ControllerBase
             RequestType: "imageGen",
             RequestPurpose: "imageGen.generate"));
 
-        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct);
+        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -196,6 +203,12 @@ public class AdminImageGenController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var adminId = GetAdminId();
+        var modelId = (request?.ModelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
+        var platformId = (request?.PlatformId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
+        var modelName = (request?.ModelName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
         var items = request?.Items ?? new List<ImageGenPlanItem>();
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
@@ -220,7 +233,7 @@ public class AdminImageGenController : ControllerBase
         }
 
         var runId = Guid.NewGuid().ToString("N");
-        await WriteEventAsync("run", new { type = "runStart", runId, adminId, total }, cancellationToken);
+        await WriteEventAsync("run", new { type = "runStart", runId, adminId, total, modelId, platformId, modelName }, cancellationToken);
 
         var done = 0;
         var failed = 0;
@@ -257,7 +270,7 @@ public class AdminImageGenController : ControllerBase
                         RequestType: "imageGen",
                         RequestPurpose: "imageGen.batch.generate"));
 
-                    var res = await _imageClient.GenerateAsync(prompt, n: 1, size, responseFormat, cancellationToken);
+                    var res = await _imageClient.GenerateAsync(prompt, n: 1, size, responseFormat, cancellationToken, modelId, platformId, modelName);
                     if (!res.Success)
                     {
                         failed++;
@@ -268,6 +281,9 @@ public class AdminImageGenController : ControllerBase
                             itemIndex,
                             imageIndex,
                             prompt,
+                            modelId,
+                            platformId,
+                            modelName,
                             errorCode = res.Error?.Code ?? ErrorCodes.LLM_ERROR,
                             errorMessage = res.Error?.Message ?? "生图失败"
                         }, cancellationToken);
@@ -283,6 +299,9 @@ public class AdminImageGenController : ControllerBase
                         itemIndex,
                         imageIndex,
                         prompt,
+                        modelId,
+                        platformId,
+                        modelName,
                         base64 = first?.Base64,
                         url = first?.Url,
                         revisedPrompt = first?.RevisedPrompt
@@ -298,6 +317,9 @@ public class AdminImageGenController : ControllerBase
                         itemIndex,
                         imageIndex,
                         prompt,
+                        modelId,
+                        platformId,
+                        modelName,
                         errorCode = ErrorCodes.LLM_ERROR,
                         errorMessage = ex.Message
                     }, cancellationToken);
@@ -425,6 +447,9 @@ public class ImageGenPlanItem
 public class ImageGenGenerateRequest
 {
     public string Prompt { get; set; } = string.Empty;
+    public string? ModelId { get; set; }
+    public string? PlatformId { get; set; }
+    public string? ModelName { get; set; }
     public int? N { get; set; }
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url
@@ -432,6 +457,9 @@ public class ImageGenGenerateRequest
 
 public class ImageGenBatchRequest
 {
+    public string? ModelId { get; set; }
+    public string? PlatformId { get; set; }
+    public string? ModelName { get; set; }
     public List<ImageGenPlanItem> Items { get; set; } = new();
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url

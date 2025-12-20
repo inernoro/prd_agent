@@ -63,6 +63,10 @@ type ImageViewItem = {
   createdAt: number;
   groupId?: string;
   variantIndex?: number;
+  sourceModelId?: string;
+  sourceModelName?: string;
+  sourceDisplayName?: string;
+  sourceModelIndex?: number;
   base64?: string | null;
   url?: string | null;
   revisedPrompt?: string | null;
@@ -354,6 +358,8 @@ export default function LlmLabTab() {
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchItems, setBatchItems] = useState<Record<string, ImageViewItem>>({});
   const batchAbortRef = useRef<AbortController | null>(null);
+  const batchStopRequestedRef = useRef(false);
+  const [batchActiveModelLabel, setBatchActiveModelLabel] = useState<string>('');
 
   const [imageGridEl, setImageGridEl] = useState<HTMLDivElement | null>(null);
   const imageGridRef = useCallback((el: HTMLDivElement | null) => setImageGridEl(el), []);
@@ -387,6 +393,41 @@ export default function LlmLabTab() {
   useEffect(() => {
     selectedModelsRef.current = selectedModels ?? [];
   }, [selectedModels]);
+
+  const imageGenModels = useMemo(() => {
+    // 生图沿用“左侧已选模型池”：不区分“已配置/未配置”。
+    // - 已配置：modelId 是 llmmodels.id，可从 allModels 回查更多信息
+    // - 未配置：modelId 可能是 modelName（见 ModelPickerDialog 的注释），这时需用 platformId+modelName 回退调用
+    const enabledById = new Map<string, Model>();
+    for (const m of allModels ?? []) {
+      if (!m.enabled) continue;
+      enabledById.set(m.id, m);
+    }
+
+    const list: { modelId: string; platformId: string; modelName: string; displayName: string }[] = [];
+    const seen = new Set<string>();
+    for (const sm of selectedModels ?? []) {
+      const pid = String(sm.platformId ?? '').trim();
+      const mname = String(sm.modelName ?? '').trim();
+      const mid = String(sm.modelId ?? '').trim();
+      if (!pid || !mname || !mid) continue;
+
+      const cfg = enabledById.get(mid) ?? null;
+      const key = cfg ? `cfg:${cfg.id}` : `pool:${pid}:${mname}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      list.push({
+        modelId: cfg ? cfg.id : mid,
+        platformId: cfg ? (cfg.platformId || pid) : pid,
+        modelName: cfg ? (cfg.modelName || mname) : mname,
+        displayName: (cfg?.name || sm.name || mname || mid).trim(),
+      });
+    }
+    return list;
+  }, [allModels, selectedModels]);
+
+  const imageGenModelCount = imageGenModels.length;
 
   const activeExperiment = useMemo(
     () => experiments.find((e) => e.id === activeExperimentId) ?? null,
@@ -571,10 +612,12 @@ export default function LlmLabTab() {
     setRunning(false);
   };
 
-  const stopBatchRun = () => {
+  const stopBatchRun = (opts?: { forRestart?: boolean }) => {
+    if (!opts?.forRestart) batchStopRequestedRef.current = true;
     batchAbortRef.current?.abort();
     batchAbortRef.current = null;
     setBatchRunning(false);
+    setBatchActiveModelLabel('');
   };
 
   const DEFAULT_IMAGE_PROMPT = '生成一张 Hello Kitty 的图片，卡通风格，纯色背景，高清。';
@@ -594,6 +637,14 @@ export default function LlmLabTab() {
   const startGenerateImage = async () => {
     const prompt = (promptText ?? '').trim();
     if (!prompt) return alert('请输入要生图的描述');
+    if (imageGenModels.length === 0) return alert('请先在左侧选择至少 1 个模型');
+
+    const perModelN = Math.max(1, Math.min(20, Number(singleN || 1)));
+    const total = perModelN * imageGenModels.length;
+    if (total > 3) {
+      const ok = window.confirm(`你将使用 ${imageGenModels.length} 个模型生成 ${perModelN} × ${imageGenModels.length} = ${total} 张图片，是否继续？`);
+      if (!ok) return;
+    }
 
     setImageError(null);
     setImageRunning(true);
@@ -602,54 +653,74 @@ export default function LlmLabTab() {
     const groupId = `single_${Date.now()}`;
     setSingleGroupId(groupId);
 
-    const n = Math.max(1, Math.min(20, Number(singleN || 1)));
     // 先放占位（让布局按数量立即生效）
     setImageItems((prev) => {
       const rest = prev.filter((x) => x.groupId !== groupId);
-      const placeholders: ImageViewItem[] = Array.from({ length: n }).map((_, i) => ({
-        key: `${groupId}_${i}`,
-        groupId,
-        variantIndex: i,
-        status: 'running',
-        prompt,
-        createdAt: Date.now(),
-      }));
+      const now = Date.now();
+      const placeholders: ImageViewItem[] = imageGenModels.flatMap((m, mi) =>
+        Array.from({ length: perModelN }).map((_, i) => ({
+          key: `${groupId}_${m.modelId}_${i}`,
+          groupId,
+          variantIndex: i,
+          status: 'running' as const,
+          prompt,
+          createdAt: now,
+          sourceModelId: m.modelId,
+          sourceModelName: m.modelName,
+          sourceDisplayName: m.displayName,
+          sourceModelIndex: mi,
+        }))
+      );
       return [...placeholders, ...rest];
     });
 
     // 这里不暴露给用户选择返回格式：默认 b64_json（更利于直接展示/下载，且避免部分网关跨域问题）
-    const res = await generateImageGen({ prompt, n, size: imgSize, responseFormat: 'b64_json' });
-    if (!res.success) {
-      setImageError(res.error?.message || '生图失败');
-      setImageItems((prev) =>
-        prev.map((x) => (x.groupId === groupId ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x))
-      );
-      setImageRunning(false);
-      return;
-    }
-
-    const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
-    setImageItems((prev) => {
-      return prev.map((x) => {
-        if (x.groupId !== groupId) return x;
-        const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
-        const img = images[idx];
-        if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
-        return {
-          ...x,
-          status: 'done',
-          base64: (img as any).base64 ?? null,
-          url: (img as any).url ?? null,
-          revisedPrompt: (img as any).revisedPrompt ?? null,
-        };
+    let anyFailed = false;
+    for (const m of imageGenModels) {
+      const res = await generateImageGen({
+        modelId: m.modelId,
+        platformId: m.platformId,
+        modelName: m.modelName,
+        prompt,
+        n: perModelN,
+        size: imgSize,
+        responseFormat: 'b64_json',
       });
-    });
+      if (!res.success) {
+        anyFailed = true;
+        const msg = res.error?.message || '生图失败';
+        setImageItems((prev) =>
+          prev.map((x) => (x.groupId === groupId && x.sourceModelId === m.modelId ? { ...x, status: 'error', errorMessage: msg } : x))
+        );
+        continue;
+      }
+
+      const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
+      setImageItems((prev) => {
+        return prev.map((x) => {
+          if (x.groupId !== groupId) return x;
+          if (x.sourceModelId !== m.modelId) return x;
+          const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
+          const img = images[idx];
+          if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
+          return {
+            ...x,
+            status: 'done',
+            base64: (img as any).base64 ?? null,
+            url: (img as any).url ?? null,
+            revisedPrompt: (img as any).revisedPrompt ?? null,
+          };
+        });
+      });
+    }
+    if (anyFailed) setImageError('部分模型生成失败（请查看对应图片卡片）');
     setImageRunning(false);
   };
 
   const parseBatchPlan = async () => {
     const text = (promptText ?? '').trim();
     if (!text) return alert('请输入要批量生图的描述');
+    if (imageGenModels.length === 0) return alert('请先在左侧选择至少 1 个模型');
 
     setBatchError(null);
     setPlanLoading(true);
@@ -668,88 +739,126 @@ export default function LlmLabTab() {
 
   const startBatchFromPlan = async () => {
     if (!planResult) return;
+    if (imageGenModels.length === 0) return alert('请先在左侧选择至少 1 个模型');
 
-    stopBatchRun();
+    const planTotal = Math.max(0, Number(planResult.total || 0));
+    const total = planTotal * imageGenModels.length;
+    if (total > 3) {
+      const ok = window.confirm(`你将使用 ${imageGenModels.length} 个模型生成 ${planTotal} × ${imageGenModels.length} = ${total} 张图片，是否继续？`);
+      if (!ok) return;
+    }
+
+    stopBatchRun({ forRestart: true });
+    batchStopRequestedRef.current = false;
     setBatchError(null);
     setBatchItems({});
     setPlanDialogOpen(false);
     setBatchRunning(true);
 
-    const ac = new AbortController();
-    batchAbortRef.current = ac;
+    const items = (planResult.items ?? []) as ImageGenPlanItem[];
+    for (const m of imageGenModels) {
+      if (batchStopRequestedRef.current) break;
+      setBatchActiveModelLabel(m.displayName);
+      const ac = new AbortController();
+      batchAbortRef.current = ac;
 
-    const res = await runImageGenBatchStream({
-      input: { items: (planResult.items ?? []) as ImageGenPlanItem[], size: imgSize, responseFormat: 'b64_json' },
-      signal: ac.signal,
-      onEvent: (evt) => {
-        if (!evt.data) return;
-        try {
-          const obj = JSON.parse(evt.data);
-          if (evt.event === 'run') {
-            if (obj.type === 'error') {
-              setBatchError(obj.errorMessage || '批量生图失败');
-              setBatchRunning(false);
+      const res = await runImageGenBatchStream({
+        input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json' },
+        signal: ac.signal,
+        onEvent: (evt) => {
+          if (!evt.data) return;
+          try {
+            const obj = JSON.parse(evt.data);
+            const evtModelId = String(obj.modelId ?? m.modelId ?? '').trim() || m.modelId;
+            if (evt.event === 'run') {
+              if (obj.type === 'error') {
+                setBatchError(obj.errorMessage || '批量生图失败');
+                batchStopRequestedRef.current = true;
+                setBatchRunning(false);
+                setBatchActiveModelLabel('');
+                return;
+              }
               return;
             }
-            if (obj.type === 'runDone') {
-              setBatchRunning(false);
-              return;
-            }
-            return;
-          }
-          if (evt.event === 'image') {
-            const key = `${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
-            if (obj.type === 'imageStart') {
-              const item: ImageViewItem = {
-                key,
-                status: 'running',
-                prompt: String(obj.prompt ?? ''),
-                createdAt: Date.now(),
-              };
-              setBatchItems((p) => ({ ...p, [key]: item }));
-              return;
-            }
-            if (obj.type === 'imageDone') {
-              setBatchItems((p) => {
-                const cur = p[key] || { key, createdAt: Date.now(), prompt: String(obj.prompt ?? ''), status: 'running' as const };
-                return {
-                  ...p,
-                  [key]: {
-                    ...cur,
-                    status: 'done',
-                    base64: obj.base64 ?? null,
-                    url: obj.url ?? null,
-                    revisedPrompt: obj.revisedPrompt ?? null,
-                  },
+            if (evt.event === 'image') {
+              const key = `${evtModelId}_${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
+              if (obj.type === 'imageStart') {
+                const item: ImageViewItem = {
+                  key,
+                  status: 'running',
+                  prompt: String(obj.prompt ?? ''),
+                  createdAt: Date.now(),
+                  sourceModelId: m.modelId,
+                  sourceModelName: m.modelName,
+                  sourceDisplayName: m.displayName,
                 };
-              });
-              return;
+                setBatchItems((p) => ({ ...p, [key]: item }));
+                return;
+              }
+              if (obj.type === 'imageDone') {
+                setBatchItems((p) => {
+                  const cur = p[key] || {
+                    key,
+                    createdAt: Date.now(),
+                    prompt: String(obj.prompt ?? ''),
+                    status: 'running' as const,
+                    sourceModelId: m.modelId,
+                    sourceModelName: m.modelName,
+                    sourceDisplayName: m.displayName,
+                  };
+                  return {
+                    ...p,
+                    [key]: {
+                      ...cur,
+                      status: 'done',
+                      base64: obj.base64 ?? null,
+                      url: obj.url ?? null,
+                      revisedPrompt: obj.revisedPrompt ?? null,
+                    },
+                  };
+                });
+                return;
+              }
+              if (obj.type === 'imageError') {
+                setBatchItems((p) => {
+                  const cur = p[key] || {
+                    key,
+                    createdAt: Date.now(),
+                    prompt: String(obj.prompt ?? ''),
+                    status: 'running' as const,
+                    sourceModelId: m.modelId,
+                    sourceModelName: m.modelName,
+                    sourceDisplayName: m.displayName,
+                  };
+                  return {
+                    ...p,
+                    [key]: {
+                      ...cur,
+                      status: 'error',
+                      errorMessage: obj.errorMessage || '失败',
+                    },
+                  };
+                });
+                return;
+              }
             }
-            if (obj.type === 'imageError') {
-              setBatchItems((p) => {
-                const cur = p[key] || { key, createdAt: Date.now(), prompt: String(obj.prompt ?? ''), status: 'running' as const };
-                return {
-                  ...p,
-                  [key]: {
-                    ...cur,
-                    status: 'error',
-                    errorMessage: obj.errorMessage || '失败',
-                  },
-                };
-              });
-              return;
-            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
-      },
-    });
+        },
+      });
 
-    if (!res.success) {
-      setBatchError(res.error?.message || '批量生图失败');
-      setBatchRunning(false);
+      if (!res.success) {
+        setBatchError(res.error?.message || '批量生图失败');
+        setBatchRunning(false);
+        setBatchActiveModelLabel('');
+        return;
+      }
     }
+
+    batchAbortRef.current = null;
+    setBatchRunning(false);
+    setBatchActiveModelLabel('');
   };
 
   const resolveConfigModelId = (evtModelId: unknown, evtModelName: unknown): string | null => {
@@ -911,7 +1020,11 @@ export default function LlmLabTab() {
 
   const singleList = useMemo(() => {
     const list = (imageItems ?? []).filter((x) => x.groupId === singleGroupId);
-    return list.sort((a, b) => (Number(a.variantIndex ?? 0) - Number(b.variantIndex ?? 0)));
+    return list.sort(
+      (a, b) =>
+        Number(a.sourceModelIndex ?? 0) - Number(b.sourceModelIndex ?? 0) ||
+        Number(a.variantIndex ?? 0) - Number(b.variantIndex ?? 0)
+    );
   }, [imageItems, singleGroupId]);
 
   const modelById = useMemo(() => new Map<string, Model>((allModels ?? []).map((m) => [m.id, m])), [allModels]);
@@ -1403,12 +1516,14 @@ export default function LlmLabTab() {
                 </>
               ) : (
                 <>
-                  <Button variant="primary" size="md" onClick={parseBatchPlan} disabled={planLoading || batchRunning}>
+                  <Button
+                    variant={batchRunning ? 'danger' : 'primary'}
+                    size="md"
+                    onClick={() => (batchRunning ? stopBatchRun() : void parseBatchPlan())}
+                    disabled={planLoading}
+                  >
                     <Sparkles size={16} />
-                    {planLoading ? '解析中' : '解析并预览'}
-                  </Button>
-                  <Button variant="danger" size="md" onClick={stopBatchRun} disabled={!batchRunning}>
-                    停止
+                    {batchRunning ? '停止' : planLoading ? '解析中' : '解析并预览'}
                   </Button>
                 </>
               )}
@@ -1807,34 +1922,56 @@ export default function LlmLabTab() {
               <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
                 {(() => {
                       const wantN = Math.max(1, Math.min(20, Number(singleN || 1)));
+                      const modelCount = imageGenModels.length;
                       const hasAny = singleList.length > 0;
-                      const all: ImageViewItem[] = hasAny
-                        ? singleList
-                        : Array.from({ length: wantN }).map((_, i) => ({
-                            key: `preview_${i}`,
-                            groupId: 'preview',
-                            variantIndex: i,
-                            status: 'running' as const,
-                            prompt: (promptText || '').trim() || DEFAULT_IMAGE_PROMPT,
-                            createdAt: Date.now(),
-                          }));
 
-                      const done = all.filter((x) => x.status === 'done' && (x.url || x.base64));
-                      const selectedKeys = Object.keys(singleSelected).filter((k) => singleSelected[k]);
-                      const prompt = all[0]?.prompt || '';
+                      if (modelCount === 0) {
+                        return (
+                          <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                            当前未选择模型。请先在左侧选择至少 1 个模型后再生成。
+                          </div>
+                        );
+                      }
+
+                      const prompt = ((promptText || '').trim() || DEFAULT_IMAGE_PROMPT).trim();
+                      const total = wantN * modelCount;
 
                       const srcOf = (it: ImageViewItem) =>
                         it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
 
+                      // 为每个模型准备“显示列表”：没有结果时显示预览占位
+                      const now = Date.now();
+                      const groups = imageGenModels.map((m, mi) => {
+                        const list = hasAny
+                          ? singleList.filter((x) => x.sourceModelId === m.modelId)
+                          : Array.from({ length: wantN }).map((_, i) => ({
+                              key: `preview_${m.modelId}_${i}`,
+                              groupId: 'preview',
+                              variantIndex: i,
+                              status: 'running' as const,
+                              prompt,
+                              createdAt: now,
+                              sourceModelId: m.modelId,
+                              sourceModelName: m.modelName,
+                              sourceDisplayName: m.displayName,
+                              sourceModelIndex: mi,
+                            }));
+                        return { model: m, modelIndex: mi, items: list };
+                      });
+
+                      const all = groups.flatMap((g) => g.items);
+                      const done = all.filter((x) => x.status === 'done' && (x.url || x.base64));
+                      const selectedKeys = Object.keys(singleSelected).filter((k) => singleSelected[k]);
+
                       const downloadSelected = async () => {
                         const items = all
                           .filter((x) => singleSelected[x.key])
-                          .map((x) => ({ src: srcOf(x), filename: `${prompt}_${Number(x.variantIndex ?? 0) + 1}` }));
+                          .map((x) => ({ src: srcOf(x), filename: `${x.sourceDisplayName || 'model'}_${prompt}_${Number(x.variantIndex ?? 0) + 1}` }));
                         await downloadAllAsZip(items, `${prompt || 'single'}_${Date.now()}`);
                       };
 
                       const downloadAll = async () => {
-                        const items = done.map((x) => ({ src: srcOf(x), filename: `${prompt}_${Number(x.variantIndex ?? 0) + 1}` }));
+                        const items = done.map((x) => ({ src: srcOf(x), filename: `${x.sourceDisplayName || 'model'}_${prompt}_${Number(x.variantIndex ?? 0) + 1}` }));
                         await downloadAllAsZip(items, `${prompt || 'single'}_${Date.now()}`);
                       };
 
@@ -1844,7 +1981,6 @@ export default function LlmLabTab() {
                         setSingleSelected(next);
                       };
 
-                      const n = all.length;
                       const tile = (it: ImageViewItem) => {
                         const src = srcOf(it);
                         const selected = !!singleSelected[it.key];
@@ -1932,19 +2068,35 @@ export default function LlmLabTab() {
                               </button>
                             </div>
 
-                            {canSelect ? (
-                              <div className="absolute left-2 top-2 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                                #{Number(it.variantIndex ?? 0) + 1}
-                              </div>
-                            ) : null}
+                            <div className="absolute left-2 top-2 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                              {`模型 #${Number(it.sourceModelIndex ?? 0) + 1} · #${Number(it.variantIndex ?? 0) + 1}`}
+                            </div>
                           </div>
                         );
                       };
 
                       const toolbar = (
                         <div className="flex items-center justify-between gap-2 pb-2">
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {hasAny ? `已生成 ${done.length}/${n} 张（点击图片可选择）` : `布局预览：将生成 ${n} 张`}
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div
+                              className="px-2 py-1 rounded-[10px] text-xs font-semibold"
+                              style={{
+                                border: '1px solid rgba(250,204,21,0.55)',
+                                background: 'rgba(250,204,21,0.08)',
+                                color: 'rgba(250,204,21,0.95)',
+                              }}
+                            >
+                              布局预览：将生成 {wantN} × {modelCount} = {total} 张
+                            </div>
+                            {hasAny ? (
+                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                已生成 {done.length}/{total} 张（点击图片可选择）
+                              </div>
+                            ) : (
+                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                选择模型后会按“每模型 {wantN} 张”进行对比展示
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <Button variant="secondary" size="xs" onClick={() => setAllSelected(true)} disabled={done.length === 0}>
@@ -1965,82 +2117,42 @@ export default function LlmLabTab() {
                         </div>
                       );
 
-                      // 预设布局：1~4 使用固定“分割”，>4 使用规则化网格
-                      if (n === 1) {
-                        return (
-                          <div>
-                            {toolbar}
-                            <div className="flex items-center justify-center">
-                              <div ref={imageGridRef} style={{ width: 'min(620px, 80%)' }}>
-                                <div style={{ height: imageThumbHeight }}>{tile(all[0])}</div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      if (n === 2) {
-                        return (
-                          <div>
-                            {toolbar}
-                            <div ref={imageGridRef} className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                              {all.slice(0, 2).map((x) => (
-                                <div key={x.key} style={{ height: imageThumbHeight }}>
-                                  {tile(x)}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      if (n === 3) {
-                        return (
-                          <div>
-                            {toolbar}
-                            <div
-                              ref={imageGridRef}
-                              className="grid gap-2"
-                              style={{
-                                gridTemplateColumns: '1.25fr 1fr',
-                                gridTemplateRows: '1fr 1fr',
-                                gridTemplateAreas: `"a b" "a c"`,
-                                height: imageThumbHeight,
-                              }}
-                            >
-                              <div style={{ gridArea: 'a' }}>{tile(all[0])}</div>
-                              <div style={{ gridArea: 'b' }}>{tile(all[1])}</div>
-                              <div style={{ gridArea: 'c' }}>{tile(all[2])}</div>
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      if (n === 4) {
-                        return (
-                          <div>
-                            {toolbar}
-                            <div ref={imageGridRef} className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                              {all.slice(0, 4).map((x) => (
-                                <div key={x.key} style={{ height: imageThumbHeight }}>
-                                  {tile(x)}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      const cols = n <= 6 ? 3 : n <= 12 ? 4 : 5;
                       return (
                         <div>
                           {toolbar}
-                          <div ref={imageGridRef} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-                            {all.map((x) => (
-                              <div key={x.key} style={{ height: imageThumbHeight }}>
-                                {tile(x)}
-                              </div>
-                            ))}
+                          <div
+                            ref={imageGridRef}
+                            className="grid gap-3"
+                            style={{
+                              gridTemplateColumns: modelCount >= 4 ? 'repeat(4, minmax(0, 1fr))' : `repeat(${modelCount}, minmax(0, 1fr))`,
+                            }}
+                          >
+                            {groups.map((g) => {
+                              const perCols = Math.max(1, Math.min(3, wantN));
+                              return (
+                                <div
+                                  key={g.model.modelId}
+                                  className="rounded-[14px] p-3 flex flex-col min-h-0"
+                                  style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={g.model.displayName}>
+                                      模型 #{g.modelIndex + 1} · {g.model.displayName}
+                                    </div>
+                                    <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                      {wantN} 张
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: `repeat(${perCols}, minmax(0, 1fr))` }}>
+                                    {g.items.map((x) => (
+                                      <div key={x.key} style={{ height: imageThumbHeight }}>
+                                        {tile(x)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -2055,6 +2167,15 @@ export default function LlmLabTab() {
                 </div>
                 <div className="flex items-center gap-2">
                   {batchRunning ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
+                  {batchActiveModelLabel ? (
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      当前模型：{batchActiveModelLabel}
+                    </span>
+                  ) : null}
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    使用 {imageGenModelCount || 0} 个模型
+                    {planResult?.total ? `，将生成 ${planResult.total} × ${imageGenModelCount || 0} = ${(planResult.total || 0) * (imageGenModelCount || 0)} 张` : ''}
+                  </span>
                   <Button
                     variant="secondary"
                     size="xs"
@@ -2119,6 +2240,9 @@ export default function LlmLabTab() {
                             <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
                               <span className="block truncate" title={it.prompt}>
                                 {it.prompt}
+                              </span>
+                              <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                来源：{it.sourceDisplayName || it.sourceModelName || it.sourceModelId || '未知'}
                               </span>
                             </div>
                             <div
@@ -2205,7 +2329,11 @@ export default function LlmLabTab() {
         open={planDialogOpen}
         onOpenChange={(open) => setPlanDialogOpen(open)}
         title="批量生图确认"
-        description={planResult ? `将生成 ${planResult.total} 张图片` : '确认生成数量后开始'}
+        description={
+          planResult
+            ? `将生成 ${planResult.total} × ${imageGenModelCount || 0} = ${(planResult.total || 0) * (imageGenModelCount || 0)} 张图片`
+            : '确认生成数量后开始'
+        }
         maxWidth={900}
         contentStyle={{ height: 'min(80vh, 680px)' }}
         content={
@@ -2225,8 +2353,12 @@ export default function LlmLabTab() {
                       className="rounded-[12px] px-3 py-2"
                       style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.10)' }}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-semibold min-w-0 truncate" style={{ color: 'var(--text-primary)' }} title={it.prompt}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div
+                          className="text-sm font-semibold min-w-0 whitespace-pre-wrap wrap-break-word"
+                          style={{ color: 'var(--text-primary)' }}
+                          title={it.prompt}
+                        >
                           {it.prompt}
                         </div>
                         <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
