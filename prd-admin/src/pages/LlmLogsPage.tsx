@@ -1,11 +1,11 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
-import { Select } from '@/components/design/Select';
+import { SearchableSelect, Select } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
-import { Copy, Eraser, Filter, RefreshCw, Search } from 'lucide-react';
+import { CheckCircle, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, MessageSquare, RefreshCw, Reply, ScanEye, Search, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -120,14 +120,14 @@ function normalizeRequestType(t: string | null | undefined): string {
   return (t ?? '').trim().toLowerCase();
 }
 
-function requestTypeToBadge(t: string | null | undefined): { label: string; title: string; tone: RequestTypeTone } {
+function requestTypeToBadge(t: string | null | undefined): { label: string; title: string; tone: RequestTypeTone; icon: JSX.Element | null } {
   const v = normalizeRequestType(t);
-  if (v === 'intent') return { label: '意图', title: '意图', tone: 'green' };
-  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue' };
-  if (v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple' };
-  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '推理', tone: 'gold' };
-  if (!v || v === 'unknown') return { label: '未知', title: '未知', tone: 'muted' };
-  return { label: '未知', title: v, tone: 'muted' };
+  if (v === 'intent') return { label: '意图', title: '意图', tone: 'green', icon: <Sparkles size={12} /> };
+  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue', icon: <ScanEye size={12} /> };
+  if (v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple', icon: <ImagePlus size={12} /> };
+  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '推理', tone: 'gold', icon: <Zap size={12} /> };
+  if (!v || v === 'unknown') return { label: '未知', title: '未知', tone: 'muted', icon: null };
+  return { label: '未知', title: v, tone: 'muted', icon: null };
 }
 
 function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
@@ -335,19 +335,21 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
     >
       <div className="grid items-center gap-3" style={{ gridTemplateColumns: '2fr 3fr 1fr' }}>
         <div className="min-w-0 flex items-center gap-2">
-          <span className="text-[11px] font-semibold shrink-0" style={{ color: '#E7CE97' }}>
+          <span className="text-[11px] font-semibold shrink-0 flex items-center gap-1" style={{ color: '#E7CE97' }}>
+            <HelpCircle size={12} />
             问题
           </span>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 text-[11px]">
             <NewsMarquee text={q ? `：${q}` : '：未记录（已脱敏）'} />
           </div>
         </div>
 
         <div className="min-w-0 flex items-center gap-2">
-          <span className="text-[11px] font-semibold shrink-0" style={{ color: '#E7CE97', opacity: 0.9 }}>
+          <span className="text-[11px] font-semibold shrink-0 flex items-center gap-1" style={{ color: '#E7CE97', opacity: 0.9 }}>
+            <Reply size={12} />
             回答
           </span>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 text-[11px]">
             <NewsMarquee text={a ? `：${a}` : it.status === 'running' ? '：生成中…' : '：未记录'} />
           </div>
         </div>
@@ -454,10 +456,11 @@ export default function LlmLogsPage() {
 
   const statusBadge = (s: string) => {
     const v = (s || '').toLowerCase();
-    if (v === 'succeeded') return <Badge variant="success">成功</Badge>;
-    if (v === 'failed') return <Badge variant="subtle">失败</Badge>;
-    if (v === 'running') return <Badge variant="subtle">进行中</Badge>;
-    return <Badge variant="subtle">{s || '-'}</Badge>;
+    if (v === 'succeeded') return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
+    if (v === 'failed') return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
+    if (v === 'running') return <Badge variant="subtle" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+    if (v === 'cancelled') return <Badge variant="subtle" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
+    return <Badge variant="subtle" size="sm">{s || '-'}</Badge>;
   };
 
   const inputStyle: React.CSSProperties = {
@@ -497,28 +500,64 @@ export default function LlmLogsPage() {
 
       <Card className="p-4">
         <div className="grid gap-3 md:grid-cols-6">
-          <Select value={qProvider} onChange={(e) => setQProvider(e.target.value)} uiSize="sm" style={inputStyle}>
+          <Select
+            value={qProvider}
+            onChange={(e) => setQProvider(e.target.value)}
+            uiSize="sm"
+            style={inputStyle}
+            leftIcon={<Server size={16} />}
+          >
             <option value="">provider（全部）</option>
             {metaProviders.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </Select>
-          <Select value={qModel} onChange={(e) => setQModel(e.target.value)} uiSize="sm" style={inputStyle}>
-            <option value="">model（全部）</option>
-            {metaModels.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </Select>
-          <Select value={qStatus} onChange={(e) => setQStatus(e.target.value)} uiSize="sm" style={inputStyle}>
+          <SearchableSelect
+            value={qModel}
+            onValueChange={setQModel}
+            options={[
+              { value: '', label: 'model（全部）' },
+              ...metaModels.map((m) => ({ value: m, label: m })),
+            ]}
+            placeholder="model（全部）"
+            leftIcon={<Database size={16} />}
+            uiSize="sm"
+            style={inputStyle}
+          />
+          <Select
+            value={qStatus}
+            onChange={(e) => setQStatus(e.target.value)}
+            uiSize="sm"
+            style={inputStyle}
+            leftIcon={<CheckCircle size={16} />}
+          >
             <option value="">status（全部）</option>
             {metaStatuses.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </Select>
-          <input value={qGroupId} onChange={(e) => setQGroupId(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={inputStyle} placeholder="groupId" />
-          <input value={qSessionId} onChange={(e) => setQSessionId(e.target.value)} className="h-9 rounded-[12px] px-3 text-sm outline-none" style={inputStyle} placeholder="sessionId" />
           <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              value={qGroupId}
+              onChange={(e) => setQGroupId(e.target.value)}
+              className="h-9 w-full rounded-[12px] pl-9 pr-3 text-sm outline-none"
+              style={inputStyle}
+              placeholder="groupId"
+            />
+          </div>
+          <div className="relative">
+            <Clock size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              value={qSessionId}
+              onChange={(e) => setQSessionId(e.target.value)}
+              className="h-9 w-full rounded-[12px] pl-9 pr-3 text-sm outline-none"
+              style={inputStyle}
+              placeholder="sessionId"
+            />
+          </div>
+          <div className="relative">
+            <Hash size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               value={qRequestId}
               onChange={(e) => setQRequestId(e.target.value)}
@@ -602,10 +641,13 @@ export default function LlmLogsPage() {
                         </div>
                         {statusBadge(it.status)}
                       </div>
-                      <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                        requestId: {it.requestId}
-                        {it.groupId ? ` · groupId: ${it.groupId}` : ''}
-                        {it.sessionId ? ` · sessionId: ${it.sessionId}` : ''}
+                      <div className="mt-1 text-xs truncate flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                        <Hash size={12} />
+                        <span>
+                          requestId: {it.requestId}
+                          {it.groupId ? ` · groupId: ${it.groupId}` : ''}
+                          {it.sessionId ? ` · sessionId: ${it.sessionId}` : ''}
+                        </span>
                       </div>
                       <div className="mt-1 flex items-center gap-2 min-w-0">
                         {(() => {
@@ -616,6 +658,7 @@ export default function LlmLogsPage() {
                               title={b.title}
                               style={requestTypeChipStyle(b.tone)}
                             >
+                              {b.icon}
                               {b.label}
                             </label>
                           );

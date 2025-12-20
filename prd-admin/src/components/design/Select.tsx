@@ -7,17 +7,26 @@ export const Select = React.forwardRef<
   React.SelectHTMLAttributes<HTMLSelectElement> & {
     /** 仅用于调整整体高度（与 Button 的尺寸体系对齐） */
     uiSize?: 'sm' | 'md';
+    /** 左侧图标 */
+    leftIcon?: React.ReactNode;
   }
->(function Select({ className, style, uiSize = 'md', disabled, ...props }, ref) {
+>(function Select({ className, style, uiSize = 'md', disabled, leftIcon, ...props }, ref) {
   const sizeCls = uiSize === 'sm' ? 'h-9 rounded-[12px] text-sm' : 'h-10 rounded-[14px] text-[13px]';
+  const paddingLeft = leftIcon ? 'pl-9' : 'px-3';
 
   return (
     <div className={cn('relative', disabled ? 'opacity-60' : '')}>
+      {leftIcon && (
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }}>
+          {leftIcon}
+        </div>
+      )}
       <select
         ref={ref}
         disabled={disabled}
         className={cn(
-          'w-full px-3 pr-9 outline-none transition-colors',
+          'w-full pr-9 outline-none transition-colors',
+          paddingLeft,
           'hover:border-white/20',
           'focus-visible:ring-2 focus-visible:ring-white/20',
           sizeCls,

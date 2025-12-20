@@ -4,10 +4,14 @@ export function Badge({
   children,
   variant = 'subtle',
   className,
+  icon,
+  size = 'default',
 }: {
   children: React.ReactNode;
   variant?: 'subtle' | 'discount' | 'new' | 'featured' | 'success';
   className?: string;
+  icon?: React.ReactNode;
+  size?: 'default' | 'sm';
 }) {
   const style: React.CSSProperties =
     variant === 'discount'
@@ -40,15 +44,19 @@ export function Badge({
                 color: 'var(--text-secondary)',
               };
 
+  const sizeCls = size === 'sm' ? 'px-1.5 py-0.5 text-[10px] gap-1' : 'px-2.5 py-1 text-[11px] gap-1.5';
+
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide',
+        'inline-flex items-center rounded-full font-semibold tracking-wide',
+        sizeCls,
         variant === 'featured' && 'h-5',
         className
       )}
       style={style}
     >
+      {icon}
       {children}
     </span>
   );
