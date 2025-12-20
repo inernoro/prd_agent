@@ -68,6 +68,27 @@ public class ModelLabRepository : IModelLabRepository
         await _experiments.ReplaceOneAsync(x => x.Id == experiment.Id && x.OwnerAdminId == experiment.OwnerAdminId, experiment);
     }
 
+    public async Task<bool> DeleteExperimentAsync(string id, string ownerAdminId)
+    {
+        // 级联删除：实验 -> runs -> runItems（都按 ownerAdminId 做隔离）
+        var exp = await _experiments.Find(x => x.Id == id && x.OwnerAdminId == ownerAdminId).FirstOrDefaultAsync();
+        if (exp == null) return false;
+
+        var runIds = await _runs
+            .Find(x => x.OwnerAdminId == ownerAdminId && x.ExperimentId == id)
+            .Project(x => x.Id)
+            .ToListAsync();
+
+        if (runIds.Count > 0)
+        {
+            await _items.DeleteManyAsync(x => x.OwnerAdminId == ownerAdminId && runIds.Contains(x.RunId));
+            await _runs.DeleteManyAsync(x => x.OwnerAdminId == ownerAdminId && x.ExperimentId == id);
+        }
+
+        var res = await _experiments.DeleteOneAsync(x => x.Id == id && x.OwnerAdminId == ownerAdminId);
+        return res.DeletedCount > 0;
+    }
+
     public async Task<ModelLabModelSet> UpsertModelSetAsync(ModelLabModelSet modelSet)
     {
         var now = DateTime.UtcNow;

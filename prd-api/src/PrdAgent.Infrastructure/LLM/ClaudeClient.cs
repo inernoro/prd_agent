@@ -190,6 +190,7 @@ public class ClaudeClient : ILLMClient
                     QuestionText: questionText,
                     SystemPromptChars: systemPrompt.Length,
                     SystemPromptHash: LlmLogRedactor.Sha256Hex(systemRedacted),
+                    SystemPromptText: systemPrompt,
                     MessageCount: messages.Count,
                     GroupId: ctx?.GroupId,
                     SessionId: ctx?.SessionId,

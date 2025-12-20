@@ -148,6 +148,7 @@ public class OpenAIClient : ILLMClient
                     QuestionText: questionText,
                     SystemPromptChars: (systemPrompt ?? string.Empty).Length,
                     SystemPromptHash: LlmLogRedactor.Sha256Hex(systemRedacted),
+                    SystemPromptText: systemPromptFinal,
                     MessageCount: messages.Count + 1,
                     GroupId: ctx?.GroupId,
                     SessionId: ctx?.SessionId,

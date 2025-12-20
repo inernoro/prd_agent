@@ -101,6 +101,7 @@ export type LlmRequestLog = {
   requestBodyHash?: string | null;
   systemPromptChars?: number | null;
   systemPromptHash?: string | null;
+  systemPromptText?: string | null;
   messageCount?: number | null;
   documentChars?: number | null;
   documentHash?: string | null;

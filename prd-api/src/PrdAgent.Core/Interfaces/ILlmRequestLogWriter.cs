@@ -14,6 +14,7 @@ public record LlmLogStart(
     string? QuestionText,
     int? SystemPromptChars,
     string? SystemPromptHash,
+    string? SystemPromptText,
     int? MessageCount,
     string? GroupId,
     string? SessionId,

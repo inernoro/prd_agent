@@ -63,6 +63,10 @@ type ImageViewItem = {
   createdAt: number;
   groupId?: string;
   variantIndex?: number;
+  /** 批量生图：在解析清单中的 item 序号（用于稳定排序） */
+  itemIndex?: number;
+  /** 批量生图：同一 item 下的图片序号（用于稳定排序） */
+  imageIndex?: number;
   sourceModelId?: string;
   sourceModelName?: string;
   sourceDisplayName?: string;
@@ -90,6 +94,15 @@ const ASPECT_OPTIONS: AspectOption[] = [
   { id: '16:9', label: '16:9', size: '1280x720', iconW: 24, iconH: 14 },
   { id: '9:16', label: '9:16', size: '720x1280', iconW: 14, iconH: 24 },
 ];
+
+function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
+  // 用于“是否需要自动保存”的变更检测；与 setSelectedModelsDedupe 的唯一性规则保持一致（平台 + modelName）
+  return (list ?? [])
+    .map((m) => `${String(m.platformId ?? '').trim()}:${String(m.modelName ?? '').trim()}`.toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
 
 function filenameSafe(s: string) {
   const base = (s || '').trim().slice(0, 32) || 'image';
@@ -363,7 +376,6 @@ export default function LlmLabTab() {
 
   const [imageGridEl, setImageGridEl] = useState<HTMLDivElement | null>(null);
   const imageGridRef = useCallback((el: HTMLDivElement | null) => setImageGridEl(el), []);
-  const [imageGridCols, setImageGridCols] = useState(3);
   const [imageThumbHeight, setImageThumbHeight] = useState(220);
 
   const [modelSets, setModelSets] = useState<ModelLabModelSet[]>([]);
@@ -385,6 +397,11 @@ export default function LlmLabTab() {
     title: '输出预览',
     text: '',
   });
+
+  // 自动保存（防抖）：避免“加入实验后刷新丢失”
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const lastSavedSigRef = useRef<string>('');
+  const lastSavedExperimentIdRef = useRef<string>('');
 
   useEffect(() => {
     allModelsRef.current = allModels ?? [];
@@ -552,7 +569,6 @@ export default function LlmLabTab() {
       const ratio = parseRatio(imgSize);
       const h = Math.round(cardW * (ratio.h / ratio.w));
 
-      setImageGridCols(cols);
       setImageThumbHeight(Math.max(160, Math.min(420, h)));
     };
 
@@ -568,6 +584,16 @@ export default function LlmLabTab() {
     setParams(activeExperiment.params ?? defaultParams);
     setPromptText(activeExperiment.promptText ?? '');
     setSelectedModels(activeExperiment.selectedModels ?? []);
+
+    // 同步“已保存快照”，避免首次加载/切换实验就触发自动保存
+    const sig = [
+      String(activeExperiment.suite ?? ''),
+      JSON.stringify(activeExperiment.params ?? defaultParams),
+      String(activeExperiment.promptText ?? ''),
+      signatureOfSelectedModels(activeExperiment.selectedModels ?? []),
+    ].join('||');
+    lastSavedSigRef.current = sig;
+    lastSavedExperimentIdRef.current = activeExperiment.id;
   }, [activeExperiment]);
 
   const setSelectedModelsDedupe = (list: ModelLabSelectedModel[]) => {
@@ -586,7 +612,7 @@ export default function LlmLabTab() {
     setSelectedModels((prev) => prev.filter((x) => x.modelId !== modelId));
   };
 
-  const saveExperiment = async () => {
+  const saveExperiment = async (opts?: { silent?: boolean }) => {
     if (!activeExperimentId) return;
     try {
       const res = await updateModelLabExperiment(activeExperimentId, {
@@ -596,7 +622,7 @@ export default function LlmLabTab() {
         params,
       });
       if (!res.success) {
-        alert(res.error?.message || '保存失败');
+        if (!opts?.silent) alert(res.error?.message || '保存失败');
         return;
       }
       // 刷新本地列表
@@ -605,6 +631,33 @@ export default function LlmLabTab() {
       // no-op
     }
   };
+
+  useEffect(() => {
+    if (!activeExperimentId) return;
+    if (experimentsLoading) return;
+    if (modelsLoading) return;
+
+    // 切换实验后，先等上面的 activeExperiment 同步快照
+    if (lastSavedExperimentIdRef.current !== activeExperimentId) return;
+
+    const sig = [String(suite ?? ''), JSON.stringify(params ?? {}), String(promptText ?? ''), signatureOfSelectedModels(selectedModels)].join('||');
+    if (sig === lastSavedSigRef.current) return;
+
+    // debounce：避免快速点选/输入导致频繁请求
+    if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        await saveExperiment({ silent: true });
+        lastSavedSigRef.current = sig;
+      })();
+    }, 650);
+
+    return () => {
+      if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeExperimentId, experimentsLoading, modelsLoading, suite, params, promptText, selectedModels]);
 
   const stopRun = () => {
     abortRef.current?.abort();
@@ -788,6 +841,8 @@ export default function LlmLabTab() {
                   status: 'running',
                   prompt: String(obj.prompt ?? ''),
                   createdAt: Date.now(),
+                  itemIndex: Number(obj.itemIndex ?? 0),
+                  imageIndex: Number(obj.imageIndex ?? 0),
                   sourceModelId: m.modelId,
                   sourceModelName: m.modelName,
                   sourceDisplayName: m.displayName,
@@ -802,6 +857,8 @@ export default function LlmLabTab() {
                     createdAt: Date.now(),
                     prompt: String(obj.prompt ?? ''),
                     status: 'running' as const,
+                    itemIndex: Number(obj.itemIndex ?? 0),
+                    imageIndex: Number(obj.imageIndex ?? 0),
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
@@ -826,6 +883,8 @@ export default function LlmLabTab() {
                     createdAt: Date.now(),
                     prompt: String(obj.prompt ?? ''),
                     status: 'running' as const,
+                    itemIndex: Number(obj.itemIndex ?? 0),
+                    imageIndex: Number(obj.imageIndex ?? 0),
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
@@ -1017,6 +1076,24 @@ export default function LlmLabTab() {
   const batchList = useMemo(() => {
     return Object.values(batchItems).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }, [batchItems]);
+
+  const batchPlanTotal = useMemo(() => {
+    const t = Number((planResult as any)?.total ?? 0);
+    if (Number.isFinite(t) && t > 0) return t;
+    const items = (planResult as any)?.items;
+    return Array.isArray(items) ? items.length : 0;
+  }, [planResult]);
+
+  const batchTotal = batchPlanTotal * imageGenModelCount;
+  const batchHasFormula = batchPlanTotal > 0 && imageGenModelCount > 0;
+
+  const batchDoneCount = useMemo(() => {
+    return batchList.filter((x) => x.status === 'done' && (x.url || x.base64)).length;
+  }, [batchList]);
+
+  const batchErrorCount = useMemo(() => {
+    return batchList.filter((x) => x.status === 'error').length;
+  }, [batchList]);
 
   const singleList = useMemo(() => {
     const list = (imageItems ?? []).filter((x) => x.groupId === singleGroupId);
@@ -2173,8 +2250,7 @@ export default function LlmLabTab() {
                     </span>
                   ) : null}
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    使用 {imageGenModelCount || 0} 个模型
-                    {planResult?.total ? `，将生成 ${planResult.total} × ${imageGenModelCount || 0} = ${(planResult.total || 0) * (imageGenModelCount || 0)} 张` : ''}
+                    模型数 {imageGenModelCount || 0}
                   </span>
                   <Button
                     variant="secondary"
@@ -2201,6 +2277,31 @@ export default function LlmLabTab() {
                   </Button>
                 </div>
               </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {batchHasFormula ? (
+                    <div
+                      className="px-2 py-1 rounded-[10px] text-xs font-semibold"
+                      style={{
+                        border: '1px solid rgba(250,204,21,0.55)',
+                        background: 'rgba(250,204,21,0.08)',
+                        color: 'rgba(250,204,21,0.95)',
+                      }}
+                    >
+                      布局预览：将生成 {batchPlanTotal} × {imageGenModelCount} = {batchTotal} 张
+                    </div>
+                  ) : (
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      提示：解析后会按“清单项 × 模型数”生成，方便你按模型对比效果
+                    </div>
+                  )}
+                  {batchHasFormula ? (
+                    <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                      已生成 {batchDoneCount}/{batchTotal} 张{batchErrorCount ? `，失败 ${batchErrorCount}` : ''}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
               {batchError ? (
                 <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
                   {batchError}
@@ -2223,100 +2324,185 @@ export default function LlmLabTab() {
                     </div>
                   </div>
                 ) : (
-                  <div
-                    ref={imageGridRef}
-                    className="grid gap-2"
-                    style={{ gridTemplateColumns: `repeat(${imageGridCols}, minmax(0, 1fr))` }}
-                  >
-                    {batchList.map((it) => {
-                      const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                      return (
-                        <div
-                          key={it.key}
-                          className="rounded-[14px] p-3 flex flex-col gap-2"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-                              <span className="block truncate" title={it.prompt}>
-                                {it.prompt}
-                              </span>
-                              <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                                来源：{it.sourceDisplayName || it.sourceModelName || it.sourceModelId || '未知'}
-                              </span>
+                  <>
+                    {(() => {
+                      const byModelId = new Map<string, ImageViewItem[]>();
+                      for (const it of batchList) {
+                        const id = String(it.sourceModelId ?? '').trim() || '__unknown__';
+                        const arr = byModelId.get(id) ?? [];
+                        arr.push(it);
+                        byModelId.set(id, arr);
+                      }
+
+                      const sortByIndex = (a: ImageViewItem, b: ImageViewItem) => {
+                        return (
+                          Number(a.itemIndex ?? 0) - Number(b.itemIndex ?? 0) ||
+                          Number(a.imageIndex ?? 0) - Number(b.imageIndex ?? 0) ||
+                          Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0)
+                        );
+                      };
+
+                      const known = new Set(imageGenModels.map((m) => m.modelId));
+
+                      const baseGroups = imageGenModels.map((m, mi) => ({
+                        key: m.modelId,
+                        model: m,
+                        modelIndex: mi,
+                        items: (byModelId.get(m.modelId) ?? []).slice().sort(sortByIndex),
+                      }));
+
+                      const extraGroups: { key: string; model: { modelId: string; displayName: string }; modelIndex: number; items: ImageViewItem[] }[] = [];
+                      for (const [id, items] of byModelId.entries()) {
+                        if (known.has(id)) continue;
+                        const first = items[0];
+                        const displayName = first?.sourceDisplayName || first?.sourceModelName || (id === '__unknown__' ? '未知模型' : id);
+                        extraGroups.push({
+                          key: `extra_${id}`,
+                          model: { modelId: id, displayName },
+                          modelIndex: baseGroups.length + extraGroups.length,
+                          items: items.slice().sort(sortByIndex),
+                        });
+                      }
+
+                      const groups = [...baseGroups, ...extraGroups];
+                      const groupCount = Math.max(1, groups.length);
+                      const outerCols = groupCount >= 4 ? 4 : groupCount;
+                      const perCols = Math.max(1, Math.min(3, batchPlanTotal || 3));
+
+                      const tile = (it: ImageViewItem) => {
+                        const src = it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+                        return (
+                          <div
+                            key={it.key}
+                            className="rounded-[14px] p-3 flex flex-col gap-2"
+                            style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                                <span className="block truncate" title={it.prompt}>
+                                  {it.prompt}
+                                </span>
+                                <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                  来源：{it.sourceDisplayName || it.sourceModelName || it.sourceModelId || '未知'}
+                                </span>
+                              </div>
+                              <div
+                                className="text-xs shrink-0"
+                                style={{
+                                  color:
+                                    it.status === 'error'
+                                      ? 'rgba(239,68,68,0.95)'
+                                      : it.status === 'done'
+                                        ? 'rgba(34,197,94,0.95)'
+                                        : 'var(--text-muted)',
+                                }}
+                              >
+                                {it.status === 'running' ? '生成中' : it.status === 'done' ? '完成' : '失败'}
+                              </div>
                             </div>
                             <div
-                              className="text-xs shrink-0"
+                              className="rounded-[12px] overflow-hidden relative"
                               style={{
-                                color:
-                                  it.status === 'error'
-                                    ? 'rgba(239,68,68,0.95)'
-                                    : it.status === 'done'
-                                      ? 'rgba(34,197,94,0.95)'
-                                      : 'var(--text-muted)',
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                background: 'rgba(255,255,255,0.02)',
+                                height: imageThumbHeight,
                               }}
                             >
-                              {it.status === 'running' ? '生成中' : it.status === 'done' ? '完成' : '失败'}
-                            </div>
-                          </div>
-                          <div
-                            className="rounded-[12px] overflow-hidden relative"
-                            style={{
-                              border: '1px solid rgba(255,255,255,0.10)',
-                              background: 'rgba(255,255,255,0.02)',
-                              height: imageThumbHeight,
-                            }}
-                          >
-                            {it.status === 'done' && src ? (
-                              <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
-                                {it.status === 'error' ? (
-                                  <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                                    {it.errorMessage || '失败'}
-                                  </div>
-                                ) : (
-                                  <>
-                                    <PrdLoader size={40} />
-                                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                      正在生成中…
+                              {it.status === 'done' && src ? (
+                                <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
+                                  {it.status === 'error' ? (
+                                    <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                      {it.errorMessage || '失败'}
                                     </div>
-                                  </>
-                                )}
-                              </div>
-                            )}
+                                  ) : (
+                                    <>
+                                      <PrdLoader size={40} />
+                                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        正在生成中…
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              )}
 
-                            <div className="absolute right-2 bottom-2 flex items-center gap-1">
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
-                                onClick={() => void copyToClipboard(it.prompt)}
-                                aria-label="复制提示词"
-                                title="复制提示词"
-                                disabled={!it.prompt}
-                              >
-                                <Copy size={12} />
-                                复制
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
-                                onClick={() => void downloadImage(src, it.prompt)}
-                                aria-label="下载图片"
-                                title="下载图片"
-                                disabled={it.status !== 'done' || !src}
-                              >
-                                <Download size={12} />
-                                下载
-                              </button>
+                              <div className="absolute right-2 bottom-2 flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                                  style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                  onClick={() => void copyToClipboard(it.prompt)}
+                                  aria-label="复制提示词"
+                                  title="复制提示词"
+                                  disabled={!it.prompt}
+                                >
+                                  <Copy size={12} />
+                                  复制
+                                </button>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                                  style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                  onClick={() => void downloadImage(src, it.prompt)}
+                                  aria-label="下载图片"
+                                  title="下载图片"
+                                  disabled={it.status !== 'done' || !src}
+                                >
+                                  <Download size={12} />
+                                  下载
+                                </button>
+                              </div>
                             </div>
                           </div>
+                        );
+                      };
+
+                      return (
+                        <div
+                          ref={imageGridRef}
+                          className="grid gap-3"
+                          style={{
+                            gridTemplateColumns: outerCols >= 4 ? 'repeat(4, minmax(0, 1fr))' : `repeat(${outerCols}, minmax(0, 1fr))`,
+                          }}
+                        >
+                          {groups.map((g) => (
+                            <div
+                              key={g.key}
+                              className="rounded-[14px] p-3 flex flex-col min-h-0"
+                              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={g.model.displayName}>
+                                  模型 #{g.modelIndex + 1} · {g.model.displayName}
+                                </div>
+                                <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                  {g.items.length} 张
+                                </div>
+                              </div>
+                              {g.items.length === 0 ? (
+                                <div
+                                  className="mt-2 rounded-[12px] flex items-center justify-center text-xs"
+                                  style={{
+                                    border: '1px solid rgba(255,255,255,0.10)',
+                                    background: 'rgba(255,255,255,0.02)',
+                                    height: imageThumbHeight,
+                                    color: 'var(--text-muted)',
+                                  }}
+                                >
+                                  {batchRunning ? '等待生成…' : '暂无输出'}
+                                </div>
+                              ) : (
+                                <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: `repeat(${perCols}, minmax(0, 1fr))` }}>
+                                  {g.items.map((x) => tile(x))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       );
-                    })}
-                  </div>
+                    })()}
+                  </>
                 )}
               </div>
             </>

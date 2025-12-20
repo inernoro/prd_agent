@@ -108,6 +108,16 @@ public class AdminModelLabController : ControllerBase
         return Ok(ApiResponse<object>.Ok(exp));
     }
 
+    [HttpDelete("experiments/{id}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DeleteExperiment(string id)
+    {
+        var adminId = GetAdminId();
+        var ok = await _repo.DeleteExperimentAsync(id, adminId);
+        if (!ok) return NotFound(ApiResponse<object>.Fail("EXPERIMENT_NOT_FOUND", "实验不存在"));
+        return Ok(ApiResponse<object>.Ok(true));
+    }
+
     [HttpGet("model-sets")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> ListModelSets([FromQuery] string? search, [FromQuery] int limit = 50)

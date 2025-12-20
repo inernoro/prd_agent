@@ -11,6 +11,7 @@ public interface IModelLabRepository
     Task<ModelLabExperiment?> GetExperimentAsync(string id, string ownerAdminId);
     Task<List<ModelLabExperiment>> ListExperimentsAsync(string ownerAdminId, string? search, int page, int pageSize);
     Task UpdateExperimentAsync(ModelLabExperiment experiment);
+    Task<bool> DeleteExperimentAsync(string id, string ownerAdminId);
 
     Task<ModelLabModelSet> UpsertModelSetAsync(ModelLabModelSet modelSet);
     Task<List<ModelLabModelSet>> ListModelSetsAsync(string ownerAdminId, string? search, int limit);

@@ -45,6 +45,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 QuestionText = Truncate(start.QuestionText ?? string.Empty, 200_000),
                 SystemPromptChars = start.SystemPromptChars,
                 SystemPromptHash = start.SystemPromptHash,
+                SystemPromptText = string.IsNullOrWhiteSpace(start.SystemPromptText) ? null : Truncate(start.SystemPromptText, 200_000),
                 MessageCount = start.MessageCount,
                 DocumentChars = start.DocumentChars,
                 DocumentHash = start.DocumentHash,

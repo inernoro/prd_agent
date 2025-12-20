@@ -27,6 +27,66 @@ function codeBoxStyle(): React.CSSProperties {
   };
 }
 
+const PROMPT_TOKEN_RE = /\[[A-Z0-9_]+\]/g;
+
+function splitTextByPromptTokens(text: string): Array<{ type: 'text' | 'token'; value: string }> {
+  const s = text ?? '';
+  const parts: Array<{ type: 'text' | 'token'; value: string }> = [];
+  if (!s) return parts;
+
+  let lastIndex = 0;
+  PROMPT_TOKEN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PROMPT_TOKEN_RE.exec(s)) !== null) {
+    const idx = m.index;
+    if (idx > lastIndex) parts.push({ type: 'text', value: s.slice(lastIndex, idx) });
+    parts.push({ type: 'token', value: m[0] });
+    lastIndex = idx + m[0].length;
+  }
+  if (lastIndex < s.length) parts.push({ type: 'text', value: s.slice(lastIndex) });
+  return parts;
+}
+
+function BodyWithPromptTokens({
+  text,
+  onTokenClick,
+}: {
+  text: string;
+  onTokenClick: (token: string) => void;
+}) {
+  const parts = useMemo(() => splitTextByPromptTokens(text), [text]);
+
+  return (
+    <div style={codeBoxStyle()}>
+      {parts.map((p, i) =>
+        p.type === 'token' ? (
+          <span
+            key={`${p.type}-${p.value}-${i}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onTokenClick(p.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') onTokenClick(p.value);
+            }}
+            title={`点击预览 system prompt：${p.value}`}
+            style={{
+              cursor: 'pointer',
+              color: 'rgba(77, 163, 255, 0.95)',
+              fontWeight: 800,
+              textDecoration: 'underline',
+              textUnderlineOffset: 2,
+            }}
+          >
+            {p.value}
+          </span>
+        ) : (
+          <span key={`${p.type}-${i}`}>{p.value}</span>
+        )
+      )}
+    </div>
+  );
+}
+
 function formatLocalTime(iso: string | null | undefined): string {
   if (!iso) return '-';
   const d = new Date(iso);
@@ -284,6 +344,8 @@ export default function LlmLogsPage() {
   const [detail, setDetail] = useState<LlmRequestLog | null>(null);
   const [copiedHint, setCopiedHint] = useState<string>('');
   const [detailOpen, setDetailOpen] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptToken, setPromptToken] = useState<string>('');
 
   const load = async (opts?: { resetPage?: boolean }) => {
     if (opts?.resetPage) setPage(1);
@@ -579,6 +641,8 @@ export default function LlmLogsPage() {
             setSelectedId(null);
             setCopiedHint('');
             setAnswerView('preview');
+            setPromptOpen(false);
+            setPromptToken('');
           }
         }}
         title="LLM 请求详情"
@@ -671,7 +735,13 @@ export default function LlmLogsPage() {
                   </div>
                   <div>
                     <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>body</div>
-                    <pre style={codeBoxStyle()}>{prettyRequestBody || ''}</pre>
+                    <BodyWithPromptTokens
+                      text={prettyRequestBody || ''}
+                      onTokenClick={(token) => {
+                        setPromptToken(token);
+                        setPromptOpen(true);
+                      }}
+                    />
                   </div>
                 </div>
                 <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -833,6 +903,56 @@ export default function LlmLogsPage() {
                   ) : null}
                 </div>
               </Card>
+            </div>
+          )
+        }
+      />
+
+      <Dialog
+        open={promptOpen}
+        onOpenChange={(open) => setPromptOpen(open)}
+        title="System Prompt 预览"
+        description={detail ? `${promptToken || '[SYSTEM_PROMPT]'} · requestId: ${detail.requestId}` : promptToken || ''}
+        maxWidth={980}
+        contentStyle={{ height: '76vh' }}
+        content={
+          !detail ? (
+            <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
+          ) : (
+            <div className="h-full min-h-0 flex flex-col">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  点击 body 中的占位符可预览（旧数据可能未记录）
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText((detail.systemPromptText ?? '').trim());
+                      setCopiedHint('system prompt 已复制');
+                      setTimeout(() => setCopiedHint(''), 1200);
+                    } catch {
+                      setCopiedHint('复制失败（浏览器权限）');
+                      setTimeout(() => setCopiedHint(''), 2000);
+                    }
+                  }}
+                  disabled={!((detail.systemPromptText ?? '').trim())}
+                >
+                  <Copy size={16} />
+                  复制
+                </Button>
+              </div>
+              {copiedHint ? (
+                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {copiedHint}
+                </div>
+              ) : null}
+              <div className="mt-3 flex-1 min-h-0 overflow-auto">
+                <pre style={codeBoxStyle()}>
+                  {((detail.systemPromptText ?? '').trim() || '未记录 system prompt（可能为旧日志或后端未写入该字段）')}
+                </pre>
+              </div>
             </div>
           )
         }

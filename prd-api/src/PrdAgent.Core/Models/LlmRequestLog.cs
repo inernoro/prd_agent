@@ -32,6 +32,10 @@ public class LlmRequestLog
     public string? RequestBodyHash { get; set; }
     public int? SystemPromptChars { get; set; }
     public string? SystemPromptHash { get; set; }
+    /// <summary>
+    /// 实际发送给模型的 system prompt（用于管理员调试；可能为空；超长会被截断）
+    /// </summary>
+    public string? SystemPromptText { get; set; }
     public int? MessageCount { get; set; }
 
     // 文档元信息（不落盘 PRD 原文）

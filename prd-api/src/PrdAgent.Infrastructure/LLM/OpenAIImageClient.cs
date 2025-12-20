@@ -193,6 +193,7 @@ public class OpenAIImageClient
                     QuestionText: req.Prompt,
                     SystemPromptChars: null,
                     SystemPromptHash: null,
+                    SystemPromptText: null,
                     MessageCount: null,
                     GroupId: ctx?.GroupId,
                     SessionId: ctx?.SessionId,
