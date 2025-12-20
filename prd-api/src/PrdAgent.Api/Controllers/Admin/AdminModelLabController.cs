@@ -387,23 +387,37 @@ public class AdminModelLabController : ControllerBase
         SemaphoreSlim writeLock,
         CancellationToken ct)
     {
+        // 仅 suite=Intent 默认注入意图 schema；其它 suite 由前端显式选择专项测试（expectedFormat）来决定系统约束，避免“强加”。
         var systemPrompt = effective.Suite switch
         {
             ModelLabSuite.Intent =>
                 "你是意图识别模型。请对用户输入进行意图分类，并严格输出 JSON：{\"intent\":\"...\",\"confidence\":0-1,\"reason\":\"...\"}。不要输出额外内容。",
-            ModelLabSuite.Speed =>
-                "你是一个函数调用规划模型。请根据用户输入选择一个合适的工具调用，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
-                "JSON 格式（推荐）：{\"name\":\"tool_name\",\"arguments\":{...}}。\n" +
-                "也允许 OpenAI 风格：{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"tool_name\",\"arguments\":{...}}}]}。\n" +
-                "要求：必须是合法 JSON；arguments 必须是对象或可解析为对象的字符串。",
-            ModelLabSuite.Custom =>
-                "你是 MCP（Model Context Protocol）调用规划模型。请根据用户输入生成 MCP 调用指令，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
-                "JSON 格式（推荐）：{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}。\n" +
-                "也允许资源读取：{\"server\":\"server_id\",\"uri\":\"resource://...\"}。\n" +
-                "也允许批量：{\"calls\":[{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}]}。\n" +
-                "要求：必须是合法 JSON；必须包含 server 字段。",
             _ => ""
         };
+
+        // 专项测试：前端传 expectedFormat 时，强约束输出格式（system prompt 级）。
+        var fmt = (effective.ExpectedFormat ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(fmt))
+        {
+            systemPrompt = fmt switch
+            {
+                "json" =>
+                    "你是结构化输出模型。请根据用户输入生成结构化结果，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                    "要求：必须是合法 JSON（对象或数组）。",
+                "functioncall" or "function_call" or "function-call" =>
+                    "你是函数调用规划模型。请根据用户输入选择一个合适的工具调用，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                    "JSON 格式（推荐）：{\"name\":\"tool_name\",\"arguments\":{...}}。\n" +
+                    "也允许 OpenAI 风格：{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"tool_name\",\"arguments\":{...}}}]}。\n" +
+                    "要求：必须是合法 JSON；arguments 必须是对象或可解析为对象的字符串。",
+                "mcp" =>
+                    "你是 MCP（Model Context Protocol）调用规划模型。请根据用户输入生成 MCP 调用指令，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                    "JSON 格式（推荐）：{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}。\n" +
+                    "也允许资源读取：{\"server\":\"server_id\",\"uri\":\"resource://...\"}。\n" +
+                    "也允许批量：{\"calls\":[{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}]}。\n" +
+                    "要求：必须是合法 JSON；必须包含 server 字段。",
+                _ => systemPrompt
+            };
+        }
 
         var prompt = string.IsNullOrWhiteSpace(effective.PromptText)
             ? "你好，请用一句话简短回复。"
@@ -583,6 +597,7 @@ public class AdminModelLabController : ControllerBase
             experimentId: exp?.Id,
             suite: suite,
             promptText: promptText,
+            expectedFormat: request.ExpectedFormat,
             @params: p,
             enablePromptCache: request.EnablePromptCache,
             models: models);
@@ -673,6 +688,10 @@ public class RunStreamRequest
     public string? ExperimentId { get; set; }
     public ModelLabSuite? Suite { get; set; }
     public string? PromptText { get; set; }
+    /// <summary>
+    /// 可选：专项测试期望输出格式（json / mcp / functionCall）。用于 system prompt 级约束。
+    /// </summary>
+    public string? ExpectedFormat { get; set; }
     public ModelLabParams? Params { get; set; }
     public bool? EnablePromptCache { get; set; }
 
@@ -692,6 +711,7 @@ internal class EffectiveRunRequest
     public string? ExperimentId { get; private set; }
     public ModelLabSuite Suite { get; private set; }
     public string? PromptText { get; private set; }
+    public string? ExpectedFormat { get; private set; }
     public ModelLabParams Params { get; private set; } = new();
     public bool? EnablePromptCache { get; private set; }
     public List<ModelLabSelectedModel> Models { get; private set; } = new();
@@ -703,12 +723,13 @@ internal class EffectiveRunRequest
         ErrorMessage = message
     };
 
-    public static EffectiveRunRequest Ok(string? experimentId, ModelLabSuite suite, string? promptText, ModelLabParams @params, bool? enablePromptCache, List<ModelLabSelectedModel> models) => new()
+    public static EffectiveRunRequest Ok(string? experimentId, ModelLabSuite suite, string? promptText, string? expectedFormat, ModelLabParams @params, bool? enablePromptCache, List<ModelLabSelectedModel> models) => new()
     {
         Success = true,
         ExperimentId = experimentId,
         Suite = suite,
         PromptText = promptText,
+        ExpectedFormat = expectedFormat,
         Params = @params,
         EnablePromptCache = enablePromptCache,
         Models = models

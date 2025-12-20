@@ -14,6 +14,7 @@ import {
   createPlatform,
   deleteModel,
   deletePlatform,
+  getLlmModelStats,
   getModels,
   getPlatforms,
   setMainModel,
@@ -25,10 +26,11 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Check, DatabaseZap, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, Check, Clock, DatabaseZap, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
+import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 
 type PlatformForm = {
   name: string;
@@ -96,6 +98,105 @@ function FlagLabel({
   );
 }
 
+function StatLabel({
+  icon,
+  text,
+  title,
+  style,
+}: {
+  icon: React.ReactNode;
+  text: string;
+  title?: string;
+  style: React.CSSProperties;
+}) {
+  return (
+    <label
+      className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+      style={style}
+      title={title || text}
+    >
+      <span className="shrink-0">{icon}</span>
+      <span>{text}</span>
+    </label>
+  );
+}
+
+type AggregatedModelStats = {
+  requestCount: number;
+  avgDurationMs: number | null;
+  avgTtfbMs: number | null;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+};
+
+function formatCompactZh(n: number) {
+  if (!Number.isFinite(n)) return '';
+  const v = Math.floor(n);
+  if (v >= 1e8) return `${(v / 1e8).toFixed(1).replace(/\.0$/, '')}亿`;
+  if (v >= 1e4) return `${(v / 1e4).toFixed(1).replace(/\.0$/, '')}万`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(v);
+}
+
+function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, AggregatedModelStats> {
+  const tmp = new Map<string, {
+    requestCount: number;
+    durWeightedSum: number;
+    durWeight: number;
+    ttfbWeightedSum: number;
+    ttfbWeight: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+  }>();
+
+  for (const it of items) {
+    const key = String(it.model ?? '').trim().toLowerCase();
+    if (!key) continue;
+    const rc = Math.max(0, Number(it.requestCount ?? 0));
+    if (!tmp.has(key)) {
+      tmp.set(key, {
+        requestCount: 0,
+        durWeightedSum: 0,
+        durWeight: 0,
+        ttfbWeightedSum: 0,
+        ttfbWeight: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+      });
+    }
+    const cur = tmp.get(key)!;
+
+    cur.requestCount += rc;
+
+    const avgDur = it.avgDurationMs == null ? null : Number(it.avgDurationMs);
+    if (avgDur != null && Number.isFinite(avgDur) && avgDur > 0 && rc > 0) {
+      cur.durWeightedSum += avgDur * rc;
+      cur.durWeight += rc;
+    }
+
+    const avgTtfb = it.avgTtfbMs == null ? null : Number(it.avgTtfbMs);
+    if (avgTtfb != null && Number.isFinite(avgTtfb) && avgTtfb > 0 && rc > 0) {
+      cur.ttfbWeightedSum += avgTtfb * rc;
+      cur.ttfbWeight += rc;
+    }
+
+    cur.totalInputTokens += Math.max(0, Number(it.totalInputTokens ?? 0));
+    cur.totalOutputTokens += Math.max(0, Number(it.totalOutputTokens ?? 0));
+  }
+
+  const out: Record<string, AggregatedModelStats> = {};
+  for (const [k, v] of tmp.entries()) {
+    out[k] = {
+      requestCount: v.requestCount,
+      avgDurationMs: v.durWeight > 0 ? Math.round(v.durWeightedSum / v.durWeight) : null,
+      avgTtfbMs: v.ttfbWeight > 0 ? Math.round(v.ttfbWeightedSum / v.ttfbWeight) : null,
+      totalInputTokens: v.totalInputTokens,
+      totalOutputTokens: v.totalOutputTokens,
+    };
+  }
+  return out;
+}
+
 export default function ModelManagePage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -146,6 +247,10 @@ export default function ModelManagePage() {
   const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
   const [openModelGroups, setOpenModelGroups] = useState<Record<string, boolean>>({});
 
+  const [modelStatsDays, setModelStatsDays] = useState(7);
+  const [modelStatsByModel, setModelStatsByModel] = useState<Record<string, AggregatedModelStats>>({});
+  const [modelStatsLoading, setModelStatsLoading] = useState(false);
+
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
@@ -163,6 +268,22 @@ export default function ModelManagePage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      setModelStatsLoading(true);
+      try {
+        const res = await getLlmModelStats({ days: 7, status: 'succeeded' });
+        if (res.success) {
+          setModelStatsDays(res.data.days);
+          setModelStatsByModel(aggregateModelStats(res.data.items ?? []));
+        }
+      } finally {
+        setModelStatsLoading(false);
+      }
+    };
+    void run();
   }, []);
 
   // 主模型选中后的瞬时动效（行闪一下 + 星星弹一下）
@@ -296,10 +417,6 @@ export default function ModelManagePage() {
     if (!selectedPlatformId || selectedPlatformId === '__all__') return null;
     return platforms.find((p) => p.id === selectedPlatformId) || null;
   }, [platforms, selectedPlatformId]);
-
-  const useMockMode = useMemo(() => {
-    return ['1', 'true', 'yes'].includes(((import.meta.env.VITE_USE_MOCK as string | undefined) ?? '').toLowerCase());
-  }, []);
 
   useEffect(() => {
     if (!selectedPlatform) {
@@ -601,11 +718,6 @@ export default function ModelManagePage() {
         }
         setApiKeyDraft('');
         setShowApiKey(false);
-      }
-
-      if (useMockMode) {
-        setPlatformCheckMsg('mock：检测通过');
-        return;
       }
 
       // 优先测试该平台的主模型（更贴近“可用性检测”），否则退化为刷新平台模型列表
@@ -1401,6 +1513,99 @@ export default function ModelManagePage() {
                                         ) : null}
                                       </div>
                                     ) : null}
+
+                                    {/* 第三行：模型统计（无数据/为 0 则隐藏；样式参考 FlagLabel） */}
+                                    {(() => {
+                                      if (modelStatsLoading) return null;
+                                      const s = modelStatsByModel[String(m.modelName ?? '').trim().toLowerCase()];
+                                      if (!s) return null;
+
+                                      const chips: React.ReactNode[] = [];
+                                      const titlePrefix = `近${modelStatsDays}天`;
+
+                                      if (s.requestCount > 0) {
+                                        chips.push(
+                                          <StatLabel
+                                            key="req"
+                                            icon={<Activity size={12} />}
+                                            text={`请求 ${formatCompactZh(s.requestCount)}`}
+                                            title={`${titlePrefix} · 请求次数`}
+                                            style={{
+                                              background: 'rgba(255,255,255,0.05)',
+                                              border: '1px solid rgba(255,255,255,0.12)',
+                                              color: 'var(--text-secondary)',
+                                            }}
+                                          />
+                                        );
+                                      }
+
+                                      if ((s.avgDurationMs ?? 0) > 0) {
+                                        chips.push(
+                                          <StatLabel
+                                            key="dur"
+                                            icon={<Clock size={12} />}
+                                            text={`平均 ${s.avgDurationMs}ms`}
+                                            title={`${titlePrefix} · 平均响应时间`}
+                                            style={{
+                                              background: 'rgba(245,158,11,0.12)',
+                                              border: '1px solid rgba(245,158,11,0.28)',
+                                              color: 'rgba(245,158,11,0.95)',
+                                            }}
+                                          />
+                                        );
+                                      }
+
+                                      if ((s.avgTtfbMs ?? 0) > 0) {
+                                        chips.push(
+                                          <StatLabel
+                                            key="ttfb"
+                                            icon={<Zap size={12} />}
+                                            text={`首字 ${s.avgTtfbMs}ms`}
+                                            title={`${titlePrefix} · 首字延迟（TTFB）`}
+                                            style={{
+                                              background: 'rgba(59,130,246,0.12)',
+                                              border: '1px solid rgba(59,130,246,0.28)',
+                                              color: 'rgba(59,130,246,0.95)',
+                                            }}
+                                          />
+                                        );
+                                      }
+
+                                      if (s.totalInputTokens > 0) {
+                                        chips.push(
+                                          <StatLabel
+                                            key="in"
+                                            icon={<ArrowDown size={12} />}
+                                            text={`输入 ${formatCompactZh(s.totalInputTokens)}`}
+                                            title={`${titlePrefix} · 输入 token（总量）`}
+                                            style={{
+                                              background: 'rgba(168,85,247,0.12)',
+                                              border: '1px solid rgba(168,85,247,0.28)',
+                                              color: 'rgba(168,85,247,0.95)',
+                                            }}
+                                          />
+                                        );
+                                      }
+
+                                      if (s.totalOutputTokens > 0) {
+                                        chips.push(
+                                          <StatLabel
+                                            key="out"
+                                            icon={<ArrowUp size={12} />}
+                                            text={`输出 ${formatCompactZh(s.totalOutputTokens)}`}
+                                            title={`${titlePrefix} · 输出 token（总量）`}
+                                            style={{
+                                              background: 'rgba(34,197,94,0.12)',
+                                              border: '1px solid rgba(34,197,94,0.28)',
+                                              color: 'rgba(34,197,94,0.95)',
+                                            }}
+                                          />
+                                        );
+                                      }
+
+                                      if (chips.length === 0) return null;
+                                      return <div className="mt-1 flex flex-wrap items-center gap-2 min-w-0">{chips}</div>;
+                                    })()}
                                   </div>
 
                                   <div className="flex items-center gap-2">

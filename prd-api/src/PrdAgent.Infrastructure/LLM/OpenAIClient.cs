@@ -20,6 +20,7 @@ public class OpenAIClient : ILLMClient
     private readonly bool _defaultEnablePromptCache;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
+    private readonly string _chatCompletionsEndpointOrPath;
 
     public string Provider => "OpenAI";
 
@@ -31,7 +32,8 @@ public class OpenAIClient : ILLMClient
         double temperature = 0.7,
         bool enablePromptCache = true,
         ILlmRequestLogWriter? logWriter = null,
-        ILLMRequestContextAccessor? contextAccessor = null)
+        ILLMRequestContextAccessor? contextAccessor = null,
+        string? chatCompletionsEndpointOrPath = null)
     {
         _httpClient = httpClient;
         _apiKey = apiKey;
@@ -41,6 +43,9 @@ public class OpenAIClient : ILLMClient
         _defaultEnablePromptCache = enablePromptCache;
         _logWriter = logWriter;
         _contextAccessor = contextAccessor;
+        _chatCompletionsEndpointOrPath = string.IsNullOrWhiteSpace(chatCompletionsEndpointOrPath)
+            ? "v1/chat/completions"
+            : chatCompletionsEndpointOrPath.Trim();
 
         // 允许外部（例如 Program / 管理后台配置）预先设置 BaseAddress
         _httpClient.BaseAddress ??= new Uri("https://api.openai.com/");
@@ -131,13 +136,14 @@ public class OpenAIClient : ILLMClient
             };
 
             var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqForLog));
+            var (apiBaseForLog, pathForLog) = OpenAICompatUrl.SplitApiBaseAndPath(_chatCompletionsEndpointOrPath, _httpClient.BaseAddress);
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
                     RequestId: requestId,
                     Provider: Provider,
                     Model: _model,
-                    ApiBase: _httpClient.BaseAddress?.ToString(),
-                    Path: "v1/chat/completions",
+                    ApiBase: apiBaseForLog,
+                    Path: pathForLog,
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
                         ["content-type"] = "application/json",
@@ -167,7 +173,11 @@ public class OpenAIClient : ILLMClient
             Encoding.UTF8,
             "application/json");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "v1/chat/completions")
+        var targetUri = Uri.TryCreate(_chatCompletionsEndpointOrPath, UriKind.Absolute, out var abs)
+            ? abs
+            : new Uri(_chatCompletionsEndpointOrPath.TrimStart('/'), UriKind.Relative);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, targetUri)
         {
             Content = content
         };

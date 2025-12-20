@@ -400,16 +400,9 @@ public class AdminPlatformsController : ControllerBase
 
     private string GetModelsEndpoint(string apiUrl)
     {
-        apiUrl = apiUrl.TrimEnd('/');
-        if (apiUrl.EndsWith("#"))
-        {
-            return apiUrl.TrimEnd('#') + "/models";
-        }
-        if (!apiUrl.Contains("/v1"))
-        {
-            return apiUrl + "/v1/models";
-        }
-        return apiUrl.Replace("/chat/completions", "/models");
+        // 统一按配置规则拼接（/、#、默认）
+        // 注意：# 结尾表示“原样使用”，因此若要拉取 models，用户需直接填写 models endpoint#
+        return PrdAgent.Infrastructure.LLM.OpenAICompatUrl.BuildEndpoint(apiUrl, "models");
     }
 
     private string ExtractModelGroup(string modelId)

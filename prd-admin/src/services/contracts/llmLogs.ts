@@ -33,3 +33,28 @@ export type GetLlmLogDetailContract = (id: string) => Promise<ApiResponse<LlmReq
 
 export type GetLlmLogsMetaContract = () => Promise<ApiResponse<LlmLogsMetaData>>;
 
+// 按模型聚合统计（用于模型管理页左下角统计标签）
+export type GetLlmModelStatsParams = {
+  days?: number;
+  provider?: string;
+  model?: string;
+  status?: string;
+};
+
+export type LlmModelStatsItem = {
+  provider: string;
+  model: string;
+  requestCount: number;
+  avgDurationMs?: number | null;
+  avgTtfbMs?: number | null;
+  totalInputTokens?: number | null;
+  totalOutputTokens?: number | null;
+};
+
+export type LlmModelStatsData = {
+  days: number;
+  items: LlmModelStatsItem[];
+};
+
+export type GetLlmModelStatsContract = (params?: GetLlmModelStatsParams) => Promise<ApiResponse<LlmModelStatsData>>;
+

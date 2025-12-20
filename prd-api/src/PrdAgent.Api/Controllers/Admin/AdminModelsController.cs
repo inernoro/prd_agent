@@ -616,20 +616,8 @@ public class AdminModelsController : ControllerBase
 
     private string GetChatEndpoint(string apiUrl)
     {
-        apiUrl = apiUrl.TrimEnd('/');
-        if (apiUrl.EndsWith("#"))
-        {
-            return apiUrl.TrimEnd('#');
-        }
-        if (apiUrl.EndsWith("/chat/completions"))
-        {
-            return apiUrl;
-        }
-        if (!apiUrl.Contains("/v1"))
-        {
-            return apiUrl + "/v1/chat/completions";
-        }
-        return apiUrl + "/chat/completions";
+        // 统一按配置规则拼接（/、#、默认）
+        return PrdAgent.Infrastructure.LLM.OpenAICompatUrl.BuildEndpoint(apiUrl, "chat/completions");
     }
 
     private object MapModelResponse(LLMModel m, Dictionary<string, string> platformMap) => new

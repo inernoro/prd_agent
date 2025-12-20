@@ -3,7 +3,7 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, isMockMode } from '@/services';
+import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus } from '@/services';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 
 type UserRow = {
@@ -219,7 +219,7 @@ export default function UsersPage() {
             <option value="Disabled">禁用</option>
           </select>
 
-          {isMockMode ? <Badge variant="subtle">mock</Badge> : null}
+          {null}
         </div>
 
         <div className="mt-5 overflow-hidden rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>

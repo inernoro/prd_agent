@@ -245,11 +245,7 @@ type SuiteCheck = {
   reason: string;
 };
 
-function suiteExpectationLabel(suite: ModelLabSuite): string {
-  if (suite === 'intent') return '意图JSON';
-  if (suite === 'speed') return 'FunctionCall JSON';
-  return 'MCP JSON';
-}
+type FormatTest = 'none' | 'json' | 'mcp' | 'functionCall';
 
 function validateIntentJson(value: unknown): { ok: true } | { ok: false; reason: string } {
   if (!isPlainRecord(value)) return { ok: false, reason: '意图JSON 必须是对象' };
@@ -262,23 +258,36 @@ function validateIntentJson(value: unknown): { ok: true } | { ok: false; reason:
   return { ok: true };
 }
 
-function validateBySuite(suite: ModelLabSuite, raw: string): SuiteCheck {
+function validateByFormatTest(suite: ModelLabSuite, formatTest: FormatTest, raw: string): SuiteCheck | null {
+  const t = (raw ?? '').trim();
+  if (!t) return null;
+
+  // Intent 套件默认检查“意图JSON schema”，除非用户显式选择专项测试（json/mcp/functionCall）
+  if (suite === 'intent' && formatTest === 'none') {
+    const parsed = parseAnyJson(t);
+    if (!parsed.ok) return { label: '意图JSON', ok: false, reason: parsed.reason };
+    const res = validateIntentJson(parsed.value);
+    return { label: '意图JSON', ok: res.ok, reason: res.ok ? '通过（符合意图JSON schema）' : res.reason };
+  }
+
+  if (formatTest === 'none') return null;
+
   const parsed = parseAnyJson(raw);
-  const label = suiteExpectationLabel(suite);
+  const label: SuiteCheck['label'] = formatTest === 'json' ? 'JSON' : formatTest === 'mcp' ? 'MCP' : 'FunctionCall';
   if (!parsed.ok) return { label, ok: false, reason: parsed.reason };
 
-  if (suite === 'intent') {
-    const res = validateIntentJson(parsed.value);
-    return { label, ok: res.ok, reason: res.ok ? '通过（符合意图JSON schema）' : res.reason };
+  if (formatTest === 'json') {
+    return { label: 'JSON', ok: true, reason: '通过（JSON.parse 成功）' };
   }
 
-  if (suite === 'speed') {
+  if (formatTest === 'functionCall') {
     const fc = isFunctionCallShape(parsed.value);
-    return { label, ok: fc.ok, reason: fc.ok ? '通过（识别到 function call 结构）' : fc.reason };
+    return { label: 'FunctionCall', ok: fc.ok, reason: fc.ok ? '通过（识别到 function call 结构）' : fc.reason };
   }
 
+  // formatTest === 'mcp'
   const mcp = isMcpJsonShape(parsed.value);
-  return { label, ok: mcp.ok, reason: mcp.ok ? '通过（识别到 MCP JSON 结构）' : mcp.reason };
+  return { label: 'MCP', ok: mcp.ok, reason: mcp.ok ? '通过（识别到 MCP JSON 结构）' : mcp.reason };
 }
 
 async function downloadImage(src: string, filename: string) {
@@ -517,6 +526,7 @@ export default function LlmLabTab() {
   const [loadExperimentId, setLoadExperimentId] = useState<string>('');
 
   const [suite, setSuite] = useState<ModelLabSuite>('speed');
+  const [formatTest, setFormatTest] = useState<FormatTest>('none');
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
   const [promptText, setPromptText] = useState<string>('');
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
@@ -1135,6 +1145,7 @@ export default function LlmLabTab() {
       input: {
         experimentId: activeExperimentId,
         suite,
+        expectedFormat: formatTest === 'none' ? undefined : formatTest,
         promptText,
         params,
       },
@@ -1248,35 +1259,10 @@ export default function LlmLabTab() {
     });
   }, [itemsList, sortBy]);
 
-  const suiteValidationSummary = useMemo(() => {
-    if (mainMode !== 'infer') return null;
-    const done = Object.values(runItems).filter((x) => x.status === 'done');
-    const total = done.length;
-    if (total === 0) {
-      return {
-        label: suiteExpectationLabel(suite),
-        total: 0,
-        passed: 0,
-        title: `期望：${suiteExpectationLabel(suite)}（尚无完成结果）`,
-      };
-    }
-    let passed = 0;
-    const failReasons: string[] = [];
-    for (const it of done) {
-      const raw = (it.rawText ?? it.preview ?? '').trim();
-      const v = validateBySuite(suite, raw);
-      if (v.ok) passed++;
-      else if (failReasons.length < 4) failReasons.push(`${it.displayName || it.modelName || it.modelId}: ${v.reason}`);
-    }
-    return {
-      label: suiteExpectationLabel(suite),
-      total,
-      passed,
-      title:
-        `期望：${suiteExpectationLabel(suite)}\n通过：${passed}/${total}` +
-        (failReasons.length ? `\n\n失败示例：\n- ${failReasons.join('\n- ')}` : ''),
-    };
-  }, [mainMode, runItems, suite]);
+  const failedRunItems = useMemo(() => Object.values(runItems).filter((x) => x.status === 'error'), [runItems]);
+  const failedRunCount = failedRunItems.length;
+
+  // suiteValidationSummary 已移除：专项测试由用户显式选择（JSON/MCP/FunctionCall），避免“看上去总失败”的误导。
 
   const batchList = useMemo(() => {
     return Object.values(batchItems).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
@@ -1471,9 +1457,29 @@ export default function LlmLabTab() {
     setPromptText(p);
   };
 
+  const formatTestPresets = useMemo(() => {
+    return {
+      json:
+        suite === 'intent'
+          ? '用户话术：我登录失败，一直提示 token 过期。\n\n请严格只输出 JSON（不要 Markdown/解释/多余字符）。示例：{"intent":"...","confidence":0.0,"reason":"..."}'
+          : '请把下面内容转换为结构化 JSON，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n\n输入：我想申请退款，订单号 12345。',
+      functionCall:
+        '用户输入：查询订单 12345 的状态。\n\n请严格只输出 FunctionCall JSON（不要 Markdown/解释）。\n推荐：{"name":"order.getStatus","arguments":{"orderId":"12345"}}',
+      mcp:
+        '用户输入：请在知识库里搜索“退款流程”，并给出下一步建议。\n\n请严格只输出 MCP JSON（不要 Markdown/解释）。\n推荐：{"server":"kb","tool":"search","arguments":{"query":"退款流程"}}',
+    } as const;
+  }, [suite]);
+
+  const onFormatTestClick = (next: Exclude<FormatTest, 'none'>) => {
+    setFormatTest(next);
+    const preset = next === 'json' ? formatTestPresets.json : next === 'mcp' ? formatTestPresets.mcp : formatTestPresets.functionCall;
+    if (preset && preset.trim()) applyBuiltInPrompt(preset);
+  };
+
   const onSuiteClick = (nextSuite: ModelLabSuite) => {
     if (suite !== nextSuite) {
       setSuite(nextSuite);
+      setFormatTest('none'); // 切换 suite 时清空专项测试选择，避免误解
       // 单击切换 suite 时也要立即替换提示词（避免需要点第二下才生效）
       const list = builtInPrompts[nextSuite] ?? [];
       const first = list[0]?.promptText ?? '';
@@ -1826,19 +1832,32 @@ export default function LlmLabTab() {
               <Sparkles size={14} />
               自定义
             </Button>
-            {suiteValidationSummary ? (
-              <span
-                className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide shrink-0"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'var(--text-secondary)',
-                }}
-                title={suiteValidationSummary.title}
-              >
-                期望：{suiteValidationSummary.label}
-                {suiteValidationSummary.total > 0 ? ` · 通过 ${suiteValidationSummary.passed}/${suiteValidationSummary.total}` : ''}
-              </span>
+            {suite !== 'custom' ? (
+              <>
+                <span className="shrink-0 text-[11px] font-semibold leading-[28px]" style={{ color: 'var(--text-muted)' }}>
+                  专项：
+                </span>
+                <Button size="xs" variant={formatTest === 'json' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onFormatTestClick('json')}>
+                  JSON
+                </Button>
+                <Button size="xs" variant={formatTest === 'mcp' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onFormatTestClick('mcp')}>
+                  MCP
+                </Button>
+                <Button size="xs" variant={formatTest === 'functionCall' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onFormatTestClick('functionCall')}>
+                  FunctionCall
+                </Button>
+                {formatTest !== 'none' ? (
+                  <button
+                    type="button"
+                    className="shrink-0 text-[11px] font-semibold underline underline-offset-2 hover:opacity-90"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onClick={() => setFormatTest('none')}
+                    title="关闭专项测试（恢复默认套件行为）"
+                  >
+                    关闭
+                  </button>
+                ) : null}
+              </>
             ) : null}
           </div>
           ) : (
@@ -1994,6 +2013,72 @@ export default function LlmLabTab() {
                   总时长
                 </button>
               </div>
+              {!running && failedRunCount > 0 ? (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={async () => {
+                    if (!activeExperimentId) return;
+                    const ok = window.confirm(`检测到 ${failedRunCount} 个失败模型，是否一键从“已选择模型”中剔除并保存？`);
+                    if (!ok) return;
+
+                    // 失败模型定位策略：
+                    // 1) 优先使用 run item 的 configModelId（最准确）
+                    // 2) 其次，如果 item.modelId 本身就是配置模型 id
+                    // 3) 否则退化为用 platformId(可推断) + modelName 匹配（选中列表本身保证 platform+modelName 唯一）
+                    const removeIdSet = new Set<string>();
+                    const removeKeySet = new Set<string>();
+
+                    for (const it of failedRunItems) {
+                      const cfgId = (it.configModelId && modelById.has(it.configModelId) ? it.configModelId : null) ?? (modelById.has(it.modelId) ? it.modelId : null);
+                      if (cfgId) {
+                        removeIdSet.add(cfgId);
+                        continue;
+                      }
+                      const name = (it.modelName ?? '').trim();
+                      const platformId = getPlatformIdForRunItem(name, String(it.modelId ?? '').trim());
+                      if (platformId && name) {
+                        removeKeySet.add(`${platformId}:${name}`.toLowerCase());
+                      }
+                    }
+
+                    const nextSelected = (selectedModels ?? []).filter((m) => {
+                      if (removeIdSet.has(m.modelId)) return false;
+                      const key = `${String(m.platformId ?? '').trim()}:${String(m.modelName ?? '').trim()}`.toLowerCase();
+                      if (removeKeySet.has(key)) return false;
+                      return true;
+                    });
+
+                    if (nextSelected.length === selectedModels.length) {
+                      alert('未能匹配到需要剔除的模型（可能缺少平台信息或已被移除）');
+                      return;
+                    }
+
+                    // 先更新 UI，再写库
+                    setSelectedModels(nextSelected);
+                    const res = await updateModelLabExperiment(activeExperimentId, {
+                      suite,
+                      promptText,
+                      selectedModels: nextSelected,
+                      params,
+                    });
+                    if (!res.success) {
+                      alert(res.error?.message || '保存失败');
+                      return;
+                    }
+                    setExperiments((prev) => prev.map((e) => (e.id === res.data.id ? res.data : e)));
+
+                    // 同步“已保存快照”，避免自动保存再触发一次
+                    const sig = [String(suite ?? ''), JSON.stringify(params ?? {}), String(promptText ?? ''), signatureOfSelectedModels(nextSelected)].join('||');
+                    lastSavedSigRef.current = sig;
+                    lastSavedExperimentIdRef.current = res.data.id;
+                    alert(`已剔除 ${selectedModels.length - nextSelected.length} 个失败模型并保存`);
+                  }}
+                  title="将本次运行失败（status=error）的模型从已选择列表中移除，并保存到实验配置"
+                >
+                  一键剔除失败模型
+                </Button>
+              ) : null}
               {running ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
             </div>
           </div>
@@ -2024,7 +2109,7 @@ export default function LlmLabTab() {
                   >
                     {(() => {
                       const raw = (it.rawText ?? it.preview ?? '').trim();
-                      const v = raw ? validateFunctionCallAndMcp(raw) : null;
+                      const v = raw ? validateByFormatTest(suite, formatTest, raw) : null;
                       const chipStyle = (ok: boolean): React.CSSProperties => ({
                         background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',
                         border: ok ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(239,68,68,0.22)',
@@ -2035,24 +2120,10 @@ export default function LlmLabTab() {
                         <div className="mb-2 flex flex-wrap items-center gap-2">
                           <span
                             className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                            style={chipStyle(v.jsonOk)}
-                            title={v.jsonReason}
+                            style={chipStyle(v.ok)}
+                            title={v.reason}
                           >
-                            JSON {v.jsonOk ? '通过' : '失败'}
-                          </span>
-                          <span
-                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                            style={chipStyle(v.functionOk)}
-                            title={v.functionReason}
-                          >
-                            FunctionCall {v.functionOk ? '通过' : '失败'}
-                          </span>
-                          <span
-                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                            style={chipStyle(v.mcpOk)}
-                            title={v.mcpReason}
-                          >
-                            MCP {v.mcpOk ? '通过' : '失败'}
+                            {v.label} {v.ok ? '通过' : '失败'}
                           </span>
                           {it.rawTruncated ? (
                             <span

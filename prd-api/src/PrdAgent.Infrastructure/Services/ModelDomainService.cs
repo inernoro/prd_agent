@@ -59,7 +59,10 @@ public class ModelDomainService : IModelDomainService
         }
 
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
+        var apiUrlTrim = apiUrl.Trim();
+        // 统一规则：BaseAddress 必须以 "/" 结尾，否则 Uri 合并会丢最后一段路径（例如 /api/v3 + v1/... 会变成 /api/v1/...）
+        // 对于以 "#" 结尾的“完整 endpoint”，OpenAIClient 会使用绝对 URL，不依赖 BaseAddress。
+        httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
 
         var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true);
         if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
@@ -67,8 +70,24 @@ public class ModelDomainService : IModelDomainService
             return new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor);
         }
 
-        // 默认 OpenAI 兼容
-        return new OpenAIClient(httpClient, apiKey, model.ModelName, 1024, 0.2, enablePromptCache, _logWriter, _ctxAccessor);
+        // 默认 OpenAI 兼容：按 baseURL 规则选择 chat/completions 的最终调用方式
+        // - baseURL 以 "/" 结尾：请求 path = "chat/completions"
+        // - baseURL 以 "#" 结尾：请求 endpoint = "{baseURL 去掉#}"（不拼接）
+        // - 其他：请求 path = "v1/chat/completions"
+        var chatEndpointOrPath = apiUrlTrim.EndsWith("#", StringComparison.Ordinal)
+            ? apiUrlTrim.TrimEnd('#')
+            : (apiUrlTrim.EndsWith("/", StringComparison.Ordinal) ? "chat/completions" : "v1/chat/completions");
+
+        return new OpenAIClient(
+            httpClient,
+            apiKey,
+            model.ModelName,
+            1024,
+            0.2,
+            enablePromptCache,
+            _logWriter,
+            _ctxAccessor,
+            chatEndpointOrPath);
     }
 
     public async Task<string> SuggestGroupNameAsync(string? fileName, string snippet, CancellationToken ct = default)

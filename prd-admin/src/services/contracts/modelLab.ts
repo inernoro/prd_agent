@@ -67,6 +67,8 @@ export type RunModelLabStreamInput = {
   experimentId?: string;
   suite?: ModelLabSuite;
   promptText?: string;
+  /** 专项测试期望输出格式：json / mcp / functionCall */
+  expectedFormat?: 'json' | 'mcp' | 'functionCall';
   params?: Partial<ModelLabParams>;
   enablePromptCache?: boolean;
   modelIds?: string[];

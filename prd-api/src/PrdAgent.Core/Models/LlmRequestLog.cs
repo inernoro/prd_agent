@@ -30,6 +30,14 @@ public class LlmRequestLog
     public Dictionary<string, string>? RequestHeadersRedacted { get; set; }
     public string RequestBodyRedacted { get; set; } = string.Empty;
     public string? RequestBodyHash { get; set; }
+    /// <summary>
+    /// requestBodyRedacted 原始字符数（落库前，未截断）
+    /// </summary>
+    public int? RequestBodyChars { get; set; }
+    /// <summary>
+    /// 是否对 requestBodyRedacted 做过截断（落库时为了控制体积）
+    /// </summary>
+    public bool? RequestBodyTruncated { get; set; }
     public int? SystemPromptChars { get; set; }
     public string? SystemPromptHash { get; set; }
     /// <summary>

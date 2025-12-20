@@ -8,10 +8,9 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.login);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
-  const isMock = ['1', 'true', 'yes'].includes(((import.meta.env.VITE_USE_MOCK as string | undefined) ?? '').toLowerCase());
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState(isMock ? 'admin' : 'Admin@123456');
+  const [password, setPassword] = useState('Admin@123456');
   const [error, setError] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => Boolean(username.trim() && password.trim()), [username, password]);
@@ -113,9 +112,7 @@ export default function LoginPage() {
           </Button>
 
           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {isMock
-              ? 'Mock 登录：默认账号 admin / admin'
-              : '默认管理员：admin / Admin@123456（首次登录后请修改密码）'}
+            默认管理员：admin / Admin@123456（首次登录后请修改密码）
           </div>
         </div>
       </div>

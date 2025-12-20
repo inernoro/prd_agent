@@ -10,7 +10,6 @@ import {
   getAdminGroupMembers,
   getAdminGroupMessages,
   getAdminGroups,
-  isMockMode,
   regenerateAdminGroupInvite,
   removeAdminGroupMember,
   updateAdminGapStatus,
@@ -219,7 +218,7 @@ export default function GroupsPage() {
             <option value="expired">已过期</option>
           </select>
 
-          {isMockMode ? <Badge variant="subtle">mock</Badge> : null}
+          {null}
         </div>
 
         <div className="mt-5 overflow-hidden rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>

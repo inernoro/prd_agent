@@ -99,6 +99,10 @@ export type LlmRequestLog = {
   requestHeadersRedacted?: Record<string, string> | null;
   requestBodyRedacted: string;
   requestBodyHash?: string | null;
+  /** requestBodyRedacted 原始字符数（后端落库前，未截断） */
+  requestBodyChars?: number | null;
+  /** requestBodyRedacted 是否发生过截断（后端落库时为控制体积） */
+  requestBodyTruncated?: boolean | null;
   systemPromptChars?: number | null;
   systemPromptHash?: string | null;
   systemPromptText?: string | null;

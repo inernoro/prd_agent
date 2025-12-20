@@ -389,38 +389,14 @@ public class OpenAIImageClient
     }
 
     /// <summary>
-    /// 兼容 apiUrl：
-    /// - 以 # 结尾：视为“完整 endpoint”，trim 掉 # 直接使用
-    /// - 已包含 /images/generations：直接使用
-    /// - 包含 /v1：拼接 /images/generations
-    /// - 其他：拼接 /v1/images/generations
+    /// 兼容 apiUrl（与 OpenAICompatUrl 规则一致）：
+    /// - 以 / 结尾：忽略 v1，拼接 images/generations
+    /// - 以 # 结尾：强制使用原地址（trim #，不做拼接）
+    /// - 其他：默认拼接 /v1/images/generations
     /// </summary>
     public static string GetImagesEndpoint(string apiUrl)
     {
-        if (string.IsNullOrWhiteSpace(apiUrl)) return string.Empty;
-        var raw = apiUrl.Trim();
-        if (raw.EndsWith("#"))
-        {
-            return raw.TrimEnd('#');
-        }
-
-        var u = raw.TrimEnd('/');
-        if (u.EndsWith("/images/generations", StringComparison.OrdinalIgnoreCase))
-        {
-            return u;
-        }
-
-        if (u.Contains("/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            // 若刚好以 /v1 结尾
-            if (u.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
-            {
-                return u + "/images/generations";
-            }
-            return u + "/images/generations";
-        }
-
-        return u + "/v1/images/generations";
+        return OpenAICompatUrl.BuildEndpoint(apiUrl, "images/generations");
     }
 }
 

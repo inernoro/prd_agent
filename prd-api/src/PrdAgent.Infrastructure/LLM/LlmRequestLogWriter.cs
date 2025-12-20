@@ -25,6 +25,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     {
         try
         {
+            var requestBodyRaw = start.RequestBodyRedacted ?? string.Empty;
+            var requestBodyChars = requestBodyRaw.Length;
+            var requestBodyStored = Truncate(requestBodyRaw, 200_000);
+            var requestBodyTruncated = requestBodyChars > 200_000;
+
             var log = new LlmRequestLog
             {
                 Id = Guid.NewGuid().ToString(),
@@ -40,8 +45,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ApiBase = start.ApiBase,
                 Path = start.Path,
                 RequestHeadersRedacted = start.RequestHeadersRedacted,
-                RequestBodyRedacted = Truncate(start.RequestBodyRedacted, 200_000),
-                RequestBodyHash = start.RequestBodyHash ?? Sha256Hex(start.RequestBodyRedacted),
+                RequestBodyRedacted = requestBodyStored,
+                RequestBodyHash = start.RequestBodyHash ?? Sha256Hex(requestBodyRaw),
+                RequestBodyChars = requestBodyChars,
+                RequestBodyTruncated = requestBodyTruncated,
                 QuestionText = Truncate(start.QuestionText ?? string.Empty, 200_000),
                 SystemPromptChars = start.SystemPromptChars,
                 SystemPromptHash = start.SystemPromptHash,

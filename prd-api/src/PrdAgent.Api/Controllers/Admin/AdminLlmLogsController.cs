@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -232,6 +233,83 @@ public class AdminLlmLogsController : ControllerBase
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         return Ok(ApiResponse<LlmRequestLog>.Ok(log));
+    }
+
+    /// <summary>
+    /// 按模型聚合的近 N 天统计（用于模型管理页展示“请求次数/平均耗时/首字延迟/token”等）
+    /// 说明：LLMRequestLogs 默认 TTL 为 7 天，因此该接口也主要用于近 7 天。
+    /// </summary>
+    [HttpGet("model-stats")]
+    public async Task<IActionResult> ModelStats(
+        [FromQuery] int days = 7,
+        [FromQuery] string? provider = null,
+        [FromQuery] string? model = null,
+        [FromQuery] string? status = "succeeded")
+    {
+        days = Math.Clamp(days, 1, 30);
+        var from = DateTime.UtcNow.AddDays(-days);
+
+        var filter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, from);
+        if (!string.IsNullOrWhiteSpace(provider)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Provider, provider);
+        if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
+        if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+
+        // 用聚合管道避免把大量日志拉回内存
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer,
+            _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "provider", "$Provider" },
+                { "model", "$Model" },
+                { "durationMs", "$DurationMs" },
+                { "inputTokens", "$InputTokens" },
+                { "outputTokens", "$OutputTokens" },
+                // 首字延迟：FirstByteAt - StartedAt（单位 ms）；若缺失则为 null
+                { "ttfbMs", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$ne", new BsonArray { "$FirstByteAt", BsonNull.Value }),
+                            new BsonDocument("$ne", new BsonArray { "$StartedAt", BsonNull.Value }),
+                        }),
+                        new BsonDocument("$subtract", new BsonArray { "$FirstByteAt", "$StartedAt" }),
+                        BsonNull.Value
+                    })
+                }
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "provider", "$provider" }, { "model", "$model" } } },
+                { "requestCount", new BsonDocument("$sum", 1) },
+                { "avgDurationMs", new BsonDocument("$avg", "$durationMs") },
+                { "avgTtfbMs", new BsonDocument("$avg", "$ttfbMs") },
+                { "totalInputTokens", new BsonDocument("$sum", new BsonDocument("$ifNull", new BsonArray { "$inputTokens", 0 })) },
+                { "totalOutputTokens", new BsonDocument("$sum", new BsonDocument("$ifNull", new BsonArray { "$outputTokens", 0 })) },
+            }),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "_id", 0 },
+                { "provider", "$_id.provider" },
+                { "model", "$_id.model" },
+                { "requestCount", 1 },
+                // round to int for UI friendliness
+                { "avgDurationMs", new BsonDocument("$round", new BsonArray { "$avgDurationMs", 0 }) },
+                { "avgTtfbMs", new BsonDocument("$round", new BsonArray { "$avgTtfbMs", 0 }) },
+                { "totalInputTokens", 1 },
+                { "totalOutputTokens", 1 },
+            }),
+            new BsonDocument("$sort", new BsonDocument("requestCount", -1)),
+        };
+
+        var items = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).ToListAsync();
+
+        // 返回 object：与现有 List/Meta 保持一致（避免引入额外 DTO/上下文）
+        return Ok(ApiResponse<object>.Ok(new { days, items }));
     }
 }
 

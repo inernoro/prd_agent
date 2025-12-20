@@ -186,10 +186,18 @@ function shellSingleQuote(text: string): string {
   return `'${String(text).replace(/'/g, `'"'"'`)}'`;
 }
 
+function joinBaseAndPath(apiBase: string, path: string) {
+  const b = (apiBase ?? '').trim();
+  const p = (path ?? '').trim();
+  if (!b) return p;
+  if (!p) return b;
+  return `${b.replace(/\/+$/, '')}/${p.replace(/^\/+/, '')}`;
+}
+
 function buildCurlFromLog(detail: LlmRequestLog): string {
   const apiBase = (detail.apiBase ?? '').trim();
   const path = (detail.path ?? '').trim();
-  const url = `${apiBase}${path}` || 'https://api.example.com/v1/chat/completions';
+  const url = joinBaseAndPath(apiBase, path) || 'https://api.example.com/v1/chat/completions';
 
   const headers: Record<string, string> = { ...(detail.requestHeadersRedacted ?? {}) };
   // 清理不适合重放的 header
@@ -768,7 +776,21 @@ export default function LlmLogsPage() {
                     <pre style={codeBoxStyle()}>{JSON.stringify(detail.requestHeadersRedacted ?? {}, null, 2)}</pre>
                   </div>
                   <div>
-                    <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>body</div>
+                    {(() => {
+                      const raw = detail.requestBodyRedacted || '';
+                      const isTruncated = Boolean(detail.requestBodyTruncated) || raw.includes('[TRUNCATED]');
+                      const orig = detail.requestBodyChars ?? null;
+                      const stored = raw.length;
+                      const hint = isTruncated ? `（已截断：stored ${stored}${orig != null ? ` / original ${orig}` : ''} chars）` : `（${stored} chars）`;
+                      return (
+                        <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                          <span>body</span>
+                          <span className={isTruncated ? 'text-[11px] font-semibold' : 'text-[11px]'} style={{ color: isTruncated ? 'rgba(255, 160, 160, 0.95)' : 'var(--text-muted)' }}>
+                            {hint}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     <BodyWithPromptTokens
                       text={prettyRequestBody || ''}
                       onTokenClick={(token) => {

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
-import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
-import { adminImpersonate, getUsers, isMockMode } from '@/services';
+import { adminImpersonate, getUsers } from '@/services';
 import type { AdminUser, UserRole } from '@/types/admin';
 import type { ApiResponse } from '@/types/api';
 
@@ -412,7 +411,7 @@ export default function DesktopLabTab() {
             模拟 Desktop：建群/邀请/上传绑定PRD/会话/聊天与引导（SSE）/缺失处理
           </div>
         </div>
-        {isMockMode ? <Badge variant="subtle">mock</Badge> : null}
+        {null}
       </div>
 
       <div className="grid gap-5" style={{ gridTemplateColumns: '420px 1fr' }}>
