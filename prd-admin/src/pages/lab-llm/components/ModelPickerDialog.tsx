@@ -4,9 +4,11 @@ import { Button } from '@/components/design/Button';
 import type { Model, Platform } from '@/types/admin';
 import type { ModelLabSelectedModel } from '@/services/contracts/modelLab';
 import { apiRequest } from '@/services/real/apiClient';
-import { Minus, Plus, RefreshCw, Search } from 'lucide-react';
+import { DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, Sparkles, Star, Zap, ScanEye, ArrowDown, Search } from 'lucide-react';
 import { deleteModelLabGroup, listModelLabGroups, upsertModelLabGroup } from '@/services';
 import type { ModelLabGroup } from '@/services/contracts/modelLabGroups';
+import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
+import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
 
 type TabKey = 'byPlatform' | 'byLabGroup';
 
@@ -78,46 +80,76 @@ function modelCategory(m: AvailableModel) {
   return 'reasoning' as const;
 }
 
-function autoGroupKey(rawName: string) {
-  const s = (rawName || '').trim().toLowerCase();
-  const parts = s.replace(/\//g, '-').split('-').filter(Boolean);
-  if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
-  if (parts.length >= 1) return parts[0];
-  return 'other';
+function splitKeywords(input: string): string[] {
+  return (input ?? '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 }
 
-function groupAvailableModels(list: AvailableModel[]) {
-  const buckets: Record<string, AvailableModel[]> = {};
+function matchAllKeywords(fullText: string, keywords: string[]): boolean {
+  if (keywords.length === 0) return true;
+  const hay = (fullText ?? '').toLowerCase();
+  return keywords.every((k) => hay.includes(k));
+}
+
+function presetTagMeta(tag: PresetTagKey): { title: string; icon: React.ReactNode; tone: string } {
+  switch (tag) {
+    case 'reasoning':
+      return { title: '推理', icon: <Zap size={14} />, tone: 'rgba(251,146,60,0.95)' };
+    case 'vision':
+      return { title: '视觉', icon: <ScanEye size={14} />, tone: 'rgba(96,165,250,0.95)' };
+    case 'websearch':
+      return { title: '联网', icon: <Link2 size={14} />, tone: 'rgba(34,197,94,0.95)' };
+    case 'function_calling':
+      return { title: '工具', icon: <Sparkles size={14} />, tone: 'rgba(167,139,250,0.95)' };
+    case 'embedding':
+      return { title: '嵌入', icon: <DatabaseZap size={14} />, tone: 'rgba(34,211,238,0.95)' };
+    case 'rerank':
+      return { title: '重排', icon: <ArrowDown size={14} />, tone: 'rgba(245,158,11,0.95)' };
+    case 'image_generation':
+      return { title: '生图', icon: <ImagePlus size={14} />, tone: 'rgba(236,72,153,0.95)' };
+    case 'free':
+      return { title: '免费', icon: <Star size={14} />, tone: 'rgba(34,197,94,0.95)' };
+  }
+}
+
+function PresetTagIcons({ modelName, displayName }: { modelName: string; displayName?: string }) {
+  const tags = inferPresetTagKeys(modelName, displayName);
+  if (tags.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1.5 shrink-0" aria-label="预设标签">
+      {tags.map((t) => {
+        const meta = presetTagMeta(t);
+        return (
+          <span
+            key={t}
+            title={meta.title}
+            className="inline-flex items-center justify-center h-[22px] w-[22px] rounded-[9px]"
+            style={{
+              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(255,255,255,0.04)',
+              color: meta.tone,
+            }}
+          >
+            {meta.icon}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function groupAvailableModels(list: AvailableModel[], providerId: string) {
+  // Cherry 管理弹窗：不做显式排序；顺序取决于远端返回顺序 + 首次出现 group 的插入顺序
+  const groups = new Map<string, AvailableModel[]>();
   for (const m of list) {
-    const key = (m.group || autoGroupKey(m.modelName) || 'other').toLowerCase();
-    (buckets[key] ||= []).push(m);
+    const key = (m.group || resolveCherryGroupKey(m.modelName, providerId) || 'other').toLowerCase();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(m);
   }
-
-  // 模型数量不足 3 的分组统一并入 other
-  const merged: Record<string, AvailableModel[]> = {};
-  const other: AvailableModel[] = [];
-  for (const [k, ms] of Object.entries(buckets)) {
-    if (k !== 'other' && ms.length < 3) other.push(...ms);
-    else merged[k] = ms;
-  }
-  if (buckets.other) other.push(...buckets.other);
-  if (other.length > 0) merged.other = other;
-
-  // 同组内按“名字”排序（优先 displayName，其次 modelName）
-  for (const ms of Object.values(merged)) {
-    ms.sort((a, b) => {
-      const an = ((a.displayName || a.modelName) || '').trim();
-      const bn = ((b.displayName || b.modelName) || '').trim();
-      return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
-    });
-  }
-
-  return Object.entries(merged).sort((a, b) => {
-    const ao = a[0] === 'other';
-    const bo = b[0] === 'other';
-    if (ao !== bo) return ao ? 1 : -1;
-    return b[1].length - a[1].length;
-  });
+  return Array.from(groups.entries());
 }
 
 function PlatformAvailableDialog({
@@ -149,12 +181,16 @@ function PlatformAvailableDialog({
   const filteredAvailableModels = useMemo(() => {
     let list = availableModels;
     if (availableTab !== 'all') list = list.filter((m) => modelCategory(m) === availableTab);
-    const s = availableSearch.trim().toLowerCase();
-    if (!s) return list;
-    return list.filter((m) => (m.modelName || '').toLowerCase().includes(s) || (m.displayName || '').toLowerCase().includes(s));
-  }, [availableModels, availableSearch, availableTab]);
+    const ks = splitKeywords(availableSearch);
+    if (ks.length === 0) return list;
+    const pName = platform?.name || '';
+    return list.filter((m) => matchAllKeywords(`${m.displayName || ''} ${m.modelName || ''} ${pName}`, ks));
+  }, [availableModels, availableSearch, availableTab, platform?.name]);
 
-  const groupedAvailable = useMemo(() => groupAvailableModels(filteredAvailableModels), [filteredAvailableModels]);
+  const groupedAvailable = useMemo(() => {
+    const pid = (platform?.providerId || platform?.platformType || '').trim();
+    return groupAvailableModels(filteredAvailableModels, pid);
+  }, [filteredAvailableModels, platform?.providerId, platform?.platformType]);
 
   useEffect(() => {
     if (!open) return;
@@ -392,23 +428,28 @@ function PlatformAvailableDialog({
                               className="px-4 py-3 flex items-center justify-between transition-colors"
                               style={{ background: exist ? 'rgba(34,197,94,0.08)' : 'transparent' }}
                             >
-                              <div className="min-w-0">
-                                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                  {label}
-                                </div>
-                                <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                  {m.modelName}
+                              <div className="min-w-0 flex items-center gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                    {label}
+                                  </div>
+                                  <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                    {m.modelName}
+                                  </div>
                                 </div>
                               </div>
-                              <Button
-                                variant={exist ? 'secondary' : 'ghost'}
-                                size="sm"
-                                onClick={() => togglePoolModel(m)}
-                                disabled={availableLoading}
-                                aria-label={exist ? '移除' : '添加'}
-                              >
-                                {exist ? <Minus size={16} /> : <Plus size={16} />}
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <PresetTagIcons modelName={m.modelName} displayName={m.displayName} />
+                                <Button
+                                  variant={exist ? 'secondary' : 'ghost'}
+                                  size="sm"
+                                  onClick={() => togglePoolModel(m)}
+                                  disabled={availableLoading}
+                                  aria-label={exist ? '移除' : '添加'}
+                                >
+                                  {exist ? <Minus size={16} /> : <Plus size={16} />}
+                                </Button>
+                              </div>
                             </div>
                           );
                         })}

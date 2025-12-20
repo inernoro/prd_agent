@@ -245,42 +245,23 @@ type SuiteCheck = {
   reason: string;
 };
 
-type FormatTest = 'none' | 'json' | 'mcp' | 'functionCall';
+type ExpectedFormat = 'json' | 'mcp' | 'functionCall';
+type LabMode = ModelLabSuite | ExpectedFormat;
 
-function validateIntentJson(value: unknown): { ok: true } | { ok: false; reason: string } {
-  if (!isPlainRecord(value)) return { ok: false, reason: '意图JSON 必须是对象' };
-  const intent = value.intent;
-  const confidence = value.confidence;
-  const reason = value.reason;
-  if (typeof intent !== 'string' || !intent.trim()) return { ok: false, reason: '缺少 intent（string）' };
-  if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return { ok: false, reason: '缺少 confidence（0-1 number）' };
-  if (typeof reason !== 'string' || !reason.trim()) return { ok: false, reason: '缺少 reason（string）' };
-  return { ok: true };
-}
-
-function validateByFormatTest(suite: ModelLabSuite, formatTest: FormatTest, raw: string): SuiteCheck | null {
+function validateByFormatTest(expectedFormat: ExpectedFormat | null | undefined, raw: string): SuiteCheck | null {
   const t = (raw ?? '').trim();
   if (!t) return null;
-
-  // Intent 套件默认检查“意图JSON schema”，除非用户显式选择专项测试（json/mcp/functionCall）
-  if (suite === 'intent' && formatTest === 'none') {
-    const parsed = parseAnyJson(t);
-    if (!parsed.ok) return { label: '意图JSON', ok: false, reason: parsed.reason };
-    const res = validateIntentJson(parsed.value);
-    return { label: '意图JSON', ok: res.ok, reason: res.ok ? '通过（符合意图JSON schema）' : res.reason };
-  }
-
-  if (formatTest === 'none') return null;
+  if (!expectedFormat) return null;
 
   const parsed = parseAnyJson(raw);
-  const label: SuiteCheck['label'] = formatTest === 'json' ? 'JSON' : formatTest === 'mcp' ? 'MCP' : 'FunctionCall';
+  const label: SuiteCheck['label'] = expectedFormat === 'json' ? 'JSON' : expectedFormat === 'mcp' ? 'MCP' : 'FunctionCall';
   if (!parsed.ok) return { label, ok: false, reason: parsed.reason };
 
-  if (formatTest === 'json') {
+  if (expectedFormat === 'json') {
     return { label: 'JSON', ok: true, reason: '通过（JSON.parse 成功）' };
   }
 
-  if (formatTest === 'functionCall') {
+  if (expectedFormat === 'functionCall') {
     const fc = isFunctionCallShape(parsed.value);
     return { label: 'FunctionCall', ok: fc.ok, reason: fc.ok ? '通过（识别到 function call 结构）' : fc.reason };
   }
@@ -500,7 +481,7 @@ function InlineMarquee({
   );
 }
 
-const builtInPrompts: Record<ModelLabSuite, { label: string; promptText: string }[]> = {
+const builtInPrompts: Record<LabMode, { label: string; promptText: string }[]> = {
   speed: [
     { label: '短回复', promptText: '你好，请用一句话简短回复。' },
     { label: '固定长度', promptText: '请输出恰好 20 个中文字符（不要标点）。' },
@@ -510,6 +491,15 @@ const builtInPrompts: Record<ModelLabSuite, { label: string; promptText: string 
     { label: '支付/退款', promptText: '用户话术：我要申请退款，订单号 12345。请判断意图。' },
   ],
   custom: [{ label: '自定义', promptText: '' }],
+  json: [
+    { label: 'JSON', promptText: '请把下面内容转换为结构化 JSON，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n\n输入：我想申请退款，订单号 12345。' },
+  ],
+  mcp: [
+    { label: 'MCP', promptText: '用户输入：请在知识库里搜索“退款流程”，并给出下一步建议。\n\n请严格只输出 MCP JSON（不要 Markdown/解释）。\n推荐：{"server":"kb","tool":"search","arguments":{"query":"退款流程"}}' },
+  ],
+  functionCall: [
+    { label: 'FunctionCall', promptText: '用户输入：查询订单 12345 的状态。\n\n请严格只输出 FunctionCall JSON（不要 Markdown/解释）。\n推荐：{"name":"order.getStatus","arguments":{"orderId":"12345"}}' },
+  ],
 };
 
 export default function LlmLabTab() {
@@ -525,8 +515,12 @@ export default function LlmLabTab() {
   const [loadExperimentOpen, setLoadExperimentOpen] = useState(false);
   const [loadExperimentId, setLoadExperimentId] = useState<string>('');
 
+  // suite：会被保存进实验（仅 speed/intent/custom）
   const [suite, setSuite] = useState<ModelLabSuite>('speed');
-  const [formatTest, setFormatTest] = useState<FormatTest>('none');
+  // mode：纯 UI 选择（6 个互斥类型），不写入实验，避免被 suite 回填覆盖
+  const [mode, setMode] = useState<LabMode>('speed');
+  const expectedFormat: ExpectedFormat | undefined =
+    mode === 'json' || mode === 'mcp' || mode === 'functionCall' ? mode : undefined;
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
   const [promptText, setPromptText] = useState<string>('');
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
@@ -566,7 +560,7 @@ export default function LlmLabTab() {
   const [runItems, setRunItems] = useState<Record<string, ViewRunItem>>({});
   const [runError, setRunError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const suiteCycleRef = useRef<Record<ModelLabSuite, number>>({} as Record<ModelLabSuite, number>);
+  const suiteCycleRef = useRef<Record<LabMode, number>>({} as Record<LabMode, number>);
   const [sortBy, setSortBy] = useState<SortBy>('ttft');
   const allModelsRef = useRef<Model[]>([]);
   const selectedModelsRef = useRef<ModelLabSelectedModel[]>([]);
@@ -760,6 +754,7 @@ export default function LlmLabTab() {
   useEffect(() => {
     if (!activeExperiment) return;
     setSuite(activeExperiment.suite);
+    setMode(activeExperiment.suite);
     setParams(activeExperiment.params ?? defaultParams);
     setPromptText(activeExperiment.promptText ?? '');
     setSelectedModels(activeExperiment.selectedModels ?? []);
@@ -819,6 +814,7 @@ export default function LlmLabTab() {
     // 切换实验后，先等上面的 activeExperiment 同步快照
     if (lastSavedExperimentIdRef.current !== activeExperimentId) return;
 
+    // 只对“实验会保存的字段”做自动保存，避免 mode（JSON/MCP/FunctionCall）切换触发保存并被 suite 回填覆盖
     const sig = [String(suite ?? ''), JSON.stringify(params ?? {}), String(promptText ?? ''), signatureOfSelectedModels(selectedModels)].join('||');
     if (sig === lastSavedSigRef.current) return;
 
@@ -1145,7 +1141,7 @@ export default function LlmLabTab() {
       input: {
         experimentId: activeExperimentId,
         suite,
-        expectedFormat: formatTest === 'none' ? undefined : formatTest,
+        expectedFormat,
         promptText,
         params,
       },
@@ -1457,45 +1453,28 @@ export default function LlmLabTab() {
     setPromptText(p);
   };
 
-  const formatTestPresets = useMemo(() => {
-    return {
-      json:
-        suite === 'intent'
-          ? '用户话术：我登录失败，一直提示 token 过期。\n\n请严格只输出 JSON（不要 Markdown/解释/多余字符）。示例：{"intent":"...","confidence":0.0,"reason":"..."}'
-          : '请把下面内容转换为结构化 JSON，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n\n输入：我想申请退款，订单号 12345。',
-      functionCall:
-        '用户输入：查询订单 12345 的状态。\n\n请严格只输出 FunctionCall JSON（不要 Markdown/解释）。\n推荐：{"name":"order.getStatus","arguments":{"orderId":"12345"}}',
-      mcp:
-        '用户输入：请在知识库里搜索“退款流程”，并给出下一步建议。\n\n请严格只输出 MCP JSON（不要 Markdown/解释）。\n推荐：{"server":"kb","tool":"search","arguments":{"query":"退款流程"}}',
-    } as const;
-  }, [suite]);
-
-  const onFormatTestClick = (next: Exclude<FormatTest, 'none'>) => {
-    setFormatTest(next);
-    const preset = next === 'json' ? formatTestPresets.json : next === 'mcp' ? formatTestPresets.mcp : formatTestPresets.functionCall;
-    if (preset && preset.trim()) applyBuiltInPrompt(preset);
-  };
-
-  const onSuiteClick = (nextSuite: ModelLabSuite) => {
-    if (suite !== nextSuite) {
-      setSuite(nextSuite);
-      setFormatTest('none'); // 切换 suite 时清空专项测试选择，避免误解
-      // 单击切换 suite 时也要立即替换提示词（避免需要点第二下才生效）
-      const list = builtInPrompts[nextSuite] ?? [];
+  const onModeClick = (next: LabMode) => {
+    if (mode !== next) {
+      // 切换 speed/intent/custom 时，同步 suite（会写入实验）
+      if (next === 'speed' || next === 'intent' || next === 'custom') {
+        setSuite(next);
+      }
+      setMode(next);
+      const list = builtInPrompts[next] ?? [];
       const first = list[0]?.promptText ?? '';
       applyBuiltInPrompt(first);
       // 下一次再点时，从第二条开始循环（若只有 1 条则继续 0）
-      suiteCycleRef.current[nextSuite] = list.length > 1 ? 1 : 0;
+      suiteCycleRef.current[next] = list.length > 1 ? 1 : 0;
       return;
     }
 
-    // 重复点击当前 suite：循环填充内置提示词
-    const list = builtInPrompts[nextSuite] ?? [];
+    // 重复点击当前 mode：循环填充内置提示词
+    const list = builtInPrompts[next] ?? [];
     if (list.length === 0) return;
-    const cur = suiteCycleRef.current[nextSuite] ?? 0;
+    const cur = suiteCycleRef.current[next] ?? 0;
     const idx = ((cur % list.length) + list.length) % list.length;
     applyBuiltInPrompt(list[idx].promptText);
-    suiteCycleRef.current[nextSuite] = (idx + 1) % list.length;
+    suiteCycleRef.current[next] = (idx + 1) % list.length;
   };
 
   const saveModelSet = async () => {
@@ -1511,14 +1490,26 @@ export default function LlmLabTab() {
 
   const formatParamChips = useMemo(() => {
     const chips: { key: string; label: string }[] = [];
-    chips.push({ key: 'suite', label: `套件：${suite === 'speed' ? '速度' : suite === 'intent' ? '意图' : '自定义'}` });
+    const modeLabel =
+      mode === 'speed'
+        ? '速度'
+        : mode === 'intent'
+          ? '意图'
+          : mode === 'custom'
+            ? '自定义'
+            : mode === 'json'
+              ? 'JSON'
+              : mode === 'mcp'
+                ? 'MCP'
+                : 'FunctionCall';
+    chips.push({ key: 'mode', label: `类型：${modeLabel}` });
     chips.push({ key: 'temperature', label: `温度：${Number.isFinite(params.temperature as any) ? params.temperature : '-'}` });
     if (params.maxTokens != null) chips.push({ key: 'maxTokens', label: `MaxTokens：${params.maxTokens}` });
     chips.push({ key: 'timeout', label: `超时：${Math.round((params.timeoutMs ?? 0) / 1000)}s` });
     chips.push({ key: 'concurrency', label: `并发：${params.maxConcurrency ?? '-'}` });
     chips.push({ key: 'repeat', label: `重复：${params.repeatN ?? '-'}` });
     return chips;
-  }, [params, suite]);
+  }, [params, mode]);
 
   const copyToClipboard = async (text: string) => {
     const t = text ?? '';
@@ -1820,45 +1811,27 @@ export default function LlmLabTab() {
 
           {mainMode === 'infer' ? (
             <div className="mt-2 flex gap-2 overflow-x-auto pr-1">
-              <Button size="xs" variant={suite === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('speed')}>
+              <Button size="xs" variant={mode === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('speed')}>
               <Sparkles size={14} />
               速度
             </Button>
-            <Button size="xs" variant={suite === 'intent' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('intent')}>
+            <Button size="xs" variant={mode === 'intent' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('intent')}>
               <Sparkles size={14} />
               意图
             </Button>
-            <Button size="xs" variant={suite === 'custom' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onSuiteClick('custom')}>
+            <Button size="xs" variant={mode === 'custom' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('custom')}>
               <Sparkles size={14} />
               自定义
             </Button>
-            {suite !== 'custom' ? (
-              <>
-                <span className="shrink-0 text-[11px] font-semibold leading-[28px]" style={{ color: 'var(--text-muted)' }}>
-                  专项：
-                </span>
-                <Button size="xs" variant={formatTest === 'json' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onFormatTestClick('json')}>
-                  JSON
-                </Button>
-                <Button size="xs" variant={formatTest === 'mcp' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onFormatTestClick('mcp')}>
-                  MCP
-                </Button>
-                <Button size="xs" variant={formatTest === 'functionCall' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onFormatTestClick('functionCall')}>
-                  FunctionCall
-                </Button>
-                {formatTest !== 'none' ? (
-                  <button
-                    type="button"
-                    className="shrink-0 text-[11px] font-semibold underline underline-offset-2 hover:opacity-90"
-                    style={{ color: 'var(--text-secondary)' }}
-                    onClick={() => setFormatTest('none')}
-                    title="关闭专项测试（恢复默认套件行为）"
-                  >
-                    关闭
-                  </button>
-                ) : null}
-              </>
-            ) : null}
+            <Button size="xs" variant={mode === 'json' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('json')}>
+              JSON
+            </Button>
+            <Button size="xs" variant={mode === 'mcp' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('mcp')}>
+              MCP
+            </Button>
+            <Button size="xs" variant={mode === 'functionCall' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('functionCall')}>
+              FunctionCall
+            </Button>
           </div>
           ) : (
             <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1">
@@ -2109,7 +2082,7 @@ export default function LlmLabTab() {
                   >
                     {(() => {
                       const raw = (it.rawText ?? it.preview ?? '').trim();
-                      const v = raw ? validateByFormatTest(suite, formatTest, raw) : null;
+                      const v = raw ? validateByFormatTest(expectedFormat, raw) : null;
                       const chipStyle = (ok: boolean): React.CSSProperties => ({
                         background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',
                         border: ok ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(239,68,68,0.22)',

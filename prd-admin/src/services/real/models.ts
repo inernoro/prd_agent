@@ -11,6 +11,8 @@ import type {
   SetVisionModelContract,
   ClearImageGenModelContract,
   TestModelContract,
+  ModelPriorityUpdate,
+  UpdateModelPrioritiesContract,
   UpdateModelContract,
   UpdateModelInput,
 } from '@/services/contracts/models';
@@ -90,6 +92,13 @@ export const testModelReal: TestModelContract = async (id: string) => {
     body: {},
   });
   return res;
+};
+
+export const updateModelPrioritiesReal: UpdateModelPrioritiesContract = async (updates: ModelPriorityUpdate[]) => {
+  return await apiRequest<{ updated: number }>('/api/v1/config/models/priorities', {
+    method: 'PUT',
+    body: (updates ?? []).map((x) => ({ id: x.id, priority: x.priority })),
+  });
 };
 
 export const setMainModelReal: SetMainModelContract = async (id: string) => {

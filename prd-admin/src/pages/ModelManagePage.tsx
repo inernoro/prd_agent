@@ -17,6 +17,7 @@ import {
   getLlmModelStats,
   getModels,
   getPlatforms,
+  updateModelPriorities,
   setMainModel,
   setIntentModel,
   setVisionModel,
@@ -26,18 +27,25 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, ArrowDown, ArrowUp, Check, Clock, DatabaseZap, Eye, EyeOff, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, Check, Clock, DatabaseZap, DollarSign, Eye, EyeOff, GripVertical, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
+import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
+import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
 
 type PlatformForm = {
   name: string;
   platformType: string;
+  providerId: string;
   apiUrl: string;
   apiKey: string;
   enabled: boolean;
+  // 仅前端本地配置（localStorage）：用于成本估算，不写入后端
+  pricingCurrency: string;
+  pricingInPer1k: string;
+  pricingOutPer1k: string;
 };
 
 type ModelForm = {
@@ -55,12 +63,77 @@ type AvailableModel = {
   group?: string;
 };
 
+function splitKeywords(input: string): string[] {
+  return (input ?? '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function matchAllKeywords(fullText: string, keywords: string[]): boolean {
+  if (keywords.length === 0) return true;
+  const hay = (fullText ?? '').toLowerCase();
+  return keywords.every((k) => hay.includes(k));
+}
+
+function presetTagMeta(tag: PresetTagKey): { title: string; icon: React.ReactNode; tone: string } {
+  switch (tag) {
+    case 'reasoning':
+      return { title: '推理', icon: <Zap size={14} />, tone: 'rgba(251,146,60,0.95)' };
+    case 'vision':
+      return { title: '视觉', icon: <ScanEye size={14} />, tone: 'rgba(96,165,250,0.95)' };
+    case 'websearch':
+      return { title: '联网', icon: <Link2 size={14} />, tone: 'rgba(34,197,94,0.95)' };
+    case 'function_calling':
+      return { title: '工具', icon: <Sparkles size={14} />, tone: 'rgba(167,139,250,0.95)' };
+    case 'embedding':
+      return { title: '嵌入', icon: <DatabaseZap size={14} />, tone: 'rgba(34,211,238,0.95)' };
+    case 'rerank':
+      return { title: '重排', icon: <ArrowDown size={14} />, tone: 'rgba(245,158,11,0.95)' };
+    case 'image_generation':
+      return { title: '生图', icon: <ImagePlus size={14} />, tone: 'rgba(236,72,153,0.95)' };
+    case 'free':
+      return { title: '免费', icon: <Star size={14} />, tone: 'rgba(34,197,94,0.95)' };
+  }
+}
+
+function PresetTagIcons({ modelName, displayName }: { modelName: string; displayName?: string }) {
+  const tags = inferPresetTagKeys(modelName, displayName);
+  if (tags.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1.5 shrink-0" aria-label="预设标签">
+      {tags.map((t) => {
+        const meta = presetTagMeta(t);
+        return (
+          <span
+            key={t}
+            title={meta.title}
+            className="inline-flex items-center justify-center h-[22px] w-[22px] rounded-[9px]"
+            style={{
+              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(255,255,255,0.04)',
+              color: meta.tone,
+            }}
+          >
+            {meta.icon}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 const defaultPlatformForm: PlatformForm = {
   name: '',
   platformType: 'openai',
+  providerId: '',
   apiUrl: '',
   apiKey: '',
   enabled: true,
+  pricingCurrency: '¥',
+  pricingInPer1k: '',
+  pricingOutPer1k: '',
 };
 
 const defaultModelForm: ModelForm = {
@@ -138,6 +211,56 @@ function formatCompactZh(n: number) {
   return String(v);
 }
 
+type PlatformPricing = {
+  currency: string;
+  inPer1k: number;
+  outPer1k: number;
+};
+
+const PRICING_LS_KEY = 'prd_admin_platform_pricing_v1';
+
+function readPricingMap(): Record<string, PlatformPricing> {
+  try {
+    const raw = localStorage.getItem(PRICING_LS_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw) as any;
+    if (!obj || typeof obj !== 'object') return {};
+    return obj as Record<string, PlatformPricing>;
+  } catch {
+    return {};
+  }
+}
+
+function writePricingMap(map: Record<string, PlatformPricing>) {
+  try {
+    localStorage.setItem(PRICING_LS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+function toFiniteNumberOrNull(v: string): number | null {
+  const n = Number(String(v ?? '').trim());
+  if (!Number.isFinite(n)) return null;
+  if (n <= 0) return null;
+  return n;
+}
+
+function estimateCost(stats: { totalInputTokens: number; totalOutputTokens: number }, pricing: PlatformPricing | null): number | null {
+  if (!pricing) return null;
+  const inCost = (Math.max(0, stats.totalInputTokens) / 1000) * pricing.inPer1k;
+  const outCost = (Math.max(0, stats.totalOutputTokens) / 1000) * pricing.outPer1k;
+  const total = inCost + outCost;
+  return Number.isFinite(total) ? total : null;
+}
+
+function formatMoney(v: number, currency: string) {
+  if (!Number.isFinite(v)) return '';
+  if (v >= 1000) return `${currency}${v.toFixed(0)}`;
+  if (v >= 10) return `${currency}${v.toFixed(1)}`;
+  return `${currency}${v.toFixed(2)}`;
+}
+
 function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, AggregatedModelStats> {
   const tmp = new Map<string, {
     requestCount: number;
@@ -202,7 +325,8 @@ export default function ModelManagePage() {
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [selectedPlatformId, setSelectedPlatformId] = useState<string>('');
+  // 刷新后默认“全部”，避免每次都跳到第一个平台
+  const [selectedPlatformId, setSelectedPlatformId] = useState<string>('__all__');
   const [platformSearch, setPlatformSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
 
@@ -211,6 +335,7 @@ export default function ModelManagePage() {
   const [platformDialogOpen, setPlatformDialogOpen] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
   const [platformForm, setPlatformForm] = useState<PlatformForm>(defaultPlatformForm);
+  const [pricingByPlatformId, setPricingByPlatformId] = useState<Record<string, PlatformPricing>>(() => readPricingMap());
   const [platformCtxMenu, setPlatformCtxMenu] = useState<{
     open: boolean;
     x: number;
@@ -245,11 +370,26 @@ export default function ModelManagePage() {
     'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools'
   >('all');
   const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
-  const [openModelGroups, setOpenModelGroups] = useState<Record<string, boolean>>({});
+  const [draggingModelId, setDraggingModelId] = useState<string | null>(null);
+  const [modelOrderIds, setModelOrderIds] = useState<string[]>([]);
+  const [prioritySaving, setPrioritySaving] = useState(false);
 
   const [modelStatsDays, setModelStatsDays] = useState(7);
   const [modelStatsByModel, setModelStatsByModel] = useState<Record<string, AggregatedModelStats>>({});
   const [modelStatsLoading, setModelStatsLoading] = useState(false);
+
+  const loadModelStats = async () => {
+    setModelStatsLoading(true);
+    try {
+      const res = await getLlmModelStats({ days: 7 });
+      if (res.success) {
+        setModelStatsDays(res.data.days);
+        setModelStatsByModel(aggregateModelStats(res.data.items ?? []));
+      }
+    } finally {
+      setModelStatsLoading(false);
+    }
+  };
 
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -257,7 +397,7 @@ export default function ModelManagePage() {
       const [p, m] = await Promise.all([getPlatforms(), getModels()]);
       if (p.success) {
         setPlatforms(p.data);
-        setSelectedPlatformId((cur) => (cur ? cur : (p.data[0]?.id || '')));
+        setSelectedPlatformId((cur) => (cur ? cur : '__all__'));
       }
       if (m.success) setModels(m.data);
     } finally {
@@ -271,19 +411,8 @@ export default function ModelManagePage() {
   }, []);
 
   useEffect(() => {
-    const run = async () => {
-      setModelStatsLoading(true);
-      try {
-        const res = await getLlmModelStats({ days: 7, status: 'succeeded' });
-        if (res.success) {
-          setModelStatsDays(res.data.days);
-          setModelStatsByModel(aggregateModelStats(res.data.items ?? []));
-        }
-      } finally {
-        setModelStatsLoading(false);
-      }
-    };
-    void run();
+    void loadModelStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 主模型选中后的瞬时动效（行闪一下 + 星星弹一下）
@@ -432,35 +561,26 @@ export default function ModelManagePage() {
     setPlatformCheckMsg(null);
   }, [selectedPlatform?.id]);
 
-  const grouped = useMemo(() => {
-    const g: Record<string, Model[]> = {};
-    for (const m of filteredModels) {
-      const key = m.group || m.modelName.split('-').slice(0, 2).join('-') || 'other';
-      (g[key] ||= []).push(m);
-    }
-    // 同组内按“名字”排序（UI 展示用），不改变分组排序策略
-    for (const ms of Object.values(g)) {
-      ms.sort((a, b) => {
-        const an = (a.name || a.modelName || '').trim();
-        const bn = (b.name || b.modelName || '').trim();
-        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
-      });
-    }
-    return Object.entries(g).sort((a, b) => b[1].length - a[1].length);
+  const platformById = useMemo(() => new Map(platforms.map((p) => [p.id, p])), [platforms]);
+
+  const orderedModels = useMemo(() => {
+    // 默认顺序：priority 越小越靠前；再按 name/modelName 稳定兜底
+    const list = [...filteredModels];
+    list.sort((a, b) => {
+      const ap = typeof a.priority === 'number' ? a.priority : 1e9;
+      const bp = typeof b.priority === 'number' ? b.priority : 1e9;
+      if (ap !== bp) return ap - bp;
+      const an = (a.name || a.modelName || '').trim();
+      const bn = (b.name || b.modelName || '').trim();
+      return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return list;
   }, [filteredModels]);
 
-  // 默认展开前 6 个分组；之后由用户自行折叠/展开（避免每次渲染重置 open 导致“闪一下”）
+  // 同步本地排序（用于拖拽）
   useEffect(() => {
-    if (grouped.length === 0) return;
-    setOpenModelGroups((prev) => {
-      if (Object.keys(prev).length > 0) return prev;
-      const next: Record<string, boolean> = {};
-      grouped.slice(0, 6).forEach(([k]) => {
-        next[k] = true;
-      });
-      return next;
-    });
-  }, [grouped]);
+    setModelOrderIds(orderedModels.map((m) => m.id));
+  }, [orderedModels]);
 
   const existingModelByName = useMemo(() => {
     const map = new Map<string, Model>();
@@ -471,6 +591,49 @@ export default function ModelManagePage() {
     }
     return map;
   }, [models, selectedPlatform?.id]);
+
+  const displayedModels = useMemo(() => {
+    const byId = new Map(orderedModels.map((m) => [m.id, m]));
+    // 若 orderIds 与当前列表不一致（比如 filter 切换），回退 orderedModels
+    if (modelOrderIds.length !== orderedModels.length) return orderedModels;
+    const list: Model[] = [];
+    for (const id of modelOrderIds) {
+      const m = byId.get(id);
+      if (m) list.push(m);
+    }
+    return list.length === orderedModels.length ? list : orderedModels;
+  }, [modelOrderIds, orderedModels]);
+
+  const canDragSort = !selectedPlatformId || selectedPlatformId === '__all__';
+
+  const persistPriorityOrder = async (idsInOrder: string[]) => {
+    // 只允许在“全部”视图拖拽（priority 是全局排序，避免在单平台里制造不可预期的全局重排）
+    if (!canDragSort) return;
+    if (prioritySaving) return;
+    setPrioritySaving(true);
+    try {
+      // priority 越小越靠前：从 1 开始即可
+      const updates = idsInOrder.map((id, idx) => ({ id, priority: idx + 1 }));
+      const res = await updateModelPriorities(updates);
+      if (!res.success) {
+        alert(res.error?.message || '保存排序失败');
+        return;
+      }
+      await load({ silent: true });
+    } finally {
+      setPrioritySaving(false);
+    }
+  };
+
+  const moveId = (ids: string[], fromId: string, toId: string) => {
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return ids;
+    const next = ids.slice();
+    const [x] = next.splice(from, 1);
+    next.splice(to, 0, x);
+    return next;
+  };
 
   const modelCategory = (m: AvailableModel) => {
     const s = (m.modelName || '').toLowerCase();
@@ -488,52 +651,25 @@ export default function ModelManagePage() {
     if (availableTab !== 'all') {
       list = list.filter((m) => modelCategory(m) === availableTab);
     }
-    const s = availableSearch.trim().toLowerCase();
-    if (!s) return list;
-    return list.filter((m) => (m.modelName || '').toLowerCase().includes(s) || (m.displayName || '').toLowerCase().includes(s));
-  }, [availableModels, availableSearch, availableTab]);
+    const ks = splitKeywords(availableSearch);
+    if (ks.length === 0) return list;
+    const providerName = selectedPlatform?.name || '';
+    return list.filter((m) =>
+      matchAllKeywords(`${m.displayName || ''} ${m.modelName || ''} ${providerName}`, ks)
+    );
+  }, [availableModels, availableSearch, availableTab, selectedPlatform?.name]);
 
   const groupedAvailable = useMemo(() => {
-    const autoGroupKey = (rawName: string) => {
-      const s = (rawName || '').trim().toLowerCase();
-      const parts = s.replace(/\//g, '-').split('-').filter(Boolean);
-      if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
-      if (parts.length >= 1) return parts[0];
-      return 'other';
-    };
-
-    const buckets: Record<string, AvailableModel[]> = {};
+    // Cherry 管理弹窗：不做显式排序；顺序取决于远端返回顺序 + 首次出现 group 的插入顺序
+    const providerId = (selectedPlatform?.providerId || selectedPlatform?.platformType || '').trim();
+    const groups = new Map<string, AvailableModel[]>();
     for (const m of filteredAvailableModels) {
-      const key = (m.group || autoGroupKey(m.modelName) || 'other').toLowerCase();
-      (buckets[key] ||= []).push(m);
+      const key = (m.group || resolveCherryGroupKey(m.modelName, providerId) || 'other').toLowerCase();
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(m);
     }
-
-    // 模型数量不足 3 的分组统一并入 other
-    const merged: Record<string, AvailableModel[]> = {};
-    const other: AvailableModel[] = [];
-    for (const [k, ms] of Object.entries(buckets)) {
-      if (k !== 'other' && ms.length < 3) other.push(...ms);
-      else merged[k] = ms;
-    }
-    if (buckets.other) other.push(...buckets.other);
-    if (other.length > 0) merged.other = other;
-
-    // 同组内按“名字”排序（优先 displayName，其次 modelName）
-    for (const ms of Object.values(merged)) {
-      ms.sort((a, b) => {
-        const an = ((a.displayName || a.modelName) || '').trim();
-        const bn = ((b.displayName || b.modelName) || '').trim();
-        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
-      });
-    }
-
-    return Object.entries(merged).sort((a, b) => {
-      const ao = a[0] === 'other';
-      const bo = b[0] === 'other';
-      if (ao !== bo) return ao ? 1 : -1;
-      return b[1].length - a[1].length;
-    });
-  }, [filteredAvailableModels]);
+    return Array.from(groups.entries());
+  }, [filteredAvailableModels, selectedPlatform?.providerId, selectedPlatform?.platformType]);
 
   // 默认展开第一个分组（允许用户自行折叠/展开）
   useEffect(() => {
@@ -624,12 +760,17 @@ export default function ModelManagePage() {
 
   const openEditPlatform = (p: Platform) => {
     setEditingPlatform(p);
+    const pricing = pricingByPlatformId[p.id];
     setPlatformForm({
       name: p.name || '',
       platformType: p.platformType || 'openai',
+      providerId: (p.providerId || '').trim(),
       apiUrl: p.apiUrl || '',
       apiKey: '',
       enabled: !!p.enabled,
+      pricingCurrency: pricing?.currency || '¥',
+      pricingInPer1k: pricing?.inPer1k ? String(pricing.inPer1k) : '',
+      pricingOutPer1k: pricing?.outPer1k ? String(pricing.outPer1k) : '',
     });
     setPlatformDialogOpen(true);
   };
@@ -639,20 +780,39 @@ export default function ModelManagePage() {
       const res = await updatePlatform(editingPlatform.id, {
         name: platformForm.name,
         platformType: platformForm.platformType,
+        providerId: platformForm.providerId?.trim() || undefined,
         apiUrl: platformForm.apiUrl,
         apiKey: platformForm.apiKey || undefined,
         enabled: platformForm.enabled,
       });
       if (!res.success) return;
+      // 保存本地定价（不写入后端）
+      const inPer1k = toFiniteNumberOrNull(platformForm.pricingInPer1k);
+      const outPer1k = toFiniteNumberOrNull(platformForm.pricingOutPer1k);
+      if (inPer1k && outPer1k) {
+        const next = { ...pricingByPlatformId, [editingPlatform.id]: { currency: platformForm.pricingCurrency || '¥', inPer1k, outPer1k } };
+        setPricingByPlatformId(next);
+        writePricingMap(next);
+      }
     } else {
       const res = await createPlatform({
         name: platformForm.name,
         platformType: platformForm.platformType,
+        providerId: platformForm.providerId?.trim() || undefined,
         apiUrl: platformForm.apiUrl,
         apiKey: platformForm.apiKey,
         enabled: platformForm.enabled,
       });
       if (!res.success) return;
+      // 新建平台后也允许保存本地定价（使用后端返回的平台 id）
+      const id = (res.data as any)?.id;
+      const inPer1k = toFiniteNumberOrNull(platformForm.pricingInPer1k);
+      const outPer1k = toFiniteNumberOrNull(platformForm.pricingOutPer1k);
+      if (id && inPer1k && outPer1k) {
+        const next = { ...pricingByPlatformId, [String(id)]: { currency: platformForm.pricingCurrency || '¥', inPer1k, outPer1k } };
+        setPricingByPlatformId(next);
+        writePricingMap(next);
+      }
     }
 
     setPlatformDialogOpen(false);
@@ -897,6 +1057,9 @@ export default function ModelManagePage() {
       setTestingModelId(null);
       // 自动清除测试结果（让 OK/失败 提示保持一小会儿）
       window.setTimeout(() => setTestResult((cur) => (cur?.modelId === m.id ? null : cur)), 1800);
+      // 测试接口会更新后端的模型统计（callCount/averageDuration 等），这里静默刷新一次让 UI 立刻可见
+      await load({ silent: true });
+      await loadModelStats();
     }
   };
 
@@ -1338,113 +1501,71 @@ export default function ModelManagePage() {
                   </div>
 
                   <div className="mt-4">
-                    {grouped.length === 0 ? (
+                    {displayedModels.length === 0 ? (
                       <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无模型</div>
                     ) : (
-                      <div className="space-y-3">
-                        {grouped.map(([g, ms], idx) => (
-                          <details
-                            key={g}
-                            className="rounded-[16px] overflow-hidden"
-                            style={{ border: '1px solid var(--border-subtle)' }}
-                            open={openModelGroups[g] ?? (idx < 6)}
-                            onToggle={(e) => {
-                              const nextOpen = (e.currentTarget as HTMLDetailsElement).open;
-                              setOpenModelGroups((prev) => ({ ...prev, [g]: nextOpen }));
-                            }}
-                          >
-                            <summary
-                              className="px-4 py-3 flex items-center justify-between cursor-pointer select-none"
-                              style={{ background: 'rgba(255,255,255,0.03)' }}
-                            >
-                              {(() => {
-                                const target = ms.find((x) => x.isMain) ?? ms[0] ?? null;
-                                const cacheOn = Boolean(target?.enablePromptCache);
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {canDragSort ? '提示：拖拽左侧把手可调整“全部模型”的全局优先级' : '提示：切换到“全部”后可拖拽调整全局优先级'}
+                          </div>
+                          {prioritySaving ? (
+                            <div className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                              <RefreshCw size={14} className="animate-spin" />
+                              保存排序中...
+                            </div>
+                          ) : null}
+                        </div>
 
-                                return (
-                                  <>
-                                    <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
-
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      {target ? (
-                                        <button
-                                          type="button"
-                                          className="inline-flex items-center justify-center h-[30px] w-[30px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
-                                          style={{
-                                            border: '1px solid rgba(255,255,255,0.10)',
-                                            color: cacheOn ? 'rgba(34,197,94,0.95)' : 'var(--text-secondary)',
-                                          }}
-                                          title={cacheOn ? `Cache 已开（以 ${target.name} 为准）` : `Cache 已关（以 ${target.name} 为准）`}
-                                          aria-label={cacheOn ? '已开启 Prompt Cache（模型级），点击关闭' : '已关闭 Prompt Cache（模型级)，点击开启'}
-                                          disabled={modelCacheTogglingId != null}
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            void toggleModelPromptCache(target);
-                                          }}
-                                        >
-                                          <DatabaseZap size={16} />
-                                        </button>
-                                      ) : null}
-
-                                      {target ? (
-                                        <Button
-                                          variant="secondary"
-                                          size="xs"
-                                          disabled={testingModelId != null}
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            void onTest(target);
-                                          }}
-                                          className={[
-                                            testingModelId === target.id ? 'test-btn-loading' : '',
-                                            testResult?.modelId === target.id && testResult.ok ? 'test-btn-ok' : '',
-                                          ].filter(Boolean).join(' ')}
-                                          style={
-                                            testResult?.modelId === target.id
-                                              ? testResult.ok
-                                                ? { background: 'rgba(34,197,94,0.18)', borderColor: 'rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
-                                                : { background: 'rgba(239,68,68,0.14)', borderColor: 'rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
-                                              : undefined
-                                          }
-                                          title={testResult?.modelId === target.id && !testResult.ok ? testResult.msg : `测试：${target.name}`}
-                                        >
-                                          {testingModelId === target.id ? (
-                                            <RefreshCw size={16} className="animate-spin" />
-                                          ) : testResult?.modelId === target.id ? (
-                                            testResult.ok ? <Check size={16} /> : <Minus size={16} />
-                                          ) : (
-                                            <Link2 size={16} />
-                                          )}
-                                          {testingModelId === target.id
-                                            ? '测试中'
-                                            : testResult?.modelId === target.id
-                                              ? testResult.ok
-                                                ? 'OK'
-                                                : '失败'
-                                              : '测试'}
-                                        </Button>
-                                      ) : null}
-
-                                      {/* 删除“x 个”徽标 */}
-                                    </div>
-                                  </>
-                                );
-                              })()}
-                            </summary>
-
-                            <div className="divide-y divide-white/30">
-                              {ms.map((m) => (
-                                <div
-                                  key={m.id}
-                                  className={[
-                                    'px-4 py-3 flex items-center justify-between hover:bg-white/2',
-                                    mainJustSetId === m.id ? 'main-row-flash' : '',
-                                  ].join(' ')}
-                                >
+                        <div className="rounded-[16px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
+                          <div className="divide-y divide-white/30">
+                            {displayedModels.map((m) => (
+                              <div
+                                key={m.id}
+                                className={[
+                                  'px-4 py-3 flex items-center justify-between hover:bg-white/2',
+                                  mainJustSetId === m.id ? 'main-row-flash' : '',
+                                ].join(' ')}
+                                draggable={canDragSort}
+                                onDragStart={(e) => {
+                                  if (!canDragSort) return;
+                                  setDraggingModelId(m.id);
+                                  e.dataTransfer.effectAllowed = 'move';
+                                  try {
+                                    e.dataTransfer.setData('text/plain', m.id);
+                                  } catch {
+                                    // ignore
+                                  }
+                                }}
+                                onDragEnd={() => setDraggingModelId(null)}
+                                onDragOver={(e) => {
+                                  if (!canDragSort) return;
+                                  e.preventDefault();
+                                  if (!draggingModelId) return;
+                                  if (draggingModelId === m.id) return;
+                                  setModelOrderIds((prev) => moveId(prev, draggingModelId, m.id));
+                                }}
+                                onDrop={(e) => {
+                                  if (!canDragSort) return;
+                                  e.preventDefault();
+                                  void persistPriorityOrder(modelOrderIds);
+                                }}
+                              >
                                   <div className="min-w-0">
-                                    <div className="flex items-center gap-2 min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                      <div
+                                        className="inline-flex items-center justify-center h-[28px] w-[28px] rounded-[10px] cursor-grab active:cursor-grabbing"
+                                        title={canDragSort ? '拖拽排序（优先级）' : '切换到全部后可拖拽排序'}
+                                        style={{
+                                          border: '1px solid rgba(255,255,255,0.10)',
+                                          color: canDragSort ? 'var(--text-secondary)' : 'rgba(255,255,255,0.25)',
+                                          background: 'rgba(255,255,255,0.03)',
+                                        }}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                      >
+                                        <GripVertical size={16} />
+                                      </div>
+
                                       <div
                                         className="text-sm font-semibold truncate"
                                         style={{ color: 'var(--text-primary)' }}
@@ -1452,8 +1573,150 @@ export default function ModelManagePage() {
                                       >
                                         {m.name}
                                       </div>
+
+                                      {isAll ? (() => {
+                                        const p = platformById.get(m.platformId);
+                                        if (!p) return null;
+                                        const pid = (p.providerId || p.platformType || '').trim();
+                                        const title = `${p.name}${pid ? ` · ${pid}` : ''}`;
+                                        return (
+                                          <span title={title}>
+                                            <Badge variant="subtle">{p.name}</Badge>
+                                          </span>
+                                        );
+                                      })() : null}
+
+                                      {/* 模型统计：放到模型名后面（无数据/为 0 则隐藏；样式参考 FlagLabel） */}
+                                      {(() => {
+                                        if (modelStatsLoading) return null;
+                                        const key = String(m.modelName ?? '').trim().toLowerCase();
+                                        const sFromLogs = key ? modelStatsByModel[key] : undefined;
+                                        const reqFromModel = Math.max(0, Number(m.callCount ?? 0));
+                                        const avgFromModel = Number(m.averageDuration ?? 0);
+
+                                        const s: AggregatedModelStats | null =
+                                          sFromLogs
+                                            ? sFromLogs
+                                            : (reqFromModel > 0
+                                              ? {
+                                                requestCount: reqFromModel,
+                                                avgDurationMs: Number.isFinite(avgFromModel) && avgFromModel > 0 ? Math.round(avgFromModel) : null,
+                                                avgTtfbMs: null,
+                                                totalInputTokens: 0,
+                                                totalOutputTokens: 0,
+                                              }
+                                              : null);
+
+                                        if (!s) return null;
+
+                                        const chips: React.ReactNode[] = [];
+                                        const titlePrefix = `近${modelStatsDays}天`;
+                                        const white = 'rgba(255,255,255,0.92)';
+
+                                        if (s.requestCount > 0) {
+                                          chips.push(
+                                            <StatLabel
+                                              key="req"
+                                              icon={<Activity size={12} />}
+                                              text={`请求 ${formatCompactZh(s.requestCount)}`}
+                                              title={`${titlePrefix} · 请求次数${sFromLogs ? '' : '（模型计数）'}`}
+                                              style={{
+                                                background: 'rgba(255,255,255,0.05)',
+                                                border: '1px solid rgba(255,255,255,0.12)',
+                                                color: white,
+                                              }}
+                                            />
+                                          );
+                                        }
+
+                                        if ((s.avgDurationMs ?? 0) > 0) {
+                                          chips.push(
+                                            <StatLabel
+                                              key="dur"
+                                              icon={<Clock size={12} />}
+                                              text={`平均 ${s.avgDurationMs}ms`}
+                                              title={`${titlePrefix} · 平均响应时间`}
+                                              style={{
+                                                background: 'rgba(245,158,11,0.12)',
+                                                border: '1px solid rgba(245,158,11,0.28)',
+                                                color: white,
+                                              }}
+                                            />
+                                          );
+                                        }
+
+                                        if ((s.avgTtfbMs ?? 0) > 0) {
+                                          chips.push(
+                                            <StatLabel
+                                              key="ttfb"
+                                              icon={<Zap size={12} />}
+                                              text={`首字 ${s.avgTtfbMs}ms`}
+                                              title={`${titlePrefix} · 首字延迟（TTFB）`}
+                                              style={{
+                                                background: 'rgba(59,130,246,0.12)',
+                                                border: '1px solid rgba(59,130,246,0.28)',
+                                                color: white,
+                                              }}
+                                            />
+                                          );
+                                        }
+
+                                        if (s.totalInputTokens > 0) {
+                                          chips.push(
+                                            <StatLabel
+                                              key="in"
+                                              icon={<ArrowDown size={12} />}
+                                              text={`输入 ${formatCompactZh(s.totalInputTokens)}`}
+                                              title={`${titlePrefix} · 输入 token（总量）`}
+                                              style={{
+                                                background: 'rgba(168,85,247,0.12)',
+                                                border: '1px solid rgba(168,85,247,0.28)',
+                                                color: white,
+                                              }}
+                                            />
+                                          );
+                                        }
+
+                                        if (s.totalOutputTokens > 0) {
+                                          chips.push(
+                                            <StatLabel
+                                              key="out"
+                                              icon={<ArrowUp size={12} />}
+                                              text={`输出 ${formatCompactZh(s.totalOutputTokens)}`}
+                                              title={`${titlePrefix} · 输出 token（总量）`}
+                                              style={{
+                                                background: 'rgba(34,197,94,0.12)',
+                                                border: '1px solid rgba(34,197,94,0.28)',
+                                                color: white,
+                                              }}
+                                            />
+                                          );
+                                        }
+
+                                        // 成本估算（需要平台本地定价）
+                                        const pricing = pricingByPlatformId[m.platformId] ?? null;
+                                        const cost = estimateCost(s, pricing);
+                                        if (cost != null && pricing) {
+                                          chips.push(
+                                            <StatLabel
+                                              key="cost"
+                                              icon={<DollarSign size={12} />}
+                                              text={`成本 ${formatMoney(cost, pricing.currency || '¥')}`}
+                                              title={`${titlePrefix} · 成本估算（基于本地单价配置）`}
+                                              style={{
+                                                background: 'rgba(16,185,129,0.10)',
+                                                border: '1px solid rgba(16,185,129,0.24)',
+                                                color: white,
+                                              }}
+                                            />
+                                          );
+                                        }
+
+                                        if (chips.length === 0) return null;
+                                        return <div className="flex flex-wrap items-center gap-2 min-w-0">{chips}</div>;
+                                      })()}
                                     </div>
-                                    {/* 第二行：只用于展示标签（不再显示第二排 modelName） */}
+                                    {/* 第二行：用于展示标签（主/意图/识图/生图/禁用） */}
                                     {(m.isMain || m.isIntent || m.isVision || m.isImageGen || !m.enabled) ? (
                                       <div className="mt-1 flex items-center gap-2 min-w-0">
                                         {m.isMain ? (
@@ -1513,102 +1776,58 @@ export default function ModelManagePage() {
                                         ) : null}
                                       </div>
                                     ) : null}
-
-                                    {/* 第三行：模型统计（无数据/为 0 则隐藏；样式参考 FlagLabel） */}
-                                    {(() => {
-                                      if (modelStatsLoading) return null;
-                                      const s = modelStatsByModel[String(m.modelName ?? '').trim().toLowerCase()];
-                                      if (!s) return null;
-
-                                      const chips: React.ReactNode[] = [];
-                                      const titlePrefix = `近${modelStatsDays}天`;
-
-                                      if (s.requestCount > 0) {
-                                        chips.push(
-                                          <StatLabel
-                                            key="req"
-                                            icon={<Activity size={12} />}
-                                            text={`请求 ${formatCompactZh(s.requestCount)}`}
-                                            title={`${titlePrefix} · 请求次数`}
-                                            style={{
-                                              background: 'rgba(255,255,255,0.05)',
-                                              border: '1px solid rgba(255,255,255,0.12)',
-                                              color: 'var(--text-secondary)',
-                                            }}
-                                          />
-                                        );
-                                      }
-
-                                      if ((s.avgDurationMs ?? 0) > 0) {
-                                        chips.push(
-                                          <StatLabel
-                                            key="dur"
-                                            icon={<Clock size={12} />}
-                                            text={`平均 ${s.avgDurationMs}ms`}
-                                            title={`${titlePrefix} · 平均响应时间`}
-                                            style={{
-                                              background: 'rgba(245,158,11,0.12)',
-                                              border: '1px solid rgba(245,158,11,0.28)',
-                                              color: 'rgba(245,158,11,0.95)',
-                                            }}
-                                          />
-                                        );
-                                      }
-
-                                      if ((s.avgTtfbMs ?? 0) > 0) {
-                                        chips.push(
-                                          <StatLabel
-                                            key="ttfb"
-                                            icon={<Zap size={12} />}
-                                            text={`首字 ${s.avgTtfbMs}ms`}
-                                            title={`${titlePrefix} · 首字延迟（TTFB）`}
-                                            style={{
-                                              background: 'rgba(59,130,246,0.12)',
-                                              border: '1px solid rgba(59,130,246,0.28)',
-                                              color: 'rgba(59,130,246,0.95)',
-                                            }}
-                                          />
-                                        );
-                                      }
-
-                                      if (s.totalInputTokens > 0) {
-                                        chips.push(
-                                          <StatLabel
-                                            key="in"
-                                            icon={<ArrowDown size={12} />}
-                                            text={`输入 ${formatCompactZh(s.totalInputTokens)}`}
-                                            title={`${titlePrefix} · 输入 token（总量）`}
-                                            style={{
-                                              background: 'rgba(168,85,247,0.12)',
-                                              border: '1px solid rgba(168,85,247,0.28)',
-                                              color: 'rgba(168,85,247,0.95)',
-                                            }}
-                                          />
-                                        );
-                                      }
-
-                                      if (s.totalOutputTokens > 0) {
-                                        chips.push(
-                                          <StatLabel
-                                            key="out"
-                                            icon={<ArrowUp size={12} />}
-                                            text={`输出 ${formatCompactZh(s.totalOutputTokens)}`}
-                                            title={`${titlePrefix} · 输出 token（总量）`}
-                                            style={{
-                                              background: 'rgba(34,197,94,0.12)',
-                                              border: '1px solid rgba(34,197,94,0.28)',
-                                              color: 'rgba(34,197,94,0.95)',
-                                            }}
-                                          />
-                                        );
-                                      }
-
-                                      if (chips.length === 0) return null;
-                                      return <div className="mt-1 flex flex-wrap items-center gap-2 min-w-0">{chips}</div>;
-                                    })()}
                                   </div>
 
                                   <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
+                                      style={{
+                                        border: '1px solid rgba(255,255,255,0.10)',
+                                        color: m.enablePromptCache ? 'rgba(34,197,94,0.95)' : 'var(--text-secondary)',
+                                      }}
+                                      title={m.enablePromptCache ? 'Prompt Cache：开（点击关闭）' : 'Prompt Cache：关（点击开启）'}
+                                      aria-label="切换 Prompt Cache"
+                                      disabled={modelCacheTogglingId != null}
+                                      onClick={() => void toggleModelPromptCache(m)}
+                                    >
+                                      <DatabaseZap size={16} />
+                                    </button>
+
+                                    <Button
+                                      variant="secondary"
+                                      size="xs"
+                                      disabled={testingModelId != null}
+                                      onClick={() => void onTest(m)}
+                                      className={[
+                                        testingModelId === m.id ? 'test-btn-loading' : '',
+                                        testResult?.modelId === m.id && testResult.ok ? 'test-btn-ok' : '',
+                                      ].filter(Boolean).join(' ')}
+                                      style={
+                                        testResult?.modelId === m.id
+                                          ? testResult.ok
+                                            ? { background: 'rgba(34,197,94,0.18)', borderColor: 'rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
+                                            : { background: 'rgba(239,68,68,0.14)', borderColor: 'rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
+                                          : undefined
+                                      }
+                                      title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
+                                    >
+                                      {testingModelId === m.id ? (
+                                        <RefreshCw size={16} className="animate-spin" />
+                                      ) : testResult?.modelId === m.id ? (
+                                        testResult.ok ? <Check size={16} /> : <Minus size={16} />
+                                      ) : (
+                                        <Link2 size={16} />
+                                      )}
+                                      {testingModelId === m.id
+                                        ? '测试中'
+                                        : testResult?.modelId === m.id
+                                          ? testResult.ok
+                                            ? 'OK'
+                                            : '失败'
+                                          : '测试'}
+                                    </Button>
+
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1679,11 +1898,10 @@ export default function ModelManagePage() {
                                       </Button>
                                     </ConfirmTip>
                                   </div>
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        ))}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1774,6 +1992,54 @@ export default function ModelManagePage() {
                 <option value="deepseek">deepseek</option>
                 <option value="other">other</option>
               </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                ProviderId（可选）
+                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  用于 Cherry 分组/特例（如 silicon/dashscope）
+                </span>
+              </div>
+              <input
+                value={platformForm.providerId}
+                onChange={(e) => setPlatformForm((s) => ({ ...s, providerId: e.target.value }))}
+                className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={inputStyle}
+                placeholder="例如：silicon / dashscope（留空=platformType）"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                成本估算（本地）
+                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  仅用于管理后台展示，不写入后端
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <input
+                  value={platformForm.pricingCurrency}
+                  onChange={(e) => setPlatformForm((s) => ({ ...s, pricingCurrency: e.target.value }))}
+                  className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={inputStyle}
+                  placeholder="币种符号（¥/$）"
+                />
+                <input
+                  value={platformForm.pricingInPer1k}
+                  onChange={(e) => setPlatformForm((s) => ({ ...s, pricingInPer1k: e.target.value }))}
+                  className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={inputStyle}
+                  placeholder="输入单价/1K"
+                />
+                <input
+                  value={platformForm.pricingOutPer1k}
+                  onChange={(e) => setPlatformForm((s) => ({ ...s, pricingOutPer1k: e.target.value }))}
+                  className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={inputStyle}
+                  placeholder="输出单价/1K"
+                />
+              </div>
             </div>
 
             <div className="grid gap-2">
@@ -2004,6 +2270,8 @@ export default function ModelManagePage() {
                                     </div>
                                   </div>
                                 </div>
+                                <div className="flex items-center gap-2">
+                                  <PresetTagIcons modelName={m.modelName} displayName={m.displayName} />
                                 <Button
                                   variant={exist ? 'secondary' : 'ghost'}
                                   size="sm"
@@ -2013,6 +2281,7 @@ export default function ModelManagePage() {
                                 >
                                   {exist ? <Minus size={16} /> : <Plus size={16} />}
                                 </Button>
+                                </div>
                               </div>
                             );
                           })}

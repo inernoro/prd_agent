@@ -13,6 +13,13 @@ public class LLMPlatform
     
     /// <summary>平台类型 (openai/anthropic/google/qwen/zhipu/baidu/other)</summary>
     public string PlatformType { get; set; } = "openai";
+
+    /// <summary>
+    /// ProviderId（用于“模型分组/能力规则”等 provider 级差异化逻辑）
+    /// - 例如：silicon / aihubmix / dashscope
+    /// - 为空时默认等同 PlatformType
+    /// </summary>
+    public string? ProviderId { get; set; }
     
     /// <summary>API基础地址</summary>
     public string ApiUrl { get; set; } = string.Empty;

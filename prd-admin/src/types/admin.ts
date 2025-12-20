@@ -21,6 +21,8 @@ export type Platform = {
   id: string;
   name: string;
   platformType: string;
+  /** 可选：用于 Cherry 分组/能力规则等 provider 级差异化逻辑（如 silicon/dashscope） */
+  providerId?: string;
   apiUrl: string;
   apiKeyMasked: string;
   enabled: boolean;
@@ -38,6 +40,15 @@ export type Model = {
   isImageGen?: boolean;
   group?: string;
   enablePromptCache: boolean;
+  /** 优先级：越小越靠前（用于拖拽排序） */
+  priority?: number;
+  // 后端模型统计（真实数据；用于模型管理页显示“请求次数/平均耗时”等）
+  callCount?: number;
+  totalDuration?: number;
+  successCount?: number;
+  failCount?: number;
+  averageDuration?: number;
+  successRate?: number;
 };
 
 export type LLMConfig = {

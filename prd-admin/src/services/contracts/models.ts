@@ -28,3 +28,6 @@ export type SetVisionModelContract = (id: string) => Promise<ApiResponse<true>>;
 export type ClearVisionModelContract = () => Promise<ApiResponse<true>>;
 export type SetImageGenModelContract = (id: string) => Promise<ApiResponse<true>>;
 export type ClearImageGenModelContract = () => Promise<ApiResponse<true>>;
+
+export type ModelPriorityUpdate = { id: string; priority: number };
+export type UpdateModelPrioritiesContract = (updates: ModelPriorityUpdate[]) => Promise<ApiResponse<{ updated: number }>>;

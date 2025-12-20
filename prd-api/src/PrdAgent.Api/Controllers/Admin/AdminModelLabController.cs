@@ -387,13 +387,9 @@ public class AdminModelLabController : ControllerBase
         SemaphoreSlim writeLock,
         CancellationToken ct)
     {
-        // 仅 suite=Intent 默认注入意图 schema；其它 suite 由前端显式选择专项测试（expectedFormat）来决定系统约束，避免“强加”。
-        var systemPrompt = effective.Suite switch
-        {
-            ModelLabSuite.Intent =>
-                "你是意图识别模型。请对用户输入进行意图分类，并严格输出 JSON：{\"intent\":\"...\",\"confidence\":0-1,\"reason\":\"...\"}。不要输出额外内容。",
-            _ => ""
-        };
+        // 生产规则：不对 speed/intent/custom 默认注入 system prompt（避免“强加”输出格式/语义）。
+        // 输出格式约束仅由前端显式选择 expectedFormat（JSON/MCP/FunctionCall）触发。
+        var systemPrompt = "";
 
         // 专项测试：前端传 expectedFormat 时，强约束输出格式（system prompt 级）。
         var fmt = (effective.ExpectedFormat ?? string.Empty).Trim().ToLowerInvariant();

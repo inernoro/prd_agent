@@ -20,6 +20,7 @@ export const createPlatformReal: CreatePlatformContract = async (input: CreatePl
     body: {
       name: input.name,
       platformType: input.platformType,
+      providerId: input.providerId ?? null,
       apiUrl: input.apiUrl,
       apiKey: input.apiKey,
       enabled: input.enabled,
@@ -44,6 +45,7 @@ export const updatePlatformReal: UpdatePlatformContract = async (id: string, inp
   const body: Record<string, unknown> = {
     name: input.name ?? p.name,
     platformType: input.platformType ?? p.platformType,
+    providerId: input.providerId ?? p.providerId ?? null,
     apiUrl: input.apiUrl ?? p.apiUrl,
     enabled: typeof input.enabled === 'boolean' ? input.enabled : p.enabled,
     maxConcurrency: p.maxConcurrency ?? 5,

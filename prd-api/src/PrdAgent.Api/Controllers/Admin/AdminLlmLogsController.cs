@@ -244,7 +244,7 @@ public class AdminLlmLogsController : ControllerBase
         [FromQuery] int days = 7,
         [FromQuery] string? provider = null,
         [FromQuery] string? model = null,
-        [FromQuery] string? status = "succeeded")
+        [FromQuery] string? status = null)
     {
         days = Math.Clamp(days, 1, 30);
         var from = DateTime.UtcNow.AddDays(-days);
@@ -308,8 +308,39 @@ public class AdminLlmLogsController : ControllerBase
 
         var items = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).ToListAsync();
 
-        // 返回 object：与现有 List/Meta 保持一致（避免引入额外 DTO/上下文）
-        return Ok(ApiResponse<object>.Ok(new { days, items }));
+        // 重要：不要直接返回 BsonDocument/BsonValue 给 System.Text.Json。
+        // 否则它会反射访问 BsonValue.AsBoolean/AsString 等属性，遇到非匹配类型时会抛 InvalidCastException。
+        // 这里将聚合结果映射为“纯 .NET 基础类型”的对象数组，确保稳定序列化。
+        static object? ToDotNet(BsonValue v)
+        {
+            if (v == null || v.IsBsonNull) return null;
+            return BsonTypeMapper.MapToDotNetValue(v);
+        }
+
+        var safeItems = items.Select(d =>
+        {
+            d.TryGetValue("provider", out var p);
+            d.TryGetValue("model", out var m);
+            d.TryGetValue("requestCount", out var rc);
+            d.TryGetValue("avgDurationMs", out var avgDur);
+            d.TryGetValue("avgTtfbMs", out var avgTtfb);
+            d.TryGetValue("totalInputTokens", out var tin);
+            d.TryGetValue("totalOutputTokens", out var tout);
+
+            return new
+            {
+                provider = (ToDotNet(p) ?? string.Empty)?.ToString(),
+                model = (ToDotNet(m) ?? string.Empty)?.ToString(),
+                requestCount = ToDotNet(rc),
+                avgDurationMs = ToDotNet(avgDur),
+                avgTtfbMs = ToDotNet(avgTtfb),
+                totalInputTokens = ToDotNet(tin),
+                totalOutputTokens = ToDotNet(tout),
+            };
+        }).ToList();
+
+        // 返回 object：与现有 List/Meta 保持一致
+        return Ok(ApiResponse<object>.Ok(new { days, items = safeItems }));
     }
 }
 

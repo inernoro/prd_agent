@@ -119,6 +119,7 @@ public class AdminPlatformsController : ControllerBase
             p.Id,
             p.Name,
             p.PlatformType,
+            providerId = string.IsNullOrWhiteSpace(p.ProviderId) ? p.PlatformType : p.ProviderId,
             p.ApiUrl,
             apiKeyMasked = MaskApiKey(DecryptApiKey(p.ApiKeyEncrypted)),
             p.Enabled,
@@ -148,6 +149,7 @@ public class AdminPlatformsController : ControllerBase
             platform.Id,
             platform.Name,
             platform.PlatformType,
+            providerId = string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId,
             platform.ApiUrl,
             apiKeyMasked = MaskApiKey(DecryptApiKey(platform.ApiKeyEncrypted)),
             platform.Enabled,
@@ -175,6 +177,7 @@ public class AdminPlatformsController : ControllerBase
         {
             Name = request.Name,
             PlatformType = request.PlatformType,
+            ProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(),
             ApiUrl = request.ApiUrl,
             ApiKeyEncrypted = EncryptApiKey(request.ApiKey),
             Enabled = request.Enabled,
@@ -205,6 +208,7 @@ public class AdminPlatformsController : ControllerBase
         var update = Builders<LLMPlatform>.Update
             .Set(p => p.Name, request.Name)
             .Set(p => p.PlatformType, request.PlatformType)
+            .Set(p => p.ProviderId, string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim())
             .Set(p => p.ApiUrl, request.ApiUrl)
             .Set(p => p.Enabled, request.Enabled)
             .Set(p => p.MaxConcurrency, request.MaxConcurrency)
@@ -376,6 +380,7 @@ public class AdminPlatformsController : ControllerBase
     {
         var apiUrl = GetModelsEndpoint(platform.ApiUrl);
         var apiKey = DecryptApiKey(platform.ApiKeyEncrypted);
+        var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
 
         using var client = _httpClientFactory.CreateClient("LoggedHttpClient");
         client.Timeout = TimeSpan.FromSeconds(30);
@@ -393,9 +398,24 @@ public class AdminPlatformsController : ControllerBase
             {
                 modelName = m.Id,
                 displayName = m.Id,
-                group = ExtractModelGroup(m.Id)
+                group = ResolveCherryGroup(m.Id, providerId)
             })
             .ToList();
+    }
+
+    private static string ResolveCherryGroup(string modelId, string providerId)
+    {
+        // dashscope 特例：对 qwen* 模型做前缀细分（等价 Cherry 的 groupQwenModels）
+        if (string.Equals(providerId, "dashscope", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseName = PrdAgent.Infrastructure.Models.CherryModelGrouping.GetLowerBaseModelName(modelId);
+            if (baseName.StartsWith("qwen", StringComparison.OrdinalIgnoreCase))
+            {
+                var qwenKey = PrdAgent.Infrastructure.Models.CherryModelGrouping.GetDashscopeQwenGroupKey(baseName);
+                if (!string.IsNullOrWhiteSpace(qwenKey)) return qwenKey;
+            }
+        }
+        return PrdAgent.Infrastructure.Models.CherryModelGrouping.GetDefaultGroupName(modelId, providerId);
     }
 
     private string GetModelsEndpoint(string apiUrl)
@@ -518,6 +538,7 @@ public class CreatePlatformRequest
 {
     public string Name { get; set; } = string.Empty;
     public string PlatformType { get; set; } = "openai";
+    public string? ProviderId { get; set; }
     public string ApiUrl { get; set; } = string.Empty;
     public string ApiKey { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
@@ -529,6 +550,7 @@ public class UpdatePlatformRequest
 {
     public string Name { get; set; } = string.Empty;
     public string PlatformType { get; set; } = "openai";
+    public string? ProviderId { get; set; }
     public string ApiUrl { get; set; } = string.Empty;
     public string? ApiKey { get; set; }
     public bool Enabled { get; set; } = true;
