@@ -48,6 +48,9 @@ type ViewRunItem = {
   ttftMs?: number;
   totalMs?: number;
   preview: string;
+  /** 流式拼接的原始输出（前端累积；有上限；用于校验/展开/复制） */
+  rawText?: string;
+  rawTruncated?: boolean;
   errorMessage?: string;
 };
 
@@ -110,6 +113,172 @@ function filenameSafe(s: string) {
     .replace(/[\s/\\:*?"<>|]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
+}
+
+const MAX_RUN_RAW_CHARS = 60_000;
+
+function normalizeJsonCandidatesFromText(raw: string): string[] {
+  const t = (raw ?? '').trim();
+  if (!t) return [];
+
+  const candidates: string[] = [];
+
+  // 1) 全文尝试（严格）
+  if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) candidates.push(t);
+
+  // 2) fenced code blocks（可多个）
+  const fenceRe = /```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```/g;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(t)) !== null) {
+    const inner = (m[1] ?? '').trim();
+    if (!inner) continue;
+    if ((inner.startsWith('{') && inner.endsWith('}')) || (inner.startsWith('[') && inner.endsWith(']'))) candidates.push(inner);
+  }
+
+  // 3) 兜底：截取最外层 JSON（容错，避免模型加了前后说明）
+  const firstObj = t.indexOf('{');
+  const lastObj = t.lastIndexOf('}');
+  if (firstObj >= 0 && lastObj > firstObj) {
+    const sub = t.slice(firstObj, lastObj + 1).trim();
+    if (sub.startsWith('{') && sub.endsWith('}')) candidates.push(sub);
+  }
+  const firstArr = t.indexOf('[');
+  const lastArr = t.lastIndexOf(']');
+  if (firstArr >= 0 && lastArr > firstArr) {
+    const sub = t.slice(firstArr, lastArr + 1).trim();
+    if (sub.startsWith('[') && sub.endsWith(']')) candidates.push(sub);
+  }
+
+  // 去重
+  return Array.from(new Set(candidates));
+}
+
+function parseAnyJson(raw: string): { ok: true; value: unknown } | { ok: false; reason: string } {
+  const cands = normalizeJsonCandidatesFromText(raw);
+  if (cands.length === 0) return { ok: false, reason: '未发现可解析的 JSON（全文/代码块/截取均失败）' };
+
+  for (const c of cands) {
+    try {
+      const v = JSON.parse(c) as unknown;
+      return { ok: true, value: v };
+    } catch {
+      // continue
+    }
+  }
+  return { ok: false, reason: '发现疑似 JSON，但 JSON.parse 均失败' };
+}
+
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+function isFunctionCallShape(v: unknown): { ok: true } | { ok: false; reason: string } {
+  if (!isPlainRecord(v)) return { ok: false, reason: '不是对象' };
+  const obj = v;
+
+  // OpenAI 新版：tool_calls
+  const toolCalls = obj.tool_calls;
+  if (Array.isArray(toolCalls)) {
+    const first = toolCalls[0];
+    if (!isPlainRecord(first)) return { ok: false, reason: 'tool_calls[0] 不是对象' };
+
+    const type = first.type;
+    const fn = first.function;
+    if (!isPlainRecord(fn)) return { ok: false, reason: 'tool_calls[0].function 缺失或不是对象' };
+
+    const name = fn.name;
+    const args = fn.arguments;
+    if (type === 'function' && typeof name === 'string' && name.trim()) {
+      if (typeof args === 'string' || isPlainRecord(args)) return { ok: true };
+      return { ok: false, reason: 'tool_calls[0].function.arguments 缺失或类型不对' };
+    }
+    return { ok: false, reason: 'tool_calls 结构不符合（缺少 type=function / function.name / function.arguments）' };
+  }
+
+  // 旧版：function_call
+  const fc = obj.function_call;
+  if (isPlainRecord(fc)) {
+    const name = fc.name;
+    const args = fc.arguments;
+    if (typeof name === 'string' && name.trim()) {
+      if (typeof args === 'string' || isPlainRecord(args)) return { ok: true };
+      return { ok: false, reason: 'function_call.arguments 缺失或类型不对' };
+    }
+  }
+
+  // 简化形态：{ name, arguments }
+  if (typeof obj.name === 'string' && obj.name.trim() && obj.arguments !== undefined) {
+    return { ok: true };
+  }
+
+  return { ok: false, reason: '未命中 function_call/tool_calls/name+arguments 任一形态' };
+}
+
+function isMcpJsonShape(v: unknown): { ok: true } | { ok: false; reason: string } {
+  if (!isPlainRecord(v)) return { ok: false, reason: '不是对象' };
+  const obj = v;
+
+  // 允许 { calls: [...] } 或 { mcp: [...] } 包裹
+  const list = obj.calls ?? obj.mcp;
+  if (Array.isArray(list) && list.length > 0) {
+    const first = list[0];
+    if (!isPlainRecord(first)) return { ok: false, reason: 'calls/mcp[0] 不是对象' };
+    const server = first.server;
+    const uri = first.uri;
+    const tool = first.tool ?? first.name ?? first.method;
+    if (typeof server === 'string' && server.trim() && (typeof uri === 'string' || typeof tool === 'string')) return { ok: true };
+    return { ok: false, reason: 'calls/mcp[0] 缺少 server + (uri/tool/name/method)' };
+  }
+
+  // 直接形态：{ server, uri } / { server, tool, arguments }
+  const server = obj.server;
+  const uri = obj.uri;
+  const tool = obj.tool ?? obj.name ?? obj.method;
+  if (typeof server === 'string' && server.trim() && (typeof uri === 'string' || typeof tool === 'string')) return { ok: true };
+
+  return { ok: false, reason: '未命中 MCP 形态（需要 server + (uri/tool/name/method)）' };
+}
+
+type SuiteCheck = {
+  label: string;
+  ok: boolean;
+  reason: string;
+};
+
+function suiteExpectationLabel(suite: ModelLabSuite): string {
+  if (suite === 'intent') return '意图JSON';
+  if (suite === 'speed') return 'FunctionCall JSON';
+  return 'MCP JSON';
+}
+
+function validateIntentJson(value: unknown): { ok: true } | { ok: false; reason: string } {
+  if (!isPlainRecord(value)) return { ok: false, reason: '意图JSON 必须是对象' };
+  const intent = value.intent;
+  const confidence = value.confidence;
+  const reason = value.reason;
+  if (typeof intent !== 'string' || !intent.trim()) return { ok: false, reason: '缺少 intent（string）' };
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return { ok: false, reason: '缺少 confidence（0-1 number）' };
+  if (typeof reason !== 'string' || !reason.trim()) return { ok: false, reason: '缺少 reason（string）' };
+  return { ok: true };
+}
+
+function validateBySuite(suite: ModelLabSuite, raw: string): SuiteCheck {
+  const parsed = parseAnyJson(raw);
+  const label = suiteExpectationLabel(suite);
+  if (!parsed.ok) return { label, ok: false, reason: parsed.reason };
+
+  if (suite === 'intent') {
+    const res = validateIntentJson(parsed.value);
+    return { label, ok: res.ok, reason: res.ok ? '通过（符合意图JSON schema）' : res.reason };
+  }
+
+  if (suite === 'speed') {
+    const fc = isFunctionCallShape(parsed.value);
+    return { label, ok: fc.ok, reason: fc.ok ? '通过（识别到 function call 结构）' : fc.reason };
+  }
+
+  const mcp = isMcpJsonShape(parsed.value);
+  return { label, ok: mcp.ok, reason: mcp.ok ? '通过（识别到 MCP JSON 结构）' : mcp.reason };
 }
 
 async function downloadImage(src: string, filename: string) {
@@ -996,6 +1165,8 @@ export default function LlmLabTab() {
                 configModelId: configModelId || undefined,
                 status: 'running',
                 preview: '',
+                rawText: '',
+                rawTruncated: false,
               };
               setRunItems((p) => ({ ...p, [item.itemId]: item }));
               return;
@@ -1005,7 +1176,11 @@ export default function LlmLabTab() {
                 const cur = p[obj.itemId];
                 if (!cur) return p;
                 const nextPreview = (cur.preview + obj.content).slice(0, 512);
-                return { ...p, [obj.itemId]: { ...cur, preview: nextPreview } };
+                const raw = String(cur.rawText ?? '');
+                const canAppend = raw.length < MAX_RUN_RAW_CHARS;
+                const nextRaw = canAppend ? (raw + obj.content).slice(0, MAX_RUN_RAW_CHARS) : raw;
+                const truncated = (cur.rawTruncated ?? false) || (raw.length + obj.content.length > MAX_RUN_RAW_CHARS);
+                return { ...p, [obj.itemId]: { ...cur, preview: nextPreview, rawText: nextRaw, rawTruncated: truncated } };
               });
               return;
             }
@@ -1072,6 +1247,36 @@ export default function LlmLabTab() {
       return aTotal - bTotal;
     });
   }, [itemsList, sortBy]);
+
+  const suiteValidationSummary = useMemo(() => {
+    if (mainMode !== 'infer') return null;
+    const done = Object.values(runItems).filter((x) => x.status === 'done');
+    const total = done.length;
+    if (total === 0) {
+      return {
+        label: suiteExpectationLabel(suite),
+        total: 0,
+        passed: 0,
+        title: `期望：${suiteExpectationLabel(suite)}（尚无完成结果）`,
+      };
+    }
+    let passed = 0;
+    const failReasons: string[] = [];
+    for (const it of done) {
+      const raw = (it.rawText ?? it.preview ?? '').trim();
+      const v = validateBySuite(suite, raw);
+      if (v.ok) passed++;
+      else if (failReasons.length < 4) failReasons.push(`${it.displayName || it.modelName || it.modelId}: ${v.reason}`);
+    }
+    return {
+      label: suiteExpectationLabel(suite),
+      total,
+      passed,
+      title:
+        `期望：${suiteExpectationLabel(suite)}\n通过：${passed}/${total}` +
+        (failReasons.length ? `\n\n失败示例：\n- ${failReasons.join('\n- ')}` : ''),
+    };
+  }, [mainMode, runItems, suite]);
 
   const batchList = useMemo(() => {
     return Object.values(batchItems).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
@@ -1547,7 +1752,7 @@ export default function LlmLabTab() {
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="flex gap-2 overflow-x-auto pr-1">
               <Button size="xs" variant={mainMode === 'infer' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onMainModeChange('infer')}>
-                推理测试
+                推理
               </Button>
               <Button
                 size="xs"
@@ -1621,6 +1826,20 @@ export default function LlmLabTab() {
               <Sparkles size={14} />
               自定义
             </Button>
+            {suiteValidationSummary ? (
+              <span
+                className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide shrink-0"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: 'var(--text-secondary)',
+                }}
+                title={suiteValidationSummary.title}
+              >
+                期望：{suiteValidationSummary.label}
+                {suiteValidationSummary.total > 0 ? ` · 通过 ${suiteValidationSummary.passed}/${suiteValidationSummary.total}` : ''}
+              </span>
+            ) : null}
           </div>
           ) : (
             <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1">
@@ -1803,6 +2022,54 @@ export default function LlmLabTab() {
                     className="rounded-[14px] p-3"
                     style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
                   >
+                    {(() => {
+                      const raw = (it.rawText ?? it.preview ?? '').trim();
+                      const v = raw ? validateFunctionCallAndMcp(raw) : null;
+                      const chipStyle = (ok: boolean): React.CSSProperties => ({
+                        background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',
+                        border: ok ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(239,68,68,0.22)',
+                        color: ok ? 'rgba(34,197,94,0.95)' : 'rgba(239,68,68,0.92)',
+                      });
+                      if (!v) return null;
+                      return (
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span
+                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                            style={chipStyle(v.jsonOk)}
+                            title={v.jsonReason}
+                          >
+                            JSON {v.jsonOk ? '通过' : '失败'}
+                          </span>
+                          <span
+                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                            style={chipStyle(v.functionOk)}
+                            title={v.functionReason}
+                          >
+                            FunctionCall {v.functionOk ? '通过' : '失败'}
+                          </span>
+                          <span
+                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                            style={chipStyle(v.mcpOk)}
+                            title={v.mcpReason}
+                          >
+                            MCP {v.mcpOk ? '通过' : '失败'}
+                          </span>
+                          {it.rawTruncated ? (
+                            <span
+                              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                              style={{
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                color: 'var(--text-secondary)',
+                              }}
+                              title={`原始输出超过上限 ${MAX_RUN_RAW_CHARS} 字符，已截断；校验基于截断文本`}
+                            >
+                              已截断
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     <div className="flex items-center justify-between gap-3 min-w-0">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1938,7 +2205,7 @@ export default function LlmLabTab() {
                             className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
                             style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
                             onClick={() => {
-                              const text = it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
+                              const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               void copyToClipboard(text);
                             }}
                             aria-label="复制输出"
@@ -1952,7 +2219,7 @@ export default function LlmLabTab() {
                             className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
                             style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
                             onClick={() => {
-                              const text = it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
+                              const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
                             }}
                             aria-label="展开查看完整输出"

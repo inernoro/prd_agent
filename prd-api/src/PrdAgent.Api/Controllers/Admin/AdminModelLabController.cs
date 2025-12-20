@@ -391,6 +391,17 @@ public class AdminModelLabController : ControllerBase
         {
             ModelLabSuite.Intent =>
                 "你是意图识别模型。请对用户输入进行意图分类，并严格输出 JSON：{\"intent\":\"...\",\"confidence\":0-1,\"reason\":\"...\"}。不要输出额外内容。",
+            ModelLabSuite.Speed =>
+                "你是一个函数调用规划模型。请根据用户输入选择一个合适的工具调用，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                "JSON 格式（推荐）：{\"name\":\"tool_name\",\"arguments\":{...}}。\n" +
+                "也允许 OpenAI 风格：{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"tool_name\",\"arguments\":{...}}}]}。\n" +
+                "要求：必须是合法 JSON；arguments 必须是对象或可解析为对象的字符串。",
+            ModelLabSuite.Custom =>
+                "你是 MCP（Model Context Protocol）调用规划模型。请根据用户输入生成 MCP 调用指令，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                "JSON 格式（推荐）：{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}。\n" +
+                "也允许资源读取：{\"server\":\"server_id\",\"uri\":\"resource://...\"}。\n" +
+                "也允许批量：{\"calls\":[{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}]}。\n" +
+                "要求：必须是合法 JSON；必须包含 server 字段。",
             _ => ""
         };
 

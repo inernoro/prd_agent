@@ -149,6 +149,38 @@ function tryPrettyJsonText(text: string): string {
   }
 }
 
+function normalizeStrictJsonCandidate(raw: string): { ok: true; json: string } | { ok: false; reason: string } {
+  const t0 = (raw ?? '').trim();
+  if (!t0) return { ok: false, reason: '空内容' };
+
+  // 允许 ```json ... ``` 这种“整体代码块包裹”的返回
+  if (t0.startsWith('```')) {
+    const m = t0.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/);
+    if (!m) return { ok: false, reason: '代码块格式不完整（缺少闭合 ```）' };
+    const inner = (m[1] ?? '').trim();
+    if (!inner) return { ok: false, reason: '代码块为空' };
+    if (!inner.startsWith('{') && !inner.startsWith('[')) return { ok: false, reason: '代码块内容不是 JSON（未以 { 或 [ 开头）' };
+    if (!(inner.endsWith('}') || inner.endsWith(']'))) return { ok: false, reason: '代码块内容不是 JSON（未以 } 或 ] 结尾）' };
+    return { ok: true, json: inner };
+  }
+
+  if (!t0.startsWith('{') && !t0.startsWith('[')) return { ok: false, reason: '不是 JSON（未以 { 或 [ 开头）' };
+  if (!(t0.endsWith('}') || t0.endsWith(']'))) return { ok: false, reason: '不是 JSON（未以 } 或 ] 结尾）' };
+  return { ok: true, json: t0 };
+}
+
+function validateStrictJson(raw: string): { ok: true } | { ok: false; reason: string } {
+  const c = normalizeStrictJsonCandidate(raw);
+  if (!c.ok) return c;
+  try {
+    JSON.parse(c.json);
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: `JSON.parse 失败：${msg}` };
+  }
+}
+
 function shellSingleQuote(text: string): string {
   // Bash/zsh 安全单引号转义：' -> '"'"'
   return `'${String(text).replace(/'/g, `'"'"'`)}'`;
@@ -327,6 +359,7 @@ export default function LlmLogsPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(30);
   const [answerView, setAnswerView] = useState<'preview' | 'raw'>('preview');
+  const [answerHint, setAnswerHint] = useState<string>('');
 
   const [qProvider, setQProvider] = useState('');
   const [qModel, setQModel] = useState('');
@@ -641,6 +674,7 @@ export default function LlmLogsPage() {
             setSelectedId(null);
             setCopiedHint('');
             setAnswerView('preview');
+            setAnswerHint('');
             setPromptOpen(false);
             setPromptToken('');
           }
@@ -796,6 +830,11 @@ export default function LlmLogsPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Answer（最终拼接文本）</div>
                     <div className="flex items-center gap-2">
+                      {answerHint ? (
+                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {answerHint}
+                        </div>
+                      ) : null}
                       <div className="flex items-center rounded-[12px] p-1" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
                         <button
                           type="button"
@@ -839,6 +878,25 @@ export default function LlmLogsPage() {
                       >
                         <Copy size={16} />
                         复制
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          const raw = (detail?.answerText ?? '').trim();
+                          const res = validateStrictJson(raw);
+                          if (res.ok) {
+                            setAnswerHint('JSON 合法');
+                            setTimeout(() => setAnswerHint(''), 1600);
+                          } else {
+                            setAnswerHint(`JSON 不合法：${res.reason}`);
+                            setTimeout(() => setAnswerHint(''), 2800);
+                          }
+                        }}
+                        disabled={!((detail?.answerText ?? '').trim())}
+                        title="对模型原始返回（Answer）做严格 JSON 校验"
+                      >
+                        JSON检查
                       </Button>
                     </div>
                   </div>
