@@ -14,21 +14,25 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<LlmRequestLogWriter> _logger;
+    private readonly IAppSettingsService _settingsService;
 
-    public LlmRequestLogWriter(MongoDbContext db, ILogger<LlmRequestLogWriter> logger, LlmRequestLogBackground _)
+    public LlmRequestLogWriter(MongoDbContext db, ILogger<LlmRequestLogWriter> logger, LlmRequestLogBackground _, IAppSettingsService settingsService)
     {
         _db = db;
         _logger = logger;
+        _settingsService = settingsService;
     }
 
     public async Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
     {
         try
         {
+            var settings = await _settingsService.GetSettingsAsync(ct);
             var requestBodyRaw = start.RequestBodyRedacted ?? string.Empty;
             var requestBodyChars = requestBodyRaw.Length;
-            var requestBodyStored = Truncate(requestBodyRaw, 200_000);
-            var requestBodyTruncated = requestBodyChars > 200_000;
+            var requestBodyMaxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
+            var requestBodyStored = Truncate(requestBodyRaw, requestBodyMaxChars);
+            var requestBodyTruncated = requestBodyChars > requestBodyMaxChars;
 
             var log = new LlmRequestLog
             {
@@ -49,10 +53,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 RequestBodyHash = start.RequestBodyHash ?? Sha256Hex(requestBodyRaw),
                 RequestBodyChars = requestBodyChars,
                 RequestBodyTruncated = requestBodyTruncated,
-                QuestionText = Truncate(start.QuestionText ?? string.Empty, 200_000),
+                QuestionText = Truncate(start.QuestionText ?? string.Empty, requestBodyMaxChars),
                 SystemPromptChars = start.SystemPromptChars,
                 SystemPromptHash = start.SystemPromptHash,
-                SystemPromptText = string.IsNullOrWhiteSpace(start.SystemPromptText) ? null : Truncate(start.SystemPromptText, 200_000),
+                SystemPromptText = string.IsNullOrWhiteSpace(start.SystemPromptText) ? null : Truncate(start.SystemPromptText, requestBodyMaxChars),
                 MessageCount = start.MessageCount,
                 DocumentChars = start.DocumentChars,
                 DocumentHash = start.DocumentHash,
@@ -85,7 +89,9 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     public void MarkError(string logId, string error, int? statusCode = null)
     {
         if (string.IsNullOrWhiteSpace(logId)) return;
-        var payload = (Truncate(error, 20_000), statusCode);
+        // 使用默认值（错误信息通常不会太大，使用默认值即可）
+        var errorMaxChars = LlmLogLimits.DefaultErrorMaxChars;
+        var payload = (Truncate(error, errorMaxChars), statusCode);
         LlmLogQueue.Queue.Writer.TryWrite(new LlmLogOp(LlmLogOpType.MarkError, logId, payload));
     }
 

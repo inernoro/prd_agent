@@ -97,6 +97,10 @@ builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
 builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 
+// 应用设置服务（带缓存）
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
+
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
@@ -132,6 +136,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         options.Events = new JwtBearerEvents
         {
+            OnMessageReceived = context =>
+            {
+                // 跳过 OPTIONS 预检请求的认证（CORS 预检请求不需要认证）
+                if (HttpMethods.IsOptions(context.Request.Method))
+                {
+                    context.NoResult();
+                    return Task.CompletedTask;
+                }
+                return Task.CompletedTask;
+            },
             OnChallenge = async context =>
             {
                 // 跳过默认 challenge 响应（会覆盖 body）
@@ -528,7 +542,8 @@ builder.Services.AddScoped<IPreviewAskService>(sp =>
     var documentService = sp.GetRequiredService<IDocumentService>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx);
+    var settingsService = sp.GetRequiredService<IAppSettingsService>();
+    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx, settingsService);
 });
 
 // 注册引导进度仓储

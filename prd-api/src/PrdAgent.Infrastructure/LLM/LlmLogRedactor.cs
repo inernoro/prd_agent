@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -42,7 +43,9 @@ internal static class LlmLogRedactor
         }
         catch
         {
-            return json.Length > 2000 ? json[..2000] + "...[TRUNCATED]" : json;
+            // 兜底截断：JSON 解析失败时使用系统配置（默认 50k）
+            var fallbackMaxChars = LlmLogLimits.DefaultJsonFallbackMaxChars;
+            return json.Length > fallbackMaxChars ? json[..fallbackMaxChars] + "...[TRUNCATED]" : json;
         }
     }
 

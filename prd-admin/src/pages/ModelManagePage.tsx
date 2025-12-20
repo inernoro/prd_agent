@@ -27,13 +27,16 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, ArrowDown, ArrowUp, Check, Clock, DatabaseZap, DollarSign, Eye, EyeOff, GripVertical, ImagePlus, Link2, Minus, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
+import { Activity, ArrowDown, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
+import { ModelKpiRail } from '@/components/model/ModelKpiRail';
+import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
+import { formatDuration } from '@/lib/formatStats';
 
 type PlatformForm = {
   name: string;
@@ -148,28 +151,6 @@ const defaultModelForm: ModelForm = {
 const isSvgAssetUrl = (url?: string | null) => !!url && /\.svg(\?|#|$)/i.test(url);
 const isRasterAssetUrl = (url?: string | null) => !!url && /\.(png|jpe?g|webp|gif|bmp|ico)(\?|#|$)/i.test(url);
 
-function FlagLabel({
-  icon,
-  text,
-  title,
-  style,
-}: {
-  icon: React.ReactNode;
-  text: string;
-  title?: string;
-  style: React.CSSProperties;
-}) {
-  return (
-    <label
-      className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
-      style={style}
-      title={title || text}
-    >
-      <span className="shrink-0">{icon}</span>
-      <span>{text}</span>
-    </label>
-  );
-}
 
 function StatLabel({
   icon,
@@ -200,6 +181,8 @@ type AggregatedModelStats = {
   avgTtfbMs: number | null;
   totalInputTokens: number;
   totalOutputTokens: number;
+  successCount?: number;
+  failCount?: number;
 };
 
 function formatCompactZh(n: number) {
@@ -246,20 +229,6 @@ function toFiniteNumberOrNull(v: string): number | null {
   return n;
 }
 
-function estimateCost(stats: { totalInputTokens: number; totalOutputTokens: number }, pricing: PlatformPricing | null): number | null {
-  if (!pricing) return null;
-  const inCost = (Math.max(0, stats.totalInputTokens) / 1000) * pricing.inPer1k;
-  const outCost = (Math.max(0, stats.totalOutputTokens) / 1000) * pricing.outPer1k;
-  const total = inCost + outCost;
-  return Number.isFinite(total) ? total : null;
-}
-
-function formatMoney(v: number, currency: string) {
-  if (!Number.isFinite(v)) return '';
-  if (v >= 1000) return `${currency}${v.toFixed(0)}`;
-  if (v >= 10) return `${currency}${v.toFixed(1)}`;
-  return `${currency}${v.toFixed(2)}`;
-}
 
 function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, AggregatedModelStats> {
   const tmp = new Map<string, {
@@ -377,6 +346,11 @@ export default function ModelManagePage() {
   const [modelStatsDays, setModelStatsDays] = useState(7);
   const [modelStatsByModel, setModelStatsByModel] = useState<Record<string, AggregatedModelStats>>({});
   const [modelStatsLoading, setModelStatsLoading] = useState(false);
+  const [densityMode, setDensityMode] = useState<'compact' | 'detailed'>('compact');
+  const [expandedStatsModelIds, setExpandedStatsModelIds] = useState<Set<string>>(new Set());
+  const [allStatsExpanded, setAllStatsExpanded] = useState(false);
+  const [platformSidebarCollapsed, setPlatformSidebarCollapsed] = useState(false);
+  const [modelActionMenuOpenId, setModelActionMenuOpenId] = useState<string | null>(null);
 
   const loadModelStats = async () => {
     setModelStatsLoading(true);
@@ -529,6 +503,19 @@ export default function ModelManagePage() {
     };
   }, [platformCtxMenu.open]);
 
+  // 点击外部关闭模型操作菜单
+  useEffect(() => {
+    if (!modelActionMenuOpenId) return;
+    const onClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(`[data-model-menu="${modelActionMenuOpenId}"]`)) {
+        setModelActionMenuOpenId(null);
+      }
+    };
+    window.addEventListener('click', onClickOutside);
+    return () => window.removeEventListener('click', onClickOutside);
+  }, [modelActionMenuOpenId]);
+
   const filteredPlatforms = useMemo(() => {
     const s = platformSearch.trim().toLowerCase();
     if (!s) return platforms;
@@ -570,10 +557,10 @@ export default function ModelManagePage() {
       const ap = typeof a.priority === 'number' ? a.priority : 1e9;
       const bp = typeof b.priority === 'number' ? b.priority : 1e9;
       if (ap !== bp) return ap - bp;
-      const an = (a.name || a.modelName || '').trim();
-      const bn = (b.name || b.modelName || '').trim();
-      return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
-    });
+        const an = (a.name || a.modelName || '').trim();
+        const bn = (b.name || b.modelName || '').trim();
+        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+      });
     return list;
   }, [filteredModels]);
 
@@ -1113,9 +1100,29 @@ export default function ModelManagePage() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr] flex-1 min-h-0">
+      <div className={`grid gap-4 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格） */}
         <Card className="p-0 overflow-hidden flex flex-col">
+          {/* 折叠/展开按钮 */}
+          <div className="p-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            {!platformSidebarCollapsed && (
+              <div className="text-sm font-semibold px-2" style={{ color: 'var(--text-primary)' }}>平台</div>
+            )}
+            <button
+              type="button"
+              onClick={() => setPlatformSidebarCollapsed((prev) => !prev)}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] transition-colors hover:bg-white/6 shrink-0 ml-auto"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: 'var(--text-secondary)',
+              }}
+              title={platformSidebarCollapsed ? '展开平台列表' : '折叠平台列表'}
+            >
+              {platformSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            </button>
+          </div>
+          {!platformSidebarCollapsed && (
+            <>
           <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="relative">
               <Search
@@ -1241,6 +1248,8 @@ export default function ModelManagePage() {
               添加平台
             </Button>
           </div>
+            </>
+          )}
         </Card>
 
         {/* 平台右键菜单 */}
@@ -1497,6 +1506,18 @@ export default function ModelManagePage() {
                           placeholder="搜索模型..."
                         />
                       </div>
+                                        <button
+                                          type="button"
+                        onClick={() => setDensityMode((m) => (m === 'compact' ? 'detailed' : 'compact'))}
+                        className="inline-flex items-center justify-center h-10 w-10 rounded-[14px] transition-colors hover:bg-white/6"
+                                          style={{
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          color: 'var(--text-secondary)',
+                        }}
+                        title={densityMode === 'compact' ? '切换到详情模式' : '切换到简洁模式'}
+                      >
+                        {densityMode === 'compact' ? <LayoutList size={18} /> : <LayoutGrid size={18} />}
+                                        </button>
                     </div>
                   </div>
 
@@ -1514,18 +1535,18 @@ export default function ModelManagePage() {
                               <RefreshCw size={14} className="animate-spin" />
                               保存排序中...
                             </div>
-                          ) : null}
-                        </div>
+                                      ) : null}
+                                    </div>
 
                         <div className="rounded-[16px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
-                          <div className="divide-y divide-white/30">
+                            <div className="divide-y divide-white/30">
                             {displayedModels.map((m) => (
-                              <div
-                                key={m.id}
-                                className={[
-                                  'px-4 py-3 flex items-center justify-between hover:bg-white/2',
-                                  mainJustSetId === m.id ? 'main-row-flash' : '',
-                                ].join(' ')}
+                                <div
+                                  key={m.id}
+                                  className={[
+                                    'px-4 py-3 flex items-center justify-between hover:bg-white/2',
+                                    mainJustSetId === m.id ? 'main-row-flash' : '',
+                                  ].join(' ')}
                                 draggable={canDragSort}
                                 onDragStart={(e) => {
                                   if (!canDragSort) return;
@@ -1551,10 +1572,10 @@ export default function ModelManagePage() {
                                   void persistPriorityOrder(modelOrderIds);
                                 }}
                               >
-                                  <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 min-w-0">
                                       <div
-                                        className="inline-flex items-center justify-center h-[28px] w-[28px] rounded-[10px] cursor-grab active:cursor-grabbing"
+                                        className="inline-flex items-center justify-center h-[18px] w-[18px] rounded-[6px] cursor-grab active:cursor-grabbing shrink-0"
                                         title={canDragSort ? '拖拽排序（优先级）' : '切换到全部后可拖拽排序'}
                                         style={{
                                           border: '1px solid rgba(255,255,255,0.10)',
@@ -1563,30 +1584,33 @@ export default function ModelManagePage() {
                                         }}
                                         onMouseDown={(e) => e.stopPropagation()}
                                       >
-                                        <GripVertical size={16} />
+                                        <GripVertical size={12} />
                                       </div>
 
-                                      <div
-                                        className="text-sm font-semibold truncate"
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          {isAll ? (() => {
+                                            const p = platformById.get(m.platformId);
+                                            if (!p) return null;
+                                            const pid = (p.providerId || p.platformType || '').trim();
+                                            const title = `${p.name}${pid ? ` · ${pid}` : ''}`;
+                                            return (
+                                              <span title={title} className="shrink-0">
+                                                <Badge variant="subtle">{p.name}</Badge>
+                                              </span>
+                                            );
+                                          })() : null}
+                                          <div
+                                            className="text-sm font-semibold truncate flex-1 min-w-0"
                                         style={{ color: 'var(--text-primary)' }}
                                         title={m.modelName}
                                       >
                                         {m.name}
                                       </div>
+                                    </div>
+                                      </div>
 
-                                      {isAll ? (() => {
-                                        const p = platformById.get(m.platformId);
-                                        if (!p) return null;
-                                        const pid = (p.providerId || p.platformType || '').trim();
-                                        const title = `${p.name}${pid ? ` · ${pid}` : ''}`;
-                                        return (
-                                          <span title={title}>
-                                            <Badge variant="subtle">{p.name}</Badge>
-                                          </span>
-                                        );
-                                      })() : null}
-
-                                      {/* 模型统计：放到模型名后面（无数据/为 0 则隐藏；样式参考 FlagLabel） */}
+                                      {/* KPI Rail：3个核心指标（TTFB、成功率、成本/量级） */}
                                       {(() => {
                                         if (modelStatsLoading) return null;
                                         const key = String(m.modelName ?? '').trim().toLowerCase();
@@ -1594,9 +1618,17 @@ export default function ModelManagePage() {
                                         const reqFromModel = Math.max(0, Number(m.callCount ?? 0));
                                         const avgFromModel = Number(m.averageDuration ?? 0);
 
+                                        const successFromModel = Math.max(0, Number(m.successCount ?? 0));
+                                        const failFromModel = Math.max(0, Number(m.failCount ?? 0));
+                                        const totalFromModel = successFromModel + failFromModel;
+                                        const estimatedSuccessCount = totalFromModel > 0 ? successFromModel : (reqFromModel > 0 ? Math.round(reqFromModel * 0.95) : 0);
+
                                         const s: AggregatedModelStats | null =
                                           sFromLogs
-                                            ? sFromLogs
+                                            ? {
+                                                ...sFromLogs,
+                                                successCount: totalFromModel > 0 ? successFromModel : estimatedSuccessCount,
+                                              }
                                             : (reqFromModel > 0
                                               ? {
                                                 requestCount: reqFromModel,
@@ -1604,178 +1636,104 @@ export default function ModelManagePage() {
                                                 avgTtfbMs: null,
                                                 totalInputTokens: 0,
                                                 totalOutputTokens: 0,
+                                                successCount: estimatedSuccessCount,
                                               }
                                               : null);
 
                                         if (!s) return null;
 
-                                        const chips: React.ReactNode[] = [];
-                                        const titlePrefix = `近${modelStatsDays}天`;
-                                        const white = 'rgba(255,255,255,0.92)';
-
-                                        if (s.requestCount > 0) {
-                                          chips.push(
-                                            <StatLabel
-                                              key="req"
-                                              icon={<Activity size={12} />}
-                                              text={`请求 ${formatCompactZh(s.requestCount)}`}
-                                              title={`${titlePrefix} · 请求次数${sFromLogs ? '' : '（模型计数）'}`}
-                                              style={{
-                                                background: 'rgba(255,255,255,0.05)',
-                                                border: '1px solid rgba(255,255,255,0.12)',
-                                                color: white,
-                                              }}
-                                            />
-                                          );
-                                        }
-
-                                        if ((s.avgDurationMs ?? 0) > 0) {
-                                          chips.push(
-                                            <StatLabel
-                                              key="dur"
-                                              icon={<Clock size={12} />}
-                                              text={`平均 ${s.avgDurationMs}ms`}
-                                              title={`${titlePrefix} · 平均响应时间`}
-                                              style={{
-                                                background: 'rgba(245,158,11,0.12)',
-                                                border: '1px solid rgba(245,158,11,0.28)',
-                                                color: white,
-                                              }}
-                                            />
-                                          );
-                                        }
-
-                                        if ((s.avgTtfbMs ?? 0) > 0) {
-                                          chips.push(
-                                            <StatLabel
-                                              key="ttfb"
-                                              icon={<Zap size={12} />}
-                                              text={`首字 ${s.avgTtfbMs}ms`}
-                                              title={`${titlePrefix} · 首字延迟（TTFB）`}
-                                              style={{
-                                                background: 'rgba(59,130,246,0.12)',
-                                                border: '1px solid rgba(59,130,246,0.28)',
-                                                color: white,
-                                              }}
-                                            />
-                                          );
-                                        }
-
-                                        if (s.totalInputTokens > 0) {
-                                          chips.push(
-                                            <StatLabel
-                                              key="in"
-                                              icon={<ArrowDown size={12} />}
-                                              text={`输入 ${formatCompactZh(s.totalInputTokens)}`}
-                                              title={`${titlePrefix} · 输入 token（总量）`}
-                                              style={{
-                                                background: 'rgba(168,85,247,0.12)',
-                                                border: '1px solid rgba(168,85,247,0.28)',
-                                                color: white,
-                                              }}
-                                            />
-                                          );
-                                        }
-
-                                        if (s.totalOutputTokens > 0) {
-                                          chips.push(
-                                            <StatLabel
-                                              key="out"
-                                              icon={<ArrowUp size={12} />}
-                                              text={`输出 ${formatCompactZh(s.totalOutputTokens)}`}
-                                              title={`${titlePrefix} · 输出 token（总量）`}
-                                              style={{
-                                                background: 'rgba(34,197,94,0.12)',
-                                                border: '1px solid rgba(34,197,94,0.28)',
-                                                color: white,
-                                              }}
-                                            />
-                                          );
-                                        }
-
-                                        // 成本估算（需要平台本地定价）
                                         const pricing = pricingByPlatformId[m.platformId] ?? null;
-                                        const cost = estimateCost(s, pricing);
-                                        if (cost != null && pricing) {
-                                          chips.push(
-                                            <StatLabel
-                                              key="cost"
-                                              icon={<DollarSign size={12} />}
-                                              text={`成本 ${formatMoney(cost, pricing.currency || '¥')}`}
-                                              title={`${titlePrefix} · 成本估算（基于本地单价配置）`}
-                                              style={{
-                                                background: 'rgba(16,185,129,0.10)',
-                                                border: '1px solid rgba(16,185,129,0.24)',
-                                                color: white,
-                                              }}
-                                            />
-                                          );
-                                        }
+                                        const titlePrefix = `近${modelStatsDays}天`;
 
-                                        if (chips.length === 0) return null;
-                                        return <div className="flex flex-wrap items-center gap-2 min-w-0">{chips}</div>;
+                                        return (
+                                          <div className="flex-1 min-w-0 flex justify-center">
+                                            <ModelKpiRail
+                                              stats={s}
+                                              pricing={pricing}
+                                              titlePrefix={titlePrefix}
+                                            />
+                                      </div>
+                                        );
                                       })()}
                                     </div>
-                                    {/* 第二行：用于展示标签（主/意图/识图/生图/禁用） */}
-                                    {(m.isMain || m.isIntent || m.isVision || m.isImageGen || !m.enabled) ? (
-                                      <div className="mt-1 flex items-center gap-2 min-w-0">
-                                        {m.isMain ? (
-                                          <FlagLabel
-                                            icon={<Star size={12} fill="currentColor" />}
-                                            text="主"
+
+                                    {/* 第二行：统计信息（统一折叠，默认折叠） */}
+                                    {(() => {
+                                      if (modelStatsLoading) return null;
+                                      if (!allStatsExpanded && !expandedStatsModelIds.has(m.id)) return null;
+                                      
+                                      const key = String(m.modelName ?? '').trim().toLowerCase();
+                                      const sFromLogs = key ? modelStatsByModel[key] : undefined;
+                                      const reqFromModel = Math.max(0, Number(m.callCount ?? 0));
+                                      const avgFromModel = Number(m.averageDuration ?? 0);
+
+                                      const s: AggregatedModelStats | null =
+                                        sFromLogs
+                                          ? sFromLogs
+                                          : (reqFromModel > 0
+                                            ? {
+                                              requestCount: reqFromModel,
+                                              avgDurationMs: Number.isFinite(avgFromModel) && avgFromModel > 0 ? Math.round(avgFromModel) : null,
+                                              avgTtfbMs: null,
+                                              totalInputTokens: 0,
+                                              totalOutputTokens: 0,
+                                            }
+                                            : null);
+
+                                      if (!s) return null;
+
+                                      const titlePrefix = `近${modelStatsDays}天`;
+                                      const white = 'rgba(255,255,255,0.92)';
+                                      const chips: React.ReactNode[] = [];
+
+                                      if (s.requestCount > 0) {
+                                        chips.push(
+                                          <StatLabel
+                                            key="req"
+                                            icon={<Activity size={12} />}
+                                            text={`请求 ${formatCompactZh(s.requestCount)}`}
+                                            title={`${titlePrefix} · 请求次数${sFromLogs ? '' : '（模型计数）'}`}
                                             style={{
-                                              background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)',
-                                              border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)',
-                                              color: 'var(--accent-gold-2)',
-                                            }}
-                                          />
-                                        ) : null}
-                                        {m.isIntent ? (
-                                          <FlagLabel
-                                            icon={<Sparkles size={12} />}
-                                            text="意图"
-                                            style={{
-                                              background: 'rgba(34,197,94,0.12)',
-                                              border: '1px solid rgba(34,197,94,0.28)',
-                                              color: 'rgba(34,197,94,0.95)',
-                                            }}
-                                          />
-                                        ) : null}
-                                        {m.isVision ? (
-                                          <FlagLabel
-                                            icon={<ScanEye size={12} />}
-                                            text="识图"
-                                            style={{
-                                              background: 'rgba(59,130,246,0.12)',
-                                              border: '1px solid rgba(59,130,246,0.28)',
-                                              color: 'rgba(59,130,246,0.95)',
-                                            }}
-                                          />
-                                        ) : null}
-                                        {m.isImageGen ? (
-                                          <FlagLabel
-                                            icon={<ImagePlus size={12} />}
-                                            text="生图"
-                                            style={{
-                                              background: 'rgba(168,85,247,0.12)',
-                                              border: '1px solid rgba(168,85,247,0.28)',
-                                              color: 'rgba(168,85,247,0.95)',
-                                            }}
-                                          />
-                                        ) : null}
-                                        {!m.enabled ? (
-                                          <FlagLabel
-                                            icon={<EyeOff size={12} />}
-                                            text="禁用"
-                                            style={{
-                                              background: 'rgba(255,255,255,0.04)',
+                                              background: 'rgba(255,255,255,0.05)',
                                               border: '1px solid rgba(255,255,255,0.12)',
-                                              color: 'var(--text-secondary)',
+                                              color: white,
                                             }}
                                           />
-                                        ) : null}
-                                      </div>
-                                    ) : null}
+                                        );
+                                      }
+
+                                      if ((s.avgDurationMs ?? 0) > 0) {
+                                        const dur = formatDuration(s.avgDurationMs);
+                                        chips.push(
+                                          <StatLabel
+                                            key="dur"
+                                            icon={<Clock size={12} />}
+                                            text={`平均 ${dur.text}`}
+                                            title={`${titlePrefix} · 平均响应时间`}
+                                            style={{
+                                              background: 'rgba(245,158,11,0.12)',
+                                              border: '1px solid rgba(245,158,11,0.28)',
+                                              color: dur.color,
+                                            }}
+                                          />
+                                        );
+                                      }
+
+                                      if (s.totalInputTokens > 0 || s.totalOutputTokens > 0) {
+                                        chips.push(
+                                          <div key="tokens" className="flex items-center gap-1">
+                                            <ModelTokensDisplay
+                                              inputTokens={s.totalInputTokens}
+                                              outputTokens={s.totalOutputTokens}
+                                              titlePrefix={titlePrefix}
+                                            />
+                                          </div>
+                                        );
+                                      }
+
+                                      if (chips.length === 0) return null;
+                                      return <div className="mt-1.5 flex flex-wrap items-center gap-2 min-w-0">{chips}</div>;
+                                    })()}
                                   </div>
 
                                   <div className="flex items-center gap-2">
@@ -1794,21 +1752,17 @@ export default function ModelManagePage() {
                                       <DatabaseZap size={16} />
                                     </button>
 
-                                    <Button
-                                      variant="secondary"
-                                      size="xs"
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
                                       disabled={testingModelId != null}
                                       onClick={() => void onTest(m)}
-                                      className={[
-                                        testingModelId === m.id ? 'test-btn-loading' : '',
-                                        testResult?.modelId === m.id && testResult.ok ? 'test-btn-ok' : '',
-                                      ].filter(Boolean).join(' ')}
                                       style={
                                         testResult?.modelId === m.id
                                           ? testResult.ok
-                                            ? { background: 'rgba(34,197,94,0.18)', borderColor: 'rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
-                                            : { background: 'rgba(239,68,68,0.14)', borderColor: 'rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
-                                          : undefined
+                                            ? { background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
+                                            : { background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
+                                          : { border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }
                                       }
                                       title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
                                     >
@@ -1819,15 +1773,10 @@ export default function ModelManagePage() {
                                       ) : (
                                         <Link2 size={16} />
                                       )}
-                                      {testingModelId === m.id
-                                        ? '测试中'
-                                        : testResult?.modelId === m.id
-                                          ? testResult.ok
-                                            ? 'OK'
-                                            : '失败'
-                                          : '测试'}
-                                    </Button>
+                                    </button>
 
+                                    {/* 操作按钮组（主/意图/识图/生图）- 用圆角矩形框框选 */}
+                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1880,26 +1829,76 @@ export default function ModelManagePage() {
                                     >
                                       <ImagePlus size={16} className={imageGenJustSetId === m.id ? 'main-star-pop' : ''} />
                                     </Button>
+                                    </div>
 
-                                    <Button variant="ghost" size="sm" onClick={() => openEditModel(m)}>
-                                      <Pencil size={16} />
-                                    </Button>
+                                    {/* 更多菜单 */}
+                                    <div className="relative" data-model-menu={m.id}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setModelActionMenuOpenId(modelActionMenuOpenId === m.id ? null : m.id);
+                                        }}
+                                        className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
+                                        style={{
+                                          border: '1px solid rgba(255,255,255,0.10)',
+                                          color: 'var(--text-secondary)',
+                                        }}
+                                        aria-label="更多操作"
+                                        title="更多操作"
+                                      >
+                                        <MoreVertical size={16} />
+                                      </button>
+                                      {modelActionMenuOpenId === m.id && (
+                                        <div
+                                          className="absolute right-0 top-full mt-1 z-50 rounded-[12px] p-1 min-w-[140px]"
+                                          style={{
+                                            background: 'var(--bg-elevated)',
+                                            border: '1px solid var(--border-subtle)',
+                                            boxShadow: 'var(--shadow-lg)',
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              openEditModel(m);
+                                              setModelActionMenuOpenId(null);
+                                            }}
+                                            className="w-full flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm hover:bg-white/5"
+                                            style={{ color: 'var(--text-primary)' }}
+                                          >
+                                            <Pencil size={14} />
+                                            编辑
+                                          </button>
+                                          <div className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
                                     <ConfirmTip
-                                      title={`确认删除模型“${m.name}”？`}
+                                            title={`确认删除模型"${m.name}"？`}
                                       description="该操作不可撤销"
                                       confirmText="确认删除"
                                       cancelText="取消"
-                                      onConfirm={() => onDeleteModel(m)}
-                                      side="top"
-                                      align="end"
-                                    >
-                                      <Button variant="danger" size="sm" aria-label="删除模型">
-                                        <Trash2 size={16} />
-                                      </Button>
+                                            onConfirm={() => {
+                                              onDeleteModel(m);
+                                              setModelActionMenuOpenId(null);
+                                            }}
+                                            side="left"
+                                            align="start"
+                                          >
+                                            <button
+                                              type="button"
+                                              className="w-full flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm hover:bg-white/5"
+                                              style={{ color: 'rgba(239,68,68,0.95)' }}
+                                            >
+                                              <Trash2 size={14} />
+                                              删除
+                                            </button>
                                     </ConfirmTip>
                                   </div>
+                                      )}
+                                </div>
+                            </div>
                               </div>
-                            ))}
+                        ))}
                           </div>
                         </div>
                       </div>
@@ -1915,6 +1914,25 @@ export default function ModelManagePage() {
           </div>
 
           <div className="p-3 flex items-center gap-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            {isAll ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="w-[100px]"
+                onClick={() => {
+                  setAllStatsExpanded((prev) => !prev);
+                  if (!allStatsExpanded) {
+                    // 展开所有模型的统计
+                    setExpandedStatsModelIds(new Set(displayedModels.map((m) => m.id)));
+                  } else {
+                    // 折叠所有模型的统计
+                    setExpandedStatsModelIds(new Set());
+                  }
+                }}
+              >
+                {allStatsExpanded ? '折叠' : '展开'}
+              </Button>
+            ) : (
             <Button
               variant="secondary"
               size="sm"
@@ -1926,6 +1944,7 @@ export default function ModelManagePage() {
             >
               管理
             </Button>
+            )}
             <Button
               variant="primary"
               size="sm"

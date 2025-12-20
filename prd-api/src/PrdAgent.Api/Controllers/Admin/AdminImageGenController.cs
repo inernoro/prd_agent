@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -24,6 +25,7 @@ public class AdminImageGenController : ControllerBase
     private readonly OpenAIImageClient _imageClient;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<AdminImageGenController> _logger;
+    private readonly IAppSettingsService _settingsService;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -32,13 +34,15 @@ public class AdminImageGenController : ControllerBase
         IModelDomainService modelDomain,
         OpenAIImageClient imageClient,
         ILLMRequestContextAccessor llmRequestContext,
-        ILogger<AdminImageGenController> logger)
+        ILogger<AdminImageGenController> logger,
+        IAppSettingsService settingsService)
     {
         _db = db;
         _modelDomain = modelDomain;
         _imageClient = imageClient;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
+        _settingsService = settingsService;
     }
 
     private string GetAdminId() =>
@@ -61,8 +65,14 @@ public class AdminImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "text 不能为空"));
         }
 
-        // 防滥用：限制输入长度（这不是 PRD 上传入口）
-        if (text.Length > 8000) text = text[..8000];
+        // 使用系统配置的字符限制（默认 200k，所有大模型请求输入的字符限制统一来源）
+        var settings = await _settingsService.GetSettingsAsync(ct);
+        var maxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
+        if (text.Length > maxChars)
+        {
+            _logger.LogWarning("ImageGen plan text truncated: {OriginalLength} -> {MaxChars}", text.Length, maxChars);
+            text = text[..maxChars];
+        }
 
         var maxItems = request?.MaxItems ?? 10;
         maxItems = Math.Clamp(maxItems, 1, 20);
@@ -238,6 +248,13 @@ public class AdminImageGenController : ControllerBase
         var done = 0;
         var failed = 0;
 
+        // 使用 SemaphoreSlim 控制并发数
+        var maxConc = Math.Clamp(request?.MaxConcurrency ?? 3, 1, 10);
+        var sem = new SemaphoreSlim(maxConc, maxConc);
+        var writeLock = new SemaphoreSlim(1, 1);
+        var tasks = new List<Task>();
+
+        // 收集所有需要生成的图片任务
         for (var itemIndex = 0; itemIndex < items.Count; itemIndex++)
         {
             var prompt = (items[itemIndex].Prompt ?? string.Empty).Trim();
@@ -253,78 +270,129 @@ public class AdminImageGenController : ControllerBase
             {
                 if (cancellationToken.IsCancellationRequested) break;
 
+                var currentItemIndex = itemIndex;
                 var imageIndex = k;
-                await WriteEventAsync("image", new { type = "imageStart", runId, itemIndex, imageIndex, prompt }, cancellationToken);
+                var currentPrompt = prompt;
 
-                try
+                // 创建并发任务
+                tasks.Add(Task.Run(async () =>
                 {
-                    using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-                        RequestId: Guid.NewGuid().ToString("N"),
-                        GroupId: null,
-                        SessionId: null,
-                        UserId: adminId,
-                        ViewRole: "ADMIN",
-                        DocumentChars: null,
-                        DocumentHash: null,
-                        SystemPromptRedacted: "[IMAGE_GEN_BATCH_GENERATE]",
-                        RequestType: "imageGen",
-                        RequestPurpose: "imageGen.batch.generate"));
-
-                    var res = await _imageClient.GenerateAsync(prompt, n: 1, size, responseFormat, cancellationToken, modelId, platformId, modelName);
-                    if (!res.Success)
+                    await sem.WaitAsync(cancellationToken);
+                    try
                     {
-                        failed++;
-                        await WriteEventAsync("image", new
+                        // 发送开始事件
+                        await writeLock.WaitAsync(cancellationToken);
+                        try
                         {
-                            type = "imageError",
-                            runId,
-                            itemIndex,
-                            imageIndex,
-                            prompt,
-                            modelId,
-                            platformId,
-                            modelName,
-                            errorCode = res.Error?.Code ?? ErrorCodes.LLM_ERROR,
-                            errorMessage = res.Error?.Message ?? "生图失败"
-                        }, cancellationToken);
-                        continue;
-                    }
+                            await WriteEventAsync("image", new { type = "imageStart", runId, itemIndex = currentItemIndex, imageIndex, prompt = currentPrompt }, cancellationToken);
+                        }
+                        finally
+                        {
+                            writeLock.Release();
+                        }
 
-                    var first = res.Data?.Images?.FirstOrDefault();
-                    done++;
-                    await WriteEventAsync("image", new
+                        try
+                        {
+                            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                                RequestId: Guid.NewGuid().ToString("N"),
+                                GroupId: null,
+                                SessionId: null,
+                                UserId: adminId,
+                                ViewRole: "ADMIN",
+                                DocumentChars: null,
+                                DocumentHash: null,
+                                SystemPromptRedacted: "[IMAGE_GEN_BATCH_GENERATE]",
+                                RequestType: "imageGen",
+                                RequestPurpose: "imageGen.batch.generate"));
+
+                            var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, size, responseFormat, cancellationToken, modelId, platformId, modelName);
+                            
+                            await writeLock.WaitAsync(cancellationToken);
+                            try
+                            {
+                                if (!res.Success)
+                                {
+                                    Interlocked.Increment(ref failed);
+                                    await WriteEventAsync("image", new
+                                    {
+                                        type = "imageError",
+                                        runId,
+                                        itemIndex = currentItemIndex,
+                                        imageIndex,
+                                        prompt = currentPrompt,
+                                        modelId,
+                                        platformId,
+                                        modelName,
+                                        errorCode = res.Error?.Code ?? ErrorCodes.LLM_ERROR,
+                                        errorMessage = res.Error?.Message ?? "生图失败"
+                                    }, cancellationToken);
+                                    return;
+                                }
+
+                                var first = res.Data?.Images?.FirstOrDefault();
+                                Interlocked.Increment(ref done);
+                                await WriteEventAsync("image", new
+                                {
+                                    type = "imageDone",
+                                    runId,
+                                    itemIndex = currentItemIndex,
+                                    imageIndex,
+                                    prompt = currentPrompt,
+                                    modelId,
+                                    platformId,
+                                    modelName,
+                                    base64 = first?.Base64,
+                                    url = first?.Url,
+                                    revisedPrompt = first?.RevisedPrompt
+                                }, cancellationToken);
+                            }
+                            finally
+                            {
+                                writeLock.Release();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            await writeLock.WaitAsync(cancellationToken);
+                            try
+                            {
+                                Interlocked.Increment(ref failed);
+                                await WriteEventAsync("image", new
+                                {
+                                    type = "imageError",
+                                    runId,
+                                    itemIndex = currentItemIndex,
+                                    imageIndex,
+                                    prompt = currentPrompt,
+                                    modelId,
+                                    platformId,
+                                    modelName,
+                                    errorCode = ErrorCodes.LLM_ERROR,
+                                    errorMessage = ex.Message
+                                }, cancellationToken);
+                            }
+                            finally
+                            {
+                                writeLock.Release();
+                            }
+                        }
+                    }
+                    finally
                     {
-                        type = "imageDone",
-                        runId,
-                        itemIndex,
-                        imageIndex,
-                        prompt,
-                        modelId,
-                        platformId,
-                        modelName,
-                        base64 = first?.Base64,
-                        url = first?.Url,
-                        revisedPrompt = first?.RevisedPrompt
-                    }, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    failed++;
-                    await WriteEventAsync("image", new
-                    {
-                        type = "imageError",
-                        runId,
-                        itemIndex,
-                        imageIndex,
-                        prompt,
-                        modelId,
-                        platformId,
-                        modelName,
-                        errorCode = ErrorCodes.LLM_ERROR,
-                        errorMessage = ex.Message
-                    }, cancellationToken);
-                }
+                        sem.Release();
+                    }
+                }, cancellationToken));
             }
+        }
+
+        // 等待所有任务完成
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (OperationCanceledException)
+        {
+            // 取消时忽略异常
         }
 
         await WriteEventAsync("run", new { type = "runDone", runId, total, done, failed, endedAt = DateTime.UtcNow }, cancellationToken);
@@ -463,5 +531,6 @@ public class ImageGenBatchRequest
     public List<ImageGenPlanItem> Items { get; set; } = new();
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url
+    public int? MaxConcurrency { get; set; } // 最大并发数
 }
 

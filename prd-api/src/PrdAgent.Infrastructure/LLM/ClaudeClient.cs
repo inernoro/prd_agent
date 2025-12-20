@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -217,7 +218,7 @@ public class ClaudeClient : ILLMClient
         var firstByteMarked = false;
         var assembledChars = 0;
         var answerSb = new StringBuilder(capacity: 1024);
-        const int AnswerMaxChars = 200_000;
+        var answerMaxChars = LlmLogLimits.DefaultAnswerMaxChars;
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         try
@@ -286,9 +287,9 @@ public class ClaudeClient : ILLMClient
 
                     assembledChars += eventData.Delta.Text.Length;
                     hasher.AppendData(Encoding.UTF8.GetBytes(eventData.Delta.Text));
-                    if (answerSb.Length < AnswerMaxChars)
+                    if (answerSb.Length < answerMaxChars)
                     {
-                        var remain = AnswerMaxChars - answerSb.Length;
+                        var remain = answerMaxChars - answerSb.Length;
                         answerSb.Append(eventData.Delta.Text.Length <= remain ? eventData.Delta.Text : eventData.Delta.Text[..remain]);
                     }
 

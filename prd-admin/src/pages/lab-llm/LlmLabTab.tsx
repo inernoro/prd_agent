@@ -575,6 +575,7 @@ export default function LlmLabTab() {
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastSavedSigRef = useRef<string>('');
   const lastSavedExperimentIdRef = useRef<string>('');
+  const isModeSwitchingRef = useRef(false); // 标记是否正在切换模式（json/mcp/functionCall），用于跳过自动保存
 
   useEffect(() => {
     allModelsRef.current = allModels ?? [];
@@ -814,9 +815,15 @@ export default function LlmLabTab() {
     // 切换实验后，先等上面的 activeExperiment 同步快照
     if (lastSavedExperimentIdRef.current !== activeExperimentId) return;
 
-    // 只对“实验会保存的字段”做自动保存，避免 mode（JSON/MCP/FunctionCall）切换触发保存并被 suite 回填覆盖
+    // 只对"实验会保存的字段"做自动保存，避免 mode（JSON/MCP/FunctionCall）切换触发保存并被 suite 回填覆盖
     const sig = [String(suite ?? ''), JSON.stringify(params ?? {}), String(promptText ?? ''), signatureOfSelectedModels(selectedModels)].join('||');
     if (sig === lastSavedSigRef.current) return;
+
+    // 如果是模式切换（json/mcp/functionCall）导致的 promptText 变化，只更新签名但不保存
+    if (isModeSwitchingRef.current) {
+      lastSavedSigRef.current = sig;
+      return;
+    }
 
     // debounce：避免快速点选/输入导致频繁请求
     if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
@@ -991,7 +998,7 @@ export default function LlmLabTab() {
       batchAbortRef.current = ac;
 
       const res = await runImageGenBatchStream({
-        input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json' },
+        input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json', maxConcurrency: params.maxConcurrency },
         signal: ac.signal,
         onEvent: (evt) => {
           if (!evt.data) return;
@@ -1458,6 +1465,10 @@ export default function LlmLabTab() {
       // 切换 speed/intent/custom 时，同步 suite（会写入实验）
       if (next === 'speed' || next === 'intent' || next === 'custom') {
         setSuite(next);
+        isModeSwitchingRef.current = false; // 这些模式会保存，所以允许自动保存
+      } else {
+        // json/mcp/functionCall 只是模板切换，不触发保存
+        isModeSwitchingRef.current = true;
       }
       setMode(next);
       const list = builtInPrompts[next] ?? [];
@@ -1465,6 +1476,12 @@ export default function LlmLabTab() {
       applyBuiltInPrompt(first);
       // 下一次再点时，从第二条开始循环（若只有 1 条则继续 0）
       suiteCycleRef.current[next] = list.length > 1 ? 1 : 0;
+      // 如果是 json/mcp/functionCall，延迟重置标记，让自动保存能跳过这次 promptText 变化
+      if (isModeSwitchingRef.current) {
+        setTimeout(() => {
+          isModeSwitchingRef.current = false;
+        }, 100);
+      }
       return;
     }
 
@@ -1473,6 +1490,13 @@ export default function LlmLabTab() {
     if (list.length === 0) return;
     const cur = suiteCycleRef.current[next] ?? 0;
     const idx = ((cur % list.length) + list.length) % list.length;
+    // 重复点击时，如果是 json/mcp/functionCall，也不触发保存
+    if (next === 'json' || next === 'mcp' || next === 'functionCall') {
+      isModeSwitchingRef.current = true;
+      setTimeout(() => {
+        isModeSwitchingRef.current = false;
+      }, 100);
+    }
     applyBuiltInPrompt(list[idx].promptText);
     suiteCycleRef.current[next] = (idx + 1) % list.length;
   };

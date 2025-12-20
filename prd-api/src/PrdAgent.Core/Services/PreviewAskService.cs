@@ -18,19 +18,22 @@ public class PreviewAskService : IPreviewAskService
     private readonly IDocumentService _documentService;
     private readonly IPromptManager _promptManager;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IAppSettingsService _settingsService;
 
     public PreviewAskService(
         ILLMClient llmClient,
         ISessionService sessionService,
         IDocumentService documentService,
         IPromptManager promptManager,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IAppSettingsService settingsService)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
         _documentService = documentService;
         _promptManager = promptManager;
         _llmRequestContext = llmRequestContext;
+        _settingsService = settingsService;
     }
 
     public async IAsyncEnumerable<PreviewAskStreamEvent> AskInSectionAsync(
@@ -102,10 +105,15 @@ public class PreviewAskService : IPreviewAskService
         }
 
         // 控制上下文长度：
-        // - “本章提问”需要强调本章内容，但也希望模型可参考全文（避免漏掉跨章节信息）
-        // - 若全文过长，会顶爆上下文，因此对“全文参考”做上限截断；本章内容仍优先保留。
-        const int maxSectionChars = 24000;
-        const int maxFullPrdChars = 90000; // 经验值：过大容易导致上下文超限/延迟飙升
+        // - "本章提问"需要强调本章内容，但也希望模型可参考全文（避免漏掉跨章节信息）
+        // - 若全文过长，会顶爆上下文，因此对"全文参考"做上限截断；本章内容仍优先保留。
+        // 使用系统配置的字符限制（默认 200k，所有大模型请求输入的字符限制统一来源）
+        var settings = await _settingsService.GetSettingsAsync(cancellationToken);
+        var maxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
+        // 章节内容限制为配置的 12%（经验值：章节不应占用过多上下文）
+        var maxSectionChars = (int)(maxChars * 0.12);
+        // 全文参考限制为配置的 45%（经验值：过大容易导致上下文超限/延迟飙升）
+        var maxFullPrdChars = (int)(maxChars * 0.45);
 
         var sectionForPrompt = sectionMarkdown;
         if (sectionForPrompt.Length > maxSectionChars)

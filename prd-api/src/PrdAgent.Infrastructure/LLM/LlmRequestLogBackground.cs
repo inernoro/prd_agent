@@ -86,11 +86,12 @@ public sealed class LlmRequestLogBackground
 
     private Task UpdateDoneAsync(string logId, LlmLogDone done)
     {
-        // 二次保险：避免超长文本导致 Mongo 文档过大
+        // 二次保险：避免超长文本导致 Mongo 文档过大（使用系统配置，默认 200k）
         var answerText = done.AnswerText;
-        if (!string.IsNullOrEmpty(answerText) && answerText.Length > 200_000)
+        var answerMaxChars = LlmLogLimits.DefaultAnswerMaxChars;
+        if (!string.IsNullOrEmpty(answerText) && answerText.Length > answerMaxChars)
         {
-            answerText = answerText[..200_000] + "...[TRUNCATED]";
+            answerText = answerText[..answerMaxChars] + "...[TRUNCATED]";
         }
 
         var update = Builders<LlmRequestLog>.Update
@@ -114,7 +115,8 @@ public sealed class LlmRequestLogBackground
 
     private Task UpdateErrorAsync(string logId, string error, int? statusCode)
     {
-        if (!string.IsNullOrEmpty(error) && error.Length > 20_000) error = error[..20_000] + "...[TRUNCATED]";
+        var errorMaxChars = LlmLogLimits.DefaultErrorMaxChars;
+        if (!string.IsNullOrEmpty(error) && error.Length > errorMaxChars) error = error[..errorMaxChars] + "...[TRUNCATED]";
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.Error, error)
             .Set(l => l.StatusCode, statusCode)

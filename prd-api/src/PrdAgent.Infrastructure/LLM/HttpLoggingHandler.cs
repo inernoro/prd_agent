@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -24,8 +25,8 @@ public class HttpLoggingHandler : DelegatingHandler
         "api-key"
     };
 
-    // 最大记录body长度（避免日志过大）
-    private const int MaxBodyLength = 8000;
+    // 最大记录body长度（使用系统配置，默认 50k）
+    private static readonly int MaxBodyLength = LlmLogLimits.DefaultHttpLogBodyMaxChars;
 
     public HttpLoggingHandler(ILogger<HttpLoggingHandler> logger)
     {

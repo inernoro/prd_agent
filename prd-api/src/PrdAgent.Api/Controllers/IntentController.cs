@@ -11,10 +11,12 @@ namespace PrdAgent.Api.Controllers;
 public class IntentController : ControllerBase
 {
     private readonly IModelDomainService _modelDomain;
+    private readonly IAppSettingsService _settingsService;
 
-    public IntentController(IModelDomainService modelDomain)
+    public IntentController(IModelDomainService modelDomain, IAppSettingsService settingsService)
     {
         _modelDomain = modelDomain;
+        _settingsService = settingsService;
     }
 
     [HttpPost("group-name")]
@@ -27,9 +29,14 @@ public class IntentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "snippet 不能为空"));
         }
 
-        // 严格限制输入长度，避免被误用为“全文存储/转发”
+        // 使用系统配置的字符限制（默认 200k，所有大模型请求输入的字符限制统一来源）
         var snippet = request.Snippet.Trim();
-        if (snippet.Length > 2000) snippet = snippet[..2000];
+        var settings = await _settingsService.GetSettingsAsync(ct);
+        var maxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
+        if (snippet.Length > maxChars)
+        {
+            snippet = snippet[..maxChars];
+        }
 
         try
         {

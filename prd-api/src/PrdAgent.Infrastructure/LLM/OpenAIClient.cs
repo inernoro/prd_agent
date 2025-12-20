@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -195,7 +196,7 @@ public class OpenAIClient : ILLMClient
         var firstByteMarked = false;
         var assembledChars = 0;
         var answerSb = new StringBuilder(capacity: 1024);
-        const int AnswerMaxChars = 200_000;
+        var answerMaxChars = LlmLogLimits.DefaultAnswerMaxChars;
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         try
@@ -269,9 +270,9 @@ public class OpenAIClient : ILLMClient
 
                         assembledChars += delta.Content.Length;
                         hasher.AppendData(Encoding.UTF8.GetBytes(delta.Content));
-                        if (answerSb.Length < AnswerMaxChars)
+                        if (answerSb.Length < answerMaxChars)
                         {
-                            var remain = AnswerMaxChars - answerSb.Length;
+                            var remain = answerMaxChars - answerSb.Length;
                             answerSb.Append(delta.Content.Length <= remain ? delta.Content : delta.Content[..remain]);
                         }
 

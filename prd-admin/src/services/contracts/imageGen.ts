@@ -41,6 +41,7 @@ export type ImageGenBatchStreamInput = {
   items: ImageGenPlanItem[];
   size?: string;
   responseFormat?: 'b64_json' | 'url';
+  maxConcurrency?: number; // 最大并发数
 };
 
 export type ImageGenBatchStreamEvent = { event?: string; data?: string };
