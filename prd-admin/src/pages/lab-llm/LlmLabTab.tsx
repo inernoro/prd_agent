@@ -36,6 +36,8 @@ import {
 import type { ModelLabExperiment, ModelLabModelSet, ModelLabParams, ModelLabSelectedModel, ModelLabSuite } from '@/services/contracts/modelLab';
 import type { ImageGenGenerateResponse, ImageGenPlanItem, ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import { ModelPickerDialog } from '@/pages/lab-llm/components/ModelPickerDialog';
+import { useAuthStore } from '@/stores/authStore';
+import { clearLlmLabImagesForUser, getLlmLabImageBlob, putLlmLabImageBlob } from '@/lib/llmLabImageDb';
 
 type ViewRunItem = {
   itemId: string;
@@ -78,6 +80,43 @@ type ImageViewItem = {
   url?: string | null;
   revisedPrompt?: string | null;
   errorMessage?: string;
+};
+
+type CachedImageItem = Omit<ImageViewItem, 'base64'> & {
+  /** true 表示图片内容已写入 IndexedDB（key 即 ImageViewItem.key） */
+  hasLocalBlob?: boolean;
+  /** 不持久化 blob: URL；仅保留 http(s) URL 或空 */
+  url?: string | null;
+  base64?: null;
+};
+
+type ExpectedFormat = 'json' | 'mcp' | 'functionCall' | 'imageGenPlan';
+type LabMode = ModelLabSuite | ExpectedFormat;
+
+type LlmLabCacheV1 = {
+  version: 1;
+  savedAt: number;
+  activeExperimentId: string;
+  mainMode: MainMode;
+  mode: LabMode;
+  suite: ModelLabSuite;
+  sortBy: SortBy;
+  imageSubMode: ImageSubMode;
+  imgSize: string;
+  singleN: number;
+  promptText: string;
+
+  runError: string | null;
+  runItems: ViewRunItem[];
+
+  imageError: string | null;
+  imageItems: CachedImageItem[];
+  singleGroupId: string;
+  singleSelected: Record<string, boolean>;
+
+  planResult: ImageGenPlanResponse | null;
+  batchError: string | null;
+  batchItems: CachedImageItem[];
 };
 
 type AspectOption = {
@@ -244,9 +283,6 @@ type SuiteCheck = {
   ok: boolean;
   reason: string;
 };
-
-type ExpectedFormat = 'json' | 'mcp' | 'functionCall' | 'imageGenPlan';
-type LabMode = ModelLabSuite | ExpectedFormat;
 
 function validateByFormatTest(expectedFormat: ExpectedFormat | null | undefined, raw: string): SuiteCheck | null {
   const t = (raw ?? '').trim();
@@ -543,6 +579,14 @@ const builtInPrompts: Record<LabMode, { label: string; promptText: string }[]> =
 };
 
 export default function LlmLabTab() {
+  const authUser = useAuthStore((s) => s.user);
+  const cacheUserId = (authUser?.userId ?? 'anonymous').trim() || 'anonymous';
+  const labCacheKey = useMemo(() => `prd-admin-llm-lab-cache:v1:${cacheUserId}`, [cacheUserId]);
+  const hydratedRef = useRef(false);
+  const cacheSaveTimerRef = useRef<number | null>(null);
+  const storedBlobKeysRef = useRef<Set<string>>(new Set());
+  const objectUrlByKeyRef = useRef<Map<string, string>>(new Map());
+
   const [allModels, setAllModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -622,6 +666,215 @@ export default function LlmLabTab() {
   const lastSavedSigRef = useRef<string>('');
   const lastSavedExperimentIdRef = useRef<string>('');
   const isModeSwitchingRef = useRef(false); // 标记是否正在切换模式（json/mcp/functionCall），用于跳过自动保存
+
+  const revokeAllObjectUrls = useCallback(() => {
+    const m = objectUrlByKeyRef.current;
+    for (const [, url] of m) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // ignore
+      }
+    }
+    m.clear();
+  }, []);
+
+  useEffect(() => {
+    // 组件卸载时释放 blob: URL，避免内存泄漏
+    return () => {
+      revokeAllObjectUrls();
+    };
+  }, [revokeAllObjectUrls]);
+
+  const attachLocalBlobsToImageItems = useCallback(
+    async (items: CachedImageItem[], kind: 'single' | 'batch') => {
+      if (!items?.length) return;
+      const updated = await Promise.all(
+        items.map(async (it) => {
+          const hasLocal = Boolean(it.hasLocalBlob);
+          if (!hasLocal) return it as unknown as ImageViewItem;
+          const blob = await getLlmLabImageBlob(cacheUserId, it.key);
+          if (!blob) {
+            return {
+              ...(it as any),
+              status: 'error',
+              errorMessage: `本地图片缓存不存在（可能已清理或异地登录）。图片仅保存在本机浏览器本地。`,
+              base64: null,
+              url: null,
+            } as ImageViewItem;
+          }
+          const url = URL.createObjectURL(blob);
+          const prev = objectUrlByKeyRef.current.get(it.key);
+          if (prev && prev !== url) {
+            try {
+              URL.revokeObjectURL(prev);
+            } catch {
+              // ignore
+            }
+          }
+          objectUrlByKeyRef.current.set(it.key, url);
+          return { ...(it as any), base64: null, url } as ImageViewItem;
+        })
+      );
+
+      if (kind === 'single') setImageItems(updated);
+      else setBatchItems(Object.fromEntries(updated.map((x) => [x.key, x])));
+    },
+    [cacheUserId]
+  );
+
+  // 启动时：从本地恢复 UI 选择与结果（除非用户手动清空）
+  useEffect(() => {
+    hydratedRef.current = false;
+    try {
+      const raw = localStorage.getItem(labCacheKey);
+      if (!raw) {
+        hydratedRef.current = true;
+        return;
+      }
+      const data = JSON.parse(raw) as Partial<LlmLabCacheV1>;
+      if (!data || (data as any).version !== 1) {
+        hydratedRef.current = true;
+        return;
+      }
+
+      if (typeof data.activeExperimentId === 'string') setActiveExperimentId(data.activeExperimentId);
+      if (data.mainMode === 'infer' || data.mainMode === 'image') setMainMode(data.mainMode);
+      if (typeof data.mode === 'string') setMode(data.mode as any);
+      if (data.suite === 'speed' || data.suite === 'intent' || data.suite === 'custom') setSuite(data.suite);
+      if (data.sortBy === 'ttft' || data.sortBy === 'total' || data.sortBy === 'imagePlanItemsDesc') setSortBy(data.sortBy);
+      if (data.imageSubMode === 'single' || data.imageSubMode === 'batch') setImageSubMode(data.imageSubMode);
+      if (typeof data.imgSize === 'string' && data.imgSize.trim()) setImgSize(data.imgSize.trim());
+      if (typeof data.singleN === 'number') setSingleN(Math.max(1, Math.min(20, Number(data.singleN || 1))));
+      if (typeof data.promptText === 'string') setPromptText(data.promptText);
+
+      if (typeof data.runError === 'string' || data.runError === null) setRunError(data.runError ?? null);
+      if (Array.isArray(data.runItems)) setRunItems(Object.fromEntries(data.runItems.map((x) => [x.itemId, x])));
+
+      if (typeof data.imageError === 'string' || data.imageError === null) setImageError(data.imageError ?? null);
+      if (typeof data.singleGroupId === 'string') setSingleGroupId(data.singleGroupId);
+      if (data.singleSelected && typeof data.singleSelected === 'object') setSingleSelected(data.singleSelected as any);
+
+      if (data.planResult && typeof data.planResult === 'object') setPlanResult(data.planResult as any);
+      if (typeof data.batchError === 'string' || data.batchError === null) setBatchError(data.batchError ?? null);
+
+      const cachedSingle = Array.isArray(data.imageItems) ? (data.imageItems as CachedImageItem[]) : [];
+      const cachedBatch = Array.isArray(data.batchItems) ? (data.batchItems as CachedImageItem[]) : [];
+
+      // 先落状态，再异步挂载本地图片（blob->objectURL）
+      setImageItems(cachedSingle as unknown as ImageViewItem[]);
+      setBatchItems(Object.fromEntries(cachedBatch.map((x) => [x.key, x])) as any);
+
+      void attachLocalBlobsToImageItems(cachedSingle, 'single');
+      void attachLocalBlobsToImageItems(cachedBatch, 'batch');
+    } catch {
+      // ignore
+    } finally {
+      hydratedRef.current = true;
+    }
+  }, [attachLocalBlobsToImageItems, labCacheKey]);
+
+  // 持久化：保存 UI 选择与结果到 localStorage（图片内容单独进 IndexedDB）
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    if (cacheSaveTimerRef.current) window.clearTimeout(cacheSaveTimerRef.current);
+
+    cacheSaveTimerRef.current = window.setTimeout(() => {
+      try {
+        const stripImage = (it: ImageViewItem): CachedImageItem => {
+          const isBlobUrl = typeof it.url === 'string' && it.url.startsWith('blob:');
+          const hasLocalBlob = it.status === 'done' && typeof it.base64 === 'string' && it.base64.trim().length > 0;
+          return {
+            ...(it as any),
+            base64: null,
+            hasLocalBlob: hasLocalBlob || isBlobUrl || Boolean((it as any).hasLocalBlob),
+            url: isBlobUrl ? null : (it.url ?? null),
+          } as CachedImageItem;
+        };
+
+        const cache: LlmLabCacheV1 = {
+          version: 1,
+          savedAt: Date.now(),
+          activeExperimentId: activeExperimentId || '',
+          mainMode,
+          mode,
+          suite,
+          sortBy,
+          imageSubMode,
+          imgSize,
+          singleN: Number(singleN || 1),
+          promptText: promptText ?? '',
+
+          runError: runError ?? null,
+          runItems: Object.values(runItems ?? {}),
+
+          imageError: imageError ?? null,
+          imageItems: (imageItems ?? []).map(stripImage),
+          singleGroupId: singleGroupId ?? '',
+          singleSelected: singleSelected ?? {},
+
+          planResult: planResult ?? null,
+          batchError: batchError ?? null,
+          batchItems: Object.values(batchItems ?? {}).map(stripImage),
+        };
+
+        localStorage.setItem(labCacheKey, JSON.stringify(cache));
+      } catch {
+        // ignore
+      }
+    }, 350);
+
+    return () => {
+      if (cacheSaveTimerRef.current) window.clearTimeout(cacheSaveTimerRef.current);
+    };
+  }, [
+    activeExperimentId,
+    batchError,
+    batchItems,
+    imageError,
+    imageItems,
+    imageSubMode,
+    imgSize,
+    labCacheKey,
+    mainMode,
+    mode,
+    planResult,
+    promptText,
+    runError,
+    runItems,
+    singleGroupId,
+    singleN,
+    singleSelected,
+    sortBy,
+    suite,
+  ]);
+
+  // 将生成的图片内容写入 IndexedDB（避免刷新后丢失；并与 userId 隔离）
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const userId = cacheUserId;
+
+    const upsertFrom = async (list: ImageViewItem[]) => {
+      for (const it of list) {
+        if (it.status !== 'done') continue;
+        const b64 = typeof it.base64 === 'string' ? it.base64.trim() : '';
+        if (!b64) continue;
+        const k = `${userId}:${it.key}`;
+        if (storedBlobKeysRef.current.has(k)) continue;
+        try {
+          const bytes = base64ToUint8Array(b64);
+          const blob = new Blob([bytes], { type: 'image/png' });
+          await putLlmLabImageBlob(userId, it.key, blob);
+          storedBlobKeysRef.current.add(k);
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    void upsertFrom(imageItems ?? []);
+    void upsertFrom(Object.values(batchItems ?? {}));
+  }, [batchItems, cacheUserId, imageItems]);
 
   useEffect(() => {
     allModelsRef.current = allModels ?? [];
@@ -902,6 +1155,45 @@ export default function LlmLabTab() {
     setBatchRunning(false);
     setBatchActiveModelLabel('');
   };
+
+  const clearLabLocalCacheAndResults = useCallback(async () => {
+    // 停止流式任务
+    stopRun();
+    stopBatchRun({ forRestart: true });
+
+    // 清理本地 UI/结果
+    setRunItems({});
+    setRunError(null);
+    setImageItems([]);
+    setBatchItems({});
+    setPlanResult(null);
+    setBatchError(null);
+    setImageError(null);
+    setSingleGroupId('');
+    setSingleSelected({});
+    setBatchActiveModelLabel('');
+
+    // 清理本地持久化（localStorage + IndexedDB），并释放 blob URL
+    try {
+      localStorage.removeItem(labCacheKey);
+    } catch {
+      // ignore
+    }
+    storedBlobKeysRef.current.clear();
+    revokeAllObjectUrls();
+    try {
+      await clearLlmLabImagesForUser(cacheUserId);
+    } catch {
+      // ignore
+    }
+
+    // 重置部分按钮/排序（避免刷新后“默认值覆盖”与用户期待不一致）
+    setMainMode('infer');
+    setImageSubMode('single');
+    setMode('speed');
+    setSuite('speed');
+    setSortBy('ttft');
+  }, [cacheUserId, labCacheKey, revokeAllObjectUrls]);
 
   const DEFAULT_IMAGE_PROMPT = '生成一张 Hello Kitty 的图片，卡通风格，纯色背景，高清。';
 
@@ -1866,10 +2158,7 @@ export default function LlmLabTab() {
                     variant="secondary"
                     size="md"
                     onClick={() => {
-                      setImageItems([]);
-                      setSingleGroupId('');
-                      setSingleSelected({});
-                      setImageError(null);
+                      void clearLabLocalCacheAndResults();
                     }}
                     disabled={imageRunning || imageItems.length === 0}
                   >
@@ -2424,6 +2713,7 @@ export default function LlmLabTab() {
                 {(() => {
                       const wantN = Math.max(1, Math.min(20, Number(singleN || 1)));
                       const modelCount = imageGenModels.length;
+                      const hasAnyOutput = singleList.length > 0;
 
                       if (modelCount === 0) {
                         return (
@@ -2654,7 +2944,7 @@ export default function LlmLabTab() {
                             >
                               布局预览：将生成 {wantN} × {modelCount} = {total} 张
                             </div>
-                            {hasAny ? (
+                            {hasAnyOutput ? (
                               <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                                 已生成 {done.length}/{total} 张（点击图片可放大，右上角勾选用于下载选中）
                               </div>
@@ -2761,7 +3051,7 @@ export default function LlmLabTab() {
                     <Download size={14} />
                     一键下载
                   </Button>
-                  <Button variant="secondary" size="xs" onClick={() => setBatchItems({})} disabled={batchRunning || batchList.length === 0}>
+                  <Button variant="secondary" size="xs" onClick={() => void clearLabLocalCacheAndResults()} disabled={batchRunning || batchList.length === 0}>
                     清空
                   </Button>
                 </div>
