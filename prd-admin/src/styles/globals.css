@@ -547,6 +547,23 @@
   }
 }
 
+/* Login（Grok-ish）：双栏 + 右侧黑洞场景 */
+.prd-login-root {
+  background: linear-gradient(135deg, var(--bg-base) 0%, #09090b 45%, var(--bg-elevated) 100%);
+}
+
+.prd-login-card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-card);
+}
+
+.prd-login-leftGlow {
+  background:
+    radial-gradient(900px 640px at 50% 46%, rgba(214, 178, 106, 0.10) 0%, transparent 66%),
+    radial-gradient(760px 520px at 55% 60%, rgba(124, 252, 0, 0.05) 0%, transparent 64%);
+}
+
 /* success.html 参考：三态按钮 + confetti（局部复用组件） */
 @keyframes saLoading {
   0% { cy: 10; }

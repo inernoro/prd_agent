@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { login } from '@/services';
 import { Button } from '@/components/design/Button';
+
+const BlackHoleScene = lazy(() => import('@/components/three/BlackHoleScene'));
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -39,82 +41,90 @@ export default function LoginPage() {
   };
 
   return (
-    <div
-      className="h-full w-full flex items-center justify-center"
-      style={{
-        background:
-          'radial-gradient(900px 500px at 50% 45%, rgba(214, 178, 106, 0.12) 0%, transparent 65%), radial-gradient(800px 420px at 35% 60%, rgba(124, 252, 0, 0.08) 0%, transparent 60%), linear-gradient(135deg, var(--bg-base) 0%, #09090b 50%, var(--bg-elevated) 100%)',
-      }}
-    >
-      <div
-        className="w-[420px] rounded-[22px] p-8"
-        style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
-          border: '1px solid var(--border-default)',
-          boxShadow: 'var(--shadow-card)',
-        }}
-      >
-        <div className="flex items-center gap-4">
-          <div
-            className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
-            style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
-          >
-            PRD
+    <div className="prd-login-root h-full w-full grid grid-cols-1 lg:grid-cols-[minmax(420px,520px)_1fr]">
+      <div className="relative h-full w-full flex items-center justify-center px-6 lg:px-8">
+        <div className="prd-login-card w-full max-w-[420px] rounded-[22px] p-8">
+          <div className="flex items-center gap-4">
+            <div
+              className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
+              style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
+            >
+              PRD
+            </div>
+            <div className="min-w-0">
+              <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>PRD Admin</div>
+              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>使用管理员账号登录</div>
+            </div>
           </div>
-          <div className="min-w-0">
-            <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>PRD Admin</div>
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>使用管理员账号登录</div>
+
+          <div className="mt-8 grid gap-4">
+            <label className="grid gap-2">
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>用户名</span>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="admin"
+                autoComplete="username"
+              />
+            </label>
+
+            <label className="grid gap-2">
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>密码</span>
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="admin"
+                type="password"
+                autoComplete="current-password"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onSubmit();
+                }}
+              />
+            </label>
+
+            {error && (
+              <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
+                {error}
+              </div>
+            )}
+
+            <Button
+              onClick={onSubmit}
+              disabled={!canSubmit || loading}
+              className="w-full"
+              variant="primary"
+            >
+              {loading ? '登录中...' : '登录'}
+            </Button>
+
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              默认管理员：admin / Admin@123456（首次登录后请修改密码）
+            </div>
           </div>
         </div>
 
-        <div className="mt-8 grid gap-4">
-          <label className="grid gap-2">
-            <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>用户名</span>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              placeholder="admin"
-              autoComplete="username"
-            />
-          </label>
+        <div className="prd-login-leftGlow pointer-events-none absolute inset-0" />
+      </div>
 
-          <label className="grid gap-2">
-            <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>密码</span>
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              placeholder="admin"
-              type="password"
-              autoComplete="current-password"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') onSubmit();
+      <div className="relative hidden h-full w-full overflow-hidden lg:block">
+        <Suspense
+          fallback={
+            <div
+              className="h-full w-full"
+              aria-hidden
+              style={{
+                background:
+                  'radial-gradient(620px 620px at 55% 50%, rgba(242, 213, 155, 0.14) 0%, rgba(214, 178, 106, 0.06) 30%, transparent 64%), radial-gradient(1200px 900px at 70% 55%, rgba(255,255,255,0.05) 0%, transparent 68%), radial-gradient(900px 680px at 55% 50%, rgba(0,0,0,0.0) 0%, rgba(0,0,0,0.45) 72%, rgba(0,0,0,0.70) 100%)',
               }}
             />
-          </label>
-
-          {error && (
-            <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
-              {error}
-            </div>
-          )}
-
-          <Button
-            onClick={onSubmit}
-            disabled={!canSubmit || loading}
-            className="w-full"
-            variant="primary"
-          >
-            {loading ? '登录中...' : '登录'}
-          </Button>
-
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            默认管理员：admin / Admin@123456（首次登录后请修改密码）
-          </div>
-        </div>
+          }
+        >
+          <BlackHoleScene className="absolute inset-0 pointer-events-none" />
+        </Suspense>
       </div>
     </div>
   );
