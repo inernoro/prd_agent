@@ -9,6 +9,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.Prompts.Templates;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -411,6 +412,8 @@ public class AdminModelLabController : ControllerBase
                     "也允许资源读取：{\"server\":\"server_id\",\"uri\":\"resource://...\"}。\n" +
                     "也允许批量：{\"calls\":[{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}]}。\n" +
                     "要求：必须是合法 JSON；必须包含 server 字段。",
+                "imagegenplan" or "image_gen_plan" or "image-gen-plan" =>
+                    ImageGenPlanPrompt.Build(effective.ImagePlanMaxItems),
                 _ => systemPrompt
             };
         }
@@ -561,6 +564,9 @@ public class AdminModelLabController : ControllerBase
         var promptText = request.PromptText ?? exp?.PromptText;
         var p = request.Params ?? exp?.Params ?? new ModelLabParams();
 
+        var fmt = (request.ExpectedFormat ?? string.Empty).Trim().ToLowerInvariant();
+        var imagePlanMaxItems = Math.Clamp(request.ImagePlanMaxItems ?? 10, 1, 20);
+
         var models = new List<ModelLabSelectedModel>();
         if (exp?.SelectedModels?.Count > 0)
         {
@@ -589,11 +595,33 @@ public class AdminModelLabController : ControllerBase
             return EffectiveRunRequest.Fail("NO_MODELS", "未选择任何模型");
         }
 
+        // 可选：追加主模型作为标准答案（便于对照）
+        if (request.IncludeMainModelAsStandard == true)
+        {
+            var main = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
+            if (main != null)
+            {
+                var has = models.Any(x => string.Equals((x.ModelId ?? string.Empty).Trim(), main.Id, StringComparison.OrdinalIgnoreCase));
+                if (!has)
+                {
+                    models.Add(new ModelLabSelectedModel
+                    {
+                        ModelId = main.Id,
+                        PlatformId = main.PlatformId ?? string.Empty,
+                        Name = $"标准答案 · {main.Name}".Trim(),
+                        ModelName = main.ModelName,
+                        Group = main.Group
+                    });
+                }
+            }
+        }
+
         return EffectiveRunRequest.Ok(
             experimentId: exp?.Id,
             suite: suite,
             promptText: promptText,
-            expectedFormat: request.ExpectedFormat,
+            expectedFormat: string.IsNullOrWhiteSpace(request.ExpectedFormat) ? null : request.ExpectedFormat,
+            imagePlanMaxItems: fmt is "imagegenplan" or "image_gen_plan" or "image-gen-plan" ? imagePlanMaxItems : 10,
             @params: p,
             enablePromptCache: request.EnablePromptCache,
             models: models);
@@ -685,9 +713,19 @@ public class RunStreamRequest
     public ModelLabSuite? Suite { get; set; }
     public string? PromptText { get; set; }
     /// <summary>
-    /// 可选：专项测试期望输出格式（json / mcp / functionCall）。用于 system prompt 级约束。
+    /// 可选：专项测试期望输出格式（json / mcp / functionCall / imageGenPlan）。用于 system prompt 级约束。
     /// </summary>
     public string? ExpectedFormat { get; set; }
+
+    /// <summary>
+    /// 可选：当 ExpectedFormat=imageGenPlan 时生效。用于限制 items 数量（1-20）。
+    /// </summary>
+    public int? ImagePlanMaxItems { get; set; }
+
+    /// <summary>
+    /// 可选：是否在本次对比中自动追加系统主模型作为“标准答案”。
+    /// </summary>
+    public bool? IncludeMainModelAsStandard { get; set; }
     public ModelLabParams? Params { get; set; }
     public bool? EnablePromptCache { get; set; }
 
@@ -708,6 +746,7 @@ internal class EffectiveRunRequest
     public ModelLabSuite Suite { get; private set; }
     public string? PromptText { get; private set; }
     public string? ExpectedFormat { get; private set; }
+    public int ImagePlanMaxItems { get; private set; } = 10;
     public ModelLabParams Params { get; private set; } = new();
     public bool? EnablePromptCache { get; private set; }
     public List<ModelLabSelectedModel> Models { get; private set; } = new();
@@ -719,13 +758,22 @@ internal class EffectiveRunRequest
         ErrorMessage = message
     };
 
-    public static EffectiveRunRequest Ok(string? experimentId, ModelLabSuite suite, string? promptText, string? expectedFormat, ModelLabParams @params, bool? enablePromptCache, List<ModelLabSelectedModel> models) => new()
+    public static EffectiveRunRequest Ok(
+        string? experimentId,
+        ModelLabSuite suite,
+        string? promptText,
+        string? expectedFormat,
+        int imagePlanMaxItems,
+        ModelLabParams @params,
+        bool? enablePromptCache,
+        List<ModelLabSelectedModel> models) => new()
     {
         Success = true,
         ExperimentId = experimentId,
         Suite = suite,
         PromptText = promptText,
         ExpectedFormat = expectedFormat,
+        ImagePlanMaxItems = Math.Clamp(imagePlanMaxItems, 1, 20),
         Params = @params,
         EnablePromptCache = enablePromptCache,
         Models = models

@@ -54,7 +54,7 @@ type ViewRunItem = {
   errorMessage?: string;
 };
 
-type SortBy = 'ttft' | 'total';
+type SortBy = 'ttft' | 'total' | 'imagePlanItemsDesc';
 
 type MainMode = 'infer' | 'image';
 type ImageSubMode = 'single' | 'batch';
@@ -245,13 +245,16 @@ type SuiteCheck = {
   reason: string;
 };
 
-type ExpectedFormat = 'json' | 'mcp' | 'functionCall';
+type ExpectedFormat = 'json' | 'mcp' | 'functionCall' | 'imageGenPlan';
 type LabMode = ModelLabSuite | ExpectedFormat;
 
 function validateByFormatTest(expectedFormat: ExpectedFormat | null | undefined, raw: string): SuiteCheck | null {
   const t = (raw ?? '').trim();
   if (!t) return null;
   if (!expectedFormat) return null;
+
+  // imageGenPlan：此处不做“通过/失败”的强校验，避免误导；仅在 UI 里展示识别条目数。
+  if (expectedFormat === 'imageGenPlan') return null;
 
   const parsed = parseAnyJson(raw);
   const label: SuiteCheck['label'] = expectedFormat === 'json' ? 'JSON' : expectedFormat === 'mcp' ? 'MCP' : 'FunctionCall';
@@ -269,6 +272,36 @@ function validateByFormatTest(expectedFormat: ExpectedFormat | null | undefined,
   // formatTest === 'mcp'
   const mcp = isMcpJsonShape(parsed.value);
   return { label: 'MCP', ok: mcp.ok, reason: mcp.ok ? '通过（识别到 MCP JSON 结构）' : mcp.reason };
+}
+
+function tryParseImageGenPlan(raw: string): { ok: true; itemsLen: number } | { ok: false; reason: string } {
+  const text0 = (raw ?? '').trim();
+  if (!text0) return { ok: false, reason: '空输出' };
+
+  // 容错：截取最外层 JSON 对象（与后端 plan 逻辑一致）
+  let text = text0;
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    text = text.slice(first, last + 1);
+  }
+
+  try {
+    const obj = JSON.parse(text) as any;
+    const items = obj?.items;
+    if (!Array.isArray(items)) return { ok: false, reason: 'items 不是数组' };
+    return { ok: true, itemsLen: items.length };
+  } catch {
+    return { ok: false, reason: '返回不是合法 JSON' };
+  }
+}
+
+function getImagePlanItemsLenFromRaw(raw: string): number | null {
+  const t = (raw ?? '').trim();
+  if (!t) return null;
+  const parsed = tryParseImageGenPlan(t);
+  if (!parsed.ok) return 0;
+  return parsed.itemsLen;
 }
 
 async function downloadImage(src: string, filename: string) {
@@ -500,6 +533,13 @@ const builtInPrompts: Record<LabMode, { label: string; promptText: string }[]> =
   functionCall: [
     { label: 'FunctionCall', promptText: '用户输入：查询订单 12345 的状态。\n\n请严格只输出 FunctionCall JSON（不要 Markdown/解释）。\n推荐：{"name":"order.getStatus","arguments":{"orderId":"12345"}}' },
   ],
+  imageGenPlan: [
+    {
+      label: '生图意图',
+      promptText:
+        '请阅读以下文章/需求，推断其中需要生成的图片清单（每个图片的 prompt 需可直接用于生图）。\n\n（在“生图意图”模式下会自动用系统内置提示词约束输出为 JSON）\n\n正文：\n',
+    },
+  ],
 };
 
 export default function LlmLabTab() {
@@ -520,7 +560,7 @@ export default function LlmLabTab() {
   // mode：纯 UI 选择（6 个互斥类型），不写入实验，避免被 suite 回填覆盖
   const [mode, setMode] = useState<LabMode>('speed');
   const expectedFormat: ExpectedFormat | undefined =
-    mode === 'json' || mode === 'mcp' || mode === 'functionCall' ? mode : undefined;
+    mode === 'json' || mode === 'mcp' || mode === 'functionCall' || mode === 'imageGenPlan' ? mode : undefined;
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
   const [promptText, setPromptText] = useState<string>('');
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
@@ -1157,6 +1197,12 @@ export default function LlmLabTab() {
         experimentId: activeExperimentId,
         suite,
         expectedFormat,
+        ...(expectedFormat === 'imageGenPlan'
+          ? {
+              imagePlanMaxItems: 10,
+              includeMainModelAsStandard: true,
+            }
+          : {}),
         promptText,
         params,
       },
@@ -1254,11 +1300,20 @@ export default function LlmLabTab() {
 
   const itemsList = useMemo(() => Object.values(runItems), [runItems]);
   const sortedItems = useMemo(() => {
-    return [...itemsList].sort((a, b) => {
+    const list = [...itemsList];
+    return list.sort((a, b) => {
       const aTtft = a.ttftMs ?? Number.POSITIVE_INFINITY;
       const bTtft = b.ttftMs ?? Number.POSITIVE_INFINITY;
       const aTotal = a.totalMs ?? Number.POSITIVE_INFINITY;
       const bTotal = b.totalMs ?? Number.POSITIVE_INFINITY;
+
+      if (sortBy === 'imagePlanItemsDesc') {
+        const aLen = getImagePlanItemsLenFromRaw(a.rawText ?? a.preview ?? '') ?? 0;
+        const bLen = getImagePlanItemsLenFromRaw(b.rawText ?? b.preview ?? '') ?? 0;
+        if (aLen !== bLen) return bLen - aLen; // 倒序：条目数越多越靠前
+        if (aTtft !== bTtft) return aTtft - bTtft;
+        return aTotal - bTotal;
+      }
 
       if (sortBy === 'total') {
         if (aTotal !== bTotal) return aTotal - bTotal;
@@ -1475,9 +1530,12 @@ export default function LlmLabTab() {
         setSuite(next);
         isModeSwitchingRef.current = false; // 这些模式会保存，所以允许自动保存
       } else {
-        // json/mcp/functionCall 只是模板切换，不触发保存
+        // json/mcp/functionCall/imageGenPlan 只是模板切换，不触发保存
         isModeSwitchingRef.current = true;
       }
+      // 生图意图：默认按“识别条目数倒序”排序；其他模式回到 TTFT/总耗时
+      if (next === 'imageGenPlan') setSortBy('imagePlanItemsDesc');
+      else if (sortBy === 'imagePlanItemsDesc') setSortBy('ttft');
       setMode(next);
       const list = builtInPrompts[next] ?? [];
       const first = list[0]?.promptText ?? '';
@@ -1492,8 +1550,8 @@ export default function LlmLabTab() {
     if (list.length === 0) return;
     const cur = suiteCycleRef.current[next] ?? 0;
     const idx = ((cur % list.length) + list.length) % list.length;
-    // 重复点击时，如果是 json/mcp/functionCall，也不触发保存
-    if (next === 'json' || next === 'mcp' || next === 'functionCall') {
+    // 重复点击时，如果是 json/mcp/functionCall/imageGenPlan，也不触发保存
+    if (next === 'json' || next === 'mcp' || next === 'functionCall' || next === 'imageGenPlan') {
       isModeSwitchingRef.current = true;
     }
     applyBuiltInPrompt(list[idx].promptText);
@@ -1524,7 +1582,9 @@ export default function LlmLabTab() {
               ? 'JSON'
               : mode === 'mcp'
                 ? 'MCP'
-                : 'FunctionCall';
+                : mode === 'imageGenPlan'
+                  ? '生图意图'
+                  : 'FunctionCall';
     chips.push({ key: 'mode', label: `类型：${modeLabel}` });
     chips.push({ key: 'temperature', label: `温度：${Number.isFinite(params.temperature as any) ? params.temperature : '-'}` });
     if (params.maxTokens != null) chips.push({ key: 'maxTokens', label: `MaxTokens：${params.maxTokens}` });
@@ -1855,6 +1915,10 @@ export default function LlmLabTab() {
             <Button size="xs" variant={mode === 'functionCall' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('functionCall')}>
               FunctionCall
             </Button>
+            <Button size="xs" variant={mode === 'imageGenPlan' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('imageGenPlan')}>
+              <Sparkles size={14} />
+              生图意图
+            </Button>
           </div>
           ) : (
             <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1">
@@ -1971,43 +2035,54 @@ export default function LlmLabTab() {
             <>
           <div className="flex items-center justify-between shrink-0">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-              实时结果（按 {sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）
+              实时结果（按 {sortBy === 'imagePlanItemsDesc' ? '识别条目数（倒序）' : sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）
             </div>
             <div className="flex items-center gap-2">
+              {mode === 'imageGenPlan' ? (
+                <div
+                  className="px-2 py-1 rounded-[10px] text-xs font-semibold"
+                  style={{ border: '1px solid rgba(250, 204, 21, 0.55)', background: 'rgba(250, 204, 21, 0.08)', color: 'rgba(250, 204, 21, 0.95)' }}
+                  title="标准答案由系统设置的主模型生成（会自动加入本次对比）"
+                >
+                  判定主模型：{(allModels.find((m) => (m as any).isMain && (m as any).enabled)?.name ?? '未设置').toString()}
+                </div>
+              ) : null}
               <div
                 className="inline-flex p-[3px] rounded-[12px]"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)' }}
               >
                 <button
                   type="button"
-                  onClick={() => setSortBy('ttft')}
-                  aria-pressed={sortBy === 'ttft'}
+                  onClick={() => setSortBy(mode === 'imageGenPlan' ? 'imagePlanItemsDesc' : 'ttft')}
+                  aria-pressed={mode === 'imageGenPlan' ? sortBy === 'imagePlanItemsDesc' : sortBy === 'ttft'}
                   className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
                   style={{
                     color: 'var(--text-primary)',
-                    background: sortBy === 'ttft' ? 'rgba(255,255,255,0.08)' : 'transparent',
-                    border: sortBy === 'ttft' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
+                    background: (mode === 'imageGenPlan' ? sortBy === 'imagePlanItemsDesc' : sortBy === 'ttft') ? 'rgba(255,255,255,0.08)' : 'transparent',
+                    border: (mode === 'imageGenPlan' ? sortBy === 'imagePlanItemsDesc' : sortBy === 'ttft') ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
                   }}
-                  title="按首字延迟（TTFT）排序"
+                  title={mode === 'imageGenPlan' ? '按识别条目数（倒序）排序' : '按首字延迟（TTFT）排序'}
                 >
                   <Zap size={14} />
-                  首字延迟
+                  {mode === 'imageGenPlan' ? '识别条目' : '首字延迟'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setSortBy('total')}
-                  aria-pressed={sortBy === 'total'}
-                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
-                  style={{
-                    color: 'var(--text-primary)',
-                    background: sortBy === 'total' ? 'rgba(255,255,255,0.08)' : 'transparent',
-                    border: sortBy === 'total' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
-                  }}
-                  title="按总耗时排序"
-                >
-                  <Clock3 size={14} />
-                  总时长
-                </button>
+                {mode !== 'imageGenPlan' ? (
+                  <button
+                    type="button"
+                    onClick={() => setSortBy('total')}
+                    aria-pressed={sortBy === 'total'}
+                    className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                    style={{
+                      color: 'var(--text-primary)',
+                      background: sortBy === 'total' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                      border: sortBy === 'total' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
+                    }}
+                    title="按总耗时排序"
+                  >
+                    <Clock3 size={14} />
+                    总时长
+                  </button>
+                ) : null}
               </div>
               {!running && failedRunCount > 0 ? (
                 <Button
@@ -2106,21 +2181,36 @@ export default function LlmLabTab() {
                     {(() => {
                       const raw = (it.rawText ?? it.preview ?? '').trim();
                       const v = raw ? validateByFormatTest(expectedFormat, raw) : null;
+                      const imgPlanLen = mode === 'imageGenPlan' && raw ? getImagePlanItemsLenFromRaw(raw) : null;
                       const chipStyle = (ok: boolean): React.CSSProperties => ({
                         background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',
                         border: ok ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(239,68,68,0.22)',
                         color: ok ? 'rgba(34,197,94,0.95)' : 'rgba(239,68,68,0.92)',
                       });
-                      if (!v) return null;
                       return (
                         <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <span
-                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                            style={chipStyle(v.ok)}
-                            title={v.reason}
-                          >
-                            {v.label} {v.ok ? '通过' : '失败'}
-                          </span>
+                          {v ? (
+                            <span
+                              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                              style={chipStyle(v.ok)}
+                              title={v.reason}
+                            >
+                              {v.label} {v.ok ? '通过' : '失败'}
+                            </span>
+                          ) : null}
+                          {mode === 'imageGenPlan' ? (
+                            <span
+                              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                              style={{
+                                background: 'rgba(250, 204, 21, 0.08)',
+                                border: '1px solid rgba(250, 204, 21, 0.30)',
+                                color: 'rgba(250, 204, 21, 0.95)',
+                              }}
+                              title="识别条目数 = items.length（按此字段倒序排序）"
+                            >
+                              识别条目 {typeof imgPlanLen === 'number' ? imgPlanLen : '-'}
+                            </span>
+                          ) : null}
                           {it.rawTruncated ? (
                             <span
                               className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
@@ -2489,8 +2579,12 @@ export default function LlmLabTab() {
                             <div className="absolute right-2 bottom-2 flex items-center gap-1">
                               <button
                                 type="button"
-                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                className={[
+                                  'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
+                                  'transition-all duration-150',
+                                  'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
+                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void copyToClipboard(it.prompt);
@@ -2504,8 +2598,12 @@ export default function LlmLabTab() {
                               </button>
                               <button
                                 type="button"
-                                className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                className={[
+                                  'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
+                                  'transition-all duration-150',
+                                  'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
+                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void downloadImage(src, `${it.prompt}_${Number(it.variantIndex ?? 0) + 1}`);
@@ -2519,7 +2617,10 @@ export default function LlmLabTab() {
                               </button>
                             </div>
 
-                            <div className="absolute left-2 top-2 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                            <div
+                              className="absolute left-2 top-2 text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-white/15 bg-black/40 backdrop-blur-sm shadow-sm"
+                              style={{ color: 'rgba(255,255,255,0.92)' }}
+                            >
                               {`模型 #${Number(it.sourceModelIndex ?? 0) + 1} · #${Number(it.variantIndex ?? 0) + 1}`}
                             </div>
                           </div>
@@ -2821,8 +2922,12 @@ export default function LlmLabTab() {
                               <div className="absolute right-2 bottom-2 flex items-center gap-1">
                                 <button
                                   type="button"
-                                  className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                                  style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                  className={[
+                                    'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
+                                    'transition-all duration-150',
+                                    'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
+                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                  ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     void copyToClipboard(it.prompt);
@@ -2836,8 +2941,12 @@ export default function LlmLabTab() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                                  style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
+                                  className={[
+                                    'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
+                                    'transition-all duration-150',
+                                    'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
+                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                  ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     void downloadImage(src, it.prompt);

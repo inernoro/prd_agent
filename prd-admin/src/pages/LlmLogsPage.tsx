@@ -3,6 +3,7 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { SearchableSelect, Select } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
+import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
 import { CheckCircle, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
@@ -408,6 +409,8 @@ export default function LlmLogsPage() {
   const [pageSize] = useState(30);
   const [answerView, setAnswerView] = useState<'preview' | 'raw'>('preview');
   const [answerHint, setAnswerHint] = useState<string>('');
+  const [jsonCheckPhase, setJsonCheckPhase] = useState<'idle' | 'scanning' | 'passed' | 'failed'>('idle');
+  const jsonCheckLastRef = useRef<{ ok: boolean; reason?: string } | null>(null);
 
   const [qProvider, setQProvider] = useState('');
   const [qModel, setQModel] = useState('');
@@ -427,6 +430,11 @@ export default function LlmLogsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptToken, setPromptToken] = useState<string>('');
+
+  const resetJsonCheck = () => {
+    jsonCheckLastRef.current = null;
+    setJsonCheckPhase('idle');
+  };
 
   const load = async (opts?: { resetPage?: boolean }) => {
     if (opts?.resetPage) setPage(1);
@@ -456,6 +464,7 @@ export default function LlmLogsPage() {
     setDetailLoading(true);
     setDetail(null);
     setCopiedHint('');
+    resetJsonCheck();
     try {
       const res = await getLlmLogDetail(id);
       if (res.success) setDetail(res.data);
@@ -463,6 +472,10 @@ export default function LlmLogsPage() {
       setDetailLoading(false);
     }
   };
+
+  useEffect(() => {
+    return () => undefined;
+  }, []);
 
   useEffect(() => {
     load();
@@ -774,6 +787,7 @@ export default function LlmLogsPage() {
             setCopiedHint('');
             setAnswerView('preview');
             setAnswerHint('');
+            resetJsonCheck();
             setPromptOpen(false);
             setPromptToken('');
           }
@@ -982,14 +996,8 @@ export default function LlmLogsPage() {
                   说明：`—` 表示未上报/未知；`0` 表示真实为 0。
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Answer（最终拼接文本）</div>
+                  <div className="flex items-center justify-end gap-2">
                     <div className="flex items-center gap-2">
-                      {answerHint ? (
-                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                          {answerHint}
-                        </div>
-                      ) : null}
                       <div className="flex items-center rounded-[12px] p-1" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
                         <button
                           type="button"
@@ -1034,26 +1042,66 @@ export default function LlmLogsPage() {
                         <Copy size={16} />
                         复制
                       </Button>
-                      <Button
-                        variant="secondary"
+                      <SuccessConfettiButton
+                        title="对模型原始返回（Answer）做严格 JSON 校验"
                         size="sm"
-                        onClick={() => {
+                        style={
+                          {
+                            // 对齐本区域其它 secondary sm 按钮（35px 高度）
+                            '--sa-h': '35px',
+                            '--sa-radius': '10px',
+                            '--sa-font': '13px',
+                            '--sa-px': '14px',
+                            '--sa-minw': '86px',
+                          } as unknown as React.CSSProperties
+                        }
+                        readyText={jsonCheckPhase === 'failed' ? '不通过' : 'JSON检查'}
+                        loadingText="检查中"
+                        successText="通过"
+                        showLoadingText
+                        loadingMinMs={680}
+                        completeMode="hold"
+                        disabled={!((detail?.answerText ?? '').trim()) || jsonCheckPhase === 'passed'}
+                        className={jsonCheckPhase === 'failed' ? 'llm-json-sa-failed' : jsonCheckPhase === 'passed' ? 'llm-json-sa-passed' : ''}
+                        onAction={() => {
                           const raw = (detail?.answerText ?? '').trim();
                           const res = validateStrictJson(raw);
-                          if (res.ok) {
-                            setAnswerHint('JSON 合法');
-                            setTimeout(() => setAnswerHint(''), 1600);
-                          } else {
-                            setAnswerHint(`JSON 不合法：${res.reason}`);
-                            setTimeout(() => setAnswerHint(''), 2800);
+                          jsonCheckLastRef.current = res.ok ? { ok: true } : { ok: false, reason: res.reason };
+                          return res.ok;
+                        }}
+                        onPhaseChange={(p) => {
+                          if (p === 'loading') {
+                            setJsonCheckPhase('scanning');
+                            return;
+                          }
+                          if (p === 'complete') {
+                            setJsonCheckPhase('passed');
+                            setAnswerHint('扫描通过');
+                            window.setTimeout(() => setAnswerHint(''), 1200);
+                            return;
+                          }
+                          // 回到 ready（失败路径）：保持红色状态到弹窗关闭
+                          if (p === 'ready') {
+                            const last = jsonCheckLastRef.current;
+                            if (last && last.ok === false) {
+                              setJsonCheckPhase('failed');
+                              setAnswerHint(`JSON 不合法：${last.reason || '未知原因'}`);
+                              window.setTimeout(() => setAnswerHint(''), 2800);
+                            } else {
+                              setJsonCheckPhase('idle');
+                            }
                           }
                         }}
-                        disabled={!((detail?.answerText ?? '').trim())}
-                        title="对模型原始返回（Answer）做严格 JSON 校验"
-                      >
-                        JSON检查
-                      </Button>
+                      />
                     </div>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
+                    {answerHint ? (
+                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        {answerHint}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="mt-3">
@@ -1063,7 +1111,12 @@ export default function LlmLogsPage() {
                       </pre>
                     ) : (
                       <div
-                        className="rounded-[14px] p-3"
+                        className={[
+                          'rounded-[14px] p-3 llm-json-scanBox',
+                          jsonCheckPhase === 'scanning' ? 'llm-json-scanBox--scanning' : '',
+                          jsonCheckPhase === 'failed' ? 'llm-json-scanBox--failed' : '',
+                          jsonCheckPhase === 'passed' ? 'llm-json-scanBox--passed' : '',
+                        ].join(' ')}
                         style={{
                           background: 'rgba(0,0,0,0.22)',
                           border: '1px solid var(--border-subtle)',

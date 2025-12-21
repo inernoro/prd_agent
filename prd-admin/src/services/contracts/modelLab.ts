@@ -68,7 +68,11 @@ export type RunModelLabStreamInput = {
   suite?: ModelLabSuite;
   promptText?: string;
   /** 专项测试期望输出格式：json / mcp / functionCall */
-  expectedFormat?: 'json' | 'mcp' | 'functionCall';
+  expectedFormat?: 'json' | 'mcp' | 'functionCall' | 'imageGenPlan';
+  /** 当 expectedFormat=imageGenPlan 时生效：限制 items 数量（1-20，默认 10） */
+  imagePlanMaxItems?: number;
+  /** 是否自动追加系统主模型作为标准答案（若未在已选模型里） */
+  includeMainModelAsStandard?: boolean;
   params?: Partial<ModelLabParams>;
   enablePromptCache?: boolean;
   modelIds?: string[];

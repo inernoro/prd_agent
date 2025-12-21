@@ -1,6 +1,7 @@
 import { cn } from '@/lib/cn';
 import { Check, Play, TimerOff } from 'lucide-react';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 
 type Phase = 'ready' | 'loading' | 'complete';
 
@@ -13,6 +14,16 @@ type Props = {
   loadingText?: string;
   successText?: string;
   showLoadingText?: boolean;
+  /** 透传按钮 style（支持覆盖 CSS 变量如 --sa-h/--sa-font 等） */
+  style?: React.CSSProperties;
+  /** phase 变化回调（用于外部联动动效/状态） */
+  onPhaseChange?: (phase: Phase) => void;
+  /**
+   * 成功后是否自动回到 ready
+   * - autoReset：保持 successHoldMs 后回到 ready（默认行为）
+   * - hold：停留在 complete，直到组件卸载或外部重新渲染
+   */
+  completeMode?: 'autoReset' | 'hold';
   /**
    * 返回 false 表示失败（会回到 ready，不进入 success/confetti）。
    * 不传则默认模拟一次成功流程。
@@ -80,12 +91,16 @@ export function SuccessConfettiButton({
   loadingText = '...',
   successText = 'OK',
   showLoadingText = false,
+  style,
+  onPhaseChange,
+  completeMode = 'autoReset',
   onAction,
   onCancel,
   loadingMinMs = 650,
   successHoldMs = 3300,
 }: Props) {
   const prefersReducedMotion = usePrefersReducedMotion();
+  const canPortal = typeof document !== 'undefined';
 
   const [phase, setPhase] = React.useState<Phase>('ready');
   const [widthPx, setWidthPx] = React.useState<number | null>(null);
@@ -117,6 +132,10 @@ export function SuccessConfettiButton({
       clearTimers();
     };
   }, [clearTimers]);
+
+  React.useEffect(() => {
+    onPhaseChange?.(phase);
+  }, [onPhaseChange, phase]);
 
   const resizeCanvas = React.useCallback(() => {
     const canvas = canvasRef.current;
@@ -365,6 +384,11 @@ export function SuccessConfettiButton({
       setPhase('complete');
       triggerConfetti();
 
+      if (completeMode === 'hold') {
+        runningRef.current = false;
+        return;
+      }
+
       const holdMs = Math.max(successHoldMs, minSuccessHoldMs);
       timeoutsRef.current.push(
         window.setTimeout(() => {
@@ -376,7 +400,7 @@ export function SuccessConfettiButton({
     } finally {
       // no-op：runningRef 会在回到 ready 或 cancel 时解除
     }
-  }, [loadingMinMs, minSuccessHoldMs, onAction, successHoldMs, triggerConfetti]);
+  }, [completeMode, loadingMinMs, minSuccessHoldMs, onAction, successHoldMs, triggerConfetti]);
 
   const cancel = React.useCallback(() => {
     if (phase !== 'loading') return;
@@ -402,7 +426,7 @@ export function SuccessConfettiButton({
         disabled={effectiveDisabled}
         title={title}
         className={cn('sa-btn', phaseCls, breatheOn ? 'sa-breathe' : '', className)}
-        style={{ ...styleVars, width: widthPx != null ? `${widthPx}px` : undefined }}
+        style={{ ...styleVars, ...style, width: widthPx != null ? `${widthPx}px` : undefined }}
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -458,7 +482,9 @@ export function SuccessConfettiButton({
         </span>
       </button>
 
-      <canvas ref={canvasRef} className="sa-confetti-canvas" />
+      {canPortal
+        ? createPortal(<canvas ref={canvasRef} className="sa-confetti-canvas" />, document.body)
+        : <canvas ref={canvasRef} className="sa-confetti-canvas" />}
     </>
   );
 }
