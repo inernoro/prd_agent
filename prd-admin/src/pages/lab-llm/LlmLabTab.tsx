@@ -2424,7 +2424,6 @@ export default function LlmLabTab() {
                 {(() => {
                       const wantN = Math.max(1, Math.min(20, Number(singleN || 1)));
                       const modelCount = imageGenModels.length;
-                      const hasAny = singleList.length > 0;
 
                       if (modelCount === 0) {
                         return (
@@ -2440,24 +2439,34 @@ export default function LlmLabTab() {
                       const srcOf = (it: ImageViewItem) =>
                         it.url || (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
 
-                      // 为每个模型准备“显示列表”：没有结果时显示预览占位
+                      // 为每个模型准备“显示列表”：始终补齐到 wantN（生成后修改数量也保持预览占位）
                       const now = Date.now();
                       const groups = imageGenModels.map((m, mi) => {
-                        const list = hasAny
-                          ? singleList.filter((x) => x.sourceModelId === m.modelId)
-                          : Array.from({ length: wantN }).map((_, i) => ({
-                              key: `preview_${m.modelId}_${i}`,
-                              groupId: 'preview',
-                              variantIndex: i,
-                              status: 'running' as const,
-                              prompt,
-                              createdAt: now,
-                              sourceModelId: m.modelId,
-                              sourceModelName: m.modelName,
-                              sourceDisplayName: m.displayName,
-                              sourceModelIndex: mi,
-                            }));
-                        return { model: m, modelIndex: mi, items: list };
+                        const real = singleList.filter((x) => x.sourceModelId === m.modelId);
+                        const byIdx = new Map<number, ImageViewItem>();
+                        for (const it of real) {
+                          const idx = typeof it.variantIndex === 'number' ? it.variantIndex : null;
+                          if (idx == null) continue;
+                          if (!byIdx.has(idx)) byIdx.set(idx, it);
+                        }
+
+                        const items: ImageViewItem[] = Array.from({ length: wantN }).map((_, i) => {
+                          const hit = byIdx.get(i);
+                          if (hit) return hit;
+                          return {
+                            key: `preview_${m.modelId}_${i}`,
+                            groupId: 'preview',
+                            variantIndex: i,
+                            status: 'running' as const,
+                            prompt,
+                            createdAt: now,
+                            sourceModelId: m.modelId,
+                            sourceModelName: m.modelName,
+                            sourceDisplayName: m.displayName,
+                            sourceModelIndex: mi,
+                          };
+                        });
+                        return { model: m, modelIndex: mi, items };
                       });
 
                       const all = groups.flatMap((g) => g.items);
@@ -2486,6 +2495,7 @@ export default function LlmLabTab() {
                         const src = srcOf(it);
                         const selected = !!singleSelected[it.key];
                         const canSelect = it.status === 'done' && !!src;
+                        const isPreviewSlot = it.groupId === 'preview';
                         return (
                           <div
                             key={it.key}
@@ -2518,13 +2528,17 @@ export default function LlmLabTab() {
                                   </div>
                                 ) : (
                                   <>
-                                    {hasAny ? (
+                                    {!isPreviewSlot && it.status === 'running' && imageRunning ? (
                                       <>
                                         <PrdLoader size={40} />
                                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                                           正在生成中…
                                         </div>
                                       </>
+                                    ) : !isPreviewSlot && it.status === 'running' ? (
+                                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        等待生成…
+                                      </div>
                                     ) : (
                                       <>
                                         <div
