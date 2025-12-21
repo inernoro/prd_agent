@@ -6,6 +6,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelMapDialog } from './model-manage/ModelMapDialog';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   clearIntentModel,
   clearVisionModel,
@@ -30,7 +31,7 @@ import type { Model, Platform } from '@/types/admin';
 import { Activity, ArrowDown, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
-import { getAvatarUrlByGroup, getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
+import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
@@ -503,19 +504,6 @@ export default function ModelManagePage() {
     };
   }, [platformCtxMenu.open]);
 
-  // 点击外部关闭模型操作菜单
-  useEffect(() => {
-    if (!modelActionMenuOpenId) return;
-    const onClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(`[data-model-menu="${modelActionMenuOpenId}"]`)) {
-        setModelActionMenuOpenId(null);
-      }
-    };
-    window.addEventListener('click', onClickOutside);
-    return () => window.removeEventListener('click', onClickOutside);
-  }, [modelActionMenuOpenId]);
-
   const filteredPlatforms = useMemo(() => {
     const s = platformSearch.trim().toLowerCase();
     if (!s) return platforms;
@@ -904,9 +892,6 @@ export default function ModelManagePage() {
 
   const platformAvatar = (p: Platform) => {
     const t = (p.platformType || '').toLowerCase();
-    const avatarUrl = getAvatarUrlByPlatformType(p.platformType || p.name || '');
-    const isSvg = isSvgAssetUrl(avatarUrl);
-    const isRaster = isRasterAssetUrl(avatarUrl);
     const bg =
       t.includes('openai')
         ? 'rgba(16,185,129,0.18)'
@@ -931,24 +916,14 @@ export default function ModelManagePage() {
               : t.includes('deepseek')
                 ? 'rgba(239,68,68,0.95)'
                 : 'rgba(247,247,251,0.78)';
-    const letter = (p.name || p.platformType || '?').slice(0, 1).toUpperCase();
+    const raw = String(p.name || p.platformType || '').trim();
+    const letter = (Array.from(raw)[0] ?? '?').toUpperCase();
     return (
       <div
         className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
-        // 仅在 svg / 文字占位时使用“色块底”，避免 png/jpg 等方图贴边显得突兀
-        style={{ background: !avatarUrl || isSvg ? bg : 'transparent', color: fg, border: '1px solid var(--border-subtle)' }}
+        style={{ background: bg, color: fg, border: '1px solid var(--border-subtle)' }}
       >
-        {avatarUrl ? (
-          isRaster ? (
-            <div className="h-6 w-6 rounded-full overflow-hidden bg-transparent">
-              <img src={avatarUrl} alt={p.name || p.platformType} className="h-full w-full object-contain" />
-            </div>
-          ) : (
-            <img src={avatarUrl} alt={p.name || p.platformType} className="h-5 w-5 object-contain" />
-          )
-        ) : (
-          letter
-        )}
+        {letter}
       </div>
     );
   };
@@ -1170,7 +1145,7 @@ export default function ModelManagePage() {
                 className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
                 style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(247,247,251,0.78)', border: '1px solid var(--border-subtle)' }}
               >
-                全
+                <LayoutGrid size={16} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>全部</div>
@@ -1831,52 +1806,58 @@ export default function ModelManagePage() {
                                     </Button>
                                     </div>
 
-                                    {/* 更多菜单 */}
-                                    <div className="relative" data-model-menu={m.id}>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setModelActionMenuOpenId(modelActionMenuOpenId === m.id ? null : m.id);
-                                        }}
-                                        className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
-                                        style={{
-                                          border: '1px solid rgba(255,255,255,0.10)',
-                                          color: 'var(--text-secondary)',
-                                        }}
-                                        aria-label="更多操作"
-                                        title="更多操作"
-                                      >
-                                        <MoreVertical size={16} />
-                                      </button>
-                                      {modelActionMenuOpenId === m.id && (
-                                        <div
-                                          className="absolute right-0 top-full mt-1 z-50 rounded-[12px] p-1 min-w-[140px]"
+                                    {/* 更多菜单（使用 Portal，避免被 overflow-hidden 裁剪） */}
+                                    <DropdownMenu.Root
+                                      open={modelActionMenuOpenId === m.id}
+                                      onOpenChange={(open) => setModelActionMenuOpenId(open ? m.id : null)}
+                                    >
+                                      <DropdownMenu.Trigger asChild>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
                                           style={{
+                                            border: '1px solid rgba(255,255,255,0.10)',
+                                            color: 'var(--text-secondary)',
+                                          }}
+                                          aria-label="更多操作"
+                                          title="更多操作"
+                                        >
+                                          <MoreVertical size={16} />
+                                        </button>
+                                      </DropdownMenu.Trigger>
+                                      <DropdownMenu.Portal>
+                                        <DropdownMenu.Content
+                                          side="bottom"
+                                          align="end"
+                                          sideOffset={8}
+                                          className="rounded-[12px] p-1 min-w-[140px]"
+                                          style={{
+                                            zIndex: 90,
                                             background: 'var(--bg-elevated)',
                                             border: '1px solid var(--border-subtle)',
                                             boxShadow: 'var(--shadow-lg)',
                                           }}
                                           onClick={(e) => e.stopPropagation()}
                                         >
-                                          <button
-                                            type="button"
-                                            onClick={() => {
+                                          <DropdownMenu.Item
+                                            className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                            style={{ color: 'var(--text-primary)' }}
+                                            onSelect={(e) => {
+                                              e.preventDefault();
                                               openEditModel(m);
                                               setModelActionMenuOpenId(null);
                                             }}
-                                            className="w-full flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm hover:bg-white/5"
-                                            style={{ color: 'var(--text-primary)' }}
                                           >
                                             <Pencil size={14} />
                                             编辑
-                                          </button>
-                                          <div className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
-                                    <ConfirmTip
+                                          </DropdownMenu.Item>
+                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                                          <ConfirmTip
                                             title={`确认删除模型"${m.name}"？`}
-                                      description="该操作不可撤销"
-                                      confirmText="确认删除"
-                                      cancelText="取消"
+                                            description="该操作不可撤销"
+                                            confirmText="确认删除"
+                                            cancelText="取消"
                                             onConfirm={() => {
                                               onDeleteModel(m);
                                               setModelActionMenuOpenId(null);
@@ -1888,14 +1869,19 @@ export default function ModelManagePage() {
                                               type="button"
                                               className="w-full flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm hover:bg-white/5"
                                               style={{ color: 'rgba(239,68,68,0.95)' }}
+                                              onClick={(e) => e.stopPropagation()}
                                             >
                                               <Trash2 size={14} />
                                               删除
                                             </button>
-                                    </ConfirmTip>
-                                  </div>
-                                      )}
-                                </div>
+                                          </ConfirmTip>
+                                          <DropdownMenu.Arrow
+                                            className="fill-[color:var(--bg-elevated)]"
+                                            style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }}
+                                          />
+                                        </DropdownMenu.Content>
+                                      </DropdownMenu.Portal>
+                                    </DropdownMenu.Root>
                             </div>
                               </div>
                         ))}

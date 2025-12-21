@@ -78,7 +78,7 @@ export function SearchableSelect({
     <SelectPrimitive.Root value={currentValue} onValueChange={handleValueChange} open={open} onOpenChange={setOpen} disabled={disabled}>
       <SelectPrimitive.Trigger
         className={cn(
-          'w-full pr-9 outline-none transition-colors flex items-center',
+          'relative w-full pr-9 outline-none transition-colors flex items-center',
           paddingLeft,
           'hover:border-white/20',
           'focus-visible:ring-2 focus-visible:ring-white/20',

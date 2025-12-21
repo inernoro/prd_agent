@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Clock3, Copy, Cpu, Download, Expand, ImagePlus, Layers, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
+import { Check, Clock3, Copy, Cpu, Download, Expand, ImagePlus, Layers, Maximize2, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
 import JSZip from 'jszip';
 
 import { Card } from '@/components/design/Card';
@@ -571,6 +571,12 @@ export default function LlmLabTab() {
     text: '',
   });
 
+  const [imagePreviewDialog, setImagePreviewDialog] = useState<{ open: boolean; title: string; src: string }>({
+    open: false,
+    title: '图片预览',
+    src: '',
+  });
+
   // 自动保存（防抖）：避免“加入实验后刷新丢失”
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastSavedSigRef = useRef<string>('');
@@ -822,6 +828,8 @@ export default function LlmLabTab() {
     // 如果是模式切换（json/mcp/functionCall）导致的 promptText 变化，只更新签名但不保存
     if (isModeSwitchingRef.current) {
       lastSavedSigRef.current = sig;
+      // 这里清除标记，避免 setTimeout 竞争导致“模式切换也触发保存 -> suite 回填 -> mode 跳回 speed”
+      isModeSwitchingRef.current = false;
       return;
     }
 
@@ -1476,12 +1484,6 @@ export default function LlmLabTab() {
       applyBuiltInPrompt(first);
       // 下一次再点时，从第二条开始循环（若只有 1 条则继续 0）
       suiteCycleRef.current[next] = list.length > 1 ? 1 : 0;
-      // 如果是 json/mcp/functionCall，延迟重置标记，让自动保存能跳过这次 promptText 变化
-      if (isModeSwitchingRef.current) {
-        setTimeout(() => {
-          isModeSwitchingRef.current = false;
-        }, 100);
-      }
       return;
     }
 
@@ -1493,9 +1495,6 @@ export default function LlmLabTab() {
     // 重复点击时，如果是 json/mcp/functionCall，也不触发保存
     if (next === 'json' || next === 'mcp' || next === 'functionCall') {
       isModeSwitchingRef.current = true;
-      setTimeout(() => {
-        isModeSwitchingRef.current = false;
-      }, 100);
     }
     applyBuiltInPrompt(list[idx].promptText);
     suiteCycleRef.current[next] = (idx + 1) % list.length;
@@ -2400,7 +2399,10 @@ export default function LlmLabTab() {
                         return (
                           <div
                             key={it.key}
-                            className="rounded-[12px] overflow-hidden relative cursor-pointer"
+                            className={[
+                              'rounded-[12px] overflow-hidden relative',
+                              canSelect ? 'cursor-zoom-in' : 'cursor-default',
+                            ].join(' ')}
                             style={{
                               border: selected ? '2px solid rgba(250,204,21,0.95)' : '1px solid rgba(255,255,255,0.10)',
                               background: 'rgba(255,255,255,0.02)',
@@ -2408,12 +2410,16 @@ export default function LlmLabTab() {
                             }}
                             onClick={() => {
                               if (!canSelect) return;
-                              setSingleSelected((p) => ({ ...p, [it.key]: !p[it.key] }));
+                              setImagePreviewDialog({
+                                open: true,
+                                title: `模型 #${Number(it.sourceModelIndex ?? 0) + 1} · #${Number(it.variantIndex ?? 0) + 1}`,
+                                src,
+                              });
                             }}
                             title={it.prompt}
                           >
                             {it.status === 'done' && src ? (
-                              <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
+                              <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
                             ) : (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
                                 {it.status === 'error' ? (
@@ -2446,6 +2452,39 @@ export default function LlmLabTab() {
                                 )}
                               </div>
                             )}
+
+                            {/* 选择（用于“下载选中”） */}
+                            {canSelect ? (
+                              <button
+                                type="button"
+                                className="absolute right-2 top-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center transition-colors hover:bg-white/6"
+                                style={{
+                                  border: selected ? '2px solid rgba(250,204,21,0.95)' : '1px solid rgba(255,255,255,0.10)',
+                                  background: selected ? 'rgba(250,204,21,0.12)' : 'rgba(0,0,0,0.20)',
+                                  color: selected ? 'rgba(250,204,21,0.95)' : 'var(--text-secondary)',
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSingleSelected((p) => ({ ...p, [it.key]: !p[it.key] }));
+                                }}
+                                aria-label={selected ? '取消选择' : '选择'}
+                                title={selected ? '取消选择' : '选择'}
+                              >
+                                <Check size={16} />
+                              </button>
+                            ) : null}
+
+                            {/* 放大提示 */}
+                            {canSelect ? (
+                              <div
+                                className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center"
+                                style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}
+                                title="点击放大预览"
+                                aria-label="点击放大预览"
+                              >
+                                <Maximize2 size={14} />
+                              </div>
+                            ) : null}
 
                             <div className="absolute right-2 bottom-2 flex items-center gap-1">
                               <button
@@ -2502,7 +2541,7 @@ export default function LlmLabTab() {
                             </div>
                             {hasAny ? (
                               <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                已生成 {done.length}/{total} 张（点击图片可选择）
+                                已生成 {done.length}/{total} 张（点击图片可放大，右上角勾选用于下载选中）
                               </div>
                             ) : (
                               <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
@@ -2742,9 +2781,15 @@ export default function LlmLabTab() {
                                 background: 'rgba(255,255,255,0.02)',
                                 height: imageThumbHeight,
                               }}
+                              onClick={() => {
+                                if (!(it.status === 'done' && src)) return;
+                                setImagePreviewDialog({ open: true, title: '图片预览', src });
+                              }}
+                              role={it.status === 'done' && src ? 'button' : undefined}
+                              tabIndex={it.status === 'done' && src ? 0 : undefined}
                             >
                               {it.status === 'done' && src ? (
-                                <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'cover' }} />
+                                <img src={src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
                                   {it.status === 'error' ? (
@@ -2762,12 +2807,26 @@ export default function LlmLabTab() {
                                 </div>
                               )}
 
+                              {it.status === 'done' && src ? (
+                                <div
+                                  className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center pointer-events-none"
+                                  style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}
+                                  title="点击放大预览"
+                                  aria-label="点击放大预览"
+                                >
+                                  <Maximize2 size={14} />
+                                </div>
+                              ) : null}
+
                               <div className="absolute right-2 bottom-2 flex items-center gap-1">
                                 <button
                                   type="button"
                                   className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
                                   style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
-                                  onClick={() => void copyToClipboard(it.prompt)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void copyToClipboard(it.prompt);
+                                  }}
                                   aria-label="复制提示词"
                                   title="复制提示词"
                                   disabled={!it.prompt}
@@ -2779,7 +2838,10 @@ export default function LlmLabTab() {
                                   type="button"
                                   className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
                                   style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.20)' }}
-                                  onClick={() => void downloadImage(src, it.prompt)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void downloadImage(src, it.prompt);
+                                  }}
                                   aria-label="下载图片"
                                   title="下载图片"
                                   disabled={it.status !== 'done' || !src}
@@ -2931,6 +2993,57 @@ export default function LlmLabTab() {
               <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                 {previewDialog.text || '（无输出）'}
               </pre>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={imagePreviewDialog.open}
+        onOpenChange={(open) => setImagePreviewDialog((p) => ({ ...p, open }))}
+        title={imagePreviewDialog.title || '图片预览'}
+        description="点击图片缩略图可打开此预览"
+        maxWidth={1100}
+        contentStyle={{ height: 'min(86vh, 820px)' }}
+        content={
+          <div className="h-full min-h-0 flex flex-col">
+            <div className="flex items-center justify-end gap-2 pb-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void downloadImage(imagePreviewDialog.src, imagePreviewDialog.title || 'image')}
+                disabled={!imagePreviewDialog.src}
+              >
+                <Download size={16} />
+                下载
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void copyToClipboard(imagePreviewDialog.src || '')}
+                disabled={!imagePreviewDialog.src}
+                title="复制图片 dataURL（或原始 URL）"
+              >
+                <Copy size={16} />
+                复制链接
+              </Button>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
+              {imagePreviewDialog.src ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <img
+                    src={imagePreviewDialog.src}
+                    alt={imagePreviewDialog.title}
+                    className="block max-w-full h-auto"
+                    style={{ maxHeight: '78vh', objectFit: 'contain' }}
+                  />
+                </div>
+              ) : (
+                <div className="h-full min-h-[220px] flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                  （无图片）
+                </div>
+              )}
             </div>
           </div>
         }

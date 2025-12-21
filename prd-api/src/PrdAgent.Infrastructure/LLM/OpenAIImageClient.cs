@@ -1,8 +1,10 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -144,6 +146,7 @@ public class OpenAIImageClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型不支持 Anthropic 平台（请配置 OpenAI 兼容的 images API）");
         }
 
+        var isVolces = IsVolcesImagesApi(apiUrl);
         var endpoint = GetImagesEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
@@ -163,23 +166,49 @@ public class OpenAIImageClient
             httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/').TrimEnd('#') + "/");
         }
 
-        var req = new OpenAIImageRequest
+        var providerForLog = isVolces ? "Volces" : "OpenAI";
+        object reqObj;
+        if (isVolces)
         {
-            Model = effectiveModelName,
-            Prompt = prompt.Trim(),
-            N = n,
-            Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
-            ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
-        };
+            // Volces Ark Images API（/api/v3/images/generations）
+            // 兼容前端统一输入：即使前端请求 b64_json，Volces 侧也强制用 url（再由后端下载转 base64/dataURL 回传）
+            var volcesResponseFormat = "url";
+            var volcesSize = NormalizeVolcesSize(size);
+            reqObj = new VolcesImageRequest
+            {
+                Model = effectiveModelName,
+                Prompt = prompt.Trim(),
+                N = n,
+                Size = volcesSize,
+                ResponseFormat = volcesResponseFormat,
+                SequentialImageGeneration = "disabled",
+                Stream = false,
+                Watermark = true
+            };
+        }
+        else
+        {
+            reqObj = new OpenAIImageRequest
+            {
+                Model = effectiveModelName,
+                Prompt = prompt.Trim(),
+                N = n,
+                Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
+                ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
+            };
+        }
 
         // 写入 LLM 请求日志（生图）
         if (_logWriter != null)
         {
-            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(req, OpenAIImageJsonContext.Default.OpenAIImageRequest));
+            var reqRawJson = isVolces
+                ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
+                : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+            var reqLogJson = LlmLogRedactor.RedactJson(reqRawJson);
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
                     RequestId: requestId,
-                    Provider: "OpenAI",
+                    Provider: providerForLog,
                     Model: effectiveModelName,
                     ApiBase: endpointUri != null && endpointUri.IsAbsoluteUri ? $"{endpointUri.Scheme}://{endpointUri.Host}/" : httpClient.BaseAddress?.ToString(),
                     Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : endpoint.TrimStart('/'),
@@ -190,7 +219,7 @@ public class OpenAIImageClient
                     },
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
-                    QuestionText: req.Prompt,
+                    QuestionText: isVolces ? ((VolcesImageRequest)reqObj).Prompt : ((OpenAIImageRequest)reqObj).Prompt,
                     SystemPromptChars: null,
                     SystemPromptHash: null,
                     SystemPromptText: null,
@@ -210,11 +239,45 @@ public class OpenAIImageClient
         HttpResponseMessage resp;
         try
         {
-            var content = new StringContent(JsonSerializer.Serialize(req, OpenAIImageJsonContext.Default.OpenAIImageRequest), Encoding.UTF8, "application/json");
-            var targetUri = endpointUri != null && endpointUri.IsAbsoluteUri
-                ? endpointUri
-                : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
-            resp = await httpClient.PostAsync(targetUri, content, ct);
+            async Task<HttpResponseMessage> SendOnceAsync(CancellationToken token)
+            {
+                var reqJsonInner = isVolces
+                    ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
+                    : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
+                var targetUriInner = endpointUri != null && endpointUri.IsAbsoluteUri
+                    ? endpointUri
+                    : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
+                return await httpClient.PostAsync(targetUriInner, contentInner, token);
+            }
+
+            resp = await SendOnceAsync(ct);
+
+            // Volces：size 太小会 400，自动升级到最小要求并重试一次（前端无需改）
+            if (isVolces && resp.StatusCode == HttpStatusCode.BadRequest)
+            {
+                var firstBody = await resp.Content.ReadAsStringAsync(ct);
+                if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg) &&
+                    errMsg.Contains("size", StringComparison.OrdinalIgnoreCase) &&
+                    errMsg.Contains("at least", StringComparison.OrdinalIgnoreCase) &&
+                    reqObj is VolcesImageRequest vReq &&
+                    !string.Equals(vReq.Size, "1920x1920", StringComparison.OrdinalIgnoreCase))
+                {
+                    vReq.Size = "1920x1920"; // 1920*1920=3,686,400（满足报错要求的最小像素数）
+                    resp.Dispose();
+                    resp = await SendOnceAsync(ct);
+                }
+                else
+                {
+                    // 兜底：把第一次 body 还回去，下面统一处理
+                    resp.Dispose();
+                    resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
+                        RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
+                    };
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -235,10 +298,54 @@ public class OpenAIImageClient
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Image generate failed: {Status} {Body}", (int)resp.StatusCode, body.Length > 500 ? body[..500] : body);
+            // 注意：下游可能返回带签名的 URL（query 中含签名/credential 等敏感信息），避免写入日志
+            _logger.LogWarning("Image generate failed: HTTP {Status} (body chars={Chars})", (int)resp.StatusCode, body?.Length ?? 0);
             if (logId != null)
             {
+                var endedAt = DateTime.UtcNow;
+                var respContentType = resp.Content.Headers.ContentType?.MediaType;
+                var bodyPreview = RedactAndTruncateResponseBody(body ?? string.Empty, respContentType);
+                string? upstreamMessage = null;
+                if (TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em)) upstreamMessage = em;
+                var answerObj = new
+                {
+                    error = new
+                    {
+                        message = $"Image generate failed: HTTP {(int)resp.StatusCode}",
+                        statusCode = (int)resp.StatusCode,
+                        contentType = respContentType,
+                        upstreamMessage,
+                        bodyPreview
+                    }
+                };
+                var answerText = JsonSerializer.Serialize(answerObj);
+                _logWriter?.MarkDone(
+                    logId,
+                    new LlmLogDone(
+                        StatusCode: (int)resp.StatusCode,
+                        ResponseHeaders: new Dictionary<string, string>
+                        {
+                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
+                        },
+                        InputTokens: null,
+                        OutputTokens: null,
+                        CacheCreationInputTokens: null,
+                        CacheReadInputTokens: null,
+                        AnswerText: answerText,
+                        AssembledTextChars: answerText.Length,
+                        AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),
+                        Status: "failed",
+                        EndedAt: endedAt,
+                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
+
+                // 保留 Error 字段用于列表页快速查看
                 _logWriter?.MarkError(logId, $"Image generate failed: HTTP {(int)resp.StatusCode}", (int)resp.StatusCode);
+            }
+            // 对 400/422 等参数类错误尽量返回 INVALID_FORMAT，便于前端直接提示用户
+            if ((int)resp.StatusCode >= 400 && (int)resp.StatusCode < 500)
+            {
+                var msg = TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em2) ? em2 : $"生图失败：HTTP {(int)resp.StatusCode}";
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, msg);
             }
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, $"生图失败：HTTP {(int)resp.StatusCode}");
         }
@@ -258,14 +365,25 @@ public class OpenAIImageClient
                 string? b64 = null;
                 string? url = null;
                 string? revised = null;
+                string? sizeHint = null;
 
                 if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
                 {
                     b64 = b64El.GetString();
                 }
+                // 兼容部分平台字段命名差异
+                if (string.IsNullOrWhiteSpace(b64) && it.TryGetProperty("base64", out var b64El2) && b64El2.ValueKind == JsonValueKind.String)
+                {
+                    b64 = b64El2.GetString();
+                }
                 if (it.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
                 {
                     url = urlEl.GetString();
+                }
+                // Volces 会返回 data[i].size 作为实际尺寸
+                if (it.TryGetProperty("size", out var sizeEl) && sizeEl.ValueKind == JsonValueKind.String)
+                {
+                    sizeHint = sizeEl.GetString();
                 }
                 if (it.TryGetProperty("revised_prompt", out var rpEl) && rpEl.ValueKind == JsonValueKind.String)
                 {
@@ -291,14 +409,43 @@ public class OpenAIImageClient
                 });
             }
 
+            // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
+            for (var i = 0; i < images.Count; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(images[i].Base64)) continue;
+                if (string.IsNullOrWhiteSpace(images[i].Url)) continue;
+
+                var dataUrl = await TryDownloadImageAsDataUrlAsync(images[i].Url!, ct);
+                if (!string.IsNullOrWhiteSpace(dataUrl))
+                {
+                    images[i].Base64 = dataUrl;
+                }
+            }
+
+            // Volces：usage 里提供 token 统计（用于后台 Token 统计卡片）
+            int? volcesTotalTokens = null;
+            if (isVolces && root.TryGetProperty("usage", out var usageEl) && usageEl.ValueKind == JsonValueKind.Object)
+            {
+                if (usageEl.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
+                {
+                    volcesTotalTokens = tt.GetInt32();
+                }
+                else if (usageEl.TryGetProperty("output_tokens", out var ot) && ot.ValueKind == JsonValueKind.Number)
+                {
+                    volcesTotalTokens = ot.GetInt32();
+                }
+            }
+
             if (logId != null)
             {
                 var endedAt = DateTime.UtcNow;
+                var responseFormatForLog = isVolces ? ((VolcesImageRequest)reqObj).ResponseFormat : ((OpenAIImageRequest)reqObj).ResponseFormat;
+                var sizeForLog = isVolces ? ((VolcesImageRequest)reqObj).Size : ((OpenAIImageRequest)reqObj).Size;
                 var summary = new
                 {
                     images = images.Count,
-                    responseFormat = req.ResponseFormat,
-                    size = req.Size,
+                    responseFormat = responseFormatForLog,
+                    size = sizeForLog,
                     // 不记录 base64 内容；仅记录是否返回
                     hasBase64 = images.Any(x => !string.IsNullOrWhiteSpace(x.Base64)),
                     hasUrl = images.Any(x => !string.IsNullOrWhiteSpace(x.Url)),
@@ -315,7 +462,7 @@ public class OpenAIImageClient
                             ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
                         },
                         InputTokens: null,
-                        OutputTokens: null,
+                        OutputTokens: volcesTotalTokens,
                         CacheCreationInputTokens: null,
                         CacheReadInputTokens: null,
                         AnswerText: answerText,
@@ -333,6 +480,26 @@ public class OpenAIImageClient
             _logger.LogWarning(ex, "Image generate parse failed");
             if (logId != null)
             {
+                var endedAt = DateTime.UtcNow;
+                var answerText = JsonSerializer.Serialize(new { error = new { message = "Image generate parse failed" } });
+                _logWriter?.MarkDone(
+                    logId,
+                    new LlmLogDone(
+                        StatusCode: (int)resp.StatusCode,
+                        ResponseHeaders: new Dictionary<string, string>
+                        {
+                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
+                        },
+                        InputTokens: null,
+                        OutputTokens: null,
+                        CacheCreationInputTokens: null,
+                        CacheReadInputTokens: null,
+                        AnswerText: answerText,
+                        AssembledTextChars: answerText.Length,
+                        AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),
+                        Status: "failed",
+                        EndedAt: endedAt,
+                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
                 _logWriter?.MarkError(logId, "Image generate parse failed");
             }
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图响应解析失败");
@@ -396,7 +563,311 @@ public class OpenAIImageClient
     /// </summary>
     public static string GetImagesEndpoint(string apiUrl)
     {
+        if (IsVolcesImagesApi(apiUrl))
+        {
+            return BuildVolcesEndpoint(apiUrl, "images/generations");
+        }
         return OpenAICompatUrl.BuildEndpoint(apiUrl, "images/generations");
+    }
+
+    /// <summary>
+    /// Volces Ark（ark.*.volces.com / *.volces.com）图片生成使用 /api/v3/images/generations，
+    /// 其余保持 OpenAICompatUrl 默认规则（/v1/...）。
+    /// </summary>
+    private static bool IsVolcesImagesApi(string apiUrl)
+    {
+        var raw = (apiUrl ?? string.Empty).Trim();
+        raw = raw.TrimEnd('#');
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var u)) return false;
+        if (!u.Host.EndsWith("volces.com", StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
+    }
+
+    private static string BuildVolcesEndpoint(string baseUrl, string capabilityPath)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(capabilityPath)) return string.Empty;
+
+        var raw = baseUrl.Trim();
+        var cap = capabilityPath.Trim().TrimStart('/');
+
+        // 规则二：以 # 结尾 —— 强制使用原地址（不做任何拼接）
+        if (raw.EndsWith("#", StringComparison.Ordinal))
+        {
+            return raw.TrimEnd('#');
+        }
+
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var u))
+        {
+            var path = (u.AbsolutePath ?? string.Empty).TrimEnd('/');
+
+            // 若 baseUrl 已经是完整的能力 endpoint（例如 .../api/v3/images/generations），则直接使用
+            if (path.EndsWith("/" + cap, StringComparison.OrdinalIgnoreCase))
+            {
+                return raw;
+            }
+
+            // 规则一：以 / 结尾
+            if (raw.EndsWith("/", StringComparison.Ordinal))
+            {
+                // 若已包含 /api/v3（作为 base），则直接拼接能力路径；否则补上 /api/v3
+                if (path.Contains("/api/v3", StringComparison.OrdinalIgnoreCase))
+                {
+                    return raw.TrimEnd('/') + "/" + cap;
+                }
+                return raw.TrimEnd('/') + "/api/v3/" + cap;
+            }
+
+            // 若 baseUrl 已包含 /api/v3（作为 base），则直接拼接 {capabilityPath}
+            if (path.Contains("/api/v3", StringComparison.OrdinalIgnoreCase))
+            {
+                return raw.TrimEnd('/') + "/" + cap;
+            }
+        }
+
+        // 规则一：以 / 结尾（无法解析为绝对 URL 的兜底逻辑）
+        if (raw.EndsWith("/", StringComparison.Ordinal))
+        {
+            return raw.TrimEnd('/') + "/api/v3/" + cap;
+        }
+
+        // Volces：否则默认补上 /api/v3
+        return raw.TrimEnd('/') + "/api/v3/" + cap;
+    }
+
+    private async Task<string?> TryDownloadImageAsDataUrlAsync(string imageUrl, CancellationToken ct)
+    {
+        if (!Uri.TryCreate((imageUrl ?? string.Empty).Trim(), UriKind.Absolute, out var uri)) return null;
+        if (!IsSafeExternalImageUri(uri)) return null;
+
+        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
+        httpClient.Timeout = TimeSpan.FromSeconds(30);
+        // 避免把上游生图平台的 Bearer token 泄露给图片 URL 的第三方 host
+        httpClient.DefaultRequestHeaders.Remove("Authorization");
+        httpClient.DefaultRequestHeaders.Accept.Clear();
+        httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("image/*"));
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+            using var resp = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Image url download failed: HTTP {Status} host={Host}", (int)resp.StatusCode, uri.Host);
+                return null;
+            }
+
+            var contentType = resp.Content.Headers.ContentType?.MediaType;
+            var maxBytes = 15 * 1024 * 1024; // 15MB 上限：防止异常大文件拖垮内存
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var ms = new MemoryStream(capacity: 1024 * 1024);
+            await CopyToWithLimitAsync(stream, ms, maxBytes, ct);
+            var bytes = ms.ToArray();
+
+            var mime = GuessImageMimeType(contentType, bytes);
+            var b64 = Convert.ToBase64String(bytes);
+            return $"data:{mime};base64,{b64}";
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Image url download failed: host={Host}", uri.Host);
+            return null;
+        }
+    }
+
+    private static async Task CopyToWithLimitAsync(Stream input, Stream output, int maxBytes, CancellationToken ct)
+    {
+        var buf = new byte[81920];
+        var total = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buf.AsMemory(0, buf.Length), ct);
+            if (read <= 0) break;
+            total += read;
+            if (total > maxBytes)
+            {
+                throw new InvalidOperationException("Image too large");
+            }
+            await output.WriteAsync(buf.AsMemory(0, read), ct);
+        }
+    }
+
+    private static bool IsSafeExternalImageUri(Uri uri)
+    {
+        if (!string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(uri.Host)) return false;
+
+        // 基础 SSRF 防护：拒绝本地/私网/环回
+        if (string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (IPAddress.TryParse(uri.Host, out var ip))
+        {
+            if (IsPrivateOrLocalIp(ip)) return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsPrivateOrLocalIp(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            // 10.0.0.0/8
+            if (b[0] == 10) return true;
+            // 172.16.0.0/12
+            if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;
+            // 192.168.0.0/16
+            if (b[0] == 192 && b[1] == 168) return true;
+            // 169.254.0.0/16 (link-local)
+            if (b[0] == 169 && b[1] == 254) return true;
+            return false;
+        }
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
+            // fc00::/7 (unique local)
+            var b = ip.GetAddressBytes();
+            if ((b[0] & 0xFE) == 0xFC) return true;
+        }
+
+        return false;
+    }
+
+    private static string GuessImageMimeType(string? contentTypeHeader, byte[] bytes)
+    {
+        // 优先使用响应头
+        if (!string.IsNullOrWhiteSpace(contentTypeHeader) &&
+            contentTypeHeader.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return contentTypeHeader;
+        }
+
+        // 魔数兜底
+        if (bytes.Length >= 12)
+        {
+            // PNG: 89 50 4E 47 0D 0A 1A 0A
+            if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) return "image/png";
+            // JPEG: FF D8 FF
+            if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) return "image/jpeg";
+            // GIF: GIF87a / GIF89a
+            if (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) return "image/gif";
+            // WEBP: RIFF....WEBP
+            if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+                bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) return "image/webp";
+        }
+
+        return "image/png";
+    }
+
+    private static string RedactAndTruncateResponseBody(string body, string? contentType)
+    {
+        var raw = body ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+
+        // 对 JSON 先做“密钥类字段”脱敏，再额外处理“带签名 URL”
+        string s;
+        if (!string.IsNullOrWhiteSpace(contentType) && contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+        {
+            s = LlmLogRedactor.RedactJson(raw);
+            s = RedactSignedUrls(s);
+        }
+        else
+        {
+            s = raw;
+            s = RedactSignedUrls(s);
+        }
+
+        var maxChars = LlmLogLimits.DefaultErrorMaxChars;
+        if (s.Length > maxChars) s = s[..maxChars] + "...[TRUNCATED]";
+        return s;
+    }
+
+    private static string RedactSignedUrls(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+
+        // 粗粒度兜底：把包含常见签名参数的 URL query 去掉（避免泄露 X-Tos-* / Signature / Credential）
+        // 不追求完美，只保证“不会把签名原文落库/展示”
+        return Regex.Replace(
+            text,
+            @"https?://[^\s""']+",
+            m =>
+            {
+                var u = m.Value;
+                if (!Uri.TryCreate(u, UriKind.Absolute, out var uri)) return u;
+                var q = uri.Query ?? string.Empty;
+                var hasSig =
+                    q.Contains("X-Tos-", StringComparison.OrdinalIgnoreCase) ||
+                    q.Contains("Signature", StringComparison.OrdinalIgnoreCase) ||
+                    q.Contains("Credential", StringComparison.OrdinalIgnoreCase) ||
+                    q.Contains("Expires", StringComparison.OrdinalIgnoreCase) ||
+                    q.Contains("x-tos-", StringComparison.OrdinalIgnoreCase);
+                if (!hasSig) return u;
+                return $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath}?[REDACTED_QUERY]";
+            });
+    }
+
+    private static bool TryExtractUpstreamErrorMessage(string body, out string message)
+    {
+        message = string.Empty;
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object)
+            {
+                if (err.TryGetProperty("message", out var msgEl) && msgEl.ValueKind == JsonValueKind.String)
+                {
+                    message = msgEl.GetString() ?? string.Empty;
+                    message = message.Trim();
+                    return !string.IsNullOrWhiteSpace(message);
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Volces 对 size 的要求更严格：根据你当前日志，至少需要 3,686,400 pixels（=1920x1920）。
+    /// 为了保持前端不变，这里把常见的 OpenAI 尺寸自动升级到可用的最小值。
+    /// </summary>
+    private static string? NormalizeVolcesSize(string? size)
+    {
+        var raw = (size ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return "1920x1920";
+
+        // 已经是 2K/4K 等标签则原样透传
+        if (raw.EndsWith("K", StringComparison.OrdinalIgnoreCase)) return raw;
+
+        // 解析 WxH
+        var m = Regex.Match(raw, @"^\s*(\d+)\s*[xX]\s*(\d+)\s*$");
+        if (m.Success &&
+            int.TryParse(m.Groups[1].Value, out var w) &&
+            int.TryParse(m.Groups[2].Value, out var h) &&
+            w > 0 && h > 0)
+        {
+            var pixels = (long)w * h;
+            // 3,686,400 = 1920*1920
+            if (pixels < 3686400) return "1920x1920";
+            return $"{w}x{h}";
+        }
+
+        // 其他未知格式：兜底到最小可用
+        return "1920x1920";
     }
 }
 
@@ -433,6 +904,39 @@ internal class OpenAIImageRequest
 
 [JsonSerializable(typeof(OpenAIImageRequest))]
 internal partial class OpenAIImageJsonContext : JsonSerializerContext
+{
+}
+
+internal class VolcesImageRequest
+{
+    [JsonPropertyName("model")]
+    public string Model { get; set; } = string.Empty;
+
+    [JsonPropertyName("prompt")]
+    public string Prompt { get; set; } = string.Empty;
+
+    [JsonPropertyName("n")]
+    public int N { get; set; } = 1;
+
+    [JsonPropertyName("size")]
+    public string? Size { get; set; }
+
+    [JsonPropertyName("response_format")]
+    public string? ResponseFormat { get; set; }
+
+    // Volces Ark 扩展字段（OpenAI 标准不包含）
+    [JsonPropertyName("sequential_image_generation")]
+    public string? SequentialImageGeneration { get; set; }
+
+    [JsonPropertyName("stream")]
+    public bool? Stream { get; set; }
+
+    [JsonPropertyName("watermark")]
+    public bool? Watermark { get; set; }
+}
+
+[JsonSerializable(typeof(VolcesImageRequest))]
+internal partial class VolcesImageJsonContext : JsonSerializerContext
 {
 }
 

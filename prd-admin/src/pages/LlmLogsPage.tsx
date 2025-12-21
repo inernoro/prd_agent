@@ -5,7 +5,7 @@ import { SearchableSelect, Select } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
-import { CheckCircle, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, MessageSquare, RefreshCw, Reply, ScanEye, Search, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { CheckCircle, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -192,6 +192,44 @@ function joinBaseAndPath(apiBase: string, path: string) {
   if (!b) return p;
   if (!p) return b;
   return `${b.replace(/\/+$/, '')}/${p.replace(/^\/+/, '')}`;
+}
+
+function tryParseJsonObject(text: string): Record<string, unknown> | null {
+  const raw = (text ?? '').trim();
+  if (!raw) return null;
+  // 仅尝试 JSON object/array；其它情况不推断
+  if (!(raw.startsWith('{') || raw.startsWith('['))) return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (v && typeof v === 'object') return v as any;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function inferDocumentCharsFromRequestBody(requestBodyRedacted: string): number | null {
+  const obj = tryParseJsonObject(requestBodyRedacted);
+  if (!obj) return null;
+
+  // 常见形态：{ documents: [...] } / { document: ... }
+  const pickLen = (v: unknown): number => {
+    if (v == null) return 0;
+    if (typeof v === 'string') return v.length;
+    try {
+      return JSON.stringify(v).length;
+    } catch {
+      return String(v).length;
+    }
+  };
+
+  const docs = (obj as any).documents;
+  if (Array.isArray(docs)) return docs.reduce((sum: number, x: unknown) => sum + pickLen(x), 0);
+
+  const doc = (obj as any).document;
+  if (doc !== undefined) return pickLen(doc);
+
+  return null;
 }
 
 function buildCurlFromLog(detail: LlmRequestLog): string {
@@ -696,8 +734,18 @@ export default function LlmLogsPage() {
                   {/* 底部：问题/回答滚动条（新闻样式） */}
                   <PreviewTickerRow it={it} />
                   {it.error ? (
-                    <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                      {it.error}
+                    <div
+                      className="mt-2 rounded-[12px] px-3 py-2 text-xs flex items-start gap-2 min-w-0"
+                      style={{
+                        background: 'rgba(239,68,68,0.06)',
+                        border: '1px solid rgba(239,68,68,0.18)',
+                        color: 'rgba(239,68,68,0.95)',
+                      }}
+                    >
+                      <XCircle size={14} className="shrink-0 mt-[1px]" />
+                      <div className="min-w-0 break-words" style={{ wordBreak: 'break-word' }}>
+                        {it.error}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -815,8 +863,31 @@ export default function LlmLogsPage() {
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">
                   <div>
-                    <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>headers</div>
-                    <pre style={codeBoxStyle()}>{JSON.stringify(detail.requestHeadersRedacted ?? {}, null, 2)}</pre>
+                    <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>endpoint</div>
+                    <pre style={codeBoxStyle()}>
+                      {joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '—'}
+                    </pre>
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      endpointChars: {(joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '').length || '—'}
+                    </div>
+                  </div>
+                  <div>
+                    {(() => {
+                      const headersObj = detail.requestHeadersRedacted ?? {};
+                      const headerKeys = Object.keys(headersObj).length;
+                      const headerChars = JSON.stringify(headersObj ?? {}).length;
+                      return (
+                        <>
+                          <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                            <span>headers</span>
+                            <span className="text-[11px]">
+                              {headerKeys} 项 · {headerChars} chars
+                            </span>
+                          </div>
+                          <pre style={codeBoxStyle()}>{JSON.stringify(headersObj, null, 2)}</pre>
+                        </>
+                      );
+                    })()}
                   </div>
                   <div>
                     {(() => {
@@ -844,7 +915,26 @@ export default function LlmLogsPage() {
                   </div>
                 </div>
                 <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  systemPromptChars: {detail.systemPromptChars ?? '-'} · documentChars: {detail.documentChars ?? '-'}
+                  {(() => {
+                    const sysChars =
+                      typeof detail.systemPromptChars === 'number'
+                        ? detail.systemPromptChars
+                        : (detail.systemPromptText ? detail.systemPromptText.length : null);
+                    const docChars =
+                      typeof detail.documentChars === 'number'
+                        ? detail.documentChars
+                        : inferDocumentCharsFromRequestBody(detail.requestBodyRedacted || '');
+                    const sysLabel = sysChars == null ? '—' : sysChars;
+                    const docLabel =
+                      docChars == null
+                        ? (detail.documentHash ? '—（仅上报 hash）' : '—（未上报/无文档）')
+                        : (typeof detail.documentChars === 'number' ? docChars : `${docChars}（推断）`);
+                    return (
+                      <>
+                        systemPromptChars: {sysLabel} · documentChars: {docLabel}
+                      </>
+                    );
+                  })()}
                 </div>
               </Card>
 
