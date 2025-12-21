@@ -229,10 +229,12 @@ public class AdminModelLabController : ControllerBase
         {
             tasks.Add(Task.Run(async () =>
             {
+                var queuedAt = DateTime.UtcNow;
                 await sem.WaitAsync(cancellationToken);
                 try
                 {
-                    await RunOneModelAsync(sm, run, jwtSecret, mainEnablePromptCache, effective, writeLock, cancellationToken);
+                    var queueMs = (long)Math.Max(0, (DateTime.UtcNow - queuedAt).TotalMilliseconds);
+                    await RunOneModelAsync(sm, run, jwtSecret, mainEnablePromptCache, effective, writeLock, queueMs, cancellationToken);
                 }
                 finally
                 {
@@ -270,6 +272,7 @@ public class AdminModelLabController : ControllerBase
         bool mainEnablePromptCache,
         EffectiveRunRequest effective,
         SemaphoreSlim writeLock,
+        long queueMs,
         CancellationToken ct)
     {
         var item = new ModelLabRunItem
@@ -285,7 +288,7 @@ public class AdminModelLabController : ControllerBase
         };
 
         await _repo.InsertRunItemAsync(item);
-        await WriteWithLockAsync(writeLock, "model", new { type = "modelStart", runId = run.Id, itemId = item.Id, modelId = item.ModelId, displayName = item.DisplayName, modelName = item.ModelName }, ct);
+        await WriteWithLockAsync(writeLock, "model", new { type = "modelStart", runId = run.Id, itemId = item.Id, modelId = item.ModelId, displayName = item.DisplayName, modelName = item.ModelName, queueMs }, ct);
 
         var model = await _db.LLMModels.Find(m => m.Id == selected.ModelId).FirstOrDefaultAsync(ct);
         // 兼容“未配置模型”：前端可能传入 modelId=modelName（平台可用模型列表），此时 llmmodels 查不到，需要回退到平台配置直接调用
@@ -568,13 +571,14 @@ public class AdminModelLabController : ControllerBase
         var imagePlanMaxItems = Math.Clamp(request.ImagePlanMaxItems ?? 10, 1, 20);
 
         var models = new List<ModelLabSelectedModel>();
-        if (exp?.SelectedModels?.Count > 0)
-        {
-            models = exp.SelectedModels;
-        }
-        else if (request.Models?.Count > 0)
+        // 规则：若前端显式传 models，则认为是“本次运行的临时模型列表”（例如临时禁用/过滤），优先级最高，不写入实验。
+        if (request.Models?.Count > 0)
         {
             models = request.Models;
+        }
+        else if (exp?.SelectedModels?.Count > 0)
+        {
+            models = exp.SelectedModels;
         }
         else if (request.ModelIds?.Count > 0)
         {

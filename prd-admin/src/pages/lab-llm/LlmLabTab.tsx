@@ -47,6 +47,8 @@ type ViewRunItem = {
   /** 配置模型的真实 id（用于“设为主/意图”等全局设置）。如果流里返回的 modelId 不是配置 id，会用 modelName 回查得到 */
   configModelId?: string;
   status: 'running' | 'done' | 'error';
+  /** 并发排队等待耗时（不计入 TTFT；用于解释“并发导致看起来很慢”） */
+  queueMs?: number;
   ttftMs?: number;
   totalMs?: number;
   preview: string;
@@ -101,6 +103,8 @@ type LlmLabCacheV1 = {
   mode: LabMode;
   suite: ModelLabSuite;
   sortBy: SortBy;
+  /** 临时禁用模型（仅本次测试用；不写入实验） */
+  disabledModelKeys: Record<string, boolean>;
   imageSubMode: ImageSubMode;
   imgSize: string;
   singleN: number;
@@ -144,6 +148,12 @@ function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
     .filter(Boolean)
     .sort()
     .join('|');
+}
+
+function modelKeyOfSelected(m: ModelLabSelectedModel): string {
+  const pid = String(m?.platformId ?? '').trim();
+  const name = String(m?.modelName ?? '').trim();
+  return `${pid}:${name}`.toLowerCase();
 }
 
 function filenameSafe(s: string) {
@@ -572,8 +582,9 @@ const builtInPrompts: Record<LabMode, { label: string; promptText: string }[]> =
   imageGenPlan: [
     {
       label: '生图意图',
-      promptText:
-        '请阅读以下文章/需求，推断其中需要生成的图片清单（每个图片的 prompt 需可直接用于生图）。\n\n（在“生图意图”模式下会自动用系统内置提示词约束输出为 JSON）\n\n正文：\n',
+      // 不在 textarea 里塞“模板文字”，避免用户误以为这是 system prompt；
+      // 真实 system prompt 已在后端以 expectedFormat=imageGenPlan 注入。
+      promptText: '',
     },
   ],
 };
@@ -583,6 +594,7 @@ export default function LlmLabTab() {
   const cacheUserId = (authUser?.userId ?? 'anonymous').trim() || 'anonymous';
   const labCacheKey = useMemo(() => `prd-admin-llm-lab-cache:v1:${cacheUserId}`, [cacheUserId]);
   const hydratedRef = useRef(false);
+  const appliedExperimentIdRef = useRef<string>('');
   const cacheSaveTimerRef = useRef<number | null>(null);
   const storedBlobKeysRef = useRef<Set<string>>(new Set());
   const objectUrlByKeyRef = useRef<Map<string, string>>(new Map());
@@ -608,6 +620,8 @@ export default function LlmLabTab() {
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
   const [promptText, setPromptText] = useState<string>('');
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
+  // 临时禁用：仅影响“本次运行”（startRun 时过滤），不写入实验 selectedModels
+  const [disabledModelKeys, setDisabledModelKeys] = useState<Record<string, boolean>>({});
 
   const [mainMode, setMainMode] = useState<MainMode>('infer');
   const [imageSubMode, setImageSubMode] = useState<ImageSubMode>('single');
@@ -743,6 +757,7 @@ export default function LlmLabTab() {
       if (typeof data.mode === 'string') setMode(data.mode as any);
       if (data.suite === 'speed' || data.suite === 'intent' || data.suite === 'custom') setSuite(data.suite);
       if (data.sortBy === 'ttft' || data.sortBy === 'total' || data.sortBy === 'imagePlanItemsDesc') setSortBy(data.sortBy);
+      if (data.disabledModelKeys && typeof data.disabledModelKeys === 'object') setDisabledModelKeys(data.disabledModelKeys as any);
       if (data.imageSubMode === 'single' || data.imageSubMode === 'batch') setImageSubMode(data.imageSubMode);
       if (typeof data.imgSize === 'string' && data.imgSize.trim()) setImgSize(data.imgSize.trim());
       if (typeof data.singleN === 'number') setSingleN(Math.max(1, Math.min(20, Number(data.singleN || 1))));
@@ -800,6 +815,7 @@ export default function LlmLabTab() {
           mode,
           suite,
           sortBy,
+          disabledModelKeys: disabledModelKeys ?? {},
           imageSubMode,
           imgSize,
           singleN: Number(singleN || 1),
@@ -831,6 +847,7 @@ export default function LlmLabTab() {
     activeExperimentId,
     batchError,
     batchItems,
+      disabledModelKeys,
     imageError,
     imageItems,
     imageSubMode,
@@ -1053,6 +1070,13 @@ export default function LlmLabTab() {
 
   useEffect(() => {
     if (!activeExperiment) return;
+    // 关键：仅在“切换实验”时才从实验回填到 UI。
+    // 否则在用户输入触发自动保存后（experiments 列表刷新导致 activeExperiment 引用变化），会把当前 mode 强行改回 suite（常见为 speed）。
+    const isSwitchingExperiment = appliedExperimentIdRef.current !== activeExperiment.id;
+    if (!isSwitchingExperiment) return;
+
+    appliedExperimentIdRef.current = activeExperiment.id;
+
     setSuite(activeExperiment.suite);
     setMode(activeExperiment.suite);
     setParams(activeExperiment.params ?? defaultParams);
@@ -1084,6 +1108,12 @@ export default function LlmLabTab() {
 
   const removeSelectedModel = (modelId: string) => {
     setSelectedModels((prev) => prev.filter((x) => x.modelId !== modelId));
+  };
+
+  const toggleDisabledSelectedModel = (m: ModelLabSelectedModel) => {
+    const key = modelKeyOfSelected(m);
+    if (!key) return;
+    setDisabledModelKeys((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const saveExperiment = async (opts?: { silent?: boolean }) => {
@@ -1172,6 +1202,7 @@ export default function LlmLabTab() {
     setSingleGroupId('');
     setSingleSelected({});
     setBatchActiveModelLabel('');
+    setDisabledModelKeys({});
 
     // 清理本地持久化（localStorage + IndexedDB），并释放 blob URL
     try {
@@ -1474,6 +1505,10 @@ export default function LlmLabTab() {
     if (!activeExperimentId) return alert('请先选择实验');
     if (selectedModels.length === 0) return alert('请先加入至少 1 个模型');
 
+    // 临时禁用：本次运行只跑“未禁用模型”，不改实验配置
+    const enabledModels = (selectedModels ?? []).filter((m) => !disabledModelKeys[modelKeyOfSelected(m)]);
+    if (enabledModels.length === 0) return alert('当前已将所有模型临时禁用，请先点击模型恢复至少 1 个再运行');
+
     setRunError(null);
     setRunItems({});
     stopRun();
@@ -1489,6 +1524,8 @@ export default function LlmLabTab() {
         experimentId: activeExperimentId,
         suite,
         expectedFormat,
+        // 若显式传 models，则后端将以此作为“本次运行模型列表”（用于临时禁用/过滤），不会写入实验
+        models: enabledModels,
         ...(expectedFormat === 'imageGenPlan'
           ? {
               imagePlanMaxItems: 10,
@@ -1524,6 +1561,7 @@ export default function LlmLabTab() {
                 modelName: obj.modelName || '',
                 configModelId: configModelId || undefined,
                 status: 'running',
+                queueMs: typeof obj.queueMs === 'number' ? Number(obj.queueMs) : undefined,
                 preview: '',
                 rawText: '',
                 rawTruncated: false,
@@ -1829,11 +1867,10 @@ export default function LlmLabTab() {
       if (next === 'imageGenPlan') setSortBy('imagePlanItemsDesc');
       else if (sortBy === 'imagePlanItemsDesc') setSortBy('ttft');
       setMode(next);
-      const list = builtInPrompts[next] ?? [];
-      const first = list[0]?.promptText ?? '';
-      applyBuiltInPrompt(first);
-      // 下一次再点时，从第二条开始循环（若只有 1 条则继续 0）
-      suiteCycleRef.current[next] = list.length > 1 ? 1 : 0;
+      // 关键：切换模式时不自动塞模板内容，避免用户还没粘贴就要先删一堆字；
+      // 如果用户想用内置模板，重复点击当前 mode 会循环填充（见下面分支）。
+      // 下一次再点时，从第一条开始循环
+      suiteCycleRef.current[next] = 0;
       return;
     }
 
@@ -2071,7 +2108,10 @@ export default function LlmLabTab() {
           <div className="mt-4 flex-1 min-h-0 flex flex-col">
             <div className="flex items-center justify-between">
               <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                已选择模型 {selectedModels.length} 个
+                {(() => {
+                  const disabled = (selectedModels ?? []).filter((m) => disabledModelKeys[modelKeyOfSelected(m)]).length;
+                  return `已选择模型 ${selectedModels.length} 个${disabled > 0 ? `（已禁用 ${disabled}）` : ''}`;
+                })()}
               </div>
               {modelsLoading ? <Badge variant="subtle">加载中</Badge> : null}
             </div>
@@ -2082,35 +2122,106 @@ export default function LlmLabTab() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {selectedModels.map((m) => (
-                    <button
-                      key={m.modelId}
-                      className="w-full rounded-[14px] px-3 py-2 text-xs flex items-center justify-between gap-3 min-w-0 whitespace-nowrap"
-                      style={{
-                        border: '1px solid var(--border-subtle)',
-                        background: 'rgba(255, 255, 255, 0.02)',
-                        color: 'var(--text-primary)',
-                      }}
-                      onClick={() => removeSelectedModel(m.modelId)}
-                      title={`${platformNameById.get(m.platformId) ? `${platformNameById.get(m.platformId)} ` : ''}${m.name || m.modelName}`}
-                      type="button"
-                    >
-                      <span className="flex items-center gap-2 min-w-0">
-                        <label
-                          className="inline-flex items-center gap-1 rounded-[999px] px-2 py-[2px] text-[11px] shrink-0 max-w-[140px] truncate"
-                          style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}
-                          title={platformNameById.get(m.platformId) || m.platformId}
+                  {(() => {
+                    // 按 platform 分组（按出现顺序稳定展示）
+                    const order: string[] = [];
+                    const groups = new Map<string, ModelLabSelectedModel[]>();
+                    for (const m of selectedModels) {
+                      const pid = String(m.platformId ?? '').trim() || 'unknown';
+                      if (!groups.has(pid)) {
+                        groups.set(pid, []);
+                        order.push(pid);
+                      }
+                      groups.get(pid)!.push(m);
+                    }
+
+                    return order.map((pid) => {
+                      const list = groups.get(pid) ?? [];
+                      const platformLabel = platformNameById.get(pid) || pid;
+                      const disabledCount = list.filter((m) => disabledModelKeys[modelKeyOfSelected(m)]).length;
+                      return (
+                        <div
+                          key={pid}
+                          className="rounded-[14px] p-3"
+                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
                         >
-                          <Cpu size={12} className="shrink-0" />
-                          <span className="truncate">{platformNameById.get(m.platformId) || m.platformId}</span>
-                        </label>
-                        <span className="min-w-0 truncate">{m.name || m.modelName}</span>
-                      </span>
-                      <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        ×
-                      </span>
-                    </button>
-                  ))}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <label
+                                className="inline-flex items-center gap-1 rounded-[999px] px-2 py-[2px] text-[11px] shrink-0 max-w-full truncate"
+                                style={{
+                                  border: '1px solid rgba(255,255,255,0.10)',
+                                  background: 'rgba(255,255,255,0.04)',
+                                  color: 'var(--text-muted)',
+                                }}
+                                title={platformLabel}
+                              >
+                                <Cpu size={12} className="shrink-0" />
+                                <span className="truncate">{platformLabel}</span>
+                              </label>
+                              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                {list.length} 个{disabledCount > 0 ? `（禁用 ${disabledCount}）` : ''}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 flex flex-col gap-2">
+                            {list.map((m) => {
+                              const isDisabled = !!disabledModelKeys[modelKeyOfSelected(m)];
+                              return (
+                                <button
+                                  key={m.modelId}
+                                  className="w-full rounded-[12px] px-3 py-2 text-xs flex items-center justify-between gap-3 min-w-0"
+                                  style={{
+                                    border: isDisabled ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(255,255,255,0.10)',
+                                    background: isDisabled ? 'rgba(255,255,255,0.01)' : 'rgba(255,255,255,0.02)',
+                                    color: isDisabled ? 'var(--text-muted)' : 'var(--text-primary)',
+                                    opacity: isDisabled ? 0.78 : 1,
+                                  }}
+                                  onClick={() => toggleDisabledSelectedModel(m)}
+                                  title={m.name || m.modelName}
+                                  type="button"
+                                >
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <span
+                                      className="min-w-0 truncate"
+                                      style={{
+                                        color: isDisabled ? 'var(--text-muted)' : 'var(--text-primary)',
+                                        textDecoration: isDisabled ? 'line-through' : 'none',
+                                      }}
+                                    >
+                                      {m.name || m.modelName}
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-[10px] transition-colors hover:bg-white/6"
+                                    style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-muted)' }}
+                                    title="从实验中移除该模型"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removeSelectedModel(m.modelId);
+                                      const k = modelKeyOfSelected(m);
+                                      if (k)
+                                        setDisabledModelKeys((p) => {
+                                          if (!p[k]) return p;
+                                          const next = { ...p };
+                                          delete next[k];
+                                          return next;
+                                        });
+                                    }}
+                                    aria-label="移除模型"
+                                  >
+                                    ×
+                                  </button>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               )}
             </div>
@@ -2308,7 +2419,9 @@ export default function LlmLabTab() {
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
             placeholder={
               mainMode === 'infer'
-                ? '输入本次对比测试的 prompt（可使用内置模板快速填充）'
+                ? mode === 'imageGenPlan'
+                  ? '粘贴文章/PRD/需求（系统会用内置“生图意图解析”提示词生成 JSON：{total, items:[{prompt,count}] }）'
+                  : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
                 : imageSubMode === 'single'
                   ? '输入要生成的图片描述（将直接交给生图模型）'
                   : '输入需求描述（将先用意图模型解析出图片清单并提示数量）'
@@ -2532,7 +2645,9 @@ export default function LlmLabTab() {
                       </div>
                       <div className="shrink-0 flex items-center justify-end gap-2">
                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'} · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
+                          TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'}
+                          {typeof it.queueMs === 'number' ? `（排队 ${it.queueMs}ms）` : ''}
+                          · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
                         </div>
                         <div
                           className="text-xs"
