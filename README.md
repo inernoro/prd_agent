@@ -103,8 +103,20 @@ pnpm dev
 # 构建桌面客户端
 .\scripts\build-desktop.ps1 -Platform windows
 
-# Docker 部署
-docker-compose up -d
+# Docker 部署（生产：禁止本地构建）
+# 生产环境请先准备好已构建并推送到镜像仓库的镜像，然后通过环境变量指定镜像（tag 或 digest）：
+# - PRD_AGENT_WEB_IMAGE=ghcr.io/<org>/<repo>/prdagent-web:vX.Y.Z
+# - PRD_AGENT_API_IMAGE=ghcr.io/<org>/<repo>/prdagent-server:vX.Y.Z
+#
+# 推荐用 digest 固定版本，避免 tag 漂移：
+# - PRD_AGENT_WEB_IMAGE=ghcr.io/<org>/<repo>/prdagent-web@sha256:...
+# - PRD_AGENT_API_IMAGE=ghcr.io/<org>/<repo>/prdagent-server@sha256:...
+#
+# 如仓库为私有，还需要先登录：
+# docker login ghcr.io
+#
+# 启动：
+docker compose up -d
 ```
 
 ## API 端点

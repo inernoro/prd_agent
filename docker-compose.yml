@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mongodb:
     image: mongo:8.0
@@ -20,7 +18,10 @@ services:
       - prdagent-network
 
   web:
-    image: ghcr.io/inernoro/prd_agent/prdagent-web:main
+    # 生产环境禁止本地构建：请提供已构建好的镜像（tag 或 digest）
+    # 例：PRD_AGENT_WEB_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-web:vX.Y.Z
+    # 或：PRD_AGENT_WEB_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-web@sha256:...
+    image: ${PRD_AGENT_WEB_IMAGE:?Please set PRD_AGENT_WEB_IMAGE}
     container_name: prdagent-web
     ports:
       - "5500:80"
@@ -30,7 +31,10 @@ services:
       - prdagent-network
 
   api:
-    image: ghcr.io/inernoro/prd_agent/prdagent-server:main
+    # 生产环境禁止本地构建：请提供已构建好的镜像（tag 或 digest）
+    # 例：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server:vX.Y.Z
+    # 或：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server@sha256:...
+    image: ${PRD_AGENT_API_IMAGE:?Please set PRD_AGENT_API_IMAGE}
     container_name: prdagent-api
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
