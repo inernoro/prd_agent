@@ -1,4 +1,19 @@
 services:
+  gateway:
+    image: nginx:1.27-alpine
+    container_name: prdagent-gateway
+    ports:
+      - "5500:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 由 deploy.sh 从 GitHub Release 下载并解压到此目录
+      - ./deploy/web/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
   mongodb:
     image: mongo:8.0
     container_name: prdagent-mongodb
@@ -8,6 +23,7 @@ services:
       MONGO_INITDB_DATABASE: prdagent
     networks:
       - prdagent-network
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -16,19 +32,7 @@ services:
       - redis_data:/data
     networks:
       - prdagent-network
-
-  web:
-    # 生产环境禁止本地构建：请提供已构建好的镜像（tag 或 digest）
-    # 例：PRD_AGENT_WEB_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-web:vX.Y.Z
-    # 或：PRD_AGENT_WEB_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-web@sha256:...
-    image: ${PRD_AGENT_WEB_IMAGE:?Please set PRD_AGENT_WEB_IMAGE}
-    container_name: prdagent-web
-    ports:
-      - "5500:80"
-    depends_on:
-      - api
-    networks:
-      - prdagent-network
+    restart: unless-stopped
 
   api:
     # 生产环境禁止本地构建：请提供已构建好的镜像（tag 或 digest）
@@ -38,6 +42,7 @@ services:
     container_name: prdagent-api
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
@@ -49,6 +54,7 @@ services:
       - redis
     networks:
       - prdagent-network
+    restart: unless-stopped
 
 volumes:
   mongodb_data:

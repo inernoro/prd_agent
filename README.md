@@ -103,20 +103,23 @@ pnpm dev
 # 构建桌面客户端
 .\scripts\build-desktop.ps1 -Platform windows
 
-# Docker 部署（生产：禁止本地构建）
-# 生产环境请先准备好已构建并推送到镜像仓库的镜像，然后通过环境变量指定镜像（tag 或 digest）：
-# - PRD_AGENT_WEB_IMAGE=ghcr.io/<org>/<repo>/prdagent-web:vX.Y.Z
-# - PRD_AGENT_API_IMAGE=ghcr.io/<org>/<repo>/prdagent-server:vX.Y.Z
+# 生产部署（推荐：Release 静态 + Docker 只跑 nginx/api/db）
 #
-# 推荐用 digest 固定版本，避免 tag 漂移：
-# - PRD_AGENT_WEB_IMAGE=ghcr.io/<org>/<repo>/prdagent-web@sha256:...
-# - PRD_AGENT_API_IMAGE=ghcr.io/<org>/<repo>/prdagent-server@sha256:...
+# 1) 打 tag（例如 v1.2.3）后，GitHub Actions 会：
+#    - 构建 prd-admin/dist 并打包成 Release 资产：prd-admin-dist-<tag>.zip
+#    - 构建并推送后端镜像到 GHCR：prdagent-server:<tag> 以及 :latest
 #
-# 如仓库为私有，还需要先登录：
-# docker login ghcr.io
+# 2) 线上服务器准备好 docker-compose（以及 curl/unzip）
 #
-# 启动：
-docker compose up -d
+# 3) 线上部署命令（下载静态到本地，再 docker-compose up -d）：
+#    Linux/macOS 示例：
+#      export REPO="inernoro/prd_agent"
+#      export PRD_AGENT_API_IMAGE="ghcr.io/inernoro/prd_agent/prdagent-server:v1.2.3"
+#      ./deploy.sh v1.2.3
+#
+#    - 静态会解压到 deploy/web/dist
+#    - nginx 容器挂载该目录作为站点根目录
+#    - /api/ 将反代到 api:8080（优先级最高，支持 SSE）
 ```
 
 ## API 端点
