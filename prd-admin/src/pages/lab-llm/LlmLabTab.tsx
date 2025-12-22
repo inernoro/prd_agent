@@ -447,7 +447,7 @@ const defaultParams: ModelLabParams = {
   temperature: 0.2,
   maxTokens: null,
   timeoutMs: 60000,
-  maxConcurrency: 3,
+  maxConcurrency: 10,
   repeatN: 1,
 };
 
