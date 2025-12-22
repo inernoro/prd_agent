@@ -4,7 +4,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { login } from '@/services';
 import { Button } from '@/components/design/Button';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
-import { emitBackdropBusyStopped } from '@/lib/backdropBusy';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 
 export default function LoginPage() {
@@ -13,7 +12,7 @@ export default function LoginPage() {
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
-  // 登录页默认应“持续动”（原始体验）；只有当外部明确进入运行/刹车态时才由 controller 接管
+  // 登录页默认持续动（更符合登录页氛围）；若 controller 正在刹车/运行，则由其接管
   const shouldRun: boolean | undefined = backdropCount > 0 ? true : pendingStopId ? false : undefined;
 
   const [username, setUsername] = useState('admin');
@@ -62,12 +61,12 @@ export default function LoginPage() {
         stopBrakeMs={2000}
         onFullyStopped={(id) => {
           if (!id) return;
-          emitBackdropBusyStopped(id);
           backdropMotionController.markStopped(id);
         }}
         persistKey="prd-recgrid-rot"
-        persistMode="write"
-        // 登录页希望“更实更深”：默认（shouldRun=undefined）也用更实的线条
+        // 必须 readwrite：登出回登录页要读取主页面保存的角度，实现“续着以前的状态”
+        persistMode="readwrite"
+        // 登录页 idle 也希望更“深”：除非明确刹车（shouldRun===false），否则用实色
         strokeRunning={shouldRun === false ? 'rgba(231, 206, 151, 0.30)' : 'rgba(231, 206, 151, 1)'}
         strokeBraking={'rgba(231, 206, 151, 0.30)'}
         brakeStrokeFadeMs={2000}

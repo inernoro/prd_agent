@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
-import { emitBackdropBusyStopped } from '@/lib/backdropBusy';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode };
@@ -48,7 +47,6 @@ export default function AppShell() {
         stopBrakeMs={2000}
         onFullyStopped={(id) => {
           if (!id) return;
-          emitBackdropBusyStopped(id);
           backdropMotionController.markStopped(id);
         }}
         persistKey="prd-recgrid-rot"
