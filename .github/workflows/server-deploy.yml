@@ -13,6 +13,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/prdagent-server
+  WEB_IMAGE_NAME: ${{ github.repository }}/prdagent-web
 
 jobs:
   # 构建并推送 Docker 镜像
@@ -66,6 +67,59 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
 
+  # 构建并推送 Web（Nginx + 管理后台静态）
+  build-web:
+    name: Build & Push Web Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./deploy/nginx/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VITE_API_BASE_URL=
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
   # 构建并推送管理后台静态文件
   build-admin:
     name: Build Admin Dashboard
@@ -107,7 +161,8 @@ jobs:
         working-directory: prd-admin
         run: pnpm build
         env:
-          VITE_API_BASE_URL: ${{ vars.API_BASE_URL || '/api' }}
+          # 同域部署：VITE_API_BASE_URL 置空，让前端请求走 /api/v1/...
+          VITE_API_BASE_URL: ""
 
       - name: Upload admin build
         uses: actions/upload-artifact@v4
@@ -119,7 +174,7 @@ jobs:
   # 部署通知（可选）
   notify:
     name: Deployment Notification
-    needs: [build-and-push, build-admin]
+    needs: [build-and-push, build-web, build-admin]
     runs-on: ubuntu-latest
     if: always()
 

@@ -53,9 +53,11 @@ public static class BsonClassMapRegistration
         BsonClassMap.RegisterClassMap<User>(cm =>
         {
             cm.AutoMap();
-            cm.MapIdMember(u => u.UserId)
-                .SetSerializer(new StringSerializer(BsonType.String))
+            // 兼容：历史上 users 可能是默认 ObjectId(_id)，也可能被存成 string
+            cm.MapIdMember(u => u.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(StringObjectIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 

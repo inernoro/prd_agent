@@ -4,6 +4,8 @@ services:
   mongodb:
     image: mongo:8.0
     container_name: prdagent-mongodb
+    ports:
+      - "18081:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
@@ -14,13 +16,20 @@ services:
   redis:
     image: redis:7-alpine
     container_name: prdagent-redis
+    ports:
+      - "18082:6379"
     volumes:
       - redis_data:/data
     networks:
       - prdagent-network
 
   web:
-    image: ghcr.io/inernoro/prd_agent/prdagent-web:main
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+    image: prdagent-web:dev
     container_name: prdagent-web
     ports:
       - "5500:80"
@@ -30,10 +39,15 @@ services:
       - prdagent-network
 
   api:
-    image: ghcr.io/inernoro/prd_agent/prdagent-server:main
+    build:
+      context: ./prd-api
+      dockerfile: Dockerfile
+    image: prdagent-api:dev
     container_name: prdagent-api
+    ports:
+      - "5000:8080"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_ENVIRONMENT=Development
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
@@ -53,8 +67,5 @@ volumes:
 networks:
   prdagent-network:
     driver: bridge
-
-
-
 
 

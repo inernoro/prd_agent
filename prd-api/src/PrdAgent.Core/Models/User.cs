@@ -5,6 +5,11 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class User
 {
+    /// <summary>
+    /// MongoDB 主键（_id）。用于兼容历史/默认 ObjectId；业务侧请使用 <see cref="UserId"/>。
+    /// </summary>
+    public string? Id { get; set; }
+
     /// <summary>用户唯一标识</summary>
     public string UserId { get; set; } = Guid.NewGuid().ToString();
     
