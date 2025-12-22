@@ -41,8 +41,8 @@ export default function AppShell() {
       {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
       <RecursiveGridBackdrop
         className="absolute inset-0"
-        // 登录/运行态背景速度更明显，刹车 2s 也更易感知
-        speedDegPerSec={2.2}
+        // 与 thirdparty/ref/递归网络.html 一致：rot += 0.02deg @60fps => 1.2deg/s
+        speedDegPerSec={1.2}
         shouldRun={backdropRunning}
         stopRequestId={pendingStopId}
         stopBrakeMs={2000}

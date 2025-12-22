@@ -55,7 +55,8 @@ export default function LoginPage() {
     <div className="prd-login-root relative h-full w-full overflow-hidden">
       <RecursiveGridBackdrop
         className="absolute inset-0"
-        speedDegPerSec={2.2}
+        // 与 thirdparty/ref/递归网络.html 一致：rot += 0.02deg @60fps => 1.2deg/s
+        speedDegPerSec={1.2}
         shouldRun={shouldRun}
         stopRequestId={pendingStopId || null}
         stopBrakeMs={2000}
