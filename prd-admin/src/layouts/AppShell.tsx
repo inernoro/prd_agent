@@ -1,8 +1,9 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, BarChart3, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
+import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode };
 
@@ -12,6 +13,21 @@ export default function AppShell() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const [collapsed, setCollapsed] = useState(false);
+  const [runForMs, setRunForMs] = useState(0);
+  const postLoginFx = runForMs > 0;
+
+  useEffect(() => {
+    // 登录后承接背景：动 2 秒，然后静止（像登录页与主页连起来）
+    try {
+      const flag = sessionStorage.getItem('prd-postlogin-fx');
+      if (flag) {
+        sessionStorage.removeItem('prd-postlogin-fx');
+        setRunForMs(2000);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const items: NavItem[] = useMemo(
     () => [
@@ -20,22 +36,49 @@ export default function AppShell() {
       { key: '/groups', label: '群组管理', icon: <Users2 size={18} /> },
       { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} /> },
       { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} /> },
-      { key: '/stats', label: '统计', icon: <BarChart3 size={18} /> },
       { key: '/lab', label: '实验室', icon: <FlaskConical size={18} /> },
     ],
     []
   );
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
+  const asideWidth = collapsed ? 72 : 220;
+  const asideGap = 18;
+  const mainPadLeft = asideWidth + asideGap * 2;
 
   return (
-    <div className="h-full w-full" style={{ background: 'var(--bg-base)' }}>
-      <div className="h-full w-full grid" style={{ gridTemplateColumns: collapsed ? '72px 1fr' : '220px 1fr' }}>
+    <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+      {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
+      <RecursiveGridBackdrop
+        className="absolute inset-0"
+        runForMs={runForMs}
+        persistKey="prd-recgrid-rot"
+        persistMode="readwrite"
+        // 刹车前更实，刹车瞬间变淡并缓慢“刹停”
+        strokeRunning={postLoginFx ? 'rgba(231, 206, 151, 1)' : 'rgba(231, 206, 151, 0.30)'}
+        strokeBraking="rgba(231, 206, 151, 0.30)"
+        brakeStrokeFadeMs={postLoginFx ? 260 : 0}
+        brakeDecelerationRate={0.965}
+        brakeMinSpeedDegPerSec={0.015}
+      />
+
+      <div className="relative z-10 h-full w-full">
+        {/* 悬浮侧边栏：不贴左边，像“挂着” */}
         <aside
-          className={cn('h-full flex flex-col p-2.5', collapsed ? 'gap-2' : 'gap-2.5')}
+          className={cn('absolute flex flex-col p-2.5', collapsed ? 'gap-2' : 'gap-2.5')}
           style={{
-            background: 'color-mix(in srgb, var(--bg-elevated) 85%, black)',
-            borderRight: '1px solid var(--border-subtle)',
+            left: asideGap,
+            top: asideGap,
+            bottom: asideGap,
+            width: asideWidth,
+            zIndex: 20,
+            borderRadius: 18,
+            // 让线条能透出来，但内容依旧清晰
+            background:
+              'linear-gradient(180deg, rgba(10,10,12,0.78) 0%, rgba(10,10,12,0.72) 100%)',
+            border: '1px solid color-mix(in srgb, var(--border-subtle) 78%, rgba(255,255,255,0.10))',
+            boxShadow: '0 26px 120px rgba(0,0,0,0.60)',
+            backdropFilter: 'blur(12px)',
           }}
         >
           <div className={cn('flex items-center justify-between rounded-[14px] px-3 py-3', collapsed && 'justify-center')}
@@ -128,7 +171,8 @@ export default function AppShell() {
 
         <main
           className="relative h-full w-full overflow-auto flex flex-col"
-          style={{ background: 'var(--bg-base)' }}
+          // 让递归线条背景可见；前景可读性由 Card 等“实底组件”承担
+          style={{ background: 'transparent', paddingLeft: mainPadLeft, zIndex: 10 }}
         >
           {/* 主内容区背景：满屏暗角 + 轻微渐变（不随 max-width 截断） */}
           <div

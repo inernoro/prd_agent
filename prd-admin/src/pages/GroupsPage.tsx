@@ -178,7 +178,7 @@ export default function GroupsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="h-full flex flex-col gap-6">
       <div className="flex items-end justify-between">
         <div>
           <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>群组管理</div>
@@ -186,7 +186,7 @@ export default function GroupsPage() {
         </div>
       </div>
 
-      <Card>
+      <Card className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-[240px]">
             <div className="relative">
@@ -221,7 +221,7 @@ export default function GroupsPage() {
           {null}
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
+        <div className="mt-5 flex-1 min-h-0 overflow-auto rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
           <table className="w-full text-sm">
             <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
               <tr>

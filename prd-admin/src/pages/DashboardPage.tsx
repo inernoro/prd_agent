@@ -1,13 +1,13 @@
 import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
 import { Badge } from '@/components/design/Badge';
-import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { KpiCard } from '@/components/design/KpiCard';
+import { Select } from '@/components/design/Select';
 import { getActiveGroups, getGapStats, getLlmLogs, getMessageTrend, getOverviewStats, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem, TokenUsage } from '@/services/contracts/adminStats';
 import type { LlmRequestLogListItem } from '@/types/admin';
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type ObsMetrics = {
   sample: number;
@@ -16,8 +16,6 @@ type ObsMetrics = {
   cacheHitRate: number | null; // 0-1
   typeCounts: Array<{ type: string; count: number }>;
 };
-
-const AttentionLandscape = lazy(() => import('@/components/three/AttentionLandscape'));
 
 function toMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
@@ -87,38 +85,49 @@ function calcObs(logs: LlmRequestLogListItem[]): ObsMetrics {
 }
 
 export default function DashboardPage() {
+  const [days, setDays] = useState(14);
   const [overview, setOverview] = useState<{ totalUsers: number; activeUsers: number; totalGroups: number; todayMessages: number } | null>(null);
   const [token, setToken] = useState<TokenUsage | null>(null);
   const [trend, setTrend] = useState<TrendItem[]>([]);
   const [groups, setGroups] = useState<ActiveGroup[]>([]);
   const [gapStats, setGapStats] = useState<GapStats | null>(null);
   const [obs, setObs] = useState<ObsMetrics | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingBase, setLoadingBase] = useState(true);
+  const [loadingSeries, setLoadingSeries] = useState(true);
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
+      setLoadingBase(true);
       try {
-        const [overviewRes, tokenRes, trendRes, groupsRes, gapRes, logsRes] = await Promise.all([
+        const [overviewRes, groupsRes, gapRes, logsRes] = await Promise.all([
           getOverviewStats(),
-          getTokenUsage(7),
-          getMessageTrend(14),
           getActiveGroups(8),
           getGapStats(),
           getLlmLogs({ page: 1, pageSize: 180 }),
         ]);
 
         if (overviewRes.success) setOverview(overviewRes.data);
-        if (tokenRes.success) setToken(tokenRes.data);
-        if (trendRes.success) setTrend(trendRes.data);
         if (groupsRes.success) setGroups(groupsRes.data);
         if (gapRes.success) setGapStats(gapRes.data);
         if (logsRes.success) setObs(calcObs(logsRes.data.items ?? []));
       } finally {
-        setLoading(false);
+        setLoadingBase(false);
       }
     })();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingSeries(true);
+      try {
+        const [tokenRes, trendRes] = await Promise.all([getTokenUsage(days), getMessageTrend(days)]);
+        if (tokenRes.success) setToken(tokenRes.data);
+        if (trendRes.success) setTrend(trendRes.data);
+      } finally {
+        setLoadingSeries(false);
+      }
+    })();
+  }, [days]);
 
   const baseOption: Pick<EChartsOption, 'backgroundColor' | 'textStyle'> = useMemo(
     () => ({
@@ -224,16 +233,21 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium">
+            <option value={7}>最近7天</option>
+            <option value={14}>最近14天</option>
+            <option value={30}>最近30天</option>
+          </Select>
           <Badge variant="new">LLM</Badge>
           <Badge variant="featured">Observability</Badge>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard title="总用户数" value={overview?.totalUsers ?? 0} loading={loading} />
-        <KpiCard title="活跃用户" value={overview?.activeUsers ?? 0} loading={loading} accent="green" />
-        <KpiCard title="群组数" value={overview?.totalGroups ?? 0} loading={loading} />
-        <KpiCard title="今日消息" value={overview?.todayMessages ?? 0} loading={loading} accent="green" />
+        <KpiCard title="总用户数" value={overview?.totalUsers ?? 0} loading={loadingBase} />
+        <KpiCard title="活跃用户" value={overview?.activeUsers ?? 0} loading={loadingBase} accent="green" />
+        <KpiCard title="群组数" value={overview?.totalGroups ?? 0} loading={loadingBase} />
+        <KpiCard title="今日消息" value={overview?.todayMessages ?? 0} loading={loadingBase} accent="green" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
@@ -243,11 +257,11 @@ export default function DashboardPage() {
             <div className="rounded-[14px] p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
               <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>TTFB 分位数</div>
               <div className="mt-1 flex items-end justify-between gap-2">
-                <div className="text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loading ? '—' : fmtMs(obs?.ttfbP50Ms ?? null)}</div>
+                <div className="text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loadingBase ? '—' : fmtMs(obs?.ttfbP50Ms ?? null)}</div>
                 <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>P50</div>
               </div>
               <div className="mt-1 flex items-end justify-between gap-2">
-                <div className="text-[16px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{loading ? '—' : fmtMs(obs?.ttfbP95Ms ?? null)}</div>
+                <div className="text-[16px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{loadingBase ? '—' : fmtMs(obs?.ttfbP95Ms ?? null)}</div>
                 <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>P95</div>
               </div>
             </div>
@@ -256,7 +270,7 @@ export default function DashboardPage() {
               <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Prompt Cache 命中率</div>
               <div className="mt-1 flex items-end justify-between gap-2">
                 <div className="text-[22px] font-semibold" style={{ color: 'var(--accent-green)' }}>
-                  {loading ? '—' : fmtPct01(obs?.cacheHitRate ?? null)}
+                  {loadingBase ? '—' : fmtPct01(obs?.cacheHitRate ?? null)}
                 </div>
                 <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
                   sample {obs?.sample ?? 0}
@@ -281,13 +295,10 @@ export default function DashboardPage() {
 
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>消息趋势（近 14 天）</div>
-            <Button variant="secondary" size="sm" onClick={() => window.location.assign('/stats')}>
-              查看详情
-            </Button>
+            <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>消息趋势（近 {days} 天）</div>
           </div>
           <div className="mt-3 rounded-[14px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-            {loading ? (
+            {loadingSeries ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             ) : trend.length === 0 ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>暂无数据</div>
@@ -300,19 +311,19 @@ export default function DashboardPage() {
         </Card>
 
         <Card>
-          <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>Token（近 7 天总量）</div>
+          <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>Token（近 {days} 天总量）</div>
           <div className="mt-3 grid gap-2">
             <div className="rounded-[14px] px-4 py-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
               <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Input</div>
-              <div className="mt-1 text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loading ? '—' : (token?.totalInput ?? 0)}</div>
+              <div className="mt-1 text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loadingSeries ? '—' : (token?.totalInput ?? 0)}</div>
             </div>
             <div className="rounded-[14px] px-4 py-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
               <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Output</div>
-              <div className="mt-1 text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loading ? '—' : (token?.totalOutput ?? 0)}</div>
+              <div className="mt-1 text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loadingSeries ? '—' : (token?.totalOutput ?? 0)}</div>
             </div>
             <div className="rounded-[14px] px-4 py-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
               <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Total</div>
-              <div className="mt-1 text-[20px] font-semibold" style={{ color: '#E7CE97' }}>{loading ? '—' : (token?.totalTokens ?? 0)}</div>
+              <div className="mt-1 text-[20px] font-semibold" style={{ color: '#E7CE97' }}>{loadingSeries ? '—' : (token?.totalTokens ?? 0)}</div>
             </div>
           </div>
         </Card>
@@ -324,7 +335,7 @@ export default function DashboardPage() {
             内容缺失统计（共{gapStats?.total ?? 0}条）
           </div>
           <div className="mt-3 rounded-[14px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-            {loading ? (
+            {loadingBase ? (
               <div className="h-[260px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             ) : !gapStats ? (
               <div className="h-[260px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>暂无数据</div>
@@ -352,7 +363,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {loadingBase ? (
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</td>
                   </tr>
@@ -383,42 +394,7 @@ export default function DashboardPage() {
           </div>
         </Card>
       </div>
-
-      <Card>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Attention Landscape</div>
-            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              用真实指标驱动的 3D 层级地形（TTFB/缓存/Token）
-            </div>
-          </div>
-          <Badge variant="subtle" size="sm">3D</Badge>
-        </div>
-        <div className="mt-3 h-[320px] rounded-[14px] overflow-hidden">
-          <Suspense
-            fallback={
-              <div
-                className="h-full w-full"
-                style={{
-                  background:
-                    'radial-gradient(560px 340px at 50% 46%, rgba(34, 211, 238, 0.12) 0%, rgba(34, 197, 94, 0.06) 34%, transparent 72%), radial-gradient(900px 680px at 50% 60%, rgba(242, 213, 155, 0.10) 0%, transparent 68%), rgba(255,255,255,0.02)',
-                  border: '1px solid var(--border-subtle)',
-                }}
-              />
-            }
-          >
-            <AttentionLandscape
-              className="h-full w-full"
-              metrics={{
-                ttfbP50Ms: obs?.ttfbP50Ms ?? null,
-                ttfbP95Ms: obs?.ttfbP95Ms ?? null,
-                cacheHitRate: obs?.cacheHitRate ?? null,
-                tokenTotal: token?.totalTokens ?? null,
-              }}
-            />
-          </Suspense>
-        </div>
-      </Card>
+ 
     </div>
   );
 }

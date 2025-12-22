@@ -1,10 +1,9 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { login } from '@/services';
 import { Button } from '@/components/design/Button';
-
-const BlackHoleScene = lazy(() => import('@/components/three/BlackHoleScene'));
+import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -12,7 +11,7 @@ export default function LoginPage() {
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('Admin@123456');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => Boolean(username.trim() && password.trim()), [username, password]);
@@ -32,6 +31,12 @@ export default function LoginPage() {
         return;
       }
       setAuth(res.data.user, res.data.accessToken);
+      // 让主页面承接登录页背景：动 2 秒后冻结
+      try {
+        sessionStorage.setItem('prd-postlogin-fx', '1');
+      } catch {
+        // ignore
+      }
       navigate('/', { replace: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : '登录失败');
@@ -41,9 +46,21 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="prd-login-root h-full w-full grid grid-cols-1 lg:grid-cols-[minmax(420px,520px)_1fr]">
-      <div className="relative h-full w-full flex items-center justify-center px-6 lg:px-8">
-        <div className="prd-login-card w-full max-w-[420px] rounded-[22px] p-8">
+    <div className="prd-login-root relative h-full w-full overflow-hidden">
+      <RecursiveGridBackdrop className="absolute inset-0" persistKey="prd-recgrid-rot" persistMode="write" />
+
+      {/* overlay: lift behind the card */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(820px 620px at 50% 46%, rgba(214, 178, 106, 0.10) 0%, transparent 66%), radial-gradient(900px 720px at 48% 56%, rgba(92, 134, 255, 0.06) 0%, transparent 70%)',
+          opacity: 0.9,
+        }}
+      />
+
+      <div className="relative z-10 h-full w-full flex items-center justify-center px-6 py-10">
+        <div className="prd-login-card w-full max-w-[440px] rounded-[22px] p-8">
           <div className="flex items-center gap-4">
             <div
               className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
@@ -102,29 +119,10 @@ export default function LoginPage() {
             </Button>
 
             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              默认管理员：admin / Admin@123456（首次登录后请修改密码）
+              默认管理员：admin / admin（首次登录后请修改密码）
             </div>
           </div>
         </div>
-
-        <div className="prd-login-leftGlow pointer-events-none absolute inset-0" />
-      </div>
-
-      <div className="relative hidden h-full w-full overflow-hidden lg:block">
-        <Suspense
-          fallback={
-            <div
-              className="h-full w-full"
-              aria-hidden
-              style={{
-                background:
-                  'radial-gradient(620px 620px at 55% 50%, rgba(242, 213, 155, 0.14) 0%, rgba(214, 178, 106, 0.06) 30%, transparent 64%), radial-gradient(1200px 900px at 70% 55%, rgba(255,255,255,0.05) 0%, transparent 68%), radial-gradient(900px 680px at 55% 50%, rgba(0,0,0,0.0) 0%, rgba(0,0,0,0.45) 72%, rgba(0,0,0,0.70) 100%)',
-              }}
-            />
-          }
-        >
-          <BlackHoleScene className="absolute inset-0 pointer-events-none" />
-        </Suspense>
       </div>
     </div>
   );

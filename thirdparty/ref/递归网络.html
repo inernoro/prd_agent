@@ -1,0 +1,62 @@
+﻿<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>100 div-递归网格-jq22.com</title>
+<script src="https://www.jq22.com/jquery/jquery-1.10.2.js"></script>
+<style>
+html, body {
+  background: black;
+  height: 100%;
+  overflow: hidden;
+}
+
+:root {
+  --rot: 0deg;
+}
+
+div {
+  border: 1px solid rgba(255, 105, 180, 0.8);
+  height: calc(100% - 0.5vh);
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(var(--rot)) scale(0.97);
+  width: calc(100% - 0.5vw);
+}</style>
+</head>
+<body>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+<div><div><div><div><div><div><div><div><div><div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+</div></div></div></div></div></div></div></div></div></div>
+
+
+<script>
+let rot = 0;
+tick();
+
+function tick() {
+  requestAnimationFrame(tick);
+  rot += 0.02;
+  document.body.style.setProperty("--rot", `${rot}deg`);
+}</script>
+
+</body>
+</html>

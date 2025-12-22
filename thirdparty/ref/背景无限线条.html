@@ -1,0 +1,854 @@
+﻿<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>canvas随机背景-jq22.com</title>
+<script src="https://www.jq22.com/jquery/jquery-1.10.2.js"></script>
+<style>
+body {
+  font-family: Arial, Helvetica, "Liberation Sans", FreeSans, sans-serif;
+  background-color: #000;
+  margin:0;
+  padding:0;
+  border-width:0;
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+<div></div>
+
+<script>
+"use strict";
+
+  let NPPS; // number of points on each side - integer > 0
+  let DLINE; // distance between 2 lines ( * 1.4142 ) > 0.1
+
+  let LSIDE = NPPS * DLINE;
+
+  let canv, ctx;    // canvas and context
+  let maxx, maxy;   // canvas dimensions
+  let firstRun = true;
+
+  let nbx, nby
+  let tbLoops;
+  let nbTrueLoops;
+  let tbRectangles;
+
+  let posx, posy; // coordinates of corners
+  let grid;
+  let hierar;  // hierarchy of loops
+  let hue;
+// for animation
+  let events;
+
+// shortcuts for Math.
+  const mrandom = Math.random;
+  const mfloor = Math.floor;
+  const mround = Math.round;
+  const mceil = Math.ceil;
+  const mabs = Math.abs;
+  const mmin = Math.min;
+  const mmax = Math.max;
+
+  const mPI = Math.PI;
+  const mPIS2 = Math.PI / 2;
+  const mPIS3 = Math.PI / 3;
+  const m2PI = Math.PI * 2;
+  const m2PIS3 = Math.PI * 2 / 3;
+  const msin = Math.sin;
+  const mcos = Math.cos;
+  const matan2 = Math.atan2;
+
+  const mhypot = Math.hypot;
+  const msqrt = Math.sqrt;
+
+  const rac3   = msqrt(3);
+  const rac3s2 = rac3 / 2;
+
+//------------------------------------------------------------------------
+
+function alea (mini, maxi) {
+// random number in given range
+
+  if (typeof(maxi) == 'undefined') return mini * mrandom(); // range 0..mini
+
+  return mini + mrandom() * (maxi - mini); // range mini..maxi
+}
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+function intAlea (mini, maxi) {
+// random integer in given range (mini..maxi - 1 or 0..mini - 1)
+//
+  if (typeof(maxi) == 'undefined') return mfloor(mini * mrandom()); // range 0..mini - 1
+  return mini + mfloor(mrandom() * (maxi - mini)); // range mini .. maxi - 1
+}
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  function arrayShuffle (array) {
+/* randomly changes the order of items in an array
+   only the order is modified, not the elements
+*/
+  let k1, temp;
+  for (let k = array.length - 1; k >= 1; --k) {
+    k1 = intAlea(0, k + 1);
+    temp = array[k];
+    array[k] = array[k1];
+    array[k1] = temp;
+    } // for k
+  return array
+  } // arrayShuffle
+
+
+//------------------------------------------------------------------------
+//------------------------------------------------------------------------
+function Square (kx, ky) {
+
+  let delta;
+  let p0, p1;
+  let kxt, kyt;
+  let kxr, kyr;
+  let kxb, kyb;
+  let kxl, kyl;
+  let line;
+  let hierar;
+  let idxRect;
+
+  this.kx = kx;
+  this.ky = ky;
+  this.x = posx[kx];
+  this.y = posy[ky];
+// points on sides of square
+  this.top = [];
+  this.bottom = [];
+  this.right = [];
+  this.left = [];
+/* screen-coordinates points (in Square.sides) are shared by both squares with a common side */
+  for (let k = 0; k < NPPS; ++k) {
+    delta = LSIDE * (k + 0.5) / NPPS ;
+    this.top[k] = (this.ky > 0) ? grid[ky - 1][kx].bottom[NPPS - 1 - k] : [this.x + delta, this.y];
+    this.right[k] = [this.x + LSIDE, this.y + delta];
+    this.bottom[k] = [this.x + LSIDE - delta, this.y + LSIDE];
+    this.left[k] = (this.kx > 0) ? grid[ky][kx - 1].right[NPPS - 1 - k] : [this.x, this.y + +LSIDE - delta];
+  }
+  this.sides = [this.top, this.right, this.bottom, this.left];
+  this.kind = intAlea(NPPS + 1); // 0 .. NPPS
+//  this.kind = (kx + ky) %(NPPS + 1); // interesting too
+
+//  lines connected to sides
+  this.connections = [[],[],[],[]];
+// create (yet unconnected) points on 4 sides
+  for (let k = 0; k < NPPS; ++k) {
+    this.connections[0][k] = {square: this, side:0, kp: k};
+    this.connections[1][k] = {square: this, side:1, kp: k};
+    this.connections[2][k] = {square: this, side:2, kp: k};
+    this.connections[3][k] = {square: this, side:3, kp: k};
+  }
+
+// connect points to points on other sides
+  for (let k = 0; k < NPPS; ++k) {
+    p0 = this.connections[0][k];
+    if (k + this.kind < NPPS) {
+      p1 = this.connections[3][NPPS - 1 - k];
+      p0.dir = 1;
+      p1.dir = 3;
+    } else {
+      p1 = this.connections[1][NPPS - 1 - k];
+      p0.dir = 0;
+      p1.dir = 2
+    }
+    p0.other = p1;
+    p1.other = p0;
+  } // for k
+
+  for (let k = 0; k < NPPS; ++k) {
+    p0 = this.connections[2][k];
+    if (k + this.kind < NPPS) {
+      p1 =  this.connections[1][NPPS - 1 - k];
+      p0.dir = 3;
+      p1.dir = 1;
+    } else {
+      p1 = this.connections[3][NPPS - 1 - k];
+      p0.dir = 2;
+      p1.dir = 0;
+    }
+    p0.other = p1;
+    p1.other = p0;
+  } // for k
+
+/* inner rectangles
+ their coordinates are directly recorded in tbRectangles
+ the list of their indices is recorded is this.rectangles
+*/
+  delta = LSIDE / NPPS;
+  
+  kxt = kyl = NPPS - this.kind;
+  kyt = kxl = 0.5;
+  kxb = kyr = this.kind;
+  kyb = kxr = NPPS - 0.5;
+  idxRect = tbRectangles.length;
+  while (kxl < kxb && kxl < kxt) { // while 'true' rectangles
+    tbRectangles[idxRect] =
+      [[this.x + kxt * delta, this.y + kyt * delta],
+       [this.x + kxr * delta, this.y + kyr * delta],
+       [this.x + kxb * delta, this.y + kyb * delta],
+       [this.x + kxl * delta, this.y + kyl * delta]];
+    ++kyt; --kyb; ++kxl; --kxr; // shrink rectangle
+    if (this.rectangles === undefined) {  
+      this.rectangles = [idxRect]; // 1st (outermost) rectangle, creation of list
+    } else {
+      this.rectangles.push(idxRect); // append to existing list of rectangles
+    }
+    ++idxRect;
+  } // while true rectangles
+
+} // Square
+
+//------------------------------------------------------------------------
+
+Square.prototype.neighborSquare = function(side) {
+
+  if (side == 0 && this.ky == 0) return false;
+  if (side == 1 && this.kx == nbx - 1) return false;
+  if (side == 2 && this.ky == nby - 1) return false;
+  if (side == 3 && this.kx == 0) return false;
+
+  return grid[this.ky + [-1, 0, 1, 0][side]][this.kx + [0, 1, 0, -1][side]];
+
+} //
+
+//------------------------------------------------------------------------
+
+function nextConnection (connection) {
+// returns the next connection (turning clockwise around the square)
+
+  let square = connection.square;
+  let side = connection.side;
+  let kp = connection.kp;
+
+  switch (side) {
+    case 0 : return (kp < NPPS - 1) ?
+               square.connections[0][kp + 1] :
+               square.connections[1][0];
+    case 1 : return (kp < NPPS - 1) ?
+               square.connections[1][kp + 1] :
+               square.connections[2][NPPS - 1];
+    case 2 : return (kp > 0) ?
+               square.connections[2][kp - 1] :
+               square.connections[3][NPPS - 1];
+    case 3 : return (kp > 0) ?
+               square.connections[3][kp - 1] :
+               square.connections[0][0];
+
+  } // switch
+
+} // nextConnexion
+//------------------------------------------------------------------------
+//------------------------------------------------------------------------
+
+function allGrid (func, params) {
+/* works on existing (non-empty) grid
+/* func will be called from inside a double loop on ky and ky
+When called, it will receive 2 arguments : grid[ky][kx], params
+*/
+
+  grid.forEach (line => {
+    line.forEach (cell => func(cell, params));
+  }); // grid.forEach
+};
+
+//------------------------------------------------------------------------
+
+function analysecw (loop) {
+// checks whether a normally closed line (without fake points) turns cw or ccw
+/* angles are counted in 1/4 of turn, the reference direction pointing towards bottom right
+reference direction does not matter since we are only interested inf change of direction over
+a full turn, which may be 4 (cw) or -4 (ccw)
+
+reverses the line if it was turning the wrong way
+*/
+
+  let angle = 0;
+  let conn;
+  let currDir, nextDir;
+
+  currDir = loop[loop.length - 1].dir;
+  for (let k = 0; k < loop.length; ++ k) {
+    conn = loop[k];
+    nextDir = conn.dir;
+    angle += [0,1,1e9,-1][(nextDir - currDir + 4) % 4];
+    currDir = nextDir;
+  }; // for k
+  
+  if (angle == -4)     reverseLoop(loop);
+  loop.turnscw = true;
+
+} // analysecw
+
+//------------------------------------------------------------------------
+function reverseLoop (loop) {
+
+// first remove fake points at the end - if any
+let fake = [];
+
+  if (loop[loop.length - 1].corner !== undefined) fake.push(loop.pop());
+  if (loop[loop.length - 1].corner !== undefined) fake.push(loop.pop());
+
+// loop is reversed in place, no new loop is created
+  let ks = 0, ke = loop.length - 1;
+  while (ks <= ke) {
+   [loop[ke], loop[ks]] = [loop[ks].other, loop[ke].other]; // swap beginning / end
+    ++ks; --ke;
+  }
+  if (loop.turnscw !== undefined) loop.turnscw = ! loop.turnscw;
+
+// append fake points in reverse order
+  if (fake.length) loop.push(fake.shift());
+  if (fake.length) loop.push(fake.shift());
+} // reverseLoop
+//------------------------------------------------------------------------
+
+function connectLines() {
+
+  let cell, conn;
+  let idxLoop = 0;
+  let tbLoops = [];
+
+/* first, create open lines (starting from sides of the grid)
+*/
+// horizontal sides
+  for (let kx = 0; kx < nbx; ++kx) {
+    grid[0][kx].connections[0].forEach(connectOneLine); // top side
+    grid[nby - 1][kx].connections[2].forEach(connectOneLine); // bottom side
+  } // for kx
+
+// vertical sides
+  for (let ky = 0; ky < nby; ++ky) {
+    grid[ky][0].connections[3].forEach(connectOneLine); // left side
+    grid[ky][nbx - 1].connections[1].forEach(connectOneLine); // right side
+  } // for ky
+
+  tbLoops.forEach( loop => {
+    if (!loop.turnscw) reverseLoop(loop);
+  }); 
+
+// now the 'naturally' closed lines in the rest of the grid
+
+  allGrid(cell => {
+    cell.connections.forEach (side => {
+      side.forEach (connectOneLine);
+    });
+  });
+/*
+now that all loops are created and correctly oriented, associate each connection
+with a direction
+*/
+  tbLoops.forEach((loop, k) => {
+    loop.forEach (conn => {
+      if (conn.corner !== undefined) return; // ignore fake points
+      conn.entry = true;
+      conn.other.entry = false;
+    }); // loop.forEach
+  }); // tbLoops.forEach
+
+  return tbLoops;
+
+  function connectOneLine(point) {
+  /* point is a connection (a Square.connections[side][kp] */
+
+    let nextP, nextCell;
+
+    let loop = [];
+    if (point.idxLoop !== undefined) return; // already done !
+    loop.push(point);
+
+    do {
+      point.idxLoop = idxLoop;
+      nextP = point.other; // other end of this connection
+      nextP.idxLoop = idxLoop;
+/* let us find the corresponding point in the neighbor cell */
+      nextCell = nextP.square.neighborSquare(nextP.side);
+      if (nextCell === false) {
+        // no neighbor : end of open line
+//        line.push(nextP); // don't forget last segment
+        closeOpenLine(loop);
+        tbLoops.push(loop);
+        ++idxLoop;
+        return;
+      }
+      point = nextCell.connections[(nextP.side + 2) % 4][NPPS - 1 - nextP.kp]; // same point seen from the neighbor cell
+      loop.push(point);
+
+    } while (point.idxLoop === undefined);
+// closed line : finished
+    analysecw(loop);
+    tbLoops.push(loop);
+    ++idxLoop;
+
+  } // connectOneLine
+} // connectLines
+
+//------------------------------------------------------------------------
+function closeOpenLine(line) {
+/*  closes an open line created by connectOneLine
+by adding a line getting around the grid, and appending the first point at the end.
+To create this line, zero are more fake points corresponding to the corner are added.
+adds property to line to remember whether it is turning cw or ccw
+*/
+
+  let pStart = line[0];
+  let pEnd = line[line.length - 1].other;
+  let k1, k2;
+
+  let c0 = {corner: 0}; // upper left
+  let c1 = {corner: 1}; // upper right
+  let c2 = {corner: 2}; // bottom right
+  let c3 = {corner: 3}; // bottom left
+  switch ((pEnd.side - pStart.side + 4) % 4) {
+    case 0 :   // same side !
+            if (pStart.side == 0 || pStart.side == 2) { // between horizontal sides
+              k1 = pStart.square.kx * NPPS + pStart.kp;
+              k2 = pEnd.square.kx * NPPS + pEnd.kp;
+              line.turnscw = (pStart.side == 0 && k2 < k1) || (pStart.side == 2 && k2 > k1)
+            } else { // between vertical sides
+              k1 = pStart.square.ky * NPPS + pStart.kp;
+              k2 = pEnd.square.ky * NPPS + pEnd.kp;
+              line.turnscw = (pStart.side == 1 && k2 < k1) || (pStart.side == 3 && k2 > k1)
+            }
+             break; 
+    case 1 : line.push([c0, c1, c2, c3][pEnd.side]); // around 1 single corner
+             line.turnscw = false;
+             break;
+    case 3 : line.push([c0, c1, c2, c3][pStart.side]); // around 1 single corner
+             line.turnscw = true;
+             break;
+    case 2 : // around 2 corners, a bit more tricky
+            if (pStart.side == 0 || pStart.side == 2) { // between horizontal sides
+              k1 = pStart.square.kx * NPPS + ((pStart.side == 0 ) ? pStart.kp : (NPPS - 1 - pStart.kp));
+              k2 = pEnd.square.kx * NPPS + ((pEnd.side == 0 ) ? pEnd.kp : (NPPS - 1 - pEnd.kp));
+              if (k1 + k2 <= nbx * NPPS) { // by the left side
+                if (pEnd.side == 0) {
+                  line.push(c0); line.push(c3);
+                  line.turnscw = false;
+                } else {
+                  line.push(c3); line.push(c0);
+                  line.turnscw = true;
+                }
+              } else { // by the right side
+                if (pEnd.side == 0) {
+                  line.push(c1); line.push(c2);
+                  line.turnscw = true;
+                } else {
+                  line.push(c2); line.push(c1);
+                  line.turnscw = false;
+                }
+              }
+            } else { // between vertical sides
+              k1 = pStart.square.ky * NPPS + ((pStart.side == 1 ) ? pStart.kp : (NPPS - 1 - pStart.kp));
+              k2 = pEnd.square.ky * NPPS + ((pEnd.side == 3 ) ? pEnd.kp : (NPPS - 1 - pEnd.kp));
+              if (k1 + k2 <= nby * NPPS) { // by the top side
+                if (pEnd.side == 1) {
+                  line.push(c1); line.push(c0);
+                  line.turnscw = false;
+                } else {
+                  line.push(c0); line.push(c1);
+                  line.turnscw = true;
+                }
+              } else { // by the bottom side
+                if (pEnd.side == 1) {
+                  line.push(c2); line.push(c3);
+                  line.turnscw = true;
+                } else {
+                  line.push(c3); line.push(c2);
+                  line.turnscw = false;
+                }
+              }
+            }
+            break;
+
+  } // switch
+
+} // function closeOpenLine
+
+//------------------------------------------------------------------------
+function findNeighbours (crossing) {
+  let {square:square, side:side, kp:kp } = crossing;
+  let nsquare, nside, nkp;
+
+  let bef = [], aft = [];
+
+  if (kp == 0) {
+    // point A
+    bef.push(square.connections[(side + 3) % 4][NPPS - 1]);
+    // point B
+    nsquare = square.neighborSquare((side + 3) % 4);
+    if (nsquare) {
+      bef.push(nsquare.connections[side][NPPS - 1]);
+    }
+    // point C
+    nsquare = square.neighborSquare(side);
+    if (nsquare) {
+      bef.push(nsquare.connections[(side + 3) % 4][0]);
+    }
+  } // if (kp == 0)
+
+// 'normal' point, preceding
+  if (kp > 0) {
+    bef.push(square.connections[side][kp - 1]);
+  }
+
+  if (kp < NPPS - 1) {
+    aft.push(square.connections[side][kp + 1]);
+  }
+
+  if (kp == NPPS - 1) {
+    // point A
+    aft.push(square.connections[(side + 1) % 4][0]);
+    // point B
+    nsquare = square.neighborSquare((side + 1) % 4);
+    if (nsquare) {
+      aft.push(nsquare.connections[side][0]);
+    }
+    // point C
+    nsquare = square.neighborSquare(side);
+    if (nsquare) {
+      aft.push(nsquare.connections[(side + 1) % 4][NPPS - 1]);
+    }
+  } // if (kp == NPPS - 1)
+
+  return crossing.entry ? [bef, aft] : [aft, bef]; // returns [internal points, ext. points]
+} // findNeighbours
+
+//------------------------------------------------------------------------
+
+function prioritizeLoops() {
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  function apeerb (a, b) {
+  // "hierar" already containing a, adds b as a peer of a
+//    a.parent.innerHier = a.parent.innerHier ||[];
+    a.parent.innerHier.push(b.found); // b is added as child of a's parent
+  } // apeerb
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  function asurroundsb (a,b) {
+    // "hierar" already containing a, adds b as a's child
+    a.found.innerHier.push(b.found); // b is added 'inside' a
+  } // asurroundsb
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  function bsurroundsa (a,b) {
+    /* "hierar" already containing a, adds b as direct parent of a and a's peers
+    */
+
+    let par = a.parent;
+    while ( par.innerHier.length > 0) {
+      b.found.innerHier.push (par.innerHier.shift()); // adds a or a peer to b
+    } // while
+
+    par.innerHier.push(b.found);          // b is added to former parent of a
+
+  } // bsurroundsa
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+// tries to find particular loop given by kb in (sub-)hierarchy given by included
+    function find (included,kb) {
+      let result;
+      let parent = included;
+      for (let k = 0 ; k < parent.innerHier.length; ++k) {
+        if (parent.innerHier[k].kLoop == kb) return {parent: parent, found: parent.innerHier[k]};
+        if (result = find(parent.innerHier[k],kb)) return result;
+      }
+      return false;
+    } // find
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+/* The loops are designated by their index in tbLoops */
+
+// beginning of function prioritizeLoops() {
+
+  let kb;      // index in toBeExamined
+  let loopa;   // loop we are running through
+  let loopb;   // loop neighbour of loopa
+  let kLoopa, kLoopb; // indexes of loopa and loopb
+  let descHierA, descHierB; // hierarchical descriptions of loopa and loopb
+  let conn, hier, hierb;
+  let neighbours; // array of neighbours crossings
+
+  let toBeExamined = [0];    // table of loops to be examined, let us begin with just loop 0
+
+  hierar = {kLoop:-1, innerHier: [{kLoop:0, innerHier:[]}]};     // let us create a hierarchy where loop 0 is the only loop included in the universe(-1)
+
+  for (kb = 0; kb < toBeExamined.length; ++kb) {
+  /* toBeExamined will be extended inside the 'for' loop, but
+  kb will allways catch up with toBeExamined.length */
+
+/* look for current loop and is parent in 'hierar' */
+    kLoopa = toBeExamined[kb];
+    loopa = tbLoops[kLoopa];
+
+    loopa.forEach(crossing => { // for every segment of the loop
+      if (crossing.corner !== undefined) return; // fake crossing
+        neighbours = findNeighbours(crossing);
+        neighbours[0].forEach (conn =>{ // neigbors inside loopa
+          kLoopb = conn.idxLoop;
+          if (toBeExamined.indexOf(kLoopb) != -1) return; // already in list, don't re-do the work
+          descHierA = find (hierar, kLoopa);
+          toBeExamined.push(kLoopb);              // add it to toBeExamined
+          descHierB = {found: {kLoop: kLoopb, innerHier: []}};
+
+          asurroundsb(descHierA, descHierB);
+        });
+
+        neighbours[1].forEach (conn =>{ // neighbors outside loopa
+          kLoopb = conn.idxLoop;
+          if (toBeExamined.indexOf(kLoopb) != -1) return; // already in list, don't re-do the work
+          descHierA = find (hierar, kLoopa);
+          toBeExamined.push(kLoopb);              // add it to toBeExamined
+          descHierB = {found: {kLoop: kLoopb, innerHier: []}};
+          if ((crossing.square != conn.square && crossing.side != conn.side) ^
+              (conn.entry != crossing.entry)) apeerb(descHierA, descHierB);
+          else bsurroundsa(descHierA, descHierB);
+        });
+
+    }); // loopa.forEach
+  } // for kb
+
+// now include rectangles in this hierarchy
+/* indices used to record rectangles in hierarchy are their indices in
+tbRectangles + tbLoops.length
+*/
+  allGrid(cell => {
+    if (!cell.rectangles) return; // no rectangles to add
+    conn = cell.connections[0][NPPS - cell.kind - 1];
+    descHierA = find(hierar, conn.idxLoop);
+    descHierB = {found: {kLoop: cell.rectangles[0] + tbLoops.length,innerHier: []}};
+    if (conn.entry) {
+      apeerb(descHierA, descHierB);
+    } else {
+      asurroundsb(descHierA, descHierB);
+    }
+    hier = descHierB.found.innerHier;
+/* other rectangles (if any) simply nested inside this rectangle */
+    cell.rectangles.forEach ((idxRect, k) => {
+      if (k == 0) return; // 1st rectangle already done !
+      hierb = {kLoop: idxRect + tbLoops.length, innerHier: []};
+      hier.push(hierb);
+      hier = hierb.innerHier;
+    }); // other rectangles
+  });
+
+/* computes hierarchy level of each loop
+  and maxDepth of included loops
+ 0 for background
+ 1 for outermost loop(s)
+ ..
+*/
+
+  (function analyseDepth (hier, level) {
+    hier.depth = level;
+    let maxDepth = level;
+    hier.innerHier.forEach(inHier => {
+      analyseDepth(inHier, level + 1);
+      maxDepth = mmax (maxDepth, inHier.maxDepth);
+    });
+    hier.maxDepth = maxDepth;
+  }(hierar, 0));
+
+} // prioritizeLoops
+
+//------------------------------------------------------------------------
+
+function drawHierarchy(hier) {
+
+
+  let lum = (hier.depth & 1) ? intAlea(20,40) : intAlea(60,80);
+  let color = `hsl(${hue},100%,${lum}%)`;
+  ctx.fillStyle = color;
+
+  if (hier.kLoop == -1) { // background
+    ctx.fillRect(0, 0, maxx, maxy);
+  } else {
+    ctx.beginPath();
+    drawOneLoopRect(hier.kLoop);
+    ctx.closePath();
+    ctx.fill();
+  }
+  hier.innerHier.forEach(drawHierarchy)
+
+}
+//------------------------------------------------------------------------
+
+function drawOneLoop(loop) {
+
+  const c0 = [grid[0][0].x, grid[0][0].y];
+  const c1 = [grid[0][nbx - 1 ].x + LSIDE, grid[0][0].y];
+  const c2 = [grid[0][nbx - 1 ].x + LSIDE, grid[nby - 1][0].y + LSIDE];
+  const c3 = [grid[0][0].x, grid[nby - 1][0].y + LSIDE];
+
+  let pScreen;
+
+  pScreen = loop[0].square.sides[loop[0].side][loop[0].kp]
+  ctx.moveTo(pScreen[0], pScreen[1]);
+
+  loop.forEach((point, k) => {
+
+    if (! point.square) pScreen = [c0, c1, c2, c3][point.corner]; // fake point
+    else  pScreen = point.other.square.sides[point.other.side][point.other.kp]; // true point
+
+    ctx.lineTo(pScreen[0], pScreen[1]);
+  });
+} // drawOneLoop
+
+//------------------------------------------------------------------------
+
+function drawOneRectangle(rect) {
+
+  rect.forEach((point, k) => {
+    if (k == 0) ctx.moveTo(point[0], point[1]);
+    else ctx.lineTo(point[0], point[1]);
+  });
+}
+//------------------------------------------------------------------------
+function drawOneLoopRect (kLoop) {
+  if (kLoop < tbLoops.length) {
+    drawOneLoop(tbLoops[kLoop]);
+  } else {
+    drawOneRectangle(tbRectangles[kLoop - tbLoops.length]);
+  }
+}
+//------------------------------------------------------------------------
+
+function createGrid() {
+
+  let line;
+  grid = [];
+  tbRectangles = [];
+  for (let ky = 0; ky < nby; ++ky) {
+    grid[ky] = line = [];
+    for (let kx = 0; kx < nbx; ++kx) {
+      line[kx] = new Square(kx, ky);
+    } // for ky
+  } // for ky
+} // createGrid
+
+//------------------------------------------------------------------------
+
+let animate;
+
+{ // scope for animate
+
+let animState = 0;
+
+animate = function(tStamp) {
+
+  let event;
+
+  event = events.pop();
+  if (event && event.event == 'reset') animState = 0;
+  if (event && event.event == 'click') animState = 0;
+  window.requestAnimationFrame(animate);
+
+  switch (animState) {
+
+    case 0 :
+      if (startOver()) {
+        ++animState;
+      }
+      break;
+
+  } // switch
+
+} // animate
+} // scope for animate
+
+//------------------------------------------------------------------------
+//------------------------------------------------------------------------
+
+function startOver() {
+
+  let offsx, offsy;
+  let centrx, centry;
+
+// canvas dimensions
+
+  maxx = window.innerWidth;
+  maxy = window.innerHeight;
+
+  canv.width = maxx;
+  canv.height = maxy;
+  ctx.lineJoin = 'bevel';
+  ctx.lineCap = 'round';
+
+  do {
+    NPPS = intAlea(1,20);
+    DLINE = intAlea(3,20);
+  } while (DLINE * NPPS < 30);
+
+  if (firstRun) {
+    NPPS = 10;
+    DLINE = 10;
+    firstRun = false;
+  }
+  LSIDE = NPPS * DLINE;
+// number of squares
+  nbx = mceil((maxx) / LSIDE); // number of columns
+  nby = mceil((maxy) / LSIDE); // number of rows
+
+// offset for perfect centering of squares
+  offsx = (maxx - nbx * LSIDE) / 2;
+  offsy = (maxy - nby * LSIDE) / 2;
+
+  posy = [];
+  for (let ky = 0; ky <= nby; ++ky) {
+    posy[ky] = offsy + LSIDE * ky;
+  }
+  posx = [];
+  for (let kx = 0; kx <= nbx; ++kx) {
+    posx[kx] = offsx + LSIDE * kx;
+  }
+
+  createGrid();
+//  allGrid(square => square.draw());
+//  tbRectangles.forEach (rect =>  drawOneRectangle(rect,`hsl(${intAlea(360)},100%,50%)`));
+  tbLoops = connectLines();
+
+  prioritizeLoops();
+
+  hue = intAlea(360);
+  drawHierarchy(hierar);
+
+  return true;
+
+} // startOver
+
+//------------------------------------------------------------------------
+//------------------------------------------------------------------------
+
+function mouseClick (event) {
+
+  events.push({event:'click'});;
+
+} // mouseMove
+
+//------------------------------------------------------------------------
+//------------------------------------------------------------------------
+// beginning of execution
+
+  {
+    canv = document.createElement('canvas');
+    canv.style.position="absolute";
+    document.body.appendChild(canv);
+    ctx = canv.getContext('2d');
+    canv.setAttribute ('title','click me');
+  } // création CANVAS
+  canv.addEventListener('click',mouseClick); // just for initial position
+  events = [{event:'reset'}];
+  requestAnimationFrame (animate);
+</script>
+
+</body>
+</html>

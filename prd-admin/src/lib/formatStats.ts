@@ -80,3 +80,4 @@ export function calculateSuccessRate(successCount: number, totalCount: number): 
   return { rate, text: `${rate.toFixed(1)}%`, color };
 }
 
+

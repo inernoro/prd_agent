@@ -5,7 +5,6 @@ import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import UsersPage from '@/pages/UsersPage';
 import ModelManagePage from '@/pages/ModelManagePage';
-import StatsPage from '@/pages/StatsPage';
 import GroupsPage from '@/pages/GroupsPage';
 import LlmLogsPage from '@/pages/LlmLogsPage';
 import LabPage from '@/pages/LabPage';
@@ -56,7 +55,7 @@ export default function App() {
         <Route path="model-manage" element={<ModelManagePage />} />
         <Route path="llm-logs" element={<LlmLogsPage />} />
         <Route path="lab" element={<LabPage />} />
-        <Route path="stats" element={<StatsPage />} />
+        <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

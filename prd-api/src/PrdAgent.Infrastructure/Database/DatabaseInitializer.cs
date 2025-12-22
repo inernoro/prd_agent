@@ -38,14 +38,14 @@ public class DatabaseInitializer
         var adminUser = new User
         {
             Username = "admin",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin@123456"),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
             DisplayName = "系统管理员",
             Role = UserRole.ADMIN,
             Status = UserStatus.Active
         };
 
         await _db.Users.InsertOneAsync(adminUser);
-        Console.WriteLine("Created default admin user: admin / Admin@123456");
+        Console.WriteLine("Created default admin user: admin / admin");
         Console.WriteLine("Please change the password after first login!");
     }
 

@@ -553,15 +553,55 @@
 }
 
 .prd-login-card {
-  background: linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%);
-  border: 1px solid var(--border-default);
-  box-shadow: var(--shadow-card);
+  /* 登录窗：稍微更“实”一点，避免在动效背景上看不清 */
+  background: linear-gradient(180deg, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.040) 100%);
+  border: 1px solid rgba(255,255,255,0.16);
+  box-shadow:
+    0 24px 90px rgba(0,0,0,0.55),
+    0 1px 0 rgba(255,255,255,0.06) inset;
+  backdrop-filter: blur(10px);
 }
 
 .prd-login-leftGlow {
   background:
     radial-gradient(900px 640px at 50% 46%, rgba(214, 178, 106, 0.10) 0%, transparent 66%),
     radial-gradient(760px 520px at 55% 60%, rgba(124, 252, 0, 0.05) 0%, transparent 64%);
+}
+
+/* Recursive grid backdrop (ported from thirdparty/ref/递归网络.html) */
+.prd-recgrid-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(1000px 820px at 68% 52%, rgba(214, 178, 106, 0.06) 0%, transparent 64%),
+    radial-gradient(900px 760px at 32% 56%, rgba(92, 134, 255, 0.05) 0%, transparent 68%),
+    linear-gradient(180deg, #050507 0%, #07070a 55%, #050507 100%);
+  /* defaults */
+  --prd-recgrid-scale: 0.97;
+  /* 注意：canvas 不支持 color-mix()，这里用可解析的 rgba，组件也可通过 prop 覆盖 */
+  --prd-recgrid-stroke: rgba(231, 206, 151, 0.55);
+}
+
+.prd-recgrid-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.prd-recgrid-vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(closest-side at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0.32) 78%, rgba(0,0,0,0.72) 100%);
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prd-recgrid-canvas { opacity: 0.9; }
 }
 
 /* success.html 参考：三态按钮 + confetti（局部复用组件） */
