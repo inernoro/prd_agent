@@ -38,6 +38,8 @@ import type { ImageGenGenerateResponse, ImageGenPlanItem, ImageGenPlanResponse }
 import { ModelPickerDialog } from '@/pages/lab-llm/components/ModelPickerDialog';
 import { useAuthStore } from '@/stores/authStore';
 import { clearLlmLabImagesForUser, getLlmLabImageBlob, putLlmLabImageBlob } from '@/lib/llmLabImageDb';
+import { emitBackdropBusyEnd, emitBackdropBusyStart } from '@/lib/backdropBusy';
+import { BACKDROP_POST_BUSY_HOLD_MS } from '@/lib/backdropBusy';
 
 type ViewRunItem = {
   itemId: string;
@@ -658,6 +660,7 @@ export default function LlmLabTab() {
   const [runItems, setRunItems] = useState<Record<string, ViewRunItem>>({});
   const [runError, setRunError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const didMountForBackdropBusyRef = useRef(false);
   const suiteCycleRef = useRef<Record<LabMode, number>>({} as Record<LabMode, number>);
   const [sortBy, setSortBy] = useState<SortBy>('ttft');
   const allModelsRef = useRef<Model[]>([]);
@@ -699,6 +702,16 @@ export default function LlmLabTab() {
       revokeAllObjectUrls();
     };
   }, [revokeAllObjectUrls]);
+
+  // “一键开始实验/运行中”期间：联动全局背景（变亮 + 转动），直到完成/取消/失败
+  useEffect(() => {
+    if (!didMountForBackdropBusyRef.current) {
+      didMountForBackdropBusyRef.current = true;
+      return;
+    }
+    if (running) emitBackdropBusyStart();
+    else emitBackdropBusyEnd();
+  }, [running]);
 
   const attachLocalBlobsToImageItems = useCallback(
     async (items: CachedImageItem[], kind: 'single' | 'batch') => {
@@ -914,6 +927,9 @@ export default function LlmLabTab() {
     const list: { modelId: string; platformId: string; modelName: string; displayName: string }[] = [];
     const seen = new Set<string>();
     for (const sm of selectedModels ?? []) {
+      // 临时禁用：生图也要尊重左侧“禁用模型”开关（与大模型实验保持一致）
+      if (disabledModelKeys[modelKeyOfSelected(sm)]) continue;
+
       const pid = String(sm.platformId ?? '').trim();
       const mname = String(sm.modelName ?? '').trim();
       const mid = String(sm.modelId ?? '').trim();
@@ -932,7 +948,7 @@ export default function LlmLabTab() {
       });
     }
     return list;
-  }, [allModels, selectedModels]);
+  }, [allModels, disabledModelKeys, selectedModels]);
 
   const imageGenModelCount = imageGenModels.length;
 
@@ -1330,16 +1346,24 @@ export default function LlmLabTab() {
 
     setBatchError(null);
     setPlanLoading(true);
+    emitBackdropBusyStart();
+    let nextPlan: ImageGenPlanResponse | null = null;
     try {
       const res = await planImageGen({ text, maxItems: 10 });
       if (!res.success) {
         setBatchError(res.error?.message || '解析失败');
         return;
       }
-      setPlanResult(res.data);
-      setPlanDialogOpen(true);
+      nextPlan = res.data ?? null;
     } finally {
       setPlanLoading(false);
+      emitBackdropBusyEnd();
+    }
+    if (nextPlan) {
+      setPlanResult(nextPlan);
+      // 等背景先“停住”再弹出确认窗（顺序：背景停 -> 弹窗从小到大）
+      await new Promise<void>((resolve) => window.setTimeout(resolve, BACKDROP_POST_BUSY_HOLD_MS));
+      setPlanDialogOpen(true);
     }
   };
 
@@ -3457,24 +3481,65 @@ export default function LlmLabTab() {
 
             <div className="mt-3 flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
               {planResult?.items?.length ? (
-                <div className="grid gap-2">
+                <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
                   {planResult.items.map((it, idx) => (
                     <div
                       key={`${idx}_${it.prompt}`}
-                      className="rounded-[12px] px-3 py-2"
-                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.10)' }}
+                      className="rounded-[14px] p-3 flex flex-col min-h-0"
+                      style={{
+                        border: '1px solid var(--border-subtle)',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        minHeight: 306,
+                      }}
                     >
-                      <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={it.prompt}>
+                          条目 #{idx + 1}
+                        </div>
+                        <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                          {Math.max(1, Number(it.count || 1))} 张
+                        </div>
+                      </div>
+
+                      {/* 中间区域：做成“预览窗”尺寸与风格，内容展示提示词 */}
+                      <div
+                        className="mt-2 rounded-[12px] flex flex-col items-center justify-center gap-2 px-3 text-center"
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.10)',
+                          background: 'rgba(255,255,255,0.02)',
+                          height: 208,
+                          color: 'var(--text-muted)',
+                        }}
+                        title={it.prompt}
+                      >
                         <div
-                          className="text-sm font-semibold min-w-0 whitespace-pre-wrap wrap-break-word"
-                          style={{ color: 'var(--text-primary)' }}
-                          title={it.prompt}
+                          className="text-xs font-semibold whitespace-pre-wrap wrap-break-word"
+                          style={{
+                            color: 'var(--text-primary)',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 8,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                          }}
                         >
                           {it.prompt}
                         </div>
-                        <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                          × {it.count}
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <div className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
+                             style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}>
+                          条目 #{idx + 1}
                         </div>
+                        <Button
+                          variant="secondary"
+                          size="xs"
+                          onClick={() => void copyToClipboard(it.prompt)}
+                          title="复制提示词"
+                        >
+                          <Copy size={14} />
+                          复制
+                        </Button>
                       </div>
                     </div>
                   ))}

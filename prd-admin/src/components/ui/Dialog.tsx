@@ -27,12 +27,12 @@ export function Dialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0"
+          className="fixed inset-0 z-[100] prd-dialog-overlay"
           style={{ background: 'rgba(0,0,0,0.72)' }}
         />
         <DialogPrimitive.Content
           className={[
-            'fixed left-1/2 top-1/2 w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[22px] p-6 flex flex-col',
+            'fixed left-1/2 top-1/2 z-[110] w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
