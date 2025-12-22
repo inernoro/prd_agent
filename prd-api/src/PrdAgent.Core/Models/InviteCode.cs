@@ -5,6 +5,11 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class InviteCode
 {
+    /// <summary>
+    /// MongoDB 主键（_id）。统一使用 string(Guid)；业务侧请使用 <see cref="Code"/>。
+    /// </summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
     public string Code { get; set; } = string.Empty;
     public string CreatorId { get; set; } = string.Empty;
     public bool IsUsed { get; set; }

@@ -83,7 +83,10 @@ public class MongoDbContext
         ContentGaps.Indexes.CreateOne(new CreateIndexModel<ContentGap>(
             Builders<ContentGap>.IndexKeys.Ascending(g => g.GroupId)));
         
-        // InviteCodes: Code 已标记为 [BsonId]，MongoDB _id 字段天生唯一，无需额外索引
+        // InviteCodes: 禁止用业务字段 Code 当 _id；统一使用 string Id(Guid) 作为 _id，因此需要对 Code 建唯一索引
+        InviteCodes.Indexes.CreateOne(new CreateIndexModel<InviteCode>(
+            Builders<InviteCode>.IndexKeys.Ascending(x => x.Code),
+            new CreateIndexOptions { Unique = true }));
         
         // LLMPlatforms索引
         LLMPlatforms.Indexes.CreateOne(new CreateIndexModel<LLMPlatform>(

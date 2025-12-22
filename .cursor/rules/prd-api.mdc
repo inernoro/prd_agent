@@ -20,6 +20,15 @@ globs: prd-api/**
 - 后端分层: Api -> Core -> Infrastructure
 - Prompt模板: `Infrastructure/Prompts/Templates/`
 
+## MongoDB 约束（强制）
+
+### ID 规范（必须遵守）
+- **禁止使用 MongoDB 原生类型作为任何字段的存储类型**（尤其是 `ObjectId`）。
+- **禁止使用** `BsonType.ObjectId` / `StringObjectIdGenerator` / 任何会把 `_id` 写成 `ObjectId` 的序列化配置。
+- **禁止使用** `[BsonId]` 把业务字段（如 `Code`、`Username`）当作 `_id`。
+- **统一要求**：集合主键 `_id` 必须映射到实体的 `public string Id { get; set; }`，并且写入值为 **Guid 字符串**（推荐 `Guid.NewGuid().ToString("N")`）。
+- 若业务需要唯一字段（如邀请码 `Code`），请通过 **唯一索引** 实现，而不是把它当 `_id`。
+
 ## 局部前置自检（避免 CI 才爆）
 
 当你改动了 `prd-api/**` 时，必须执行：

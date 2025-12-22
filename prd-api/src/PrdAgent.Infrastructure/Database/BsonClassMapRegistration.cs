@@ -1,6 +1,4 @@
-using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.IdGenerators;
 using MongoDB.Bson.Serialization.Serializers;
 using PrdAgent.Core.Models;
 
@@ -53,10 +51,9 @@ public static class BsonClassMapRegistration
         BsonClassMap.RegisterClassMap<User>(cm =>
         {
             cm.AutoMap();
-            // 兼容：历史上 users 可能是默认 ObjectId(_id)，也可能被存成 string
             cm.MapIdMember(u => u.Id)
-                .SetSerializer(new StringOrObjectIdSerializer())
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -69,8 +66,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(g => g.GroupId)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -82,8 +79,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(m => m.Id)
-                .SetSerializer(new StringSerializer(BsonType.ObjectId))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -96,8 +93,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(m => m.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -109,8 +106,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(s => s.SessionId)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -122,8 +119,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(g => g.GapId)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -135,8 +132,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(a => a.AttachmentId)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -148,8 +145,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(c => c.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -160,9 +157,11 @@ public static class BsonClassMapRegistration
         BsonClassMap.RegisterClassMap<InviteCode>(cm =>
         {
             cm.AutoMap();
-            cm.MapIdMember(i => i.Code)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+            // 统一：_id 映射到 Id（string Guid）；业务字段 Code 用唯一索引约束
+            cm.MapIdMember(i => i.Id)
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 
@@ -174,8 +173,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(s => s.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
         });
     }
 
@@ -187,8 +186,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(l => l.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -202,7 +201,7 @@ public static class BsonClassMapRegistration
             cm.AutoMap();
             // 以内容 hash 作为主键；不使用 ObjectId 生成器
             cm.MapIdMember(d => d.Id)
-                .SetSerializer(new StringSerializer(BsonType.String));
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String));
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -215,8 +214,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringSerializer(BsonType.ObjectId))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -229,8 +228,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -243,8 +242,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -257,8 +256,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -271,8 +270,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }
@@ -285,8 +284,8 @@ public static class BsonClassMapRegistration
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringSerializer(BsonType.String))
-                .SetIdGenerator(StringObjectIdGenerator.Instance);
+                .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
     }

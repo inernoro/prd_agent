@@ -37,6 +37,7 @@ public class DatabaseInitializer
         // 创建默认管理员账号
         var adminUser = new User
         {
+            Id = Guid.NewGuid().ToString("N"),
             Username = "admin",
             PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
             DisplayName = "系统管理员",
@@ -62,6 +63,7 @@ public class DatabaseInitializer
         // 创建初始邀请码
         var inviteCode = new InviteCode
         {
+            Id = Guid.NewGuid().ToString("N"),
             Code = "PRD-INIT-2024",
             CreatorId = "system",
             IsUsed = false,
