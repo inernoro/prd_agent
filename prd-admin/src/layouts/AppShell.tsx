@@ -1,10 +1,11 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
-import { BACKDROP_BUSY_END_EVENT, BACKDROP_BUSY_START_EVENT, emitBackdropBusyEnd, emitBackdropBusyStart, emitBackdropBusyStopped } from '@/lib/backdropBusy';
+import { emitBackdropBusyStopped } from '@/lib/backdropBusy';
+import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode };
 
@@ -14,55 +15,9 @@ export default function AppShell() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const [collapsed, setCollapsed] = useState(false);
-  const [backdropBusyCount, setBackdropBusyCount] = useState(0);
-  const [pendingStopId, setPendingStopId] = useState<string | null>(null);
-  const postLoginTimerRef = useRef<number | null>(null);
-  const backdropRunning = backdropBusyCount > 0;
+  const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
+  const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
-
-  useEffect(() => {
-    // 登录后承接背景：动 2 秒，然后静止（像登录页与主页连起来）
-    try {
-      const flag = sessionStorage.getItem('prd-postlogin-fx');
-      if (flag) {
-        sessionStorage.removeItem('prd-postlogin-fx');
-        emitBackdropBusyStart();
-        if (postLoginTimerRef.current) window.clearTimeout(postLoginTimerRef.current);
-        postLoginTimerRef.current = window.setTimeout(() => {
-          emitBackdropBusyEnd();
-          postLoginTimerRef.current = null;
-        }, 2000);
-      }
-    } catch {
-      // ignore
-    }
-    return () => {
-      if (postLoginTimerRef.current) window.clearTimeout(postLoginTimerRef.current);
-      postLoginTimerRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const onStart = () => {
-      setPendingStopId(null);
-      setBackdropBusyCount((c) => c + 1);
-    };
-    const onEnd = (e: Event) => {
-      const ce = e as CustomEvent;
-      const id = (ce.detail?.id as string | undefined) ?? '';
-      setBackdropBusyCount((c) => {
-        const next = Math.max(0, c - 1);
-        if (c > 0 && next === 0 && id) setPendingStopId(id);
-        return next;
-      });
-    };
-    window.addEventListener(BACKDROP_BUSY_START_EVENT, onStart);
-    window.addEventListener(BACKDROP_BUSY_END_EVENT, onEnd);
-    return () => {
-      window.removeEventListener(BACKDROP_BUSY_START_EVENT, onStart);
-      window.removeEventListener(BACKDROP_BUSY_END_EVENT, onEnd);
-    };
-  }, []);
 
   const items: NavItem[] = useMemo(
     () => [
@@ -86,15 +41,15 @@ export default function AppShell() {
       {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
       <RecursiveGridBackdrop
         className="absolute inset-0"
+        // 登录/运行态背景速度更明显，刹车 2s 也更易感知
+        speedDegPerSec={2.2}
         shouldRun={backdropRunning}
         stopRequestId={pendingStopId}
         stopBrakeMs={2000}
         onFullyStopped={(id) => {
           if (!id) return;
-          // 仅处理“当前这一次 stop”对应的回调；若 stop 期间又 start，会清空 pendingStopId，从而忽略旧回调
-          if (id !== pendingStopId) return;
           emitBackdropBusyStopped(id);
-          setPendingStopId(null);
+          backdropMotionController.markStopped(id);
         }}
         persistKey="prd-recgrid-rot"
         persistMode="readwrite"

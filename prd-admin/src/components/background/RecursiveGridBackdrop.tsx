@@ -328,6 +328,8 @@ export default function RecursiveGridBackdrop({
       if (!finished) {
         if (isVisible) raf = requestAnimationFrame(tick);
       } else {
+        // 结束时清零 raf，允许后续 start/stop 重新 kick（否则会出现“看起来瞬停/无法继续刹车”的错觉）
+        raf = 0;
         // 完全停止：仅在外部 stop 模式下回调（用于 stopped 事件）
         if (sr != null && externalStop && !stoppedNotified) {
           stoppedNotified = true;
@@ -358,6 +360,7 @@ export default function RecursiveGridBackdrop({
 
     return () => {
       cancelAnimationFrame(raf);
+      raf = 0;
       ro.disconnect();
       if (kickRef.current === kick) kickRef.current = null;
     };

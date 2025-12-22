@@ -4,12 +4,18 @@ import { useAuthStore } from '@/stores/authStore';
 import { login } from '@/services';
 import { Button } from '@/components/design/Button';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
+import { emitBackdropBusyStopped } from '@/lib/backdropBusy';
+import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.login);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
+  const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
+  // 登录页默认应“持续动”（原始体验）；只有当外部明确进入运行/刹车态时才由 controller 接管
+  const shouldRun: boolean | undefined = backdropCount > 0 ? true : pendingStopId ? false : undefined;
+
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +53,24 @@ export default function LoginPage() {
 
   return (
     <div className="prd-login-root relative h-full w-full overflow-hidden">
-      <RecursiveGridBackdrop className="absolute inset-0" persistKey="prd-recgrid-rot" persistMode="write" />
+      <RecursiveGridBackdrop
+        className="absolute inset-0"
+        speedDegPerSec={2.2}
+        shouldRun={shouldRun}
+        stopRequestId={pendingStopId || null}
+        stopBrakeMs={2000}
+        onFullyStopped={(id) => {
+          if (!id) return;
+          emitBackdropBusyStopped(id);
+          backdropMotionController.markStopped(id);
+        }}
+        persistKey="prd-recgrid-rot"
+        persistMode="write"
+        // 登录页希望“更实更深”：默认（shouldRun=undefined）也用更实的线条
+        strokeRunning={shouldRun === false ? 'rgba(231, 206, 151, 0.30)' : 'rgba(231, 206, 151, 1)'}
+        strokeBraking={'rgba(231, 206, 151, 0.30)'}
+        brakeStrokeFadeMs={2000}
+      />
 
       {/* overlay: lift behind the card */}
       <div
