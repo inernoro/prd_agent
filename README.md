@@ -113,7 +113,7 @@ pnpm dev
 #
 # 2) 线上服务器准备好 docker-compose（以及 curl/unzip）
 #
-# 3) 一键部署命令（不 build，下载 latest 静态到本地，再 docker-compose up -d）：
+# 3) 一键部署命令（不 build）
 #      ./deploy.sh
 #
 #    如需覆盖静态下载地址（例如你自建 Web 站点/CDN）：
@@ -122,6 +122,7 @@ pnpm dev
 #    - 静态会解压到 deploy/web/dist
 #    - nginx 容器挂载该目录作为站点根目录
 #    - /api/ 将反代到 api:8080（优先级最高，支持 SSE）
+#    - deploy.sh 会先 `docker-compose pull api` 再 `docker-compose up -d --force-recreate`，避免复用旧的 :latest 镜像
 ```
 
 ## API 端点

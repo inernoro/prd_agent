@@ -110,7 +110,10 @@ unzip -q "$zip_path" -d deploy/web/dist
 
 echo ""
 echo "Static dist extracted to: deploy/web/dist"
-echo "Starting compose..."
-$COMPOSE up -d
+echo "Pulling latest api image..."
+$COMPOSE pull api
+
+echo "Starting compose (force recreate to ensure new image is used)..."
+$COMPOSE up -d --force-recreate
 
 
