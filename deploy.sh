@@ -18,11 +18,32 @@ set -eu
 # 可选：
 #   GITHUB_TOKEN=...  (仅当仓库/Release 资产为私有时需要)
 
-REPO="${REPO:-}"
 TAG="${1:-latest}"
+# 兼容两种方式传 repo：
+# - 环境变量：export REPO="owner/repo"
+# - 位置参数：./deploy.sh <tag> owner/repo
+REPO="${REPO:-${2:-}}"
+
+# 若未显式提供 REPO，尝试从当前目录的 git remote 推断（通常无需手填）
+if [ -z "$REPO" ] && command -v git >/dev/null 2>&1; then
+  origin="$(git config --get remote.origin.url 2>/dev/null || true)"
+  case "$origin" in
+    git@github.com:*)
+      REPO="${origin#git@github.com:}"
+      REPO="${REPO%.git}"
+      ;;
+    https://github.com/*)
+      REPO="${origin#https://github.com/}"
+      REPO="${REPO%.git}"
+      ;;
+  esac
+fi
 
 if [ -z "$REPO" ]; then
-  echo "ERROR: 请设置 REPO（例如 REPO=inernoro/prd_agent）" >&2
+  echo "ERROR: 未能确定 GitHub 仓库。" >&2
+  echo "  - 方式1：export REPO=\"inernoro/prd_agent\"" >&2
+  echo "  - 方式2：REPO=\"inernoro/prd_agent\" ./deploy.sh $TAG" >&2
+  echo "  - 方式3：./deploy.sh $TAG inernoro/prd_agent" >&2
   exit 1
 fi
 

@@ -113,9 +113,12 @@ pnpm dev
 #
 # 3) 线上部署命令（下载静态到本地，再 docker-compose up -d）：
 #    Linux/macOS 示例：
-#      export REPO="inernoro/prd_agent"
 #      export PRD_AGENT_API_IMAGE="ghcr.io/inernoro/prd_agent/prdagent-server:v1.2.3"
+#      # 通常不需要设置 REPO：deploy.sh 会尝试从 git remote 自动推断
 #      ./deploy.sh v1.2.3
+#
+#    若服务器上不是 git 仓库目录（无法推断），再显式传 REPO：
+#      ./deploy.sh v1.2.3 inernoro/prd_agent
 #
 #    - 静态会解压到 deploy/web/dist
 #    - nginx 容器挂载该目录作为站点根目录
