@@ -10,9 +10,8 @@ set -eu
 # 依赖：curl + unzip（或 busybox unzip），以及 docker-compose
 #
 # 用法：
-#   ./deploy.sh                # 默认 latest
-#   ./deploy.sh v1.2.3         # 指定版本（从 Release 下载对应 zip）
-#   ./deploy.sh latest         # 强制 latest（从 GitHub Pages 下载 latest zip）
+#   ./deploy.sh          # 一键部署 latest（唯一支持的版本）
+#   ./deploy.sh anything # 为兼容旧用法：任何参数都会按 latest 处理
 #
 # 可选环境变量：
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest）
@@ -21,7 +20,8 @@ set -eu
 #   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认 https://<owner>.github.io/<repo>/）
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 
-TAG="${1:-latest}"
+# 只维护一个版本：latest（任何参数都按 latest 处理）
+TAG="latest"
 # 兼容两种方式传 repo：
 # - 环境变量：export REPO="owner/repo"
 # - 位置参数：./deploy.sh <tag> owner/repo
@@ -52,10 +52,7 @@ REPO_NAME="${REPO##*/}"
 
 # 默认后端镜像（latest 一键部署）
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
-  export PRD_AGENT_API_IMAGE="ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:${TAG}"
-  if [ "$TAG" = "latest" ]; then
-    export PRD_AGENT_API_IMAGE="ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
-  fi
+  export PRD_AGENT_API_IMAGE="ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then
@@ -77,53 +74,14 @@ sha_url=""
 if [ -n "${DIST_URL:-}" ]; then
   asset_url="$DIST_URL"
 else
-  if [ "$TAG" = "latest" ]; then
-    pages_base="${PAGES_BASE_URL:-https://${OWNER}.github.io/${REPO_NAME}}"
-    asset_url="${pages_base%/}/prd-admin-dist-latest.zip"
-    sha_url="${pages_base%/}/prd-admin-dist-latest.zip.sha256"
-  else
-    # 版本化：从 Release 拉取 prd-admin-dist-<tag>.zip
-    api="https://api.github.com/repos/$REPO/releases"
-    url="$api/tags/$TAG"
-    auth_header=""
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
-      auth_header="Authorization: token $GITHUB_TOKEN"
-    fi
-
-    release_json="$tmp_dir/release.json"
-    if [ -n "$auth_header" ]; then
-      curl -fsSL -H "$auth_header" "$url" -o "$release_json"
-    else
-      curl -fsSL "$url" -o "$release_json"
-    fi
-
-    pick_asset_url_py='
-import json,sys,re
-data=json.load(open(sys.argv[1],"r",encoding="utf-8"))
-assets=data.get("assets",[])
-pat=re.compile(r"^prd-admin-dist-.*\.zip$")
-for a in assets:
-    name=a.get("name","")
-    if pat.match(name):
-        print(a.get("browser_download_url",""))
-        sys.exit(0)
-print("")
-sys.exit(0)
-'
-
-    asset_url="$(python3 -c "$pick_asset_url_py" "$release_json" 2>/dev/null || true)"
-    if [ -z "$asset_url" ]; then
-      # 兼容 python3 不存在：用最弱的 grep/awk 兜底（要求 JSON 里有 browser_download_url）
-      asset_url="$(grep -Eo '"browser_download_url":[ ]*"[^"]+"' "$release_json" | grep -E 'prd-admin-dist-.*\.zip' | head -n 1 | awk -F'"' '{print $4}' || true)"
-    fi
-    sha_url="$(printf "%s" "$asset_url" | sed 's/\.zip$/.zip.sha256/')"
-  fi
+  pages_base="${PAGES_BASE_URL:-https://${OWNER}.github.io/${REPO_NAME}}"
+  asset_url="${pages_base%/}/prd-admin-dist-latest.zip"
+  sha_url="${pages_base%/}/prd-admin-dist-latest.zip.sha256"
 fi
 
 if [ -z "$asset_url" ]; then
   echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
-  echo "  - latest：默认从 GitHub Pages 下载 prd-admin-dist-latest.zip（可用 PAGES_BASE_URL 覆盖）" >&2
-  echo "  - 指定版本：从 Release 下载 prd-admin-dist-<tag>.zip（需该 tag 对应 Release 存在）" >&2
+  echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-latest.zip（可用 PAGES_BASE_URL 覆盖）" >&2
   echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
   exit 1
 fi

@@ -103,22 +103,18 @@ pnpm dev
 # 构建桌面客户端
 .\scripts\build-desktop.ps1 -Platform windows
 
-# 生产/测试部署（推荐：静态走 Pages latest，Docker 只跑 nginx/api/db）
+# 生产/测试部署（只维护 main/latest）
 #
-# 1) GitHub Actions 会准备好两类产物：
-#    - latest：自动发布到 GitHub Pages（稳定下载地址，不依赖 Release 更新）
+# 1) GitHub Actions 只维护一个版本：latest
+#    - 后端镜像：main 构建完成后推送到 GHCR 的 prdagent-server:latest
+#    - 管理后台静态：自动发布到 GitHub Pages（稳定下载地址）
 #      - https://inernoro.github.io/prd_agent/prd-admin-dist-latest.zip
 #      - https://inernoro.github.io/prd_agent/admin/ （解压后的静态目录）
-#    - 版本化（可选）：打 tag（例如 v1.2.3）后，生成 Release 资产 prd-admin-dist-<tag>.zip
 #
 # 2) 线上服务器准备好 docker-compose（以及 curl/unzip）
 #
-# 3) 一键部署命令（不 build，下载静态到本地，再 docker-compose up -d）：
-#    默认 latest（推荐给测试/灰度）：
+# 3) 一键部署命令（不 build，下载 latest 静态到本地，再 docker-compose up -d）：
 #      ./deploy.sh
-#
-#    指定版本（需要该 tag 对应 Release 存在）：
-#      ./deploy.sh v1.2.3
 #
 #    如需覆盖静态下载地址（例如你自建 Web 站点/CDN）：
 #      DIST_URL="https://your-cdn.example.com/prd-admin-dist-latest.zip" ./deploy.sh
