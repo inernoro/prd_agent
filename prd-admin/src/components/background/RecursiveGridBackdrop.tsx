@@ -12,6 +12,14 @@ export default function RecursiveGridBackdrop({
   depth = 100,
   speedDegPerSec = 1.2,
   runForMs,
+  /** 外部控制：true=运行；false=刹车到停；不传=沿用 runForMs 旧逻辑 */
+  shouldRun,
+  /** 外部 stop 关联 id（用于 onFullyStopped 回调） */
+  stopRequestId,
+  /** 外部 stop 时，刹车到完全停止的可见时长（ms） */
+  stopBrakeMs = 2000,
+  /** 完全停止后回调（用于触发 stopped 事件） */
+  onFullyStopped,
   brakeDecelerationRate = 0.94,
   brakeMinSpeedDegPerSec = 0.02,
   strokeRunning,
@@ -32,6 +40,10 @@ export default function RecursiveGridBackdrop({
   speedDegPerSec?: number;
   /** 动画运行多久后冻结（ms）；0 表示不动；不传表示一直动 */
   runForMs?: number;
+  shouldRun?: boolean;
+  stopRequestId?: string | null;
+  stopBrakeMs?: number;
+  onFullyStopped?: (stopId?: string) => void;
   /**
    * 刹车衰减率（参考 iOS 滑动的“速度指数衰减”模型）
    * - 取值 (0,1)，越小越快停；越接近 1 越慢停
@@ -71,6 +83,20 @@ export default function RecursiveGridBackdrop({
   const visible = useVisibility();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const shouldRunRef = useRef<boolean | undefined>(shouldRun);
+  const stopRequestIdRef = useRef<string | null | undefined>(stopRequestId);
+  const stopBrakeMsRef = useRef<number>(stopBrakeMs);
+  const onFullyStoppedRef = useRef<typeof onFullyStopped>(onFullyStopped);
+  const kickRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    shouldRunRef.current = shouldRun;
+    stopRequestIdRef.current = stopRequestId;
+    stopBrakeMsRef.current = stopBrakeMs;
+    onFullyStoppedRef.current = onFullyStopped;
+    // 当从“停住”切换到“运行/刹车”时，需要重新 kick 一次 RAF
+    if (shouldRun != null) kickRef.current?.();
+  }, [onFullyStopped, shouldRun, stopBrakeMs, stopRequestId]);
 
   const strokeColor = useMemo(() => stroke ?? '', [stroke]);
 
@@ -126,6 +152,10 @@ export default function RecursiveGridBackdrop({
     let velDegPerSec = speed;
     let braking = false;
     let brakeAtMs = 0;
+    let externalStop = false;
+    let brakeElapsedMs = 0;
+    let stoppedNotified = false;
+    let activeStopId: string | undefined;
 
     const canRead = persistMode === 'read' || persistMode === 'readwrite';
     const canWrite = persistMode === 'write' || persistMode === 'readwrite';
@@ -215,21 +245,66 @@ export default function RecursiveGridBackdrop({
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
 
+      const sr = shouldRunRef.current;
+      const stopId = (stopRequestIdRef.current ?? undefined) || activeStopId;
+      const brakeMs = Math.max(0, Number(stopBrakeMsRef.current || 0));
+
+      // 外部控制优先：shouldRun=true 立即恢复匀速；shouldRun=false 进入刹车（由组件内部执行 stopBrakeMs）
+      if (sr != null) {
+        if (sr) {
+          externalStop = false;
+          braking = false;
+          stoppedNotified = false;
+          activeStopId = undefined;
+          brakeElapsedMs = 0;
+          velDegPerSec = speed;
+        } else {
+          if (!externalStop) {
+            externalStop = true;
+            braking = true;
+            brakeAtMs = elapsedMs;
+            brakeElapsedMs = 0;
+            stoppedNotified = false;
+            activeStopId = stopId;
+            // 保留当前速度作为刹车初速
+            velDegPerSec = Math.max(minSpeed, velDegPerSec || speed);
+          }
+        }
+      }
+
       // 只有可见时才推进时间轴（保证“2 秒动效”是真正可见的 2 秒）
       if (isVisible && !prefersReducedMotion) {
-        if (!braking && elapsedMs >= maxRun) {
-          braking = true;
-          brakeAtMs = elapsedMs;
-        }
-        if (!braking) {
-          rotDeg += speed * dt; // constant speed phase
-          elapsedMs += dt * 1000;
+        if (sr == null) {
+          // 旧逻辑：按 runForMs 触发刹车，并用指数衰减停下
+          if (!braking && elapsedMs >= maxRun) {
+            braking = true;
+            brakeAtMs = elapsedMs;
+          }
+          if (!braking) {
+            rotDeg += speed * dt; // constant speed phase
+            elapsedMs += dt * 1000;
+          } else {
+            // iOS-like exponential decay: v *= rate^(frames)
+            const frames = dt * 60;
+            velDegPerSec *= Math.pow(decel, frames);
+            rotDeg += velDegPerSec * dt;
+            elapsedMs += dt * 1000;
+          }
         } else {
-          // iOS-like exponential decay: v *= rate^(frames)
-          const frames = dt * 60;
-          velDegPerSec *= Math.pow(decel, frames);
-          rotDeg += velDegPerSec * dt;
-          elapsedMs += dt * 1000;
+          // 新逻辑：外部控制，stop 时走“固定时长刹车”（避免调用方用 setTimeout 猜）
+          if (!externalStop) {
+            rotDeg += speed * dt;
+            elapsedMs += dt * 1000;
+          } else {
+            brakeElapsedMs += dt * 1000;
+            const t = brakeMs <= 0 ? 1 : clamp(brakeElapsedMs / brakeMs, 0, 1);
+            // easeOut：先快后慢
+            const k = 1 - Math.pow(1 - t, 2);
+            const v0 = Math.max(minSpeed, speed);
+            velDegPerSec = Math.max(0, v0 * (1 - k));
+            rotDeg += velDegPerSec * dt;
+            elapsedMs += dt * 1000;
+          }
         }
       }
       draw();
@@ -246,11 +321,19 @@ export default function RecursiveGridBackdrop({
       }
 
       // 如果 runForMs 达到，就冻结（不再请求下一帧），但保留画面
-      const shouldContinue =
-        !prefersReducedMotion &&
-        isVisible &&
-        (maxRun === Number.POSITIVE_INFINITY || (!braking ? true : velDegPerSec > minSpeed));
-      if (shouldContinue) raf = requestAnimationFrame(tick);
+      const finishedByExternalStop = sr != null && externalStop && brakeElapsedMs >= brakeMs;
+      const finishedByLegacyBrake = maxRun !== Number.POSITIVE_INFINITY && braking && velDegPerSec <= minSpeed;
+      const finished = finishedByExternalStop || (sr == null ? finishedByLegacyBrake : false);
+
+      if (!finished) {
+        if (isVisible) raf = requestAnimationFrame(tick);
+      } else {
+        // 完全停止：仅在外部 stop 模式下回调（用于 stopped 事件）
+        if (sr != null && externalStop && !stoppedNotified) {
+          stoppedNotified = true;
+          onFullyStoppedRef.current?.(activeStopId);
+        }
+      }
     };
 
     resize();
@@ -259,13 +342,24 @@ export default function RecursiveGridBackdrop({
 
     // initial paint
     draw();
-    if (!prefersReducedMotion && (maxRun > 0 || maxRun === Number.POSITIVE_INFINITY)) {
+    const kick = () => {
+      // 已有 RAF 在跑就不重复 kick；停住时（raf=0）则根据当前状态决定是否启动
+      if (raf) return;
+      if (prefersReducedMotion || !visible) return;
+      const sr = shouldRunRef.current;
+      const initialShouldRun = sr == null ? (maxRun > 0 || maxRun === Number.POSITIVE_INFINITY) : sr;
+      // 外部控制时：run 或 braking 都需要启动 RAF；braking 需要 stopRequestId 存在（避免无意义空转）
+      const shouldStart = sr == null ? initialShouldRun : sr || (!sr && !!stopRequestIdRef.current);
+      if (!shouldStart) return;
       raf = requestAnimationFrame(tick);
-    }
+    };
+    kickRef.current = kick;
+    kick();
 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      if (kickRef.current === kick) kickRef.current = null;
     };
   }, [
     depth,

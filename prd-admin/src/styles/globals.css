@@ -650,7 +650,8 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
-  z-index: 60;
+  /* 必须高于 Radix Dialog/Overlay（z=100/110），否则会被弹窗压到后面 */
+  z-index: 9999;
 }
 
 .sa-btn {

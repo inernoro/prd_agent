@@ -38,8 +38,7 @@ import type { ImageGenGenerateResponse, ImageGenPlanItem, ImageGenPlanResponse }
 import { ModelPickerDialog } from '@/pages/lab-llm/components/ModelPickerDialog';
 import { useAuthStore } from '@/stores/authStore';
 import { clearLlmLabImagesForUser, getLlmLabImageBlob, putLlmLabImageBlob } from '@/lib/llmLabImageDb';
-import { emitBackdropBusyEnd, emitBackdropBusyStart } from '@/lib/backdropBusy';
-import { BACKDROP_POST_BUSY_HOLD_MS } from '@/lib/backdropBusy';
+import { emitBackdropBusyEnd, emitBackdropBusyStart, waitForBackdropBusyStopped } from '@/lib/backdropBusy';
 
 type ViewRunItem = {
   itemId: string;
@@ -1348,6 +1347,7 @@ export default function LlmLabTab() {
     setPlanLoading(true);
     emitBackdropBusyStart();
     let nextPlan: ImageGenPlanResponse | null = null;
+    let stopId: string | null = null;
     try {
       const res = await planImageGen({ text, maxItems: 10 });
       if (!res.success) {
@@ -1357,12 +1357,12 @@ export default function LlmLabTab() {
       nextPlan = res.data ?? null;
     } finally {
       setPlanLoading(false);
-      emitBackdropBusyEnd();
+      stopId = emitBackdropBusyEnd() || null;
     }
     if (nextPlan) {
       setPlanResult(nextPlan);
-      // 等背景先“停住”再弹出确认窗（顺序：背景停 -> 弹窗从小到大）
-      await new Promise<void>((resolve) => window.setTimeout(resolve, BACKDROP_POST_BUSY_HOLD_MS));
+      // 顺序：先请求背景 stop（刹车到停）-> 背景完全停止后再弹窗
+      if (stopId) await waitForBackdropBusyStopped(stopId, 2800);
       setPlanDialogOpen(true);
     }
   };
