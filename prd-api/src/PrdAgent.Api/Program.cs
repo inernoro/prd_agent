@@ -23,6 +23,11 @@ using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// MongoDB BSON 映射注册：
+// - 线上遇到过旧数据/旧镜像导致 _id 反序列化失败（Element '_id' does not match...）
+// - 这里显式注册一次，避免依赖 MongoDbContext 构造顺序
+BsonClassMapRegistration.Register();
+
 // 配置Serilog - Pretty格式输出
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
