@@ -1,0 +1,71 @@
+name: Web Latest (Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prd-admin/**"
+      - "deploy/nginx/nginx.conf"
+      - ".github/workflows/web-latest-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        working-directory: prd-admin
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (same-origin /api)
+        working-directory: prd-admin
+        env:
+          VITE_API_BASE_URL: ""
+        run: pnpm build
+
+      - name: Prepare Pages site
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+          rm -rf site
+          mkdir -p site/admin
+          cp -r prd-admin/dist/* site/admin/
+          (cd prd-admin/dist && zip -r "../../site/prd-admin-dist-latest.zip" .)
+          sha256sum "site/prd-admin-dist-latest.zip" > "site/prd-admin-dist-latest.zip.sha256"
+          printf '%s\n' "${GITHUB_SHA}" > "site/commit.txt"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+

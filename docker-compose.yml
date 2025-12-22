@@ -35,10 +35,11 @@ services:
     restart: unless-stopped
 
   api:
-    # 生产环境禁止本地构建：请提供已构建好的镜像（tag 或 digest）
-    # 例：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server:vX.Y.Z
+    # 生产环境禁止本地构建：默认拉取 :latest（由 GitHub Actions 推送）
+    # 如需固定版本/自建仓库，设置 PRD_AGENT_API_IMAGE 覆盖（tag 或 digest）
+    # 例：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server:v1.1.1
     # 或：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server@sha256:...
-    image: ${PRD_AGENT_API_IMAGE:?Please set PRD_AGENT_API_IMAGE}
+    image: ${PRD_AGENT_API_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-server:latest}
     container_name: prdagent-api
     environment:
       - ASPNETCORE_ENVIRONMENT=Production

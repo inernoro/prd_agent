@@ -10,13 +10,16 @@ set -eu
 # 依赖：curl + unzip（或 busybox unzip），以及 docker-compose
 #
 # 用法：
-#   REPO="inernoro/prd_agent" ./deploy.sh v1.2.3
-#   REPO="inernoro/prd_agent" ./deploy.sh latest
+#   ./deploy.sh                # 默认 latest
+#   ./deploy.sh v1.2.3         # 指定版本（从 Release 下载对应 zip）
+#   ./deploy.sh latest         # 强制 latest（从 GitHub Pages 下载 latest zip）
 #
-# 必需环境变量：
-#   PRD_AGENT_API_IMAGE=ghcr.io/<org>/<repo>/prdagent-server:<tag>   (或 @sha256:...)
-# 可选：
-#   GITHUB_TOKEN=...  (仅当仓库/Release 资产为私有时需要)
+# 可选环境变量：
+#   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest）
+#   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
+#   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
+#   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认 https://<owner>.github.io/<repo>/）
+#   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 
 TAG="${1:-latest}"
 # 兼容两种方式传 repo：
@@ -40,16 +43,19 @@ if [ -z "$REPO" ] && command -v git >/dev/null 2>&1; then
 fi
 
 if [ -z "$REPO" ]; then
-  echo "ERROR: 未能确定 GitHub 仓库。" >&2
-  echo "  - 方式1：export REPO=\"inernoro/prd_agent\"" >&2
-  echo "  - 方式2：REPO=\"inernoro/prd_agent\" ./deploy.sh $TAG" >&2
-  echo "  - 方式3：./deploy.sh $TAG inernoro/prd_agent" >&2
-  exit 1
+  # 支持“从任何地方下载源码 zip 后直接跑”：没有 git remote 就回退默认仓库
+  REPO="inernoro/prd_agent"
 fi
 
+OWNER="${REPO%%/*}"
+REPO_NAME="${REPO##*/}"
+
+# 默认后端镜像（latest 一键部署）
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
-  echo "ERROR: 请设置 PRD_AGENT_API_IMAGE（例如 ghcr.io/inernoro/prd_agent/prdagent-server:vX.Y.Z 或 @sha256:...）" >&2
-  exit 1
+  export PRD_AGENT_API_IMAGE="ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:${TAG}"
+  if [ "$TAG" = "latest" ]; then
+    export PRD_AGENT_API_IMAGE="ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
+  fi
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then
@@ -61,30 +67,37 @@ else
   exit 1
 fi
 
-api="https://api.github.com/repos/$REPO/releases"
-if [ "$TAG" = "latest" ]; then
-  url="$api/latest"
-else
-  url="$api/tags/$TAG"
-fi
-
-auth_header=""
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  auth_header="Authorization: token $GITHUB_TOKEN"
-fi
-
 tmp_dir="$(mktemp -d)"
 cleanup() { rm -rf "$tmp_dir"; }
 trap cleanup EXIT
 
-release_json="$tmp_dir/release.json"
-if [ -n "$auth_header" ]; then
-  curl -fsSL -H "$auth_header" "$url" -o "$release_json"
-else
-  curl -fsSL "$url" -o "$release_json"
-fi
+asset_url=""
+sha_url=""
 
-pick_asset_url_py='
+if [ -n "${DIST_URL:-}" ]; then
+  asset_url="$DIST_URL"
+else
+  if [ "$TAG" = "latest" ]; then
+    pages_base="${PAGES_BASE_URL:-https://${OWNER}.github.io/${REPO_NAME}}"
+    asset_url="${pages_base%/}/prd-admin-dist-latest.zip"
+    sha_url="${pages_base%/}/prd-admin-dist-latest.zip.sha256"
+  else
+    # 版本化：从 Release 拉取 prd-admin-dist-<tag>.zip
+    api="https://api.github.com/repos/$REPO/releases"
+    url="$api/tags/$TAG"
+    auth_header=""
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      auth_header="Authorization: token $GITHUB_TOKEN"
+    fi
+
+    release_json="$tmp_dir/release.json"
+    if [ -n "$auth_header" ]; then
+      curl -fsSL -H "$auth_header" "$url" -o "$release_json"
+    else
+      curl -fsSL "$url" -o "$release_json"
+    fi
+
+    pick_asset_url_py='
 import json,sys,re
 data=json.load(open(sys.argv[1],"r",encoding="utf-8"))
 assets=data.get("assets",[])
@@ -98,20 +111,22 @@ print("")
 sys.exit(0)
 '
 
-asset_url="$(python3 -c "$pick_asset_url_py" "$release_json" 2>/dev/null || true)"
-if [ -z "$asset_url" ]; then
-  # 兼容 python3 不存在：用最弱的 grep/awk 兜底（要求 JSON 里有 browser_download_url）
-  asset_url="$(grep -Eo '"browser_download_url":[ ]*"[^"]+"' "$release_json" | grep -E 'prd-admin-dist-.*\.zip' | head -n 1 | awk -F'"' '{print $4}' || true)"
+    asset_url="$(python3 -c "$pick_asset_url_py" "$release_json" 2>/dev/null || true)"
+    if [ -z "$asset_url" ]; then
+      # 兼容 python3 不存在：用最弱的 grep/awk 兜底（要求 JSON 里有 browser_download_url）
+      asset_url="$(grep -Eo '"browser_download_url":[ ]*"[^"]+"' "$release_json" | grep -E 'prd-admin-dist-.*\.zip' | head -n 1 | awk -F'"' '{print $4}' || true)"
+    fi
+    sha_url="$(printf "%s" "$asset_url" | sed 's/\.zip$/.zip.sha256/')"
+  fi
 fi
 
 if [ -z "$asset_url" ]; then
-  echo "ERROR: 未在 Release($TAG) 中找到 prd-admin dist 资产（期望名称形如 prd-admin-dist-<tag>.zip）" >&2
-  echo "       你可以去 Release 页面确认是否有上传 dist 压缩包。" >&2
+  echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
+  echo "  - latest：默认从 GitHub Pages 下载 prd-admin-dist-latest.zip（可用 PAGES_BASE_URL 覆盖）" >&2
+  echo "  - 指定版本：从 Release 下载 prd-admin-dist-<tag>.zip（需该 tag 对应 Release 存在）" >&2
+  echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
   exit 1
 fi
-
-sha_url=""
-sha_url="$(printf "%s" "$asset_url" | sed 's/\.zip$/.zip.sha256/')"
 
 zip_path="$tmp_dir/prd-admin-dist.zip"
 echo "Downloading: $asset_url"
