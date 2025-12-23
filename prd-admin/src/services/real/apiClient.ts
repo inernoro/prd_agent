@@ -37,6 +37,7 @@ export async function apiRequest<T>(
     body?: unknown;
     auth?: boolean;
     emptyResponseData?: T;
+    headers?: Record<string, string>;
   }
 ): Promise<ApiResponse<T>> {
   const method = options?.method ?? 'GET';
@@ -45,6 +46,11 @@ export async function apiRequest<T>(
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
+  if (options?.headers) {
+    for (const [k, v] of Object.entries(options.headers)) {
+      if (typeof v === 'string') headers[k] = v;
+    }
+  }
 
   const auth = options?.auth ?? true;
   if (auth) {

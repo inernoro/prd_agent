@@ -233,6 +233,41 @@ function inferDocumentCharsFromRequestBody(requestBodyRedacted: string): number 
   return null;
 }
 
+function inferUserPromptCharsFromRequestBody(requestBodyRedacted: string): number | null {
+  const obj = tryParseJsonObject(requestBodyRedacted);
+  if (!obj) return null;
+
+  const messages = (obj as any).messages;
+  if (!Array.isArray(messages)) return null;
+
+  const pickTextLen = (v: unknown): number => {
+    if (v == null) return 0;
+    if (typeof v === 'string') return v.length;
+    if (Array.isArray(v)) {
+      // Claude/OpenAI 多模态：[{type:"text", text:"..."}, ...]
+      return v.reduce((sum, it) => {
+        if (it && typeof it === 'object' && typeof (it as any).text === 'string') return sum + ((it as any).text as string).length;
+        return sum;
+      }, 0);
+    }
+    if (typeof v === 'object') {
+      // 兼容：{type:"text", text:"..."}
+      if (typeof (v as any).text === 'string') return ((v as any).text as string).length;
+      return 0;
+    }
+    return 0;
+  };
+
+  let sum = 0;
+  for (const m of messages) {
+    if (!m || typeof m !== 'object') continue;
+    const role = String((m as any).role ?? '').toLowerCase();
+    if (role !== 'user') continue;
+    sum += pickTextLen((m as any).content);
+  }
+  return sum;
+}
+
 function buildCurlFromLog(detail: LlmRequestLog): string {
   const apiBase = (detail.apiBase ?? '').trim();
   const path = (detail.path ?? '').trim();
@@ -938,14 +973,22 @@ export default function LlmLogsPage() {
                       typeof detail.documentChars === 'number'
                         ? detail.documentChars
                         : inferDocumentCharsFromRequestBody(detail.requestBodyRedacted || '');
+                    const userChars =
+                      typeof detail.userPromptChars === 'number'
+                        ? detail.userPromptChars
+                        : inferUserPromptCharsFromRequestBody(detail.requestBodyRedacted || '');
                     const sysLabel = sysChars == null ? '—' : sysChars;
                     const docLabel =
                       docChars == null
                         ? (detail.documentHash ? '—（仅上报 hash）' : '—（未上报/无文档）')
                         : (typeof detail.documentChars === 'number' ? docChars : `${docChars}（推断）`);
+                    const userLabel =
+                      userChars == null
+                        ? '—（未上报）'
+                        : (typeof detail.userPromptChars === 'number' ? userChars : `${userChars}（推断）`);
                     return (
                       <>
-                        systemPromptChars: {sysLabel} · documentChars: {docLabel}
+                        系统提示词长度：{sysLabel} · PRD文档长度：{docLabel} · 用户提示词长度：{userLabel}
                       </>
                     );
                   })()}
@@ -956,6 +999,18 @@ export default function LlmLogsPage() {
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
                 <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                   statusCode: {detail.statusCode ?? '-'} · duration: {detail.durationMs ?? '-'}ms
+                </div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {(() => {
+                    const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
+                    const label = s === 'reported' ? '上游上报' : (s === 'estimated' ? '估算' : '未上报');
+                    const img = typeof detail.imageSuccessCount === 'number' ? detail.imageSuccessCount : null;
+                    return (
+                      <>
+                        Token统计来源：{label}{img != null ? ` · 生图成功张数：${img}` : ''}
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
                   {[

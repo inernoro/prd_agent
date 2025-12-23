@@ -153,6 +153,9 @@ public class ClaudeClient : ILLMClient
         {
             var systemRedacted = ctx?.SystemPromptRedacted ?? "[SYSTEM_PROMPT_REDACTED]";
             var questionText = messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content;
+            var userPromptChars = messages
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                .Sum(m => (m.Content ?? string.Empty).Length);
             var reqRedacted = new
             {
                 model = _model,
@@ -201,6 +204,7 @@ public class ClaudeClient : ILLMClient
                     RequestPurpose: ctx?.RequestPurpose,
                     DocumentChars: ctx?.DocumentChars,
                     DocumentHash: ctx?.DocumentHash,
+                    UserPromptChars: userPromptChars,
                     StartedAt: startedAt),
                 cancellationToken);
         }
@@ -211,10 +215,11 @@ public class ClaudeClient : ILLMClient
         var logFinalized = false; // true 表示已 MarkError 或 MarkDone
         var completed = false; // true 表示已 yield done（正常完成）
 
-        int inputTokens = 0;
-        int outputTokens = 0;
+        int? inputTokens = null;
+        int? outputTokens = null;
         int cacheCreationInputTokens = 0;
         int cacheReadInputTokens = 0;
+        var usageSeen = false;
         var firstByteMarked = false;
         var assembledChars = 0;
         var answerSb = new StringBuilder(capacity: 1024);
@@ -301,12 +306,14 @@ public class ClaudeClient : ILLMClient
                 }
                 else if (eventData?.Type == "message_start" && eventData.Message?.Usage != null)
                 {
+                    usageSeen = true;
                     inputTokens = eventData.Message.Usage.InputTokens;
                     cacheCreationInputTokens = eventData.Message.Usage.CacheCreationInputTokens;
                     cacheReadInputTokens = eventData.Message.Usage.CacheReadInputTokens;
                 }
                 else if (eventData?.Type == "message_delta" && eventData.Usage != null)
                 {
+                    usageSeen = true;
                     outputTokens = eventData.Usage.OutputTokens;
                 }
             }
@@ -348,6 +355,8 @@ public class ClaudeClient : ILLMClient
                         OutputTokens: outputTokens,
                         CacheCreationInputTokens: cacheCreationInputTokens > 0 ? cacheCreationInputTokens : null,
                         CacheReadInputTokens: cacheReadInputTokens > 0 ? cacheReadInputTokens : null,
+                        TokenUsageSource: usageSeen ? "reported" : "missing",
+                        ImageSuccessCount: null,
                         AnswerText: answerText,
                         AssembledTextChars: assembledChars,
                         AssembledTextHash: hash,

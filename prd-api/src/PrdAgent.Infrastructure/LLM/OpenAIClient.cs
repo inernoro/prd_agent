@@ -118,6 +118,9 @@ public class OpenAIClient : ILLMClient
         {
             var systemRedacted = ctx?.SystemPromptRedacted ?? "[SYSTEM_PROMPT_REDACTED]";
             var questionText = messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content;
+            var userPromptChars = messages
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                .Sum(m => (m.Content ?? string.Empty).Length);
 
             var reqForLog = new
             {
@@ -153,7 +156,8 @@ public class OpenAIClient : ILLMClient
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
                     QuestionText: questionText,
-                    SystemPromptChars: (systemPrompt ?? string.Empty).Length,
+                    // 与实际发送给模型的 systemPromptFinal 保持一致，避免 enablePromptCache=false 时出现 chars=0 但 text 非空的误导
+                    SystemPromptChars: systemPromptFinal.Length,
                     SystemPromptHash: LlmLogRedactor.Sha256Hex(systemRedacted),
                     SystemPromptText: systemPromptFinal,
                     MessageCount: messages.Count + 1,
@@ -165,6 +169,7 @@ public class OpenAIClient : ILLMClient
                     RequestPurpose: ctx?.RequestPurpose,
                     DocumentChars: ctx?.DocumentChars,
                     DocumentHash: ctx?.DocumentHash,
+                    UserPromptChars: userPromptChars,
                     StartedAt: startedAt),
                 cancellationToken);
         }
@@ -190,9 +195,10 @@ public class OpenAIClient : ILLMClient
         var logFinalized = false; // true 表示已 MarkError 或 MarkDone
         var completed = false; // true 表示正常读取到 [DONE] 并已 yield done
 
-        int inputTokens = 0;
-        int outputTokens = 0;
+        int? inputTokens = null;
+        int? outputTokens = null;
         int cacheReadInputTokens = 0;
+        var usageSeen = false;
         var firstByteMarked = false;
         var assembledChars = 0;
         var answerSb = new StringBuilder(capacity: 1024);
@@ -286,6 +292,7 @@ public class OpenAIClient : ILLMClient
 
                 if (eventData.Usage != null)
                 {
+                    usageSeen = true;
                     inputTokens = eventData.Usage.PromptTokens;
                     outputTokens = eventData.Usage.CompletionTokens;
                     cacheReadInputTokens = eventData.Usage.PromptTokensDetails?.CachedTokens ?? 0;
@@ -323,6 +330,8 @@ public class OpenAIClient : ILLMClient
                         OutputTokens: outputTokens,
                         CacheCreationInputTokens: null,
                         CacheReadInputTokens: cacheReadInputTokens > 0 ? cacheReadInputTokens : null,
+                        TokenUsageSource: usageSeen ? "reported" : "missing",
+                        ImageSuccessCount: null,
                         AnswerText: answerText,
                         AssembledTextChars: assembledChars,
                         AssembledTextHash: hash,

@@ -22,6 +22,7 @@ public record LlmLogStart(
     string? ViewRole,
     int? DocumentChars,
     string? DocumentHash,
+    int? UserPromptChars,
     DateTime StartedAt,
     string? RequestType = null,
     string? RequestPurpose = null);
@@ -33,6 +34,8 @@ public record LlmLogDone(
     int? OutputTokens,
     int? CacheCreationInputTokens,
     int? CacheReadInputTokens,
+    string? TokenUsageSource,
+    int? ImageSuccessCount,
     string? AnswerText,
     int? AssembledTextChars,
     string? AssembledTextHash,

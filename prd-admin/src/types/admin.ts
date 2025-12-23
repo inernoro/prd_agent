@@ -120,6 +120,12 @@ export type LlmRequestLog = {
   messageCount?: number | null;
   documentChars?: number | null;
   documentHash?: string | null;
+  /** 本次请求 messages 中所有 user 内容长度总和 */
+  userPromptChars?: number | null;
+  /** Token统计来源：reported/estimated/missing */
+  tokenUsageSource?: string | null;
+  /** 生图成功张数（文本请求为 null） */
+  imageSuccessCount?: number | null;
   statusCode?: number | null;
   responseHeaders?: Record<string, string> | null;
   questionText?: string | null;

@@ -101,6 +101,8 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.OutputTokens, done.OutputTokens)
             .Set(l => l.CacheCreationInputTokens, done.CacheCreationInputTokens)
             .Set(l => l.CacheReadInputTokens, done.CacheReadInputTokens)
+            .Set(l => l.TokenUsageSource, done.TokenUsageSource)
+            .Set(l => l.ImageSuccessCount, done.ImageSuccessCount)
             .Set(l => l.AnswerText, answerText)
             .Set(l => l.AnswerTextChars, done.AssembledTextChars)
             .Set(l => l.AnswerTextHash, done.AssembledTextHash)

@@ -87,25 +87,46 @@ public class AdminStatsController : ControllerBase
     public async Task<IActionResult> GetTokenUsage([FromQuery] int days = 7)
     {
         var startDate = DateTime.UtcNow.Date.AddDays(-days + 1);
-        var messages = await _db.Messages.Find(
-            m => m.Timestamp >= startDate && 
-                 m.Role == MessageRole.Assistant && 
-                 m.TokenUsage != null)
+        days = Math.Clamp(days, 1, 30);
+
+        // 1) Chat 用量：来自 messages（长期保留）
+        var messageFilter = Builders<Message>.Filter.Gte(m => m.Timestamp, startDate) &
+                           Builders<Message>.Filter.Eq(m => m.Role, MessageRole.Assistant) &
+                           Builders<Message>.Filter.Ne(m => m.TokenUsage, null);
+        var chatItems = await _db.Messages
+            .Find(messageFilter)
+            .Project(m => new { m.Timestamp, input = m.TokenUsage!.Input, output = m.TokenUsage!.Output })
             .ToListAsync();
 
-        var totalInput = messages.Sum(m => m.TokenUsage?.Input ?? 0);
-        var totalOutput = messages.Sum(m => m.TokenUsage?.Output ?? 0);
+        // 2) 系统级用量补全：来自 llmrequestlogs（用于覆盖非 chat 的 LLM 调用；注意该集合默认 TTL=7天）
+        //    为避免 chat 调用被重复计入，排除 RequestPurpose 以 "chat." 开头的日志。
+        var logFilter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, startDate) &
+                        Builders<LlmRequestLog>.Filter.Ne(x => x.InputTokens, null) &
+                        Builders<LlmRequestLog>.Filter.Ne(x => x.OutputTokens, null) &
+                        Builders<LlmRequestLog>.Filter.Ne(x => x.Status, "running") &
+                        Builders<LlmRequestLog>.Filter.Not(
+                            Builders<LlmRequestLog>.Filter.Regex(
+                                x => x.RequestPurpose,
+                                new MongoDB.Bson.BsonRegularExpression("^chat\\.", "i")));
+        var nonChatItems = await _db.LlmRequestLogs
+            .Find(logFilter)
+            .Project(x => new { x.StartedAt, input = x.InputTokens ?? 0, output = x.OutputTokens ?? 0 })
+            .ToListAsync();
+
+        var totalInput = chatItems.Sum(x => x.input) + nonChatItems.Sum(x => x.input);
+        var totalOutput = chatItems.Sum(x => x.output) + nonChatItems.Sum(x => x.output);
 
         var dailyUsage = Enumerable.Range(0, days)
             .Select(i => startDate.AddDays(i))
             .Select(date =>
             {
-                var dayMessages = messages.Where(m => m.Timestamp.Date == date);
+                var dayChat = chatItems.Where(m => m.Timestamp.Date == date);
+                var dayNonChat = nonChatItems.Where(l => l.StartedAt.Date == date);
                 return new
                 {
                     date = date.ToString("yyyy-MM-dd"),
-                    input = dayMessages.Sum(m => m.TokenUsage?.Input ?? 0),
-                    output = dayMessages.Sum(m => m.TokenUsage?.Output ?? 0)
+                    input = dayChat.Sum(m => m.input) + dayNonChat.Sum(l => l.input),
+                    output = dayChat.Sum(m => m.output) + dayNonChat.Sum(l => l.output)
                 };
             })
             .ToList();

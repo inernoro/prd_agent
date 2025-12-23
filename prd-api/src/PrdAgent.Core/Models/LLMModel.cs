@@ -1,6 +1,30 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
+/// 模型能力标记（用于分类/过滤/手动覆盖）
+/// </summary>
+public class LLMModelCapability
+{
+    /// <summary>能力类型：vision/embedding/rerank/function_calling/web_search/reasoning/free</summary>
+    public string Type { get; set; } = string.Empty;
+
+    /// <summary>来源：llm/user/system</summary>
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>该能力是否启用/命中</summary>
+    public bool Value { get; set; }
+
+    /// <summary>是否为用户手动选择（用于覆盖默认判断）</summary>
+    public bool? IsUserSelected { get; set; }
+
+    /// <summary>置信度（0-1，可选）</summary>
+    public double? Confidence { get; set; }
+
+    /// <summary>更新时间</summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
 /// LLM模型实体
 /// </summary>
 public class LLMModel
@@ -52,6 +76,13 @@ public class LLMModel
 
     /// <summary>是否为图片生成模型 (全局唯一)</summary>
     public bool IsImageGen { get; set; } = false;
+
+    /// <summary>
+    /// 模型能力（用于分类/过滤；可被用户覆盖）
+    /// - source=llm：来自自动分类
+    /// - source=user：来自人工覆盖
+    /// </summary>
+    public List<LLMModelCapability>? Capabilities { get; set; }
 
     /// <summary>
     /// 是否启用 Prompt Cache（模型级开关）

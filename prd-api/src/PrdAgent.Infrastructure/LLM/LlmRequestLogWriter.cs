@@ -60,6 +60,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 MessageCount = start.MessageCount,
                 DocumentChars = start.DocumentChars,
                 DocumentHash = start.DocumentHash,
+                UserPromptChars = start.UserPromptChars,
                 StartedAt = start.StartedAt,
                 Status = "running"
             };

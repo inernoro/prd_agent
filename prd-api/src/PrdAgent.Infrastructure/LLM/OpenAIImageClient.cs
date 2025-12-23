@@ -230,6 +230,7 @@ public class OpenAIImageClient
                     ViewRole: ctx?.ViewRole,
                     DocumentChars: null,
                     DocumentHash: null,
+                    UserPromptChars: (isVolces ? ((VolcesImageRequest)reqObj).Prompt : ((OpenAIImageRequest)reqObj).Prompt)?.Length ?? 0,
                     StartedAt: startedAt,
                     RequestType: (ctx?.RequestType ?? "imageGen"),
                     RequestPurpose: (ctx?.RequestPurpose ?? "imageGen.generate")),
@@ -331,6 +332,8 @@ public class OpenAIImageClient
                         OutputTokens: null,
                         CacheCreationInputTokens: null,
                         CacheReadInputTokens: null,
+                        TokenUsageSource: "missing",
+                        ImageSuccessCount: 0,
                         AnswerText: answerText,
                         AssembledTextChars: answerText.Length,
                         AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),
@@ -422,20 +425,6 @@ public class OpenAIImageClient
                 }
             }
 
-            // Volces：usage 里提供 token 统计（用于后台 Token 统计卡片）
-            int? volcesTotalTokens = null;
-            if (isVolces && root.TryGetProperty("usage", out var usageEl) && usageEl.ValueKind == JsonValueKind.Object)
-            {
-                if (usageEl.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
-                {
-                    volcesTotalTokens = tt.GetInt32();
-                }
-                else if (usageEl.TryGetProperty("output_tokens", out var ot) && ot.ValueKind == JsonValueKind.Number)
-                {
-                    volcesTotalTokens = ot.GetInt32();
-                }
-            }
-
             if (logId != null)
             {
                 var endedAt = DateTime.UtcNow;
@@ -462,9 +451,11 @@ public class OpenAIImageClient
                             ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
                         },
                         InputTokens: null,
-                        OutputTokens: volcesTotalTokens,
+                        OutputTokens: null,
                         CacheCreationInputTokens: null,
                         CacheReadInputTokens: null,
+                        TokenUsageSource: "missing",
+                        ImageSuccessCount: images.Count,
                         AnswerText: answerText,
                         AssembledTextChars: answerText.Length,
                         AssembledTextHash: hash,
@@ -494,6 +485,8 @@ public class OpenAIImageClient
                         OutputTokens: null,
                         CacheCreationInputTokens: null,
                         CacheReadInputTokens: null,
+                        TokenUsageSource: "missing",
+                        ImageSuccessCount: 0,
                         AnswerText: answerText,
                         AssembledTextChars: answerText.Length,
                         AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),

@@ -51,9 +51,22 @@ public static class BsonClassMapRegistration
         BsonClassMap.RegisterClassMap<User>(cm =>
         {
             cm.AutoMap();
-            cm.MapIdMember(u => u.Id)
+            // 统一：业务侧使用 UserId 作为主键；历史数据 users 集合往往只有 _id，没有 userId 字段。
+            // 若不将 _id 映射到 UserId，则会触发 User.UserId 的默认值（Guid.NewGuid），导致每次登录 userId 不稳定，
+            // 进而导致 OwnerAdminId/JWT sub 漂移（看起来像“一个用户却有多个 ownerId”）。
+            cm.MapIdMember(u => u.UserId)
                 .SetSerializer(new StringSerializer(MongoDB.Bson.BsonType.String))
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            // 避免同时序列化 User.Id -> "id" 字段（它只用于旧模型兼容，不应落库）
+            try
+            {
+                var idProp = typeof(User).GetProperty(nameof(User.Id));
+                if (idProp != null) cm.UnmapMember(idProp);
+            }
+            catch
+            {
+                // ignore：不同版本 driver API 兼容性差异；即便无法 Unmap，也不影响主键映射与查询正确性
+            }
             cm.SetIgnoreExtraElements(true);
         });
     }

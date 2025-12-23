@@ -28,15 +28,13 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, ArrowDown, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2, Zap } from 'lucide-react';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
-import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
-import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
-import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { ModelKpiRail } from '@/components/model/ModelKpiRail';
 import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
+import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import { formatDuration } from '@/lib/formatStats';
 
 type PlatformForm = {
@@ -61,73 +59,6 @@ type ModelForm = {
   enablePromptCache: boolean;
 };
 
-type AvailableModel = {
-  modelName: string;
-  displayName: string;
-  group?: string;
-};
-
-function splitKeywords(input: string): string[] {
-  return (input ?? '')
-    .toLowerCase()
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-function matchAllKeywords(fullText: string, keywords: string[]): boolean {
-  if (keywords.length === 0) return true;
-  const hay = (fullText ?? '').toLowerCase();
-  return keywords.every((k) => hay.includes(k));
-}
-
-function presetTagMeta(tag: PresetTagKey): { title: string; icon: React.ReactNode; tone: string } {
-  switch (tag) {
-    case 'reasoning':
-      return { title: '推理', icon: <Zap size={14} />, tone: 'rgba(251,146,60,0.95)' };
-    case 'vision':
-      return { title: '视觉', icon: <ScanEye size={14} />, tone: 'rgba(96,165,250,0.95)' };
-    case 'websearch':
-      return { title: '联网', icon: <Link2 size={14} />, tone: 'rgba(34,197,94,0.95)' };
-    case 'function_calling':
-      return { title: '工具', icon: <Sparkles size={14} />, tone: 'rgba(167,139,250,0.95)' };
-    case 'embedding':
-      return { title: '嵌入', icon: <DatabaseZap size={14} />, tone: 'rgba(34,211,238,0.95)' };
-    case 'rerank':
-      return { title: '重排', icon: <ArrowDown size={14} />, tone: 'rgba(245,158,11,0.95)' };
-    case 'image_generation':
-      return { title: '生图', icon: <ImagePlus size={14} />, tone: 'rgba(236,72,153,0.95)' };
-    case 'free':
-      return { title: '免费', icon: <Star size={14} />, tone: 'rgba(34,197,94,0.95)' };
-  }
-}
-
-function PresetTagIcons({ modelName, displayName }: { modelName: string; displayName?: string }) {
-  const tags = inferPresetTagKeys(modelName, displayName);
-  if (tags.length === 0) return null;
-  return (
-    <div className="flex items-center gap-1.5 shrink-0" aria-label="预设标签">
-      {tags.map((t) => {
-        const meta = presetTagMeta(t);
-        return (
-          <span
-            key={t}
-            title={meta.title}
-            className="inline-flex items-center justify-center h-[22px] w-[22px] rounded-[9px]"
-            style={{
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(255,255,255,0.04)',
-              color: meta.tone,
-            }}
-          >
-            {meta.icon}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 const defaultPlatformForm: PlatformForm = {
   name: '',
   platformType: 'openai',
@@ -148,9 +79,6 @@ const defaultModelForm: ModelForm = {
   enabled: true,
   enablePromptCache: true,
 };
-
-const isSvgAssetUrl = (url?: string | null) => !!url && /\.svg(\?|#|$)/i.test(url);
-const isRasterAssetUrl = (url?: string | null) => !!url && /\.(png|jpe?g|webp|gif|bmp|ico)(\?|#|$)/i.test(url);
 
 
 function StatLabel({
@@ -332,14 +260,6 @@ export default function ModelManagePage() {
   const [platformCheckMsg, setPlatformCheckMsg] = useState<string | null>(null);
 
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
-  const [availableLoading, setAvailableLoading] = useState(false);
-  const [availableError, setAvailableError] = useState<string | null>(null);
-  const [availableSearch, setAvailableSearch] = useState('');
-  const [availableTab, setAvailableTab] = useState<
-    'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools'
-  >('all');
-  const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
   const [draggingModelId, setDraggingModelId] = useState<string | null>(null);
   const [modelOrderIds, setModelOrderIds] = useState<string[]>([]);
   const [prioritySaving, setPrioritySaving] = useState(false);
@@ -608,67 +528,6 @@ export default function ModelManagePage() {
     const [x] = next.splice(from, 1);
     next.splice(to, 0, x);
     return next;
-  };
-
-  const filteredAvailableModels = useMemo(() => {
-    let list = availableModels;
-    if (availableTab !== 'all') {
-      const pid = (selectedPlatform?.providerId || selectedPlatform?.platformType || '').trim();
-      list = list.filter((m) => matchAvailableModelsTab({ tab: availableTab, modelName: m.modelName, displayName: m.displayName, providerId: pid }));
-    }
-    const ks = splitKeywords(availableSearch);
-    if (ks.length === 0) return list;
-    const providerName = selectedPlatform?.name || '';
-    return list.filter((m) =>
-      matchAllKeywords(`${m.displayName || ''} ${m.modelName || ''} ${providerName}`, ks)
-    );
-  }, [availableModels, availableSearch, availableTab, selectedPlatform?.name, selectedPlatform?.providerId, selectedPlatform?.platformType]);
-
-  const groupedAvailable = useMemo(() => {
-    // Cherry 管理弹窗：不做显式排序；顺序取决于远端返回顺序 + 首次出现 group 的插入顺序
-    const providerId = (selectedPlatform?.providerId || selectedPlatform?.platformType || '').trim();
-    const groups = new Map<string, AvailableModel[]>();
-    for (const m of filteredAvailableModels) {
-      const key = (m.group || resolveCherryGroupKey(m.modelName, providerId) || 'other').toLowerCase();
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(m);
-    }
-    return Array.from(groups.entries());
-  }, [filteredAvailableModels, selectedPlatform?.providerId, selectedPlatform?.platformType]);
-
-  // 默认展开第一个分组（允许用户自行折叠/展开）
-  useEffect(() => {
-    if (groupedAvailable.length === 0) return;
-    const first = groupedAvailable[0]?.[0];
-    if (!first) return;
-    setOpenAvailableGroups((prev) => {
-      if (Object.keys(prev).length === 0) return { [first]: true };
-      if (prev[first] === undefined) return { ...prev, [first]: true };
-      return prev;
-    });
-  }, [groupedAvailable]);
-
-  const fetchAvailableModels = async (opts?: { refresh?: boolean }) => {
-    if (!selectedPlatform) return;
-    setAvailableLoading(true);
-    setAvailableError(null);
-    try {
-      const isRefresh = !!opts?.refresh;
-      const r = await apiRequest<AvailableModel[]>(
-        isRefresh
-          ? `/api/v1/platforms/${selectedPlatform.id}/refresh-models`
-          : `/api/v1/platforms/${selectedPlatform.id}/available-models`,
-        isRefresh ? { method: 'POST', body: {} } : { method: 'GET' }
-      );
-      if (!r.success) {
-        setAvailableError(r.error?.message || '获取模型列表失败');
-        setAvailableModels([]);
-        return;
-      }
-      setAvailableModels(r.data || []);
-    } finally {
-      setAvailableLoading(false);
-    }
   };
 
   const toggleModel = async (m: AvailableModel) => {
@@ -1043,10 +902,7 @@ export default function ModelManagePage() {
 
   const openModelPicker = async () => {
     if (!selectedPlatform) return;
-    setAvailableSearch('');
-    setAvailableTab('all');
     setModelPickerOpen(true);
-    await fetchAvailableModels();
   };
 
   const isAll = selectedPlatformId === '__all__';
@@ -2081,214 +1937,18 @@ export default function ModelManagePage() {
         }
       />
 
-      <Dialog
+      <PlatformAvailableModelsDialog
         open={modelPickerOpen}
-        onOpenChange={(open) => {
-          setModelPickerOpen(open);
-          if (!open) {
-            setAvailableModels([]);
-            setAvailableError(null);
-          }
-        }}
-        title={`${selectedPlatform?.name ?? ''}模型`}
+        onOpenChange={setModelPickerOpen}
+        platform={selectedPlatform}
         description="从平台可用模型列表中一键添加/移除"
-        maxWidth={600}
-        contentStyle={{ height: 'min(80vh, 720px)' }}
-        content={
-          <div className="h-full min-h-0 flex flex-col space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2"
-                  style={{ color: 'var(--text-muted)' }}
-                />
-                <input
-                  value={availableSearch}
-                  onChange={(e) => setAvailableSearch(e.target.value)}
-                  type="search"
-                  name="available-model-search"
-                  autoComplete="off"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  data-lpignore="true"
-                  data-1p-ignore="true"
-                  data-bwignore="true"
-                  className="h-10 w-full rounded-[14px] pl-9 pr-4 text-sm outline-none"
-                  style={inputStyle}
-                  placeholder="搜索模型 ID 或名称"
-                />
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={async () => {
-                  await fetchAvailableModels({ refresh: true });
-                }}
-                disabled={!selectedPlatform || availableLoading}
-                aria-label="刷新"
-              >
-                <RefreshCw size={16} />
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {(
-                [
-                  ['all', '全部'],
-                  ['reasoning', '推理'],
-                  ['vision', '视觉'],
-                  ['web', '联网'],
-                  ['free', '免费'],
-                  ['embedding', '嵌入'],
-                  ['rerank', '重排'],
-                  ['tools', '工具'],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setAvailableTab(k)}
-                  className="px-1 pb-2 text-sm transition-colors"
-                  style={{
-                    color: availableTab === k ? 'rgba(34,197,94,0.95)' : 'var(--text-secondary)',
-                    borderBottom: availableTab === k ? '2px solid rgba(34,197,94,0.95)' : '2px solid transparent',
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-              <div className="flex-1" />
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                可用 {filteredAvailableModels.length} 个 · 已添加 {existingModelByName.size} 个
-              </div>
-            </div>
-
-            <div
-              className="rounded-[16px] overflow-hidden flex flex-col flex-1 min-h-0"
-              style={{ border: '1px solid var(--border-subtle)' }}
-            >
-              {availableLoading ? (
-                <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-              ) : availableError ? (
-                <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>{availableError}</div>
-              ) : groupedAvailable.length === 0 ? (
-                <div className="py-14 text-center" style={{ color: 'var(--text-muted)' }}>暂无可用模型</div>
-              ) : (
-                <div className="flex-1 min-h-0 overflow-auto">
-                  <div className="space-y-2 p-2">
-                    {groupedAvailable.map(([g, ms]) => (
-                      <details
-                        key={g}
-                        className="rounded-[14px] overflow-hidden"
-                        style={{ border: '1px solid var(--border-subtle)' }}
-                        open={!!openAvailableGroups[g]}
-                        onToggle={(e) => {
-                          const nextOpen = (e.currentTarget as HTMLDetailsElement).open;
-                          setOpenAvailableGroups((prev) => ({ ...prev, [g]: nextOpen }));
-                        }}
-                      >
-                        <summary
-                          className="px-4 py-3 flex items-center justify-between cursor-pointer select-none"
-                          style={{ background: 'rgba(255,255,255,0.03)' }}
-                        >
-                          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="subtle">{ms.length}</Badge>
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center h-[26px] w-[26px] rounded-[10px] hover:bg-white/6"
-                              style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
-                              title="批量添加该组"
-                              onClick={(e) => {
-                                e.preventDefault(); // 避免触发 summary toggle
-                                e.stopPropagation();
-                                void bulkAddAvailableGroup(g, ms);
-                              }}
-                            >
-                              <Plus size={16} />
-                            </button>
-                          </div>
-                        </summary>
-                        <div className="divide-y divide-white/30">
-                          {ms.map((m) => {
-                            const exist = existingModelByName.get(m.modelName);
-                            const label = (m.displayName || m.modelName).trim();
-                            const avatarUrl =
-                              (g || '').toLowerCase() === 'other' ? getAvatarUrlByModelName(m.modelName || label) : getAvatarUrlByGroup(g);
-                            return (
-                              <div
-                                key={`${g}:${m.modelName}`}
-                                className="px-4 py-3 flex items-center justify-between transition-colors"
-                                style={{
-                                  background: exist ? 'rgba(34,197,94,0.08)' : 'transparent',
-                                }}
-                              >
-                                <div className="min-w-0 flex items-center gap-3">
-                                  <div
-                                    className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
-                                    style={{
-                                      // 仅在 svg / 文字占位时使用“色块底”，避免 png/jpg 等方图贴边显得突兀
-                                      background: !avatarUrl || isSvgAssetUrl(avatarUrl) ? 'rgba(59,130,246,0.14)' : 'rgba(255, 255, 255, 0)',
-                                      color: 'rgba(59,130,246,0.95)',
-                                      border: '1px solid var(--border-subtle)',
-                                    }}
-                                  >
-                                    {avatarUrl ? (
-                                      isRasterAssetUrl(avatarUrl) ? (
-                                        <div className="h-6 w-6 rounded-full overflow-hidden bg-transparent">
-                                          <img src={avatarUrl} alt={g} className="h-full w-full object-contain" style={{ opacity: 1 }} />
-                                        </div>
-                                      ) : (
-                                        <img
-                                          src={avatarUrl}
-                                          alt={g}
-                                          className="h-5 w-5 object-contain"
-                                          style={{
-                                            opacity: 1,
-                                            // svg 图标可保留轻微阴影提升可读性（raster 容易把“方边”阴影放大）
-                                            filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.35))',
-                                          }}
-                                        />
-                                      )
-                                    ) : (
-                                      g.slice(0, 1).toUpperCase()
-                                    )}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                        {label}
-                                      </div>
-                                      {exist && <Badge variant="success">已添加</Badge>}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <PresetTagIcons modelName={m.modelName} displayName={m.displayName} />
-                                <Button
-                                  variant={exist ? 'secondary' : 'ghost'}
-                                  size="sm"
-                                  onClick={() => toggleModel(m)}
-                                  disabled={availableLoading}
-                                  aria-label={exist ? '移除' : '添加'}
-                                >
-                                  {exist ? <Minus size={16} /> : <Plus size={16} />}
-                                </Button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        }
+        selectedCount={existingModelByName.size}
+        selectedCountLabel="已添加"
+        selectedBadgeText="已添加"
+        isSelected={(m) => Boolean(existingModelByName.get(m.modelName))}
+        onToggle={(m) => void toggleModel(m)}
+        onBulkAddGroup={(groupName, ms) => void bulkAddAvailableGroup(groupName, ms)}
+        onAfterWriteBack={() => load({ silent: true })}
       />
 
       <Dialog

@@ -6,6 +6,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -22,9 +24,12 @@ public class AdminPlatformsController : ControllerBase
     private readonly IConfiguration _config;
     private readonly ICacheManager _cache;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IModelDomainService _modelDomainService;
+    private readonly ILLMRequestContextAccessor _ctxAccessor;
     
     private const string ModelsCacheKeyPrefix = "platform:models:";
     private static readonly TimeSpan ModelsCacheExpiry = TimeSpan.FromHours(24);
+    private static readonly TimeSpan ReclassifyIdempotencyExpiry = TimeSpan.FromMinutes(15);
     
     // 预设模型列表缓存
     private static readonly Dictionary<string, List<PresetModel>> PresetModels = new()
@@ -95,14 +100,20 @@ public class AdminPlatformsController : ControllerBase
         ILogger<AdminPlatformsController> logger,
         IConfiguration config,
         ICacheManager cache,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IModelDomainService modelDomainService,
+        ILLMRequestContextAccessor ctxAccessor)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _cache = cache;
         _httpClientFactory = httpClientFactory;
+        _modelDomainService = modelDomainService;
+        _ctxAccessor = ctxAccessor;
     }
+
+    private string GetAdminId() => User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "unknown";
 
     /// <summary>
     /// 获取所有平台
@@ -330,6 +341,288 @@ public class AdminPlatformsController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(models));
+    }
+
+    /// <summary>
+    /// 使用“主模型”对平台可用模型列表做智能分类/分组，并写回已配置模型（llmmodels）
+    /// </summary>
+    [HttpPost("/api/v1/admin/platforms/{id}/reclassify-models")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ReclassifyModels(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var platform = await _db.LLMPlatforms.Find(p => p.Id == id).FirstOrDefaultAsync(ct);
+        if (platform == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
+        }
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var idemCacheKey = $"{ModelsCacheKeyPrefix}{id}:reclassify:{adminId}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(idemCacheKey);
+            if (cached != null)
+            {
+                return Ok(ApiResponse<object>.Ok(cached));
+            }
+        }
+
+        // 1) 拉取平台可用模型列表（全量）
+        var available = await GetModelsForPlatform(platform);
+        if (available.Count == 0)
+        {
+            var payloadEmpty = new
+            {
+                platformId = id,
+                providerId = platform.ProviderId,
+                platformType = platform.PlatformType,
+                availableCount = 0,
+                configuredCount = 0,
+                updatedCount = 0,
+                items = Array.Empty<object>()
+            };
+            return Ok(ApiResponse<object>.Ok(payloadEmpty));
+        }
+
+        // 2) 调用主模型进行分类（可能需要分片）
+        var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
+        var client = await _modelDomainService.GetClientAsync(ModelPurpose.MainChat, ct);
+
+        var requestId = Guid.NewGuid().ToString("N");
+        using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: adminId,
+            ViewRole: "ADMIN",
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[MODEL_RECLASSIFY]",
+            RequestType: "reasoning",
+            RequestPurpose: "admin.platforms.reclassify"));
+
+        var results = new List<ModelClassifyResult>();
+        const int chunkSize = 180;
+        for (var i = 0; i < available.Count; i += chunkSize)
+        {
+            var chunk = available.Skip(i).Take(chunkSize).ToList();
+            var chunkRes = await ClassifyAvailableModelsAsync(client, providerId, platform.PlatformType, chunk, ct);
+            results.AddRange(chunkRes);
+        }
+
+        // 3) 写回已配置模型（llmmodels）：按 platformId + modelName 匹配
+        var configured = await _db.LLMModels.Find(m => m.PlatformId == id).ToListAsync(ct);
+        var map = results
+            .Where(r => !string.IsNullOrWhiteSpace(r.ModelName))
+            .Select(r => new { Key = (r.ModelName ?? string.Empty).Trim().ToLowerInvariant(), Value = r })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Key))
+            .GroupBy(x => x.Key)
+            .ToDictionary(g => g.Key, g => g.First().Value);
+
+        var updates = new List<WriteModel<LLMModel>>();
+        var diffs = new List<object>();
+        foreach (var m in configured)
+        {
+            var key = (m.ModelName ?? string.Empty).Trim().ToLowerInvariant();
+            if (!map.TryGetValue(key, out var r)) continue;
+
+            var nextGroup = string.IsNullOrWhiteSpace(r.Group) ? m.Group : r.Group!.Trim();
+            var llmCaps = BuildLlmCapabilities(r, DateTime.UtcNow);
+
+            // 合并策略：保留非 llm 来源条目（未来可写入 user 覆盖），覆盖/替换 llm 条目
+            var existingCaps = m.Capabilities ?? new List<LLMModelCapability>();
+            var kept = existingCaps.Where(x => !string.Equals(x.Source, "llm", StringComparison.OrdinalIgnoreCase)).ToList();
+            var mergedCaps = kept.Concat(llmCaps).ToList();
+
+            var needUpdate = !string.Equals(m.Group ?? string.Empty, nextGroup ?? string.Empty, StringComparison.Ordinal)
+                             || !CapabilitiesSemanticallyEqual(existingCaps, mergedCaps);
+            if (!needUpdate) continue;
+
+            diffs.Add(new
+            {
+                modelId = m.Id,
+                modelName = m.ModelName,
+                oldGroup = m.Group,
+                newGroup = nextGroup
+            });
+
+            var u = Builders<LLMModel>.Update
+                .Set(x => x.Group, nextGroup)
+                .Set("capabilities", mergedCaps)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+            updates.Add(new UpdateOneModel<LLMModel>(
+                Builders<LLMModel>.Filter.Eq(x => x.Id, m.Id),
+                u));
+        }
+
+        if (updates.Count > 0)
+        {
+            await _db.LLMModels.BulkWriteAsync(updates, new BulkWriteOptions { IsOrdered = false }, ct);
+        }
+
+        var payload = new
+        {
+            platformId = id,
+            providerId,
+            platformType = platform.PlatformType,
+            availableCount = available.Count,
+            configuredCount = configured.Count,
+            updatedCount = updates.Count,
+            items = diffs
+        };
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var idemCacheKey = $"{ModelsCacheKeyPrefix}{id}:reclassify:{adminId}:{idemKey}";
+            await _cache.SetAsync(idemCacheKey, payload, ReclassifyIdempotencyExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    private static bool CapabilitiesSemanticallyEqual(List<LLMModelCapability>? a, List<LLMModelCapability>? b)
+    {
+        a ??= new List<LLMModelCapability>();
+        b ??= new List<LLMModelCapability>();
+        // 仅比较 type/source/value（忽略 updatedAt/confidence）
+        static string KeyOf(LLMModelCapability x) =>
+            $"{(x.Type ?? "").Trim().ToLowerInvariant()}|{(x.Source ?? "").Trim().ToLowerInvariant()}|{x.Value}";
+        var sa = new HashSet<string>(a.Select(KeyOf));
+        var sb = new HashSet<string>(b.Select(KeyOf));
+        return sa.SetEquals(sb);
+    }
+
+    private static List<LLMModelCapability> BuildLlmCapabilities(ModelClassifyResult r, DateTime now)
+    {
+        var tags = r.Tags ?? new List<string>();
+        var set = new HashSet<string>(tags.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()));
+
+        var allTypes = new[]
+        {
+            "vision", "embedding", "rerank", "function_calling", "web_search", "reasoning", "free"
+        };
+
+        var caps = new List<LLMModelCapability>();
+        foreach (var t in allTypes)
+        {
+            var v = set.Contains(t);
+            caps.Add(new LLMModelCapability
+            {
+                Type = t,
+                Source = "llm",
+                Value = v,
+                IsUserSelected = null,
+                Confidence = r.Confidence,
+                UpdatedAt = now
+            });
+        }
+        return caps;
+    }
+
+    private async Task<List<ModelClassifyResult>> ClassifyAvailableModelsAsync(
+        ILLMClient client,
+        string providerId,
+        string platformType,
+        List<AvailableModelDto> models,
+        CancellationToken ct)
+    {
+        var systemPrompt =
+            "你是模型管理后台的分类器。你的任务：为给定平台的一组模型做“分组(group) + 多标签(tags)”分类。\n" +
+            "你必须严格只输出 JSON 数组（不要 Markdown、不要解释、不要多余文本）。\n\n" +
+            "输出数组每个元素结构：\n" +
+            "{\n" +
+            "  \"modelName\": string,  // 必须等于输入的 modelName\n" +
+            "  \"group\": string,      // 分组 key，尽量稳定、可读、全小写\n" +
+            "  \"tags\": string[],     // 仅允许这些值：vision, embedding, rerank, function_calling, web_search, reasoning, free\n" +
+            "  \"confidence\": number  // 0-1，可选\n" +
+            "}\n\n" +
+            "分组建议：按产品家族/系列（例如 doubao-vision, doubao-1.5, qwen2.5, gpt-4o 等），避免过长；不要返回空字符串。\n" +
+            "标签规则：一个模型可同时拥有多个标签；不确定时可只给 reasoning。\n";
+
+        var input = new
+        {
+            providerId,
+            platformType,
+            models = models.Select(m => new { modelName = m.ModelName, displayName = m.DisplayName, group = m.Group }).ToList()
+        };
+
+        var userMsg = JsonSerializer.Serialize(input, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        });
+
+        var messages = new List<LLMMessage> { new() { Role = "user", Content = userMsg } };
+        var raw = await CollectToTextAsync(client, systemPrompt, messages, ct);
+        return ParseClassifyResults(raw);
+    }
+
+    private static async Task<string> CollectToTextAsync(
+        ILLMClient client,
+        string systemPrompt,
+        List<LLMMessage> messages,
+        CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct).WithCancellation(ct))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+            {
+                sb.Append(chunk.Content);
+            }
+            else if (chunk.Type == "error")
+            {
+                throw new InvalidOperationException(chunk.ErrorMessage ?? ErrorCodes.LLM_ERROR);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static List<ModelClassifyResult> ParseClassifyResults(string raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return new List<ModelClassifyResult>();
+
+        // 去掉 ```json ... ``` 包裹
+        if (s.StartsWith("```", StringComparison.Ordinal))
+        {
+            var firstNl = s.IndexOf('\n');
+            if (firstNl >= 0) s = s[(firstNl + 1)..];
+            var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
+            if (lastFence >= 0) s = s[..lastFence];
+            s = s.Trim();
+        }
+
+        // 尝试截取数组
+        var start = s.IndexOf('[');
+        var end = s.LastIndexOf(']');
+        if (start >= 0 && end > start)
+        {
+            s = s[start..(end + 1)];
+        }
+
+        try
+        {
+            var arr = JsonSerializer.Deserialize<List<ModelClassifyResult>>(s, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            return arr ?? new List<ModelClassifyResult>();
+        }
+        catch
+        {
+            return new List<ModelClassifyResult>();
+        }
+    }
+
+    private class ModelClassifyResult
+    {
+        public string? ModelName { get; set; }
+        public string? Group { get; set; }
+        public List<string>? Tags { get; set; }
+        public double? Confidence { get; set; }
     }
 
     /// <summary>

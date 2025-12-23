@@ -50,6 +50,24 @@ public class LlmRequestLog
     public int? DocumentChars { get; set; }
     public string? DocumentHash { get; set; }
 
+    /// <summary>
+    /// 用户提示词字符数（本次请求 messages 中所有 user 内容长度总和；不含 system prompt）
+    /// </summary>
+    public int? UserPromptChars { get; set; }
+
+    /// <summary>
+    /// Token 统计来源：
+    /// - reported：上游 Provider 返回 usage
+    /// - estimated：本系统估算（如上游未返回 usage）
+    /// - missing：未上报/未知
+    /// </summary>
+    public string? TokenUsageSource { get; set; }
+
+    /// <summary>
+    /// 生图成功张数（文本模型不使用该字段）
+    /// </summary>
+    public int? ImageSuccessCount { get; set; }
+
     // 交互内容（仅脱敏 token/密钥；PRD 正文不落盘由上游保证）
     // - QuestionText/AnswerText 用于管理后台快速查看
     // - 单条上限 200k 字符（超出会被截断；并记录 hash/长度用于对照）
