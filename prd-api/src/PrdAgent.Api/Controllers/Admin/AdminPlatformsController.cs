@@ -394,6 +394,8 @@ public class AdminPlatformsController : ControllerBase
 
         return json.Data
             .Where(m => !string.IsNullOrEmpty(m.Id))
+            // Cherry: OpenAI 列表接口会返回 tts/whisper/speech 等非对话模型，这里做最小过滤（避免 UI 噪音）
+            .Where(m => IsSupportedOpenAiCompatModelId(m.Id, providerId))
             .Select(m => (object)new
             {
                 modelName = m.Id,
@@ -401,6 +403,18 @@ public class AdminPlatformsController : ControllerBase
                 group = ResolveCherryGroup(m.Id, providerId)
             })
             .ToList();
+    }
+
+    private static bool IsSupportedOpenAiCompatModelId(string modelId, string providerId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return false;
+        // 仅对 openai provider 做过滤，避免误伤其它供应商自定义 id
+        if (!string.Equals(providerId, "openai", StringComparison.OrdinalIgnoreCase)) return true;
+        var baseName = PrdAgent.Infrastructure.Models.CherryModelGrouping.GetLowerBaseModelName(modelId);
+        // NOT_SUPPORTED_REGEX = /(?:^tts|whisper|speech)/i
+        return !(baseName.StartsWith("tts", StringComparison.OrdinalIgnoreCase)
+                 || baseName.StartsWith("whisper", StringComparison.OrdinalIgnoreCase)
+                 || baseName.StartsWith("speech", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string ResolveCherryGroup(string modelId, string providerId)

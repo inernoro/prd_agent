@@ -34,7 +34,7 @@ import { apiRequest } from '@/services/real/apiClient';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
-import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
+import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { ModelKpiRail } from '@/components/model/ModelKpiRail';
 import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
 import { formatDuration } from '@/lib/formatStats';
@@ -610,21 +610,11 @@ export default function ModelManagePage() {
     return next;
   };
 
-  const modelCategory = (m: AvailableModel) => {
-    const s = (m.modelName || '').toLowerCase();
-    if (/(embed|embedding)/.test(s)) return 'embedding' as const;
-    if (/(rerank|re-rank)/.test(s)) return 'rerank' as const;
-    if (/(vision|vl|image)/.test(s)) return 'vision' as const;
-    if (/(search|web|online|联网)/.test(s)) return 'web' as const;
-    if (/(free|gratis|免费)/.test(s)) return 'free' as const;
-    if (/(tool|tools|function)/.test(s)) return 'tools' as const;
-    return 'reasoning' as const;
-  };
-
   const filteredAvailableModels = useMemo(() => {
     let list = availableModels;
     if (availableTab !== 'all') {
-      list = list.filter((m) => modelCategory(m) === availableTab);
+      const pid = (selectedPlatform?.providerId || selectedPlatform?.platformType || '').trim();
+      list = list.filter((m) => matchAvailableModelsTab({ tab: availableTab, modelName: m.modelName, displayName: m.displayName, providerId: pid }));
     }
     const ks = splitKeywords(availableSearch);
     if (ks.length === 0) return list;
@@ -632,7 +622,7 @@ export default function ModelManagePage() {
     return list.filter((m) =>
       matchAllKeywords(`${m.displayName || ''} ${m.modelName || ''} ${providerName}`, ks)
     );
-  }, [availableModels, availableSearch, availableTab, selectedPlatform?.name]);
+  }, [availableModels, availableSearch, availableTab, selectedPlatform?.name, selectedPlatform?.providerId, selectedPlatform?.platformType]);
 
   const groupedAvailable = useMemo(() => {
     // Cherry 管理弹窗：不做显式排序；顺序取决于远端返回顺序 + 首次出现 group 的插入顺序

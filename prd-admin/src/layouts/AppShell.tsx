@@ -72,7 +72,10 @@ export default function AppShell() {
       <div className="relative z-10 h-full w-full">
         {/* 悬浮侧边栏：不贴左边，像“挂着” */}
         <aside
-          className={cn('absolute flex flex-col p-2.5', collapsed ? 'gap-2' : 'gap-2.5')}
+          className={cn(
+            'absolute flex flex-col p-2.5 transition-[width] duration-220 ease-out',
+            collapsed ? 'gap-2' : 'gap-2.5'
+          )}
           style={{
             left: asideGap,
             top: asideGap,
@@ -89,7 +92,11 @@ export default function AppShell() {
             backdropFilter: 'blur(12px)',
           }}
         >
-          <div className={cn('flex items-center justify-between rounded-[14px] px-3 py-3', collapsed && 'justify-center')}
+          <div
+            className={cn(
+              'flex items-center transition-[padding,border-radius] duration-220 ease-out',
+              collapsed ? 'justify-center rounded-full p-2' : 'justify-between rounded-[14px] px-3 py-3'
+            )}
                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             {!collapsed && (
               <div className="flex items-center gap-3 min-w-0">
@@ -154,7 +161,11 @@ export default function AppShell() {
             })}
           </nav>
 
-          <div className={cn('rounded-[14px] p-3', collapsed && 'p-2')}
+          <div
+            className={cn(
+              'transition-[padding,border-radius] duration-220 ease-out',
+              collapsed ? 'rounded-full p-2' : 'rounded-[14px] p-3'
+            )}
                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             {!collapsed && (
               <div className="min-w-0">
@@ -171,7 +182,7 @@ export default function AppShell() {
               )}
               style={{ color: 'var(--text-secondary)' }}
             >
-              <LogOut size={16} />
+              <LogOut size={18} className="shrink-0" />
               {!collapsed && <span className="text-sm">退出</span>}
             </button>
           </div>

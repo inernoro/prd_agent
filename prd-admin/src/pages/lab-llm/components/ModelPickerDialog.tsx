@@ -8,7 +8,7 @@ import { DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, Sparkles, Star, 
 import { deleteModelLabGroup, listModelLabGroups, upsertModelLabGroup } from '@/services';
 import type { ModelLabGroup } from '@/services/contracts/modelLabGroups';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
-import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
+import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 
 type TabKey = 'byPlatform' | 'byLabGroup';
 
@@ -69,17 +69,6 @@ function toSelectedModelFromAvailable(args: {
   };
 }
 
-function modelCategory(m: AvailableModel) {
-  const s = (m.modelName || '').toLowerCase();
-  if (/(embed|embedding)/.test(s)) return 'embedding' as const;
-  if (/(rerank|re-rank)/.test(s)) return 'rerank' as const;
-  if (/(vision|vl|image)/.test(s)) return 'vision' as const;
-  if (/(search|web|online|联网)/.test(s)) return 'web' as const;
-  if (/(free|gratis|免费)/.test(s)) return 'free' as const;
-  if (/(tool|tools|function)/.test(s)) return 'tools' as const;
-  return 'reasoning' as const;
-}
-
 function splitKeywords(input: string): string[] {
   return (input ?? '')
     .toLowerCase()
@@ -115,8 +104,8 @@ function presetTagMeta(tag: PresetTagKey): { title: string; icon: React.ReactNod
   }
 }
 
-function PresetTagIcons({ modelName, displayName }: { modelName: string; displayName?: string }) {
-  const tags = inferPresetTagKeys(modelName, displayName);
+function PresetTagIcons({ modelName, displayName, providerId }: { modelName: string; displayName?: string; providerId?: string }) {
+  const tags = inferPresetTagKeys(modelName, displayName, providerId);
   if (tags.length === 0) return null;
   return (
     <div className="flex items-center gap-1.5 shrink-0" aria-label="预设标签">
@@ -180,12 +169,15 @@ function PlatformAvailableDialog({
 
   const filteredAvailableModels = useMemo(() => {
     let list = availableModels;
-    if (availableTab !== 'all') list = list.filter((m) => modelCategory(m) === availableTab);
+    const pid = (platform?.providerId || platform?.platformType || '').trim();
+    if (availableTab !== 'all') {
+      list = list.filter((m) => matchAvailableModelsTab({ tab: availableTab, modelName: m.modelName, displayName: m.displayName, providerId: pid }));
+    }
     const ks = splitKeywords(availableSearch);
     if (ks.length === 0) return list;
     const pName = platform?.name || '';
     return list.filter((m) => matchAllKeywords(`${m.displayName || ''} ${m.modelName || ''} ${pName}`, ks));
-  }, [availableModels, availableSearch, availableTab, platform?.name]);
+  }, [availableModels, availableSearch, availableTab, platform?.name, platform?.providerId, platform?.platformType]);
 
   const groupedAvailable = useMemo(() => {
     const pid = (platform?.providerId || platform?.platformType || '').trim();
@@ -422,6 +414,7 @@ function PlatformAvailableDialog({
                           const k = keyOf({ platformId: platform?.id ?? '', modelName: m.modelName });
                           const exist = selectedKeySet.has(k);
                           const label = (m.displayName || m.modelName).trim();
+                          const pid = (platform?.providerId || platform?.platformType || '').trim();
                           return (
                             <div
                               key={`${g}:${m.modelName}`}
@@ -439,7 +432,7 @@ function PlatformAvailableDialog({
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
-                                <PresetTagIcons modelName={m.modelName} displayName={m.displayName} />
+                                <PresetTagIcons modelName={m.modelName} displayName={m.displayName} providerId={pid} />
                                 <Button
                                   variant={exist ? 'secondary' : 'ghost'}
                                   size="sm"
