@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Code, Copy, Cpu, Download, Expand, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, Zap } from 'lucide-react';
+import { Check, Clock3, Code, Copy, Download, Expand, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, Zap } from 'lucide-react';
 import JSZip from 'jszip';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { cn } from '@/lib/cn';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
@@ -2171,18 +2172,7 @@ export default function LlmLabTab() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
-                              <label
-                                className="inline-flex items-center gap-1 rounded-[999px] px-2 py-[2px] text-[11px] shrink-0 max-w-full truncate"
-                                style={{
-                                  border: '1px solid rgba(255,255,255,0.10)',
-                                  background: 'rgba(255,255,255,0.04)',
-                                  color: 'var(--text-muted)',
-                                }}
-                                title={platformLabel}
-                              >
-                                <Cpu size={12} className="shrink-0" />
-                                <span className="truncate">{platformLabel}</span>
-                              </label>
+                              <PlatformLabel name={platformLabel} />
                               <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
                                 {list.length} 个{disabledCount > 0 ? `（禁用 ${disabledCount}）` : ''}
                               </div>
@@ -2713,19 +2703,7 @@ export default function LlmLabTab() {
                             const pid = getPlatformIdForRunItem((it.modelName || '').trim(), String(it.modelId ?? '').trim());
                             const label = pid ? platformNameById.get(pid) || pid : null;
                             if (!label) return null;
-                            return (
-                              <span
-                                className="inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-semibold shrink-0"
-                                style={{
-                                  background: 'rgba(255,255,255,0.04)',
-                                  border: '1px solid rgba(255,255,255,0.12)',
-                                  color: 'var(--text-secondary)',
-                                }}
-                                title="平台"
-                              >
-                                {label}
-                              </span>
-                            );
+                            return <PlatformLabel name={label} />;
                           })()}
                           <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                             {it.displayName}

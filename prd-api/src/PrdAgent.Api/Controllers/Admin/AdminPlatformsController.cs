@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -26,6 +28,7 @@ public class AdminPlatformsController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IModelDomainService _modelDomainService;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
+    private readonly ILlmRequestLogWriter _logWriter;
     
     private const string ModelsCacheKeyPrefix = "platform:models:";
     private static readonly TimeSpan ModelsCacheExpiry = TimeSpan.FromHours(24);
@@ -102,7 +105,8 @@ public class AdminPlatformsController : ControllerBase
         ICacheManager cache,
         IHttpClientFactory httpClientFactory,
         IModelDomainService modelDomainService,
-        ILLMRequestContextAccessor ctxAccessor)
+        ILLMRequestContextAccessor ctxAccessor,
+        ILlmRequestLogWriter logWriter)
     {
         _db = db;
         _logger = logger;
@@ -111,6 +115,7 @@ public class AdminPlatformsController : ControllerBase
         _httpClientFactory = httpClientFactory;
         _modelDomainService = modelDomainService;
         _ctxAccessor = ctxAccessor;
+        _logWriter = logWriter;
     }
 
     private string GetAdminId() => User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "unknown";
@@ -304,7 +309,7 @@ public class AdminPlatformsController : ControllerBase
         }
 
         // 从API或预设获取模型列表
-        var models = await GetModelsForPlatform(platform);
+        var models = await GetModelsForPlatform(platform, "admin.platforms.available-models");
         
         // 缓存结果
         if (models.Count > 0)
@@ -332,7 +337,7 @@ public class AdminPlatformsController : ControllerBase
         await _cache.RemoveAsync(cacheKey);
 
         // 从API或预设获取模型列表
-        var models = await GetModelsForPlatform(platform);
+        var models = await GetModelsForPlatform(platform, "admin.platforms.refresh-models");
         
         // 缓存结果
         if (models.Count > 0)
@@ -369,7 +374,7 @@ public class AdminPlatformsController : ControllerBase
         }
 
         // 1) 拉取平台可用模型列表（全量）
-        var available = await GetModelsForPlatform(platform);
+        var available = await GetModelsForPlatform(platform, "admin.platforms.reclassify.fetch-models");
         if (available.Count == 0)
         {
             var payloadEmpty = new
@@ -407,8 +412,18 @@ public class AdminPlatformsController : ControllerBase
         for (var i = 0; i < available.Count; i += chunkSize)
         {
             var chunk = available.Skip(i).Take(chunkSize).ToList();
-            var chunkRes = await ClassifyAvailableModelsAsync(client, providerId, platform.PlatformType, chunk, ct);
-            results.AddRange(chunkRes);
+            try
+            {
+                var chunkRes = await ClassifyAvailableModelsAsync(client, providerId, platform.PlatformType, chunk, ct);
+                results.AddRange(chunkRes);
+            }
+            catch (ModelReclassifyParseException ex)
+            {
+                _logger.LogWarning(ex,
+                    "Invalid JSON returned by main model when reclassifying platform {PlatformId}. requestId={RequestId}",
+                    id, requestId);
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"主模型未返回有效JSON：{ex.Message}"));
+            }
         }
 
         // 3) 写回已配置模型（llmmodels）：按 platformId + modelName 匹配
@@ -556,7 +571,16 @@ public class AdminPlatformsController : ControllerBase
 
         var messages = new List<LLMMessage> { new() { Role = "user", Content = userMsg } };
         var raw = await CollectToTextAsync(client, systemPrompt, messages, ct);
-        return ParseClassifyResults(raw);
+        var expected = models.Select(m => m.ModelName ?? string.Empty).ToList();
+        return ModelReclassifyParser.ParseOrThrow(raw, expected)
+            .Select(r => new ModelClassifyResult
+            {
+                ModelName = r.ModelName,
+                Group = r.Group,
+                Tags = r.Tags,
+                Confidence = r.Confidence
+            })
+            .ToList();
     }
 
     private static async Task<string> CollectToTextAsync(
@@ -580,43 +604,6 @@ public class AdminPlatformsController : ControllerBase
         return sb.ToString();
     }
 
-    private static List<ModelClassifyResult> ParseClassifyResults(string raw)
-    {
-        var s = (raw ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(s)) return new List<ModelClassifyResult>();
-
-        // 去掉 ```json ... ``` 包裹
-        if (s.StartsWith("```", StringComparison.Ordinal))
-        {
-            var firstNl = s.IndexOf('\n');
-            if (firstNl >= 0) s = s[(firstNl + 1)..];
-            var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
-            if (lastFence >= 0) s = s[..lastFence];
-            s = s.Trim();
-        }
-
-        // 尝试截取数组
-        var start = s.IndexOf('[');
-        var end = s.LastIndexOf(']');
-        if (start >= 0 && end > start)
-        {
-            s = s[start..(end + 1)];
-        }
-
-        try
-        {
-            var arr = JsonSerializer.Deserialize<List<ModelClassifyResult>>(s, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-            return arr ?? new List<ModelClassifyResult>();
-        }
-        catch
-        {
-            return new List<ModelClassifyResult>();
-        }
-    }
-
     private class ModelClassifyResult
     {
         public string? ModelName { get; set; }
@@ -628,22 +615,17 @@ public class AdminPlatformsController : ControllerBase
     /// <summary>
     /// 获取平台的模型列表（从API或预设）
     /// </summary>
-    private async Task<List<AvailableModelDto>> GetModelsForPlatform(LLMPlatform platform)
+    private async Task<List<AvailableModelDto>> GetModelsForPlatform(LLMPlatform platform, string? requestPurpose = null)
     {
         // OpenAI兼容的平台尝试从API获取模型列表
         if (platform.PlatformType == "openai" || platform.PlatformType == "other")
         {
             try
             {
-                var apiModels = await FetchModelsFromApi(platform);
+                var apiModels = await FetchModelsFromApi(platform, requestPurpose);
                 if (apiModels.Count > 0)
                 {
-                    return apiModels.Select(m => new AvailableModelDto
-                    {
-                        ModelName = ((dynamic)m).modelName,
-                        DisplayName = ((dynamic)m).displayName,
-                        Group = ((dynamic)m).group
-                    }).ToList();
+                    return apiModels;
                 }
             }
             catch (Exception ex)
@@ -669,9 +651,9 @@ public class AdminPlatformsController : ControllerBase
     /// <summary>
     /// 从API获取模型列表
     /// </summary>
-    private async Task<List<object>> FetchModelsFromApi(LLMPlatform platform)
+    private async Task<List<AvailableModelDto>> FetchModelsFromApi(LLMPlatform platform, string? requestPurpose)
     {
-        var apiUrl = GetModelsEndpoint(platform.ApiUrl);
+        var endpoint = GetModelsEndpoint(platform.ApiUrl);
         var apiKey = DecryptApiKey(platform.ApiKeyEncrypted);
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
 
@@ -679,23 +661,197 @@ public class AdminPlatformsController : ControllerBase
         client.Timeout = TimeSpan.FromSeconds(30);
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
 
-        var response = await client.GetAsync(apiUrl);
-        response.EnsureSuccessStatusCode();
+        // 写入 LLM 请求日志：平台拉取 models 接口也需要被记录（类型：更新模型）
+        var requestId = Guid.NewGuid().ToString("N");
+        var startedAt = DateTime.UtcNow;
+        var adminId = GetAdminId();
+        var (apiBase, path) = OpenAICompatUrl.SplitApiBaseAndPath(endpoint, client.BaseAddress);
 
-        var json = await response.Content.ReadFromJsonAsync<ModelsApiResponse>();
-        if (json?.Data == null) return new List<object>();
+        var start = new LlmLogStart(
+            RequestId: requestId,
+            Provider: providerId,
+            Model: "(models)",
+            ApiBase: apiBase,
+            Path: path,
+            RequestHeadersRedacted: new Dictionary<string, string> { ["Authorization"] = "Bearer ***" },
+            RequestBodyRedacted: "",
+            RequestBodyHash: null,
+            QuestionText: null,
+            SystemPromptChars: null,
+            SystemPromptHash: null,
+            SystemPromptText: null,
+            MessageCount: null,
+            GroupId: null,
+            SessionId: null,
+            UserId: adminId,
+            ViewRole: "ADMIN",
+            DocumentChars: null,
+            DocumentHash: null,
+            UserPromptChars: null,
+            StartedAt: startedAt,
+            RequestType: "update-model",
+            RequestPurpose: string.IsNullOrWhiteSpace(requestPurpose) ? "admin.platforms.fetch-models" : requestPurpose.Trim(),
+            PlatformId: platform.Id,
+            PlatformName: platform.Name);
 
-        return json.Data
+        var logId = await _logWriter.StartAsync(start);
+
+        HttpResponseMessage response;
+        string body;
+        try
+        {
+            response = await client.GetAsync(endpoint);
+            if (!string.IsNullOrWhiteSpace(logId))
+            {
+                // 这里以“拿到响应头”的时刻作为 FirstByteAt（GET models 不走 SSE，足够用于监控）
+                _logWriter.MarkFirstByte(logId!, DateTime.UtcNow);
+            }
+
+            body = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+            {
+                if (!string.IsNullOrWhiteSpace(logId))
+                {
+                    _logWriter.MarkError(logId!, $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}\n{body}", (int)response.StatusCode);
+                }
+                response.EnsureSuccessStatusCode();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!string.IsNullOrWhiteSpace(logId))
+            {
+                _logWriter.MarkError(logId!, ex.Message);
+            }
+            throw;
+        }
+
+        // 解析 JSON
+        ModelsApiResponse? json;
+        try
+        {
+            json = JsonSerializer.Deserialize<ModelsApiResponse>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            json = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(logId))
+        {
+            var endedAt = DateTime.UtcNow;
+            var durationMs = (long)Math.Max(0, (endedAt - startedAt).TotalMilliseconds);
+            var prettyBody = TryPrettyJson(body);
+            var assembledChars = string.IsNullOrEmpty(prettyBody) ? 0 : prettyBody.Length;
+            var assembledHash = Sha256Hex(prettyBody ?? string.Empty);
+
+            _logWriter.MarkDone(logId!, new LlmLogDone(
+                StatusCode: (int)response.StatusCode,
+                ResponseHeaders: ToHeaderDictionary(response),
+                InputTokens: null,
+                OutputTokens: null,
+                CacheCreationInputTokens: null,
+                CacheReadInputTokens: null,
+                TokenUsageSource: "missing",
+                ImageSuccessCount: null,
+                AnswerText: prettyBody,
+                AssembledTextChars: assembledChars,
+                AssembledTextHash: assembledHash,
+                Status: "succeeded",
+                EndedAt: endedAt,
+                DurationMs: durationMs));
+        }
+
+        if (json?.Data == null) return new List<AvailableModelDto>();
+
+        var unknownTagSamples = new List<string>();
+        var unknownTagCount = 0;
+
+        var list = json.Data
             .Where(m => !string.IsNullOrEmpty(m.Id))
+            // Volces Ark 等部分供应商会在 /models 条目上标记 status=Shutdown（或类似），需要过滤掉不可用模型
+            .Where(m => ModelsListStatusFilter.ShouldInclude(providerId, endpoint, m.Id, m.Status))
             // Cherry: OpenAI 列表接口会返回 tts/whisper/speech 等非对话模型，这里做最小过滤（避免 UI 噪音）
             .Where(m => IsSupportedOpenAiCompatModelId(m.Id, providerId))
-            .Select(m => (object)new
+            .Select(m =>
             {
-                modelName = m.Id,
-                displayName = m.Id,
-                group = ResolveCherryGroup(m.Id, providerId)
+                var tags = ModelsListTagAdapter.InferTags(
+                    providerId,
+                    endpoint,
+                    m.Id,
+                    m.Domain,
+                    m.TaskType,
+                    m.Features?.Tools?.FunctionCalling,
+                    m.Modalities?.InputModalities,
+                    m.Modalities?.OutputModalities,
+                    out var unknownReason);
+                if (!string.IsNullOrWhiteSpace(unknownReason))
+                {
+                    unknownTagCount++;
+                    if (unknownTagSamples.Count < 10) unknownTagSamples.Add($"{m.Id} ({unknownReason})");
+                }
+
+                var displayName = !string.IsNullOrWhiteSpace(m.Name) ? m.Name : m.Id;
+                return new AvailableModelDto
+                {
+                    ModelName = m.Id,
+                    DisplayName = displayName,
+                    Group = ResolveCherryGroup(m.Id, providerId),
+                    Tags = tags
+                };
             })
             .ToList();
+
+        if (unknownTagCount > 0)
+        {
+            _logger.LogInformation(
+                "Models list tag inference: provider={ProviderId} endpoint={Endpoint} has {Count} items with unknown tags (sample: {Sample})",
+                providerId,
+                endpoint,
+                unknownTagCount,
+                string.Join(", ", unknownTagSamples));
+        }
+
+        return list;
+    }
+
+    private static Dictionary<string, string> ToHeaderDictionary(HttpResponseMessage response)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in response.Headers)
+        {
+            dict[h.Key] = string.Join(", ", h.Value);
+        }
+        if (response.Content != null)
+        {
+            foreach (var h in response.Content.Headers)
+            {
+                dict[h.Key] = string.Join(", ", h.Value);
+            }
+        }
+        return dict;
+    }
+
+    private static string TryPrettyJson(string raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(s);
+            return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return raw ?? string.Empty;
+        }
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static bool IsSupportedOpenAiCompatModelId(string modelId, string providerId)
@@ -839,6 +995,38 @@ public class ModelsApiResponse
 public class ModelItem
 {
     public string Id { get; set; } = string.Empty;
+    public string? Status { get; set; }
+    public string? Name { get; set; }
+    public string? Domain { get; set; }
+    [JsonPropertyName("task_type")]
+    public List<string>? TaskType { get; set; }
+    public ModelModalities? Modalities { get; set; }
+    public ModelFeatures? Features { get; set; }
+    [JsonPropertyName("token_limits")]
+    public Dictionary<string, JsonElement>? TokenLimits { get; set; }
+}
+
+public class ModelModalities
+{
+    [JsonPropertyName("input_modalities")]
+    public List<string>? InputModalities { get; set; }
+
+    [JsonPropertyName("output_modalities")]
+    public List<string>? OutputModalities { get; set; }
+}
+
+public class ModelFeatures
+{
+    public ModelTools? Tools { get; set; }
+
+    [JsonPropertyName("structured_outputs")]
+    public Dictionary<string, JsonElement>? StructuredOutputs { get; set; }
+}
+
+public class ModelTools
+{
+    [JsonPropertyName("function_calling")]
+    public bool? FunctionCalling { get; set; }
 }
 
 public class CreatePlatformRequest
@@ -870,5 +1058,6 @@ public class AvailableModelDto
     public string ModelName { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string? Group { get; set; }
+    public List<string>? Tags { get; set; }
 }
 

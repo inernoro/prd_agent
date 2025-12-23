@@ -13,6 +13,7 @@ export type AvailableModel = {
   modelName: string;
   displayName: string;
   group?: string;
+  tags?: string[];
 };
 
 function splitKeywords(input: string): string[] {
@@ -58,13 +59,30 @@ function PresetTagIcons({
   displayName,
   providerId,
   platformType,
+  tagsHint,
 }: {
   modelName: string;
   displayName?: string;
   providerId?: string;
   platformType?: string;
+  tagsHint?: string[];
 }) {
-  const tags = inferPresetTagKeys(modelName, displayName, providerId, platformType);
+  const tags =
+    tagsHint && tagsHint.length > 0
+      ? (tagsHint
+          .map((t) => {
+            const k = (t || '').trim().toLowerCase();
+            if (k === 'web_search' || k === 'websearch') return 'websearch';
+            if (k === 'function_calling') return 'function_calling';
+            if (k === 'embedding') return 'embedding';
+            if (k === 'vision') return 'vision';
+            if (k === 'rerank') return 'rerank';
+            if (k === 'reasoning') return 'reasoning';
+            if (k === 'free') return 'free';
+            return null;
+          })
+          .filter(Boolean) as PresetTagKey[])
+      : inferPresetTagKeys(modelName, displayName, providerId, platformType);
   if (tags.length === 0) return null;
   return (
     <div className="flex items-center gap-1.5 shrink-0" aria-label="预设标签">
@@ -136,15 +154,36 @@ export function PlatformAvailableModelsDialog({
     let list = availableModels;
     const pid = (platform?.providerId || platform?.platformType || '').trim();
     if (availableTab !== 'all') {
-      list = list.filter((m) =>
-        matchAvailableModelsTab({
+      const matchByHint = (m: AvailableModel) => {
+        const hs = (m.tags || []).map((x) => (x || '').trim().toLowerCase());
+        if (hs.length === 0) return null;
+        if (availableTab === 'tools') return hs.includes('function_calling');
+        if (availableTab === 'embedding') return hs.includes('embedding');
+        if (availableTab === 'rerank') return hs.includes('rerank');
+        if (availableTab === 'vision') return hs.includes('vision');
+        if (availableTab === 'web') return hs.includes('web_search') || hs.includes('websearch');
+        if (availableTab === 'free') return hs.includes('free');
+        if (availableTab === 'reasoning') {
+          // 推理 Tab 的语义是“可对话/推理的主入口”，因此在 tagsHint 存在时也要兜底：
+          // - embedding/rerank/image_generation 这类不应出现在推理 Tab
+          // - 其它默认可归为推理（即便 tagsHint 未显式包含 reasoning）
+          if (hs.includes('embedding') || hs.includes('rerank') || hs.includes('image_generation')) return false;
+          return true;
+        }
+        return null;
+      };
+
+      list = list.filter((m) => {
+        const hinted = matchByHint(m);
+        if (hinted !== null) return hinted;
+        return matchAvailableModelsTab({
           tab: availableTab,
           modelName: m.modelName,
           displayName: m.displayName,
           providerId: pid,
           platformType: platform?.platformType,
-        })
-      );
+        });
+      });
     }
     const ks = splitKeywords(availableSearch);
     if (ks.length === 0) return list;
@@ -223,7 +262,7 @@ export function PlatformAvailableModelsDialog({
         setAvailableError(r.error?.message || '主模型分类失败');
         return;
       }
-      const d = r.data as any;
+      const d = r.data as { updatedCount?: number; configuredCount?: number; availableCount?: number } | null;
       alert(`主模型分类完成：更新 ${d?.updatedCount ?? 0} 个（已配置 ${d?.configuredCount ?? 0} / 可用 ${d?.availableCount ?? 0}）`);
       if (onAfterWriteBack) await onAfterWriteBack();
       await fetchAvailableModels({ refresh: true });
@@ -426,6 +465,7 @@ export function PlatformAvailableModelsDialog({
                                   displayName={m.displayName}
                                   providerId={(platform?.providerId || platform?.platformType || '').trim()}
                                   platformType={platform?.platformType}
+                                  tagsHint={m.tags}
                                 />
                                 <Button
                                   variant={exist ? 'secondary' : 'ghost'}

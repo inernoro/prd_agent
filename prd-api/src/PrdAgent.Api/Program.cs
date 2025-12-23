@@ -302,28 +302,31 @@ builder.Services.AddScoped<ILLMClient>(sp =>
         {
             var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
             
-            // 判断平台类型
+            // 判断平台类型并获取平台信息
             string? platformType = null;
+            string? platformId = mainModel.PlatformId;
+            string? platformName = null;
             if (mainModel.PlatformId != null)
             {
                 var platform = db.LLMPlatforms.Find(p => p.Id == mainModel.PlatformId).FirstOrDefault();
                 platformType = platform?.PlatformType?.ToLower();
+                platformName = platform?.Name;
             }
             
             // 根据平台类型或API URL判断使用哪个客户端
-            // 业务规则：不再使用“全局开关”，而是以“主模型 enablePromptCache”作为总开关
+            // 业务规则：不再使用"全局开关"，而是以"主模型 enablePromptCache"作为总开关
             var enablePromptCache = mainEnablePromptCache;
             
             if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
             {
                 httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, claudeLogger, logWriter, ctxAccessor);
+                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, claudeLogger, logWriter, ctxAccessor, platformId, platformName);
             }
             else
             {
                 // 默认使用 OpenAI 格式（兼容 openai、google、qwen、zhipu、baidu、other 等）
                 httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, logWriter, ctxAccessor);
+                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, logWriter, ctxAccessor, null, platformId, platformName);
             }
         }
     }

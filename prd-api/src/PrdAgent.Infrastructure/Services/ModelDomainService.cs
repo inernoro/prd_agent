@@ -52,7 +52,7 @@ public class ModelDomainService : IModelDomainService
         // 同时仍尊重当前模型的 enablePromptCache（不是所有模型都适合开启 cache）。
         var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
 
-        var (apiUrl, apiKey, platformType) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("模型 API 配置不完整");
@@ -61,13 +61,13 @@ public class ModelDomainService : IModelDomainService
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         var apiUrlTrim = apiUrl.Trim();
         // 统一规则：BaseAddress 必须以 "/" 结尾，否则 Uri 合并会丢最后一段路径（例如 /api/v3 + v1/... 会变成 /api/v1/...）
-        // 对于以 "#" 结尾的“完整 endpoint”，OpenAIClient 会使用绝对 URL，不依赖 BaseAddress。
+        // 对于以 "#" 结尾的"完整 endpoint"，OpenAIClient 会使用绝对 URL，不依赖 BaseAddress。
         httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
 
         var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true);
         if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
         {
-            return new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor);
+            return new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, platformId, platformName);
         }
 
         // 默认 OpenAI 兼容：按 baseURL 规则选择 chat/completions 的最终调用方式
@@ -87,7 +87,9 @@ public class ModelDomainService : IModelDomainService
             enablePromptCache,
             _logWriter,
             _ctxAccessor,
-            chatEndpointOrPath);
+            chatEndpointOrPath,
+            platformId,
+            platformName);
     }
 
     public async Task<string> SuggestGroupNameAsync(string? fileName, string snippet, CancellationToken ct = default)
@@ -149,7 +151,7 @@ public class ModelDomainService : IModelDomainService
         return await q.FirstOrDefaultAsync(ct);
     }
 
-    private async Task<(string? apiUrl, string? apiKey, string? platformType)> ResolveApiConfigForModelAsync(
+    private async Task<(string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName)> ResolveApiConfigForModelAsync(
         LLMModel model,
         string jwtSecret,
         CancellationToken ct)
@@ -157,11 +159,14 @@ public class ModelDomainService : IModelDomainService
         string? apiUrl = model.ApiUrl;
         string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
         string? platformType = null;
+        string? platformId = model.PlatformId;
+        string? platformName = null;
 
         if (model.PlatformId != null)
         {
             var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
             platformType = platform?.PlatformType?.ToLowerInvariant();
+            platformName = platform?.Name;
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
@@ -169,7 +174,7 @@ public class ModelDomainService : IModelDomainService
             }
         }
 
-        return (apiUrl, apiKey, platformType);
+        return (apiUrl, apiKey, platformType, platformId, platformName);
     }
 
     private static async Task<string> CollectToTextAsync(

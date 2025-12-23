@@ -70,6 +70,14 @@ export type LlmRequestLogListItem = {
   requestId: string;
   provider: string;
   model: string;
+  /** 便于在列表中展示"外部请求 URL"（如更新模型/models.list 等） */
+  apiBase?: string | null;
+  /** 便于在列表中展示"外部请求 URL"（如更新模型/models.list 等） */
+  path?: string | null;
+  /** 平台 ID（来自 LLMPlatform） */
+  platformId?: string | null;
+  /** 平台名称（来自 LLMPlatform.Name，如"硅基流动"、"薇薇安"） */
+  platformName?: string | null;
   groupId?: string | null;
   sessionId?: string | null;
   viewRole?: string | null;

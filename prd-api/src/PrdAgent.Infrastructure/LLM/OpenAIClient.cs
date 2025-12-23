@@ -22,6 +22,8 @@ public class OpenAIClient : ILLMClient
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly string _chatCompletionsEndpointOrPath;
+    private readonly string? _platformId;
+    private readonly string? _platformName;
 
     public string Provider => "OpenAI";
 
@@ -34,7 +36,9 @@ public class OpenAIClient : ILLMClient
         bool enablePromptCache = true,
         ILlmRequestLogWriter? logWriter = null,
         ILLMRequestContextAccessor? contextAccessor = null,
-        string? chatCompletionsEndpointOrPath = null)
+        string? chatCompletionsEndpointOrPath = null,
+        string? platformId = null,
+        string? platformName = null)
     {
         _httpClient = httpClient;
         _apiKey = apiKey;
@@ -47,6 +51,8 @@ public class OpenAIClient : ILLMClient
         _chatCompletionsEndpointOrPath = string.IsNullOrWhiteSpace(chatCompletionsEndpointOrPath)
             ? "v1/chat/completions"
             : chatCompletionsEndpointOrPath.Trim();
+        _platformId = platformId;
+        _platformName = platformName;
 
         // 允许外部（例如 Program / 管理后台配置）预先设置 BaseAddress
         _httpClient.BaseAddress ??= new Uri("https://api.openai.com/");
@@ -170,7 +176,9 @@ public class OpenAIClient : ILLMClient
                     DocumentChars: ctx?.DocumentChars,
                     DocumentHash: ctx?.DocumentHash,
                     UserPromptChars: userPromptChars,
-                    StartedAt: startedAt),
+                    StartedAt: startedAt,
+                    PlatformId: _platformId,
+                    PlatformName: _platformName),
                 cancellationToken);
         }
 

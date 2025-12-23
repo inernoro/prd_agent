@@ -25,7 +25,9 @@ public record LlmLogStart(
     int? UserPromptChars,
     DateTime StartedAt,
     string? RequestType = null,
-    string? RequestPurpose = null);
+    string? RequestPurpose = null,
+    string? PlatformId = null,
+    string? PlatformName = null);
 
 public record LlmLogDone(
     int? StatusCode,

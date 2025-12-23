@@ -1,6 +1,7 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
@@ -123,6 +124,9 @@ function normalizeRequestType(t: string | null | undefined): string {
 
 function requestTypeToBadge(t: string | null | undefined): { label: string; title: string; tone: RequestTypeTone; icon: JSX.Element | null } {
   const v = normalizeRequestType(t);
+  if (v === 'update-model' || v === 'update_model' || v === 'models' || v === 'model') {
+    return { label: '更新模型', title: '更新模型', tone: 'blue', icon: <RefreshCw size={12} /> };
+  }
   if (v === 'intent') return { label: '意图', title: '意图', tone: 'green', icon: <Sparkles size={12} /> };
   if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue', icon: <ScanEye size={12} /> };
   if (v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple', icon: <ImagePlus size={12} /> };
@@ -137,6 +141,15 @@ function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
   if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
   if (tone === 'gold') return { background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)', color: 'var(--accent-gold-2)' };
   return { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-muted)' };
+}
+
+// 判断是否为大模型请求（非外部 HTTP 请求）
+function isLlmRequest(requestType: string | null | undefined): boolean {
+  const v = normalizeRequestType(requestType);
+  // 外部 HTTP 请求：更新模型
+  if (v === 'update-model' || v === 'update_model' || v === 'models' || v === 'model') return false;
+  // 大模型请求：推理/意图/识图/生图 等
+  return true;
 }
 
 function tryPrettyJsonText(text: string): string {
@@ -195,6 +208,35 @@ function joinBaseAndPath(apiBase: string, path: string) {
   return `${b.replace(/\/+$/, '')}/${p.replace(/^\/+/, '')}`;
 }
 
+function isExternalCurlOp(it: Pick<LlmRequestLogListItem, 'requestType'>) {
+  // 目前产品定义里：更新模型 / models.list 属于“外部 HTTP 请求（非大模型推理）”
+  const v = normalizeRequestType(it.requestType);
+  return v === 'update-model' || v === 'update_model' || v === 'models' || v === 'model';
+}
+
+function resolvePlatformAndModel(
+  platformName: string | null | undefined,
+  model: string,
+  providerFallback: string
+): { platform: string; modelName: string } {
+  // 优先使用后端下发的真实平台名称
+  const pn = (platformName ?? '').trim();
+  const raw = (model ?? '').trim();
+  if (pn) {
+    return { platform: pn, modelName: raw || '—' };
+  }
+  // 兼容旧数据：没有 platformName 时，回退用 provider
+  if (!raw) return { platform: (providerFallback ?? '').trim() || '—', modelName: '—' };
+  return { platform: (providerFallback ?? '').trim() || '—', modelName: raw };
+}
+
+function inferListItemUrl(it: Pick<LlmRequestLogListItem, 'apiBase' | 'path'>): string {
+  const apiBase = (it.apiBase ?? '').trim();
+  const path = (it.path ?? '').trim();
+  if (!apiBase && !path) return '';
+  return joinBaseAndPath(apiBase, path);
+}
+
 function tryParseJsonObject(text: string): Record<string, unknown> | null {
   const raw = (text ?? '').trim();
   if (!raw) return null;
@@ -207,6 +249,68 @@ function tryParseJsonObject(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function isPromptTokenText(v: unknown): v is string {
+  if (typeof v !== 'string') return false;
+  const s = v.trim();
+  return /^\[[A-Z0-9_]+\]$/.test(s);
+}
+
+function restoreSystemPromptInRequestBody(requestBodyRedacted: string, systemPromptText: string | null | undefined): string {
+  const raw = requestBodyRedacted || '';
+  const sp = (systemPromptText ?? '').trim();
+  if (!raw.trim() || !sp) return raw;
+
+  const parsed = tryParseJsonObject(raw);
+  if (!parsed) return raw;
+
+  // parsed 已经是 JSON.parse 的产物，这里用 JSON round-trip 作为深拷贝（避免直接 mutate 原引用）
+  const obj = JSON.parse(JSON.stringify(parsed)) as any;
+  let changed = false;
+
+  // 常见：Anthropic { system: "..." } / OpenAI { messages:[{role:"system",content:"..."}] }
+  const systemKeys = ['system', 'system_prompt', 'systemPrompt', 'system_prompt_text', 'systemPromptText'];
+  for (const k of systemKeys) {
+    if (isPromptTokenText(obj?.[k])) {
+      obj[k] = sp;
+      changed = true;
+    }
+  }
+
+  const messages = obj?.messages;
+  if (Array.isArray(messages)) {
+    for (const m of messages) {
+      if (!m || typeof m !== 'object') continue;
+      const role = String((m as any).role ?? '').toLowerCase();
+      if (role !== 'system') continue;
+
+      const c = (m as any).content;
+      if (isPromptTokenText(c)) {
+        (m as any).content = sp;
+        changed = true;
+        continue;
+      }
+
+      // 兼容：多模态 content 为数组/对象，且 token 在 text 字段里
+      if (Array.isArray(c)) {
+        for (const it of c) {
+          if (!it || typeof it !== 'object') continue;
+          if (isPromptTokenText((it as any).text)) {
+            (it as any).text = sp;
+            changed = true;
+          }
+        }
+      } else if (c && typeof c === 'object') {
+        if (isPromptTokenText((c as any).text)) {
+          (c as any).text = sp;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  return changed ? JSON.stringify(obj) : raw;
 }
 
 function inferDocumentCharsFromRequestBody(requestBodyRedacted: string): number | null {
@@ -296,7 +400,8 @@ function buildCurlFromLog(detail: LlmRequestLog): string {
     headers['Content-Type'] = 'application/json';
   }
 
-  const bodyPretty = tryPrettyJsonText(detail.requestBodyRedacted || '');
+  const restoredBody = restoreSystemPromptInRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText);
+  const bodyPretty = tryPrettyJsonText(restoredBody);
   const headerArgs = Object.entries(headers)
     .filter(([k, v]) => String(k).trim() && v !== undefined && v !== null)
     .map(([k, v]) => `-H ${shellSingleQuote(`${k}: ${v}`)}`)
@@ -389,7 +494,10 @@ function NewsMarquee({
 }
 
 function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
-  const q = (it.questionPreview ?? '').trim();
+  const external = isExternalCurlOp(it);
+  const url = inferListItemUrl(it);
+
+  const q = external ? url : (it.questionPreview ?? '').trim();
   const a = (it.answerPreview ?? '').trim();
   const ttfb = diffMs(it.startedAt, it.firstByteAt ?? null);
   const rightText =
@@ -411,17 +519,17 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-[11px] font-semibold shrink-0 flex items-center gap-1" style={{ color: '#E7CE97' }}>
             <HelpCircle size={12} />
-            问题
+            {external ? '请求' : '问题'}
           </span>
           <div className="min-w-0 flex-1 text-[11px]">
-            <NewsMarquee text={q ? `：${q}` : '：未记录（已脱敏）'} />
+            <NewsMarquee text={q ? `：${q}` : external ? '：未记录（URL 缺失）' : '：未记录（已脱敏）'} />
           </div>
         </div>
 
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-[11px] font-semibold shrink-0 flex items-center gap-1" style={{ color: '#E7CE97', opacity: 0.9 }}>
             <Reply size={12} />
-            回答
+            {external ? '响应' : '回答'}
           </span>
           <div className="min-w-0 flex-1 text-[11px]">
             <NewsMarquee text={a ? `：${a}` : it.status === 'running' ? '：生成中…' : '：未记录'} />
@@ -698,6 +806,11 @@ export default function LlmLogsPage() {
             items.map((it) => {
               const active = selectedId === it.id;
               const ttfb = diffMs(it.startedAt, it.firstByteAt ?? null);
+              const external = isExternalCurlOp(it);
+              const url = inferListItemUrl(it);
+              const pm = resolvePlatformAndModel(it.platformName, it.model, it.provider);
+              // external 和 url 用于 PreviewTickerRow 显示
+              void external; void url;
               return (
                 <div
                   key={it.id}
@@ -722,8 +835,11 @@ export default function LlmLogsPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
+                        {/* 平台标签 */}
+                        <PlatformLabel name={it.platformName || pm.platform} />
+                        {/* 模型名 */}
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {it.provider} · {it.model}
+                          {pm.modelName}
                         </div>
                         {statusBadge(it.status)}
                       </div>
@@ -736,6 +852,27 @@ export default function LlmLogsPage() {
                         </span>
                       </div>
                       <div className="mt-1 flex items-center gap-2 min-w-0">
+                        {/* 大模型/外部请求 标签 */}
+                        {isLlmRequest(it.requestType) ? (
+                          <label
+                            className="inline-flex items-center gap-1 rounded-full px-2 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+                            title="大模型请求"
+                            style={{ background: 'rgba(139, 92, 246, 0.12)', border: '1px solid rgba(139, 92, 246, 0.28)', color: 'rgba(139, 92, 246, 0.95)' }}
+                          >
+                            <Sparkles size={10} />
+                            LLM
+                          </label>
+                        ) : (
+                          <label
+                            className="inline-flex items-center gap-1 rounded-full px-2 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+                            title="外部 HTTP 请求"
+                            style={{ background: 'rgba(107, 114, 128, 0.12)', border: '1px solid rgba(107, 114, 128, 0.28)', color: 'rgba(107, 114, 128, 0.95)' }}
+                          >
+                            <RefreshCw size={10} />
+                            HTTP
+                          </label>
+                        )}
+                        {/* 请求类型标签 */}
                         {(() => {
                           const b = requestTypeToBadge(it.requestType);
                           return (

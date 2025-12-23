@@ -48,6 +48,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 Model = start.Model,
                 ApiBase = start.ApiBase,
                 Path = start.Path,
+                PlatformId = start.PlatformId,
+                PlatformName = start.PlatformName,
                 RequestHeadersRedacted = start.RequestHeadersRedacted,
                 RequestBodyRedacted = requestBodyStored,
                 RequestBodyHash = start.RequestBodyHash ?? Sha256Hex(requestBodyRaw),

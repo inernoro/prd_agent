@@ -1,6 +1,7 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
@@ -1413,13 +1414,7 @@ export default function ModelManagePage() {
                                           {isAll ? (() => {
                                             const p = platformById.get(m.platformId);
                                             if (!p) return null;
-                                            const pid = (p.providerId || p.platformType || '').trim();
-                                            const title = `${p.name}${pid ? ` · ${pid}` : ''}`;
-                                            return (
-                                              <span title={title} className="shrink-0">
-                                                <Badge variant="subtle">{p.name}</Badge>
-                                              </span>
-                                            );
+                                            return <PlatformLabel name={p.name} />;
                                           })() : null}
                                           <div
                                             className="text-sm font-semibold truncate flex-1 min-w-0"

@@ -10,7 +10,9 @@ public record LlmRequestContext(
     string? DocumentHash,
     string? SystemPromptRedacted,
     string? RequestType = null,
-    string? RequestPurpose = null);
+    string? RequestPurpose = null,
+    string? PlatformId = null,
+    string? PlatformName = null);
 
 public interface ILLMRequestContextAccessor
 {

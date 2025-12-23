@@ -420,8 +420,8 @@ public class AdminModelLabController : ControllerBase
 
             var modelName = selected.ModelName.Trim();
             ILLMClient client2 = fallbackPlatformType == "anthropic" || platformApiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
-                ? new ClaudeClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _claudeLogger, _logWriter, _ctxAccessor)
-                : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor);
+                ? new ClaudeClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _claudeLogger, _logWriter, _ctxAccessor, platform.Id, platform.Name)
+                : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor, null, platform.Id, platform.Name);
 
             // 继续使用下方通用逻辑（systemPrompt/prompt/stream）
             await RunStreamWithClientAsync(client2, selected, run, effective, enablePromptCacheForPlatform, writeLock, queueMs, ct);
@@ -471,7 +471,7 @@ public class AdminModelLabController : ControllerBase
             return;
         }
 
-        var (apiUrl, apiKey, platformType) = ResolveApiConfigForModel(model, jwtSecret);
+        var (apiUrl, apiKey, platformType, resolvedPlatformId, resolvedPlatformName) = ResolveApiConfigForModel(model, jwtSecret);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
             var errItem = new ModelLabRunItem
@@ -521,8 +521,8 @@ public class AdminModelLabController : ControllerBase
         httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
 
         ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
-            ? new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor)
-            : new OpenAIClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _logWriter, _ctxAccessor);
+            ? new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, resolvedPlatformId, resolvedPlatformName)
+            : new OpenAIClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _logWriter, _ctxAccessor, null, resolvedPlatformId, resolvedPlatformName);
 
         await RunStreamWithClientAsync(client, selected, run, effective, enablePromptCache, writeLock, queueMs, ct);
         return;
@@ -833,16 +833,19 @@ public class AdminModelLabController : ControllerBase
             models: models);
     }
 
-    private (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForModel(LLMModel model, string jwtSecret)
+    private (string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName) ResolveApiConfigForModel(LLMModel model, string jwtSecret)
     {
         string? apiUrl = model.ApiUrl;
         string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
         string? platformType = null;
+        string? platformId = model.PlatformId;
+        string? platformName = null;
 
         if (model.PlatformId != null)
         {
             var platform = _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefault();
             platformType = platform?.PlatformType?.ToLowerInvariant();
+            platformName = platform?.Name;
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
@@ -850,7 +853,7 @@ public class AdminModelLabController : ControllerBase
             }
         }
 
-        return (apiUrl, apiKey, platformType);
+        return (apiUrl, apiKey, platformType, platformId, platformName);
     }
 
     private static (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForPlatform(LLMPlatform platform, string jwtSecret)

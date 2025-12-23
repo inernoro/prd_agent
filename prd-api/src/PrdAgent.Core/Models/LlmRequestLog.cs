@@ -26,6 +26,10 @@ public class LlmRequestLog
     public string? ApiBase { get; set; }
     public string? Path { get; set; }
 
+    // 平台信息（来自 LLMPlatform）
+    public string? PlatformId { get; set; }
+    public string? PlatformName { get; set; }
+
     // 请求（密钥已隐藏；正文按后端策略可能为摘要/占位符）
     public Dictionary<string, string>? RequestHeadersRedacted { get; set; }
     public string RequestBodyRedacted { get; set; } = string.Empty;
