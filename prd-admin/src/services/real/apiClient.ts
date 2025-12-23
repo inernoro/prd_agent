@@ -9,7 +9,9 @@ function joinUrl(base: string, path: string) {
 }
 
 function getApiBaseUrl() {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:5000';
+  // 默认使用相对路径（同源 /api），配合 Vite dev server proxy 与生产环境 Nginx /api 反代
+  // 如需直连后端（跨域），可通过 VITE_API_BASE_URL 显式配置完整地址
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
   return raw.trim().replace(/\/+$/, '');
 }
 

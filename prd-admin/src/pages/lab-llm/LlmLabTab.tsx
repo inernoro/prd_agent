@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Copy, Cpu, Download, Expand, ImagePlus, Layers, Maximize2, Plus, ScanEye, Sparkles, Star, TimerOff, Trash2, Zap } from 'lucide-react';
+import { Check, Clock3, Code, Copy, Cpu, Download, Expand, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, Zap } from 'lucide-react';
 import JSZip from 'jszip';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { cn } from '@/lib/cn';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdLoader } from '@/components/ui/PrdLoader';
@@ -48,6 +49,10 @@ type ViewRunItem = {
   /** 配置模型的真实 id（用于“设为主/意图”等全局设置）。如果流里返回的 modelId 不是配置 id，会用 modelName 回查得到 */
   configModelId?: string;
   status: 'running' | 'done' | 'error';
+  /** repeatN > 1 时：第几次请求（后端会把每次请求拆成独立 itemId） */
+  repeatIndex?: number;
+  /** repeatN > 1 时：总重复次数 */
+  repeatN?: number;
   /** 并发排队等待耗时（不计入 TTFT；用于解释“并发导致看起来很慢”） */
   queueMs?: number;
   ttftMs?: number;
@@ -651,7 +656,6 @@ export default function LlmLabTab() {
   const [imageThumbHeight, setImageThumbHeight] = useState(220);
 
   const [modelSets, setModelSets] = useState<ModelLabModelSet[]>([]);
-  const [modelSetName, setModelSetName] = useState('');
 
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -1586,6 +1590,8 @@ export default function LlmLabTab() {
                 configModelId: configModelId || undefined,
                 status: 'running',
                 queueMs: typeof obj.queueMs === 'number' ? Number(obj.queueMs) : undefined,
+                repeatIndex: typeof obj.repeatIndex === 'number' ? Number(obj.repeatIndex) : undefined,
+                repeatN: typeof obj.repeatN === 'number' ? Number(obj.repeatN) : undefined,
                 preview: '',
                 rawText: '',
                 rawTruncated: false,
@@ -1626,6 +1632,8 @@ export default function LlmLabTab() {
                     ttftMs: obj.ttftMs ?? cur.ttftMs,
                     totalMs: obj.totalMs ?? cur.totalMs,
                     preview: typeof obj.preview === 'string' ? obj.preview : cur.preview,
+                    repeatIndex: typeof obj.repeatIndex === 'number' ? Number(obj.repeatIndex) : cur.repeatIndex,
+                    repeatN: typeof obj.repeatN === 'number' ? Number(obj.repeatN) : cur.repeatN,
                   },
                 };
               });
@@ -1912,12 +1920,15 @@ export default function LlmLabTab() {
   };
 
   const saveModelSet = async () => {
-    if (!modelSetName.trim()) return alert('请输入集合名称');
     if (selectedModels.length === 0) return alert('当前没有已选择的模型');
-    const res = await upsertModelLabModelSet({ name: modelSetName.trim(), models: selectedModels });
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    const now = new Date();
+    const suggested = `标签组-${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
+    const name = (window.prompt('标签组名称', suggested) ?? '').trim();
+    if (!name) return;
+    const res = await upsertModelLabModelSet({ name, models: selectedModels });
     if (!res.success) return alert(res.error?.message || '保存失败');
     await loadModelSets();
-    setModelSetName('');
   };
 
   const canRun = !running && selectedModels.length > 0;
@@ -2020,11 +2031,13 @@ export default function LlmLabTab() {
 
           <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              并发
+              并发（1-50）
               <input
                 type="number"
                 value={params.maxConcurrency}
-                onChange={(e) => setParams((p) => ({ ...p, maxConcurrency: Math.max(1, Number(e.target.value || 1)) }))}
+                min={1}
+                max={50}
+                onChange={(e) => setParams((p) => ({ ...p, maxConcurrency: Math.max(1, Math.min(50, Number(e.target.value || 1))) }))}
                 className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
               />
@@ -2034,6 +2047,7 @@ export default function LlmLabTab() {
               <input
                 type="number"
                 value={params.repeatN}
+                min={1}
                 onChange={(e) => setParams((p) => ({ ...p, repeatN: Math.max(1, Number(e.target.value || 1)) }))}
                 className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
@@ -2074,26 +2088,6 @@ export default function LlmLabTab() {
               </div>
             </div>
 
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                value={modelSetName}
-                onChange={(e) => setModelSetName(e.target.value)}
-                className="h-10 flex-1 rounded-[14px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.12)', color: 'var(--text-primary)' }}
-                placeholder="集合名称（用于保存当前选择）"
-              />
-              <button
-                type="button"
-                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
-                onClick={saveModelSet}
-                disabled={selectedModels.length === 0}
-              >
-                <Layers size={16} />
-                保存
-              </button>
-            </div>
-
             <div className="mt-3">
               {modelSets.length === 0 ? (
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -2118,7 +2112,7 @@ export default function LlmLabTab() {
                         style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
                         title="将该集合模型加入当前实验"
                       >
-                        <Layers size={14} />
+                        <Tag size={14} />
                         {s.name}
                       </button>
                     </ConfirmTip>
@@ -2137,7 +2131,13 @@ export default function LlmLabTab() {
                   return `已选择模型 ${selectedModels.length} 个${disabled > 0 ? `（已禁用 ${disabled}）` : ''}`;
                 })()}
               </div>
-              {modelsLoading ? <Badge variant="subtle">加载中</Badge> : null}
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="xs" onClick={saveModelSet} disabled={selectedModels.length === 0}>
+                  <Save size={14} />
+                  保存为标签组
+                </Button>
+                {modelsLoading ? <Badge variant="subtle">加载中</Badge> : null}
+              </div>
             </div>
             <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1">
               {selectedModels.length === 0 ? (
@@ -2193,9 +2193,15 @@ export default function LlmLabTab() {
                             {list.map((m) => {
                               const isDisabled = !!disabledModelKeys[modelKeyOfSelected(m)];
                               return (
-                                <button
+                                <div
                                   key={m.modelId}
-                                  className="w-full rounded-[12px] px-3 py-2 text-xs flex items-center justify-between gap-3 min-w-0"
+                                  role="button"
+                                  tabIndex={0}
+                                  className={cn(
+                                    'w-full rounded-[12px] px-3 py-[6px] text-xs flex items-center justify-between gap-3 min-w-0',
+                                    'transition-[transform,filter,background-color,border-color] duration-150',
+                                    isDisabled ? 'hover:brightness-[1.03]' : 'hover:-translate-y-[1px] hover:brightness-[1.06]'
+                                  )}
                                   style={{
                                     border: isDisabled ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(255,255,255,0.10)',
                                     background: isDisabled ? 'rgba(255,255,255,0.01)' : 'rgba(255,255,255,0.02)',
@@ -2203,8 +2209,13 @@ export default function LlmLabTab() {
                                     opacity: isDisabled ? 0.78 : 1,
                                   }}
                                   onClick={() => toggleDisabledSelectedModel(m)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      toggleDisabledSelectedModel(m);
+                                    }
+                                  }}
                                   title={m.name || m.modelName}
-                                  type="button"
                                 >
                                   <span className="flex items-center gap-2 min-w-0">
                                     <span
@@ -2238,7 +2249,7 @@ export default function LlmLabTab() {
                                   >
                                     ×
                                   </button>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -2257,18 +2268,33 @@ export default function LlmLabTab() {
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
           <Card className="p-4 h-full">
           <div className="flex items-center justify-between gap-3 min-w-0">
-            <div className="flex gap-2 overflow-x-auto pr-1">
-              <Button size="xs" variant={mainMode === 'infer' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onMainModeChange('infer')}>
-                推理
-              </Button>
-              <Button
-                size="xs"
-                variant={mainMode === 'image' ? 'primary' : 'secondary'}
-                className="shrink-0"
-                onClick={() => onMainModeChange('image')}
-              >
-                生图
-              </Button>
+            <div
+              className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+              title="模式切换"
+            >
+              {([
+                { key: 'infer' as const, label: '推理' },
+                { key: 'image' as const, label: '生图' },
+              ] as const).map((x) => {
+                const active = mainMode === x.key;
+                return (
+                  <button
+                    key={x.key}
+                    type="button"
+                    className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
+                    style={{
+                      color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                      background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                      border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                    }}
+                    aria-pressed={active}
+                    onClick={() => onMainModeChange(x.key)}
+                  >
+                    {x.label}
+                  </button>
+                );
+              })}
             </div>
             <div className="flex gap-2 shrink-0">
               {mainMode === 'infer' ? (
@@ -2331,12 +2357,15 @@ export default function LlmLabTab() {
               自定义
             </Button>
             <Button size="xs" variant={mode === 'json' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('json')}>
+              <Code size={14} />
               JSON
             </Button>
             <Button size="xs" variant={mode === 'mcp' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('mcp')}>
+              <Code size={14} />
               MCP
             </Button>
             <Button size="xs" variant={mode === 'functionCall' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('functionCall')}>
+              <Code size={14} />
               FunctionCall
             </Button>
             <Button size="xs" variant={mode === 'imageGenPlan' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('imageGenPlan')}>
@@ -2461,7 +2490,9 @@ export default function LlmLabTab() {
             <>
           <div className="flex items-center justify-between shrink-0">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
-              实时结果（按 {sortBy === 'imagePlanItemsDesc' ? '识别条目数（倒序）' : sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）
+              {mode === 'imageGenPlan'
+                ? '实时结果（按 识别条目数 分组（倒序），组内按 TTFT/总耗时）'
+                : `实时结果（按 ${sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）`}
             </div>
             <div className="flex items-center gap-2">
               {mode === 'imageGenPlan' ? (
@@ -2598,16 +2629,51 @@ export default function LlmLabTab() {
               </div>
             ) : (
               <div className="space-y-2">
-                {sortedItems.map((it) => (
+                {params.repeatN > 1 && sortedItems.length > 0 && sortedItems.every((x) => !x.repeatIndex && !x.repeatN) ? (
+                  <div
+                    className="rounded-[12px] px-3 py-2 text-xs"
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    已设置重复 {params.repeatN} 次，但当前返回仍为聚合结果（未拆分为多个 block）。这通常表示你连接的后端实例未升级到支持 repeat 拆分的版本。
+                  </div>
+                ) : null}
+                {sortedItems.map((it, idx) => (
                   <div
                     key={it.itemId}
                     className="rounded-[14px] p-3"
                     style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
                   >
+                    {mode === 'imageGenPlan'
+                      ? (() => {
+                          const curRaw = (it.rawText ?? it.preview ?? '').trim();
+                          const curLen = curRaw ? (getImagePlanItemsLenFromRaw(curRaw) ?? 0) : 0;
+                          const prev = idx > 0 ? sortedItems[idx - 1] : null;
+                          const prevRaw = prev ? (prev.rawText ?? prev.preview ?? '').trim() : '';
+                          const prevLen = prevRaw ? (getImagePlanItemsLenFromRaw(prevRaw) ?? 0) : 0;
+                          const show = idx === 0 || curLen !== prevLen;
+                          if (!show) return null;
+                          return (
+                            <div
+                              className="mb-2 px-2 py-1 rounded-[10px] text-xs font-semibold inline-flex items-center"
+                              style={{
+                                border: '1px solid rgba(250, 204, 21, 0.22)',
+                                background: 'rgba(250, 204, 21, 0.06)',
+                                color: 'rgba(250, 204, 21, 0.92)',
+                              }}
+                              title="按识别条目数分组（组间倒序）"
+                            >
+                              识别条目 {curLen}
+                            </div>
+                          );
+                        })()
+                      : null}
                     {(() => {
                       const raw = (it.rawText ?? it.preview ?? '').trim();
                       const v = raw ? validateByFormatTest(expectedFormat, raw) : null;
-                      const imgPlanLen = mode === 'imageGenPlan' && raw ? getImagePlanItemsLenFromRaw(raw) : null;
                       const chipStyle = (ok: boolean): React.CSSProperties => ({
                         background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',
                         border: ok ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(239,68,68,0.22)',
@@ -2622,19 +2688,6 @@ export default function LlmLabTab() {
                               title={v.reason}
                             >
                               {v.label} {v.ok ? '通过' : '失败'}
-                            </span>
-                          ) : null}
-                          {mode === 'imageGenPlan' ? (
-                            <span
-                              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                              style={{
-                                background: 'rgba(250, 204, 21, 0.08)',
-                                border: '1px solid rgba(250, 204, 21, 0.30)',
-                                color: 'rgba(250, 204, 21, 0.95)',
-                              }}
-                              title="识别条目数 = items.length（按此字段倒序排序）"
-                            >
-                              识别条目 {typeof imgPlanLen === 'number' ? imgPlanLen : '-'}
                             </span>
                           ) : null}
                           {it.rawTruncated ? (
@@ -2655,17 +2708,57 @@ export default function LlmLabTab() {
                     })()}
                     <div className="flex items-center justify-between gap-3 min-w-0">
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {it.displayName}
-                        </div>
-                        <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                        <div className="flex items-center gap-2 min-w-0">
                           {(() => {
-                            const name = (it.modelName ?? '').trim();
-                            const id = (it.modelId ?? '').trim();
-                            if (name && id && name !== id) return `${name} · ${id}`;
-                            return name || id || '-';
+                            const pid = getPlatformIdForRunItem((it.modelName || '').trim(), String(it.modelId ?? '').trim());
+                            const label = pid ? platformNameById.get(pid) || pid : null;
+                            if (!label) return null;
+                            return (
+                              <span
+                                className="inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-semibold shrink-0"
+                                style={{
+                                  background: 'rgba(255,255,255,0.04)',
+                                  border: '1px solid rgba(255,255,255,0.12)',
+                                  color: 'var(--text-secondary)',
+                                }}
+                                title="平台"
+                              >
+                                {label}
+                              </span>
+                            );
                           })()}
+                          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {it.displayName}
+                          </div>
+                          {typeof it.repeatN === 'number' && it.repeatN > 1 && typeof it.repeatIndex === 'number' ? (
+                            <span
+                              className="inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-semibold shrink-0"
+                              style={{
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                color: 'var(--text-secondary)',
+                              }}
+                              title="重复请求序号"
+                            >
+                              第 {it.repeatIndex}/{it.repeatN} 次
+                            </span>
+                          ) : null}
                         </div>
+                        {(() => {
+                          const name = (it.modelName ?? '').trim();
+                          const id = (it.modelId ?? '').trim();
+                          const display = String(it.displayName ?? '').trim();
+                          const secondary = name && id && name !== id ? `${name} · ${id}` : name || id || '';
+                          // 避免与标题重复（常见：displayName == modelName）
+                          if (!secondary) return null;
+                          if (secondary === display) return null;
+                          if (secondary === name && name === display) return null;
+                          return (
+                            <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                              {secondary}
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="shrink-0 flex items-center justify-end gap-2">
                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>

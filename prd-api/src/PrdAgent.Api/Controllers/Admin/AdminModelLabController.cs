@@ -221,7 +221,9 @@ public class AdminModelLabController : ControllerBase
         await WriteEventAsync("run", new { type = "runStart", runId = run.Id, experimentId = run.ExperimentId, suite = run.Suite, repeatN = run.RepeatN }, cancellationToken);
 
         var writeLock = new SemaphoreSlim(1, 1);
-        var maxConc = Math.Clamp(effective.Params.MaxConcurrency, 1, 10);
+        // 管理后台实验室需要支持更高并发（用于同时跑多模型对比）。
+        // 注意：并发过高可能触发下游平台限流/网关限制；此处仅限制服务端自身调度上限。
+        var maxConc = Math.Clamp(effective.Params.MaxConcurrency, 1, 50);
         var sem = new SemaphoreSlim(maxConc, maxConc);
         var tasks = new List<Task>();
 
@@ -275,57 +277,139 @@ public class AdminModelLabController : ControllerBase
         long queueMs,
         CancellationToken ct)
     {
-        var item = new ModelLabRunItem
-        {
-            OwnerAdminId = run.OwnerAdminId,
-            RunId = run.Id,
-            ExperimentId = run.ExperimentId,
-            ModelId = selected.ModelId,
-            PlatformId = selected.PlatformId,
-            DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
-            ModelName = selected.ModelName,
-            Success = false
-        };
-
-        await _repo.InsertRunItemAsync(item);
-        await WriteWithLockAsync(writeLock, "model", new { type = "modelStart", runId = run.Id, itemId = item.Id, modelId = item.ModelId, displayName = item.DisplayName, modelName = item.ModelName, queueMs }, ct);
-
         var model = await _db.LLMModels.Find(m => m.Id == selected.ModelId).FirstOrDefaultAsync(ct);
         // 兼容“未配置模型”：前端可能传入 modelId=modelName（平台可用模型列表），此时 llmmodels 查不到，需要回退到平台配置直接调用
         if (model == null)
         {
             if (string.IsNullOrWhiteSpace(selected.PlatformId) || string.IsNullOrWhiteSpace(selected.ModelName))
             {
-                item.Success = false;
-                item.ErrorCode = "MODEL_NOT_FOUND";
-                item.ErrorMessage = "模型不存在";
-                item.EndedAt = DateTime.UtcNow;
-                await _repo.UpdateRunItemAsync(item);
-                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+                // 这里无法为 repeat 拆分具体 item（缺少必要信息），直接写一个错误 item，避免前端“无回显”。
+                var errItem = new ModelLabRunItem
+                {
+                    OwnerAdminId = run.OwnerAdminId,
+                    RunId = run.Id,
+                    ExperimentId = run.ExperimentId,
+                    ModelId = selected.ModelId,
+                    PlatformId = selected.PlatformId,
+                    DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
+                    ModelName = selected.ModelName,
+                    Success = false,
+                    ErrorCode = "MODEL_NOT_FOUND",
+                    ErrorMessage = "模型不存在",
+                    EndedAt = DateTime.UtcNow
+                };
+                await _repo.InsertRunItemAsync(errItem);
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelStart",
+                    runId = run.Id,
+                    itemId = errItem.Id,
+                    modelId = errItem.ModelId,
+                    displayName = errItem.DisplayName,
+                    modelName = errItem.ModelName,
+                    queueMs,
+                    repeatIndex = 1,
+                    repeatN = 1
+                }, ct);
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelError",
+                    runId = run.Id,
+                    itemId = errItem.Id,
+                    modelId = errItem.ModelId,
+                    errorCode = errItem.ErrorCode,
+                    errorMessage = errItem.ErrorMessage,
+                    repeatIndex = 1,
+                    repeatN = 1
+                }, ct);
                 return;
             }
 
             var platform = await _db.LLMPlatforms.Find(p => p.Id == selected.PlatformId).FirstOrDefaultAsync(ct);
             if (platform == null || !platform.Enabled)
             {
-                item.Success = false;
-                item.ErrorCode = "PLATFORM_NOT_FOUND";
-                item.ErrorMessage = "平台不存在或未启用";
-                item.EndedAt = DateTime.UtcNow;
-                await _repo.UpdateRunItemAsync(item);
-                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+                var errItem = new ModelLabRunItem
+                {
+                    OwnerAdminId = run.OwnerAdminId,
+                    RunId = run.Id,
+                    ExperimentId = run.ExperimentId,
+                    ModelId = selected.ModelId,
+                    PlatformId = selected.PlatformId,
+                    DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
+                    ModelName = selected.ModelName,
+                    Success = false,
+                    ErrorCode = "PLATFORM_NOT_FOUND",
+                    ErrorMessage = "平台不存在或未启用",
+                    EndedAt = DateTime.UtcNow
+                };
+                await _repo.InsertRunItemAsync(errItem);
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelStart",
+                    runId = run.Id,
+                    itemId = errItem.Id,
+                    modelId = errItem.ModelId,
+                    displayName = errItem.DisplayName,
+                    modelName = errItem.ModelName,
+                    queueMs,
+                    repeatIndex = 1,
+                    repeatN = 1
+                }, ct);
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelError",
+                    runId = run.Id,
+                    itemId = errItem.Id,
+                    modelId = errItem.ModelId,
+                    errorCode = errItem.ErrorCode,
+                    errorMessage = errItem.ErrorMessage,
+                    repeatIndex = 1,
+                    repeatN = 1
+                }, ct);
                 return;
             }
 
             var (platformApiUrl, platformApiKey, fallbackPlatformType) = ResolveApiConfigForPlatform(platform, jwtSecret);
             if (string.IsNullOrWhiteSpace(platformApiUrl) || string.IsNullOrWhiteSpace(platformApiKey))
             {
-                item.Success = false;
-                item.ErrorCode = "INVALID_CONFIG";
-                item.ErrorMessage = "平台 API 配置不完整";
-                item.EndedAt = DateTime.UtcNow;
-                await _repo.UpdateRunItemAsync(item);
-                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+                var errItem = new ModelLabRunItem
+                {
+                    OwnerAdminId = run.OwnerAdminId,
+                    RunId = run.Id,
+                    ExperimentId = run.ExperimentId,
+                    ModelId = selected.ModelId,
+                    PlatformId = selected.PlatformId,
+                    DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
+                    ModelName = selected.ModelName,
+                    Success = false,
+                    ErrorCode = "INVALID_CONFIG",
+                    ErrorMessage = "平台 API 配置不完整",
+                    EndedAt = DateTime.UtcNow
+                };
+                await _repo.InsertRunItemAsync(errItem);
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelStart",
+                    runId = run.Id,
+                    itemId = errItem.Id,
+                    modelId = errItem.ModelId,
+                    displayName = errItem.DisplayName,
+                    modelName = errItem.ModelName,
+                    queueMs,
+                    repeatIndex = 1,
+                    repeatN = 1
+                }, ct);
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelError",
+                    runId = run.Id,
+                    itemId = errItem.Id,
+                    modelId = errItem.ModelId,
+                    errorCode = errItem.ErrorCode,
+                    errorMessage = errItem.ErrorMessage,
+                    repeatIndex = 1,
+                    repeatN = 1
+                }, ct);
                 return;
             }
 
@@ -340,30 +424,94 @@ public class AdminModelLabController : ControllerBase
                 : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor);
 
             // 继续使用下方通用逻辑（systemPrompt/prompt/stream）
-            await RunStreamWithClientAsync(client2, selected, run, item, effective, enablePromptCacheForPlatform, writeLock, ct);
+            await RunStreamWithClientAsync(client2, selected, run, effective, enablePromptCacheForPlatform, writeLock, queueMs, ct);
             return;
         }
 
         if (!model.Enabled)
         {
-            item.Success = false;
-            item.ErrorCode = "MODEL_NOT_FOUND";
-            item.ErrorMessage = "模型不存在或未启用";
-            item.EndedAt = DateTime.UtcNow;
-            await _repo.UpdateRunItemAsync(item);
-            await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+            var errItem = new ModelLabRunItem
+            {
+                OwnerAdminId = run.OwnerAdminId,
+                RunId = run.Id,
+                ExperimentId = run.ExperimentId,
+                ModelId = selected.ModelId,
+                PlatformId = selected.PlatformId,
+                DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
+                ModelName = selected.ModelName,
+                Success = false,
+                ErrorCode = "MODEL_NOT_FOUND",
+                ErrorMessage = "模型不存在或未启用",
+                EndedAt = DateTime.UtcNow
+            };
+            await _repo.InsertRunItemAsync(errItem);
+            await WriteWithLockAsync(writeLock, "model", new
+            {
+                type = "modelStart",
+                runId = run.Id,
+                itemId = errItem.Id,
+                modelId = errItem.ModelId,
+                displayName = errItem.DisplayName,
+                modelName = errItem.ModelName,
+                queueMs,
+                repeatIndex = 1,
+                repeatN = 1
+            }, ct);
+            await WriteWithLockAsync(writeLock, "model", new
+            {
+                type = "modelError",
+                runId = run.Id,
+                itemId = errItem.Id,
+                modelId = errItem.ModelId,
+                errorCode = errItem.ErrorCode,
+                errorMessage = errItem.ErrorMessage,
+                repeatIndex = 1,
+                repeatN = 1
+            }, ct);
             return;
         }
 
         var (apiUrl, apiKey, platformType) = ResolveApiConfigForModel(model, jwtSecret);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
-            item.Success = false;
-            item.ErrorCode = "INVALID_CONFIG";
-            item.ErrorMessage = "模型 API 配置不完整";
-            item.EndedAt = DateTime.UtcNow;
-            await _repo.UpdateRunItemAsync(item);
-            await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
+            var errItem = new ModelLabRunItem
+            {
+                OwnerAdminId = run.OwnerAdminId,
+                RunId = run.Id,
+                ExperimentId = run.ExperimentId,
+                ModelId = selected.ModelId,
+                PlatformId = selected.PlatformId,
+                DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
+                ModelName = selected.ModelName,
+                Success = false,
+                ErrorCode = "INVALID_CONFIG",
+                ErrorMessage = "模型 API 配置不完整",
+                EndedAt = DateTime.UtcNow
+            };
+            await _repo.InsertRunItemAsync(errItem);
+            await WriteWithLockAsync(writeLock, "model", new
+            {
+                type = "modelStart",
+                runId = run.Id,
+                itemId = errItem.Id,
+                modelId = errItem.ModelId,
+                displayName = errItem.DisplayName,
+                modelName = errItem.ModelName,
+                queueMs,
+                repeatIndex = 1,
+                repeatN = 1
+            }, ct);
+            await WriteWithLockAsync(writeLock, "model", new
+            {
+                type = "modelError",
+                runId = run.Id,
+                itemId = errItem.Id,
+                modelId = errItem.ModelId,
+                errorCode = errItem.ErrorCode,
+                errorMessage = errItem.ErrorMessage,
+                repeatIndex = 1,
+                repeatN = 1
+            }, ct);
             return;
         }
 
@@ -376,7 +524,7 @@ public class AdminModelLabController : ControllerBase
             ? new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor)
             : new OpenAIClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _logWriter, _ctxAccessor);
 
-        await RunStreamWithClientAsync(client, selected, run, item, effective, enablePromptCache, writeLock, ct);
+        await RunStreamWithClientAsync(client, selected, run, effective, enablePromptCache, writeLock, queueMs, ct);
         return;
 
     }
@@ -385,10 +533,10 @@ public class AdminModelLabController : ControllerBase
         ILLMClient client,
         ModelLabSelectedModel selected,
         ModelLabRun run,
-        ModelLabRunItem item,
         EffectiveRunRequest effective,
         bool enablePromptCache,
         SemaphoreSlim writeLock,
+        long queueMs,
         CancellationToken ct)
     {
         // 生产规则：不对 speed/intent/custom 默认注入 system prompt（避免“强加”输出格式/语义）。
@@ -427,28 +575,54 @@ public class AdminModelLabController : ControllerBase
 
         var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
 
-        // 旁路记录上下文（不记录 prompt 原文）
-        var requestId = Guid.NewGuid().ToString("N");
         var requestType = effective.Suite == ModelLabSuite.Intent ? "intent" : "reasoning";
-        using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
-            RequestId: requestId,
-            GroupId: null,
-            SessionId: null,
-            UserId: run.OwnerAdminId,
-            ViewRole: null,
-            DocumentChars: null,
-            DocumentHash: null,
-            SystemPromptRedacted: "[MODEL_LAB]",
-            RequestType: requestType,
-            RequestPurpose: "modelLab.run"));
+        var repeatN = Math.Max(1, effective.Params.RepeatN);
 
-        var ttftSum = 0L;
-        var totalSum = 0L;
-        string? preview = null;
-
-        for (var i = 0; i < Math.Max(1, effective.Params.RepeatN); i++)
+        // repeatN > 1 时：每次请求都作为独立 item 回显（前端按 itemId 渲染为独立 block）
+        for (var i = 0; i < repeatN; i++)
         {
-            var startedAt = DateTime.UtcNow;
+            var item = new ModelLabRunItem
+            {
+                OwnerAdminId = run.OwnerAdminId,
+                RunId = run.Id,
+                ExperimentId = run.ExperimentId,
+                ModelId = selected.ModelId,
+                PlatformId = selected.PlatformId,
+                DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
+                ModelName = selected.ModelName,
+                Success = false,
+                StartedAt = DateTime.UtcNow
+            };
+            await _repo.InsertRunItemAsync(item);
+
+            await WriteWithLockAsync(writeLock, "model", new
+            {
+                type = "modelStart",
+                runId = run.Id,
+                itemId = item.Id,
+                modelId = item.ModelId,
+                displayName = item.DisplayName,
+                modelName = item.ModelName,
+                queueMs = i == 0 ? queueMs : (long?)null,
+                repeatIndex = i + 1,
+                repeatN
+            }, ct);
+
+            // 旁路记录上下文（不记录 prompt 原文）——每次重复都生成独立 RequestId，避免日志串联/覆盖
+            var requestId = Guid.NewGuid().ToString("N");
+            using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: null,
+                SessionId: null,
+                UserId: run.OwnerAdminId,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[MODEL_LAB]",
+                RequestType: requestType,
+                RequestPurpose: "modelLab.run"));
+
+            var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;
             var sb = new StringBuilder();
             var sawFirstDelta = false;
@@ -464,7 +638,16 @@ public class AdminModelLabController : ControllerBase
                             sawFirstDelta = true;
                             firstTokenAt = DateTime.UtcNow;
                             var ttft = (long)(firstTokenAt.Value - startedAt).TotalMilliseconds;
-                            await WriteWithLockAsync(writeLock, "model", new { type = "firstToken", runId = run.Id, itemId = item.Id, modelId = item.ModelId, ttftMs = ttft }, ct);
+                            await WriteWithLockAsync(writeLock, "model", new
+                            {
+                                type = "firstToken",
+                                runId = run.Id,
+                                itemId = item.Id,
+                                modelId = item.ModelId,
+                                ttftMs = ttft,
+                                repeatIndex = i + 1,
+                                repeatN
+                            }, ct);
                         }
 
                         if (sb.Length < 512)
@@ -473,7 +656,16 @@ public class AdminModelLabController : ControllerBase
                         }
 
                         // 将 delta 转发给前端用于拼接展示（不落库）
-                        await WriteWithLockAsync(writeLock, "model", new { type = "delta", runId = run.Id, itemId = item.Id, modelId = item.ModelId, content = chunk.Content }, ct);
+                        await WriteWithLockAsync(writeLock, "model", new
+                        {
+                            type = "delta",
+                            runId = run.Id,
+                            itemId = item.Id,
+                            modelId = item.ModelId,
+                            content = chunk.Content,
+                            repeatIndex = i + 1,
+                            repeatN
+                        }, ct);
                     }
 
                     if (chunk.Type == "error")
@@ -498,36 +690,46 @@ public class AdminModelLabController : ControllerBase
                 item.ErrorMessage = ex.Message;
                 item.EndedAt = DateTime.UtcNow;
                 await _repo.UpdateRunItemAsync(item);
-                await WriteWithLockAsync(writeLock, "model", new { type = "modelError", runId = run.Id, itemId = item.Id, modelId = item.ModelId, errorCode = item.ErrorCode, errorMessage = item.ErrorMessage }, ct);
-                return;
+                await WriteWithLockAsync(writeLock, "model", new
+                {
+                    type = "modelError",
+                    runId = run.Id,
+                    itemId = item.Id,
+                    modelId = item.ModelId,
+                    errorCode = item.ErrorCode,
+                    errorMessage = item.ErrorMessage,
+                    repeatIndex = i + 1,
+                    repeatN
+                }, ct);
+                continue;
             }
 
             var endAt = DateTime.UtcNow;
             var ttftMs = (long)((firstTokenAt ?? endAt) - startedAt).TotalMilliseconds;
             var totalMs = (long)(endAt - startedAt).TotalMilliseconds;
-            ttftSum += ttftMs;
-            totalSum += totalMs;
-            preview = sb.ToString();
+            var preview = sb.ToString();
+
+            item.Success = true;
+            item.TtftMs = ttftMs;
+            item.TotalMs = totalMs;
+            item.ResponsePreview = preview;
+            item.FirstTokenAt = item.TtftMs.HasValue ? item.StartedAt.AddMilliseconds(item.TtftMs.Value) : null;
+            item.EndedAt = endAt;
+
+            await _repo.UpdateRunItemAsync(item);
+            await WriteWithLockAsync(writeLock, "model", new
+            {
+                type = "modelDone",
+                runId = run.Id,
+                itemId = item.Id,
+                modelId = item.ModelId,
+                ttftMs = item.TtftMs,
+                totalMs = item.TotalMs,
+                preview = item.ResponsePreview,
+                repeatIndex = i + 1,
+                repeatN
+            }, ct);
         }
-
-        item.Success = true;
-        item.TtftMs = ttftSum / Math.Max(1, effective.Params.RepeatN);
-        item.TotalMs = totalSum / Math.Max(1, effective.Params.RepeatN);
-        item.ResponsePreview = preview;
-        item.FirstTokenAt = item.TtftMs.HasValue ? item.StartedAt.AddMilliseconds(item.TtftMs.Value) : null;
-        item.EndedAt = DateTime.UtcNow;
-
-        await _repo.UpdateRunItemAsync(item);
-        await WriteWithLockAsync(writeLock, "model", new
-        {
-            type = "modelDone",
-            runId = run.Id,
-            itemId = item.Id,
-            modelId = item.ModelId,
-            ttftMs = item.TtftMs,
-            totalMs = item.TotalMs,
-            preview = item.ResponsePreview
-        }, ct);
     }
 
     private async Task WriteWithLockAsync(SemaphoreSlim writeLock, string eventName, object payload, CancellationToken ct)
