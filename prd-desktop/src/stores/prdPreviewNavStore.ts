@@ -24,7 +24,7 @@ export const usePrdPreviewNavStore = create<PrdPreviewNavState>((set) => ({
   citations: [],
   activeCitationIndex: 0,
 
-  openWithCitations: ({ targetHeadingId, targetHeadingTitle, citations, activeCitationIndex }) => set((state) => {
+  openWithCitations: ({ targetHeadingId, targetHeadingTitle, citations, activeCitationIndex }) => set(() => {
     const next = {
       targetHeadingId: targetHeadingId ? String(targetHeadingId).trim() : null,
       targetHeadingTitle: targetHeadingTitle ? String(targetHeadingTitle).trim() : null,
@@ -34,9 +34,7 @@ export const usePrdPreviewNavStore = create<PrdPreviewNavState>((set) => ({
     return next;
   }),
 
-  consumeTarget: () => set((state) => {
-    return { targetHeadingId: null, targetHeadingTitle: null };
-  }),
+  consumeTarget: () => set(() => ({ targetHeadingId: null, targetHeadingTitle: null })),
 
   setActiveCitationIndex: (idx) => set((state) => {
     return {
@@ -44,7 +42,5 @@ export const usePrdPreviewNavStore = create<PrdPreviewNavState>((set) => ({
     };
   }),
 
-  clear: () => set((state) => {
-    return { targetHeadingId: null, targetHeadingTitle: null, citations: [], activeCitationIndex: 0 };
-  }),
+  clear: () => set(() => ({ targetHeadingId: null, targetHeadingTitle: null, citations: [], activeCitationIndex: 0 })),
 }));

@@ -26,7 +26,7 @@ const DEMO_RESPONSES = [
 
 export default function ChatInput() {
   const { sessionId, currentRole, mode, guideStep, setGuideStep, document } = useSessionStore();
-  const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage, qaMessages, guidedThreads } = useMessageStore();
+  const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);

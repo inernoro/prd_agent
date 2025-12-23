@@ -24,7 +24,6 @@ export default function ChatContainer() {
     setMessageCitations,
     setStreamingMessageCitations,
     stopStreaming,
-    clearMessages,
     setMessages,
     addMessage,
     isStreaming,
