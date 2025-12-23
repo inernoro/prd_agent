@@ -10,12 +10,10 @@ COPY ["src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "src/PrdAgen
 RUN dotnet restore "src/PrdAgent.Api/PrdAgent.Api.csproj"
 COPY . .
 WORKDIR "/src/src/PrdAgent.Api"
-RUN dotnet build "PrdAgent.Api.csproj" -c Release -o /app/build
-
-FROM build AS publish
-RUN dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+# publish 会自动 build：避免 build + publish 双编译；并复用上一步 restore 的缓存
+RUN dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
+COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "PrdAgent.Api.dll"]
