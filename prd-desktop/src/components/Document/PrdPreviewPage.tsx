@@ -10,14 +10,23 @@ import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import PrdSectionAskPanel from './PrdSectionAskPanel';
 import { applyHighlights as applyHighlightsHelper, clearHighlights as clearHighlightsHelper, focusCitation } from './prdCitationHighlighter';
 
-export default function PrdPreviewPage() {
+export default function PrdPreviewPage(props?: {
+  compactMode?: boolean;
+  overrideDocumentId?: string | null;
+  overrideGroupId?: string | null;
+  onRequestClose?: () => void;
+  onRequestOpenFullPreview?: () => void;
+}) {
+  const compactMode = Boolean(props?.compactMode);
+  const overrideDocumentId = (props?.overrideDocumentId || '').trim() || null;
+  const overrideGroupId = (props?.overrideGroupId || '').trim() || null;
   const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
   const { addMessage } = useMessageStore();
 
   const [prdPreviewLoading, setPrdPreviewLoading] = useState(false);
   const [prdPreviewError, setPrdPreviewError] = useState('');
-  const [prdPreviewTocOpen, setPrdPreviewTocOpen] = useState(true);
-  const [prdPreviewCommentsOpen, setPrdPreviewCommentsOpen] = useState(true);
+  const [prdPreviewTocOpen, setPrdPreviewTocOpen] = useState(() => !compactMode);
+  const [prdPreviewCommentsOpen, setPrdPreviewCommentsOpen] = useState(() => !compactMode);
   const [prdPreview, setPrdPreview] = useState<null | { documentId: string; title: string; content: string }>(null);
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
   const [activeHeadingTitle, setActiveHeadingTitle] = useState<string | null>(null);
@@ -51,9 +60,17 @@ export default function PrdPreviewPage() {
   const consumeNavTarget = usePrdPreviewNavStore((s) => s.consumeTarget);
   const clearNav = usePrdPreviewNavStore((s) => s.clear);
 
+  const effectiveDocumentId = useMemo(() => {
+    return overrideDocumentId || prdDocument?.id || null;
+  }, [overrideDocumentId, prdDocument?.id]);
+
+  const effectiveGroupId = useMemo(() => {
+    return overrideGroupId || activeGroupId || null;
+  }, [overrideGroupId, activeGroupId]);
+
   const canPreview = useMemo(() => {
-    return Boolean(documentLoaded && prdDocument && activeGroupId);
-  }, [activeGroupId, prdDocument, documentLoaded]);
+    return Boolean((overrideDocumentId && overrideGroupId) || (documentLoaded && prdDocument && activeGroupId));
+  }, [activeGroupId, prdDocument, documentLoaded, overrideDocumentId, overrideGroupId]);
 
   const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
@@ -106,8 +123,8 @@ export default function PrdPreviewPage() {
   };
 
   useEffect(() => {
-    if (!canPreview || !prdDocument || !activeGroupId) return;
-    if (prdPreview?.documentId === prdDocument.id && prdPreview.content) return;
+    if (!canPreview || !effectiveDocumentId || !effectiveGroupId) return;
+    if (prdPreview?.documentId === effectiveDocumentId && prdPreview.content) return;
 
     let cancelled = false;
     const run = async () => {
@@ -115,8 +132,8 @@ export default function PrdPreviewPage() {
       try {
         setPrdPreviewLoading(true);
         const resp = await invoke<ApiResponse<DocumentContent>>('get_document_content', {
-          documentId: prdDocument.id,
-          groupId: activeGroupId,
+          documentId: effectiveDocumentId,
+          groupId: effectiveGroupId,
         });
         if (cancelled) return;
         if (!resp.success || !resp.data) {
@@ -137,7 +154,7 @@ export default function PrdPreviewPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canPreview, prdDocument?.id, activeGroupId]);
+  }, [canPreview, effectiveDocumentId, effectiveGroupId, prdPreview?.documentId, prdPreview?.content]);
 
   // 注意：PrdPreviewPage 在 mode !== 'PrdPreview' 时会卸载（见 App.tsx），所以初始 state 已足够作为“进入页重置”。
   // 若在 mount 后再强制重置，会与用户的首次目录点击产生竞态，表现为“需要点两次/右侧不更新/不滚动”。
@@ -762,18 +779,30 @@ export default function PrdPreviewPage() {
         <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
-            onClick={backFromPrdPreview}
+            onClick={() => {
+              if (compactMode && typeof props?.onRequestClose === 'function') {
+                props.onRequestClose();
+                return;
+              }
+              backFromPrdPreview();
+            }}
             className="h-8 px-2 rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors"
-            title="返回"
-            aria-label="返回"
+            title={compactMode ? '关闭' : '返回'}
+            aria-label={compactMode ? '关闭' : '返回'}
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+            {compactMode ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            )}
           </button>
 
           <div className="min-w-0">
-            <div className="text-sm font-semibold truncate">PRD 预览</div>
+            <div className="text-sm font-semibold truncate">{compactMode ? '引用预览' : 'PRD 预览'}</div>
             <div className="text-xs text-text-secondary truncate" title={prdPreview?.title || prdDocument?.title || ''}>
               {prdPreview?.title || prdDocument?.title || ''}
             </div>
@@ -781,36 +810,65 @@ export default function PrdPreviewPage() {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
-            onClick={() => setPrdPreviewTocOpen((v) => !v)}
-            aria-label="章节目录"
-            title="章节目录"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-            </svg>
-          </button>
+          {compactMode ? (
+            <button
+              type="button"
+              className="h-8 px-2 rounded-md text-xs text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+              onClick={() => {
+                if (typeof props?.onRequestOpenFullPreview === 'function') {
+                  props.onRequestOpenFullPreview();
+                }
+              }}
+              title="打开完整预览"
+            >
+              打开完整预览
+            </button>
+          ) : null}
 
-          <button
-            type="button"
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
-            onClick={() => setPrdPreviewCommentsOpen((v) => !v)}
-            aria-label="评论"
-            title="评论"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h6m-6 4h8M5 20l-2 2V6a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H7z" />
-            </svg>
-          </button>
+          {!compactMode ? (
+            <>
+              <button
+                type="button"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+                onClick={() => setPrdPreviewTocOpen((v) => !v)}
+                aria-label="章节目录"
+                title="章节目录"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"
+                  />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+                onClick={() => setPrdPreviewCommentsOpen((v) => !v)}
+                aria-label="评论"
+                title="评论"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 8h10M7 12h6m-6 4h8M5 20l-2 2V6a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H7z"
+                  />
+                </svg>
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 
       <div className="flex-1 min-h-0">
         <div className="h-full flex min-h-0">
           {/* 左：目录 */}
-          {prdPreviewTocOpen ? (
+          {!compactMode && prdPreviewTocOpen ? (
             <div
               className="border-r border-border bg-surface-light dark:bg-surface-dark overflow-auto p-3"
               style={{ width: `${tocWidth}px` }}
@@ -847,7 +905,7 @@ export default function PrdPreviewPage() {
           ) : null}
 
           {/* 拖拽条：目录/正文 */}
-          {prdPreviewTocOpen ? (
+          {!compactMode && prdPreviewTocOpen ? (
             <div
               role="separator"
               aria-orientation="vertical"
@@ -870,7 +928,7 @@ export default function PrdPreviewPage() {
           </div>
 
           {/* 拖拽条：正文/评论 */}
-          {prdPreviewCommentsOpen ? (
+          {!compactMode && prdPreviewCommentsOpen ? (
             <div
               role="separator"
               aria-orientation="vertical"
@@ -888,7 +946,7 @@ export default function PrdPreviewPage() {
           ) : null}
 
           {/* 右：评论 */}
-          {prdPreviewCommentsOpen ? (
+          {!compactMode && prdPreviewCommentsOpen ? (
             <div
               className="border-l border-border bg-surface-light dark:bg-surface-dark overflow-hidden"
               style={{ width: `${commentsWidth}px` }}
@@ -906,7 +964,7 @@ export default function PrdPreviewPage() {
       </div>
 
       {/* 引用导航浮层（仅当存在 citations） */}
-      {Array.isArray(navCitations) && navCitations.length > 0 ? (
+      {!compactMode && Array.isArray(navCitations) && navCitations.length > 0 ? (
         <div className="fixed z-40 right-4 top-16">
           <div className="bg-surface-light dark:bg-surface-dark border border-border rounded-xl shadow-lg px-3 py-2 w-[320px]">
             <div className="flex items-center justify-between gap-2">
@@ -973,15 +1031,17 @@ export default function PrdPreviewPage() {
       ) : null}
 
       {/* Figma 式悬浮“本章提问”（一次性回复，不写入消息历史） */}
-      <PrdSectionAskPanel
-        sessionId={sessionId}
-        headingId={activeHeadingId}
-        headingTitle={activeHeadingTitle}
-        onJumpToHeading={(id) => scrollToHeading(id)}
-      />
+      {!compactMode ? (
+        <PrdSectionAskPanel
+          sessionId={sessionId}
+          headingId={activeHeadingId}
+          headingTitle={activeHeadingTitle}
+          onJumpToHeading={(id) => scrollToHeading(id)}
+        />
+      ) : null}
 
       {/* 划词悬浮入口 */}
-      {selectionToolbar ? (
+      {!compactMode && selectionToolbar ? (
         <div
           className="fixed z-50"
           style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
@@ -999,7 +1059,7 @@ export default function PrdPreviewPage() {
       ) : null}
 
       {/* 划词问AI模态 */}
-      {askOpen ? (
+      {!compactMode && askOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={closeAskModal} />
           <div className="relative z-10 w-full max-w-2xl mx-4 bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border overflow-hidden">

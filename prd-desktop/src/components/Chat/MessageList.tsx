@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
+import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import type { DocCitation, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 
@@ -36,6 +37,7 @@ export default function MessageList() {
   const { messages, isStreaming, streamingMessageId, streamingPhase, isPinnedToBottom, setPinnedToBottom } = useMessageStore();
   const { sessionId, activeGroupId, document: prdDocument } = useSessionStore();
   const openCitationDrawer = usePrdCitationPreviewStore((s) => s.open);
+  const openWithCitations = usePrdPreviewNavStore((s) => s.openWithCitations);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -179,6 +181,12 @@ export default function MessageList() {
                         const targetHeadingTitle = (c.headingTitle || '').trim();
                         if (!targetHeadingId && !targetHeadingTitle) return;
                         if (!activeGroupId || !prdDocument?.id) return;
+                        openWithCitations({
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations: message.citations ?? [],
+                          activeCitationIndex: idx,
+                        });
                         openCitationDrawer({
                           documentId: prdDocument.id,
                           groupId: activeGroupId,

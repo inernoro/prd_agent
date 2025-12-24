@@ -357,16 +357,14 @@ export default function AdvancedImageMasterTab() {
                           }}
                           onClick={() => {
                             setSelectedKey(it.key);
-                            if (canOpen) setPreview({ open: true, src: it.src, prompt: it.prompt });
                           }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
                               setSelectedKey(it.key);
-                              if (canOpen) setPreview({ open: true, src: it.src, prompt: it.prompt });
                             }
                           }}
-                          title="点击选中；双用途：选中 + 预览"
+                          title="点击选中（可作为首帧图）"
                         >
                           {it.status === 'running' ? (
                             <div className="w-full h-full flex flex-col items-center justify-center gap-2">
@@ -384,14 +382,23 @@ export default function AdvancedImageMasterTab() {
                           )}
 
                           {canOpen ? (
-                            <div
-                              className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center pointer-events-none"
-                              style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}
-                              title="点击放大预览"
-                              aria-label="点击放大预览"
+                            <button
+                              type="button"
+                              className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center"
+                              style={{
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                background: 'rgba(0,0,0,0.20)',
+                                color: 'var(--text-secondary)',
+                              }}
+                              title="放大预览"
+                              aria-label="放大预览"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreview({ open: true, src: it.src, prompt: it.prompt });
+                              }}
                             >
                               <Maximize2 size={14} />
-                            </div>
+                            </button>
                           ) : null}
 
                           <div className="absolute right-2 bottom-2 flex items-center gap-1">

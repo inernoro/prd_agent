@@ -165,6 +165,8 @@ public class AdminImageGenController : ControllerBase
 
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
+        var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
@@ -178,7 +180,7 @@ public class AdminImageGenController : ControllerBase
             RequestType: "imageGen",
             RequestPurpose: "imageGen.generate"));
 
-        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName);
+        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName, initImageBase64);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -513,6 +515,10 @@ public class ImageGenGenerateRequest
     public int? N { get; set; }
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url
+    /// <summary>
+    /// 图生图首帧（DataURL 或纯 base64）。当传入时，将优先走 images/edits（若上游支持）
+    /// </summary>
+    public string? InitImageBase64 { get; set; }
 }
 
 public class ImageGenBatchRequest
