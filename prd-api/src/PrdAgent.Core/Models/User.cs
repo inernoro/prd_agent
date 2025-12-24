@@ -6,7 +6,7 @@ namespace PrdAgent.Core.Models;
 public class User
 {
     /// <summary>
-    /// MongoDB 主键（_id）。用于兼容历史/默认 ObjectId；业务侧请使用 <see cref="UserId"/>。
+    /// 兼容字段：历史数据可能存在旧的 id 字段；当前系统以 <see cref="UserId"/> 作为 MongoDB 主键（_id）。
     /// </summary>
     public string? Id { get; set; }
 

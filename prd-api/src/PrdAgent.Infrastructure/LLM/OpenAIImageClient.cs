@@ -154,7 +154,11 @@ public class OpenAIImageClient
         }
 
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.Timeout = TimeSpan.FromSeconds(60);
+        // 生图请求通常比文本推理慢很多（部分平台可达 60s+），因此单独放大超时。
+        // 默认 600s，可通过配置 LLM:ImageGenTimeoutSeconds 覆盖；不影响文本/意图等默认 60s。
+        var imageGenTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
+        imageGenTimeoutSeconds = Math.Clamp(imageGenTimeoutSeconds, 60, 3600);
+        httpClient.Timeout = TimeSpan.FromSeconds(imageGenTimeoutSeconds);
 
         // Authorization 头不允许多值：覆盖写法
         httpClient.DefaultRequestHeaders.Remove("Authorization");
@@ -634,7 +638,10 @@ public class OpenAIImageClient
         if (!IsSafeExternalImageUri(uri)) return null;
 
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.Timeout = TimeSpan.FromSeconds(30);
+        // 生图 URL 下载转 base64：通常较快，但为避免大图/慢链路误伤，给更宽松的超时。
+        var downloadTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenDownloadTimeoutSeconds") ?? 120;
+        downloadTimeoutSeconds = Math.Clamp(downloadTimeoutSeconds, 30, 3600);
+        httpClient.Timeout = TimeSpan.FromSeconds(downloadTimeoutSeconds);
         // 避免把上游生图平台的 Bearer token 泄露给图片 URL 的第三方 host
         httpClient.DefaultRequestHeaders.Remove("Authorization");
         httpClient.DefaultRequestHeaders.Accept.Clear();

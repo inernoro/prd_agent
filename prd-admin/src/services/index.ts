@@ -26,6 +26,8 @@ import type {
 } from '@/services/contracts/modelLab';
 import type { GenerateImageGenContract, PlanImageGenContract, RunImageGenBatchStreamContract } from '@/services/contracts/imageGen';
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
+import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
+import type { SuggestGroupNameContract } from '@/services/contracts/intent';
 import type {
   DeleteAdminGroupContract,
   GenerateAdminGapSummaryContract,
@@ -61,6 +63,8 @@ import {
 } from '@/services/real/modelLab';
 import { generateImageGenReal, planImageGenReal, runImageGenBatchStreamReal } from '@/services/real/imageGen';
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
+import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
+import { suggestGroupNameReal } from '@/services/real/intent';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -160,3 +164,8 @@ export const runImageGenBatchStream: RunImageGenBatchStreamContract = withAuth(r
 export const listModelLabGroups: ListModelLabGroupsContract = withAuth(listModelLabGroupsReal);
 export const upsertModelLabGroup: UpsertModelLabGroupContract = withAuth(upsertModelLabGroupReal);
 export const deleteModelLabGroup: DeleteModelLabGroupContract = withAuth(deleteModelLabGroupReal);
+
+export const uploadAiChatDocument: AiChatUploadDocumentContract = withAuth(uploadAiChatDocumentReal);
+export const getAiChatHistory: AiChatGetHistoryContract = withAuth(getAiChatHistoryReal);
+
+export const suggestGroupName: SuggestGroupNameContract = withAuth(suggestGroupNameReal);

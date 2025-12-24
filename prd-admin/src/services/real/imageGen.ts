@@ -7,6 +7,7 @@ import type {
   PlanImageGenContract,
   RunImageGenBatchStreamContract,
 } from '@/services/contracts/imageGen';
+import { readSseStream } from '@/lib/sse';
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:5000';
@@ -20,33 +21,12 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
-async function readSseStream(res: Response, onEvent: (evt: ImageGenBatchStreamEvent) => void, signal: AbortSignal): Promise<void> {
-  const reader = res.body?.getReader();
-  if (!reader) return;
-
-  const decoder = new TextDecoder('utf-8');
-  let buf = '';
-  while (!signal.aborted) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-
-    while (true) {
-      const idx = buf.indexOf('\n\n');
-      if (idx < 0) break;
-      const raw = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-
-      const lines = raw.split('\n').map((l) => l.trimEnd());
-      let event: string | undefined;
-      const dataLines: string[] = [];
-      for (const line of lines) {
-        if (line.startsWith('event:')) event = line.slice('event:'.length).trim();
-        if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trim());
-      }
-      onEvent({ event, data: dataLines.length ? dataLines.join('\n') : undefined });
-    }
-  }
+async function readImageGenSseStream(
+  res: Response,
+  onEvent: (evt: ImageGenBatchStreamEvent) => void,
+  signal: AbortSignal
+): Promise<void> {
+  await readSseStream(res, onEvent, signal);
 }
 
 export const planImageGenReal: PlanImageGenContract = async (input) => {
@@ -104,7 +84,7 @@ export const runImageGenBatchStreamReal: RunImageGenBatchStreamContract = async 
     return fail('UNKNOWN', t || `HTTP ${res.status} ${res.statusText}`) as unknown as ApiResponse<true>;
   }
 
-  await readSseStream(res, onEvent, signal);
+  await readImageGenSseStream(res, onEvent, signal);
   return ok(true);
 };
 

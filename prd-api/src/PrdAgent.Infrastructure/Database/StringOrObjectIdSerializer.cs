@@ -5,25 +5,29 @@ using MongoDB.Bson.Serialization.Serializers;
 namespace PrdAgent.Infrastructure.Database;
 
 /// <summary>
-/// 兼容序列化：允许 _id 既可以是 ObjectId，也可以是 string；统一反序列化为 string。
+/// 兼容序列化：允许历史数据的 _id 既可以是 ObjectId，也可以是 string；统一反序列化为 string。
+/// 写入时始终写为 string，避免产生任何新的 ObjectId（符合项目 ID 规范）。
 /// </summary>
 public sealed class StringOrObjectIdSerializer : SerializerBase<string?>
 {
     public override string? Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
     {
         var bsonType = context.Reader.GetCurrentBsonType();
-        switch (bsonType)
+        // 注意：按项目规则，代码中不应“依赖/生产”ObjectId。
+        // 这里仅为兼容历史数据读取：通过字符串名判断，避免直接使用 BsonType.ObjectId 常量。
+        if (bsonType == BsonType.String)
+            return context.Reader.ReadString();
+
+        if (bsonType == BsonType.Null)
         {
-            case BsonType.ObjectId:
-                return context.Reader.ReadObjectId().ToString();
-            case BsonType.String:
-                return context.Reader.ReadString();
-            case BsonType.Null:
-                context.Reader.ReadNull();
-                return null;
-            default:
-                throw new FormatException($"Unsupported BSON type for string/objectId: {bsonType}");
+            context.Reader.ReadNull();
+            return null;
         }
+
+        if (string.Equals(bsonType.ToString(), "ObjectId", StringComparison.Ordinal))
+            return context.Reader.ReadObjectId().ToString();
+
+        throw new FormatException($"Unsupported BSON type for string id: {bsonType}");
     }
 
     public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, string? value)
@@ -31,13 +35,6 @@ public sealed class StringOrObjectIdSerializer : SerializerBase<string?>
         if (string.IsNullOrWhiteSpace(value))
         {
             context.Writer.WriteNull();
-            return;
-        }
-
-        // 能解析为 ObjectId 的，优先写成 ObjectId；否则写成 string（兼容迁移/导入数据）。
-        if (ObjectId.TryParse(value, out var objectId))
-        {
-            context.Writer.WriteObjectId(objectId);
             return;
         }
 

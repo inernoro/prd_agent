@@ -5,7 +5,7 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class PrdComment
 {
-    /// <summary>评论 ID（MongoDB ObjectId 字符串）</summary>
+    /// <summary>评论 ID（MongoDB _id：string，写入为 Guid("N")）</summary>
     public string? Id { get; set; }
 
     /// <summary>PRD 文档 ID（ParsedPrd.Id）</summary>

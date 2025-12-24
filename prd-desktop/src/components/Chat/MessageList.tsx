@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
+import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
 import type { DocCitation, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 
@@ -34,8 +34,8 @@ function unwrapMarkdownFences(text: string) {
 
 export default function MessageList() {
   const { messages, isStreaming, streamingMessageId, streamingPhase, isPinnedToBottom, setPinnedToBottom } = useMessageStore();
-  const { sessionId, activeGroupId, openPrdPreviewPage } = useSessionStore();
-  const openWithCitations = usePrdPreviewNavStore((s) => s.openWithCitations);
+  const { sessionId, activeGroupId, document: prdDocument } = useSessionStore();
+  const openCitationDrawer = usePrdCitationPreviewStore((s) => s.open);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -178,13 +178,15 @@ export default function MessageList() {
                         const targetHeadingId = (c.headingId || '').trim();
                         const targetHeadingTitle = (c.headingTitle || '').trim();
                         if (!targetHeadingId && !targetHeadingTitle) return;
-                        openWithCitations({
+                        if (!activeGroupId || !prdDocument?.id) return;
+                        openCitationDrawer({
+                          documentId: prdDocument.id,
+                          groupId: activeGroupId,
                           targetHeadingId: targetHeadingId || null,
                           targetHeadingTitle: targetHeadingTitle || null,
                           citations: message.citations ?? [],
                           activeCitationIndex: idx,
                         });
-                        openPrdPreviewPage();
                       }}
                     >
                       <span className="truncate max-w-[220px]">{c.headingTitle || c.headingId}</span>

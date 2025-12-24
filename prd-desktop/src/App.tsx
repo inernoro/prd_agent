@@ -10,6 +10,7 @@ import PrdPreviewPage from './components/Document/PrdPreviewPage';
 import ChatContainer from './components/Chat/ChatContainer';
 import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
 import LoginPage from './components/Auth/LoginPage';
+import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
 import type { ApiResponse, Document, Session, UserRole } from './types';
 
 function App() {
@@ -150,6 +151,9 @@ function App() {
             mode === 'Knowledge' ? <KnowledgeBasePage /> : <ChatContainer />
           )}
         </main>
+
+        {/* 引用小抽屉预览（不影响全屏 PrdPreviewPage 的引用浮层） */}
+        <PrdCitationPreviewDrawer />
       </div>
     </div>
   );

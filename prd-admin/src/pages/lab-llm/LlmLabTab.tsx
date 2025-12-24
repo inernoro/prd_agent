@@ -1204,6 +1204,8 @@ export default function LlmLabTab() {
     batchAbortRef.current = null;
     setBatchRunning(false);
     setBatchActiveModelLabel('');
+    // 批量生图停止：同步结束背景运行态
+    emitBackdropBusyEnd();
   };
 
   const clearLabLocalCacheAndResults = useCallback(async () => {
@@ -1275,6 +1277,8 @@ export default function LlmLabTab() {
     setImageError(null);
     setImageRunning(true);
     setSingleSelected({});
+    // 单张生图：让全局背景进入运行态（直到生成完成/失败）
+    emitBackdropBusyStart();
 
     const groupId = `single_${Date.now()}`;
     setSingleGroupId(groupId);
@@ -1302,45 +1306,49 @@ export default function LlmLabTab() {
 
     // 这里不暴露给用户选择返回格式：默认 b64_json（更利于直接展示/下载，且避免部分网关跨域问题）
     let anyFailed = false;
-    for (const m of imageGenModels) {
-      const res = await generateImageGen({
-        modelId: m.modelId,
-        platformId: m.platformId,
-        modelName: m.modelName,
-        prompt,
-        n: perModelN,
-        size: imgSize,
-        responseFormat: 'b64_json',
-      });
-      if (!res.success) {
-        anyFailed = true;
-        const msg = res.error?.message || '生图失败';
-        setImageItems((prev) =>
-          prev.map((x) => (x.groupId === groupId && x.sourceModelId === m.modelId ? { ...x, status: 'error', errorMessage: msg } : x))
-        );
-        continue;
-      }
-
-      const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
-      setImageItems((prev) => {
-        return prev.map((x) => {
-          if (x.groupId !== groupId) return x;
-          if (x.sourceModelId !== m.modelId) return x;
-          const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
-          const img = images[idx];
-          if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
-          return {
-            ...x,
-            status: 'done',
-            base64: (img as any).base64 ?? null,
-            url: (img as any).url ?? null,
-            revisedPrompt: (img as any).revisedPrompt ?? null,
-          };
+    try {
+      for (const m of imageGenModels) {
+        const res = await generateImageGen({
+          modelId: m.modelId,
+          platformId: m.platformId,
+          modelName: m.modelName,
+          prompt,
+          n: perModelN,
+          size: imgSize,
+          responseFormat: 'b64_json',
         });
-      });
+        if (!res.success) {
+          anyFailed = true;
+          const msg = res.error?.message || '生图失败';
+          setImageItems((prev) =>
+            prev.map((x) => (x.groupId === groupId && x.sourceModelId === m.modelId ? { ...x, status: 'error', errorMessage: msg } : x))
+          );
+          continue;
+        }
+
+        const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
+        setImageItems((prev) => {
+          return prev.map((x) => {
+            if (x.groupId !== groupId) return x;
+            if (x.sourceModelId !== m.modelId) return x;
+            const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
+            const img = images[idx];
+            if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
+            return {
+              ...x,
+              status: 'done',
+              base64: (img as any).base64 ?? null,
+              url: (img as any).url ?? null,
+              revisedPrompt: (img as any).revisedPrompt ?? null,
+            };
+          });
+        });
+      }
+      if (anyFailed) setImageError('部分模型生成失败（请查看对应图片卡片）');
+    } finally {
+      setImageRunning(false);
+      emitBackdropBusyEnd();
     }
-    if (anyFailed) setImageError('部分模型生成失败（请查看对应图片卡片）');
-    setImageRunning(false);
   };
 
   const parseBatchPlan = async () => {
@@ -1389,117 +1397,121 @@ export default function LlmLabTab() {
     setBatchItems({});
     setPlanDialogOpen(false);
     setBatchRunning(true);
+    emitBackdropBusyStart();
 
     const items = (planResult.items ?? []) as ImageGenPlanItem[];
-    for (const m of imageGenModels) {
-      if (batchStopRequestedRef.current) break;
-      setBatchActiveModelLabel(m.displayName);
-      const ac = new AbortController();
-      batchAbortRef.current = ac;
+    try {
+      for (const m of imageGenModels) {
+        if (batchStopRequestedRef.current) break;
+        setBatchActiveModelLabel(m.displayName);
+        const ac = new AbortController();
+        batchAbortRef.current = ac;
 
-      const res = await runImageGenBatchStream({
-        input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json', maxConcurrency: params.maxConcurrency },
-        signal: ac.signal,
-        onEvent: (evt) => {
-          if (!evt.data) return;
-          try {
-            const obj = JSON.parse(evt.data);
-            const evtModelId = String(obj.modelId ?? m.modelId ?? '').trim() || m.modelId;
-            if (evt.event === 'run') {
-              if (obj.type === 'error') {
-                setBatchError(obj.errorMessage || '批量生图失败');
-                batchStopRequestedRef.current = true;
-                setBatchRunning(false);
-                setBatchActiveModelLabel('');
+        const res = await runImageGenBatchStream({
+          input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json', maxConcurrency: params.maxConcurrency },
+          signal: ac.signal,
+          onEvent: (evt) => {
+            if (!evt.data) return;
+            try {
+              const obj = JSON.parse(evt.data);
+              const evtModelId = String(obj.modelId ?? m.modelId ?? '').trim() || m.modelId;
+              if (evt.event === 'run') {
+                if (obj.type === 'error') {
+                  setBatchError(obj.errorMessage || '批量生图失败');
+                  batchStopRequestedRef.current = true;
+                  setBatchRunning(false);
+                  setBatchActiveModelLabel('');
+                  return;
+                }
                 return;
               }
-              return;
-            }
-            if (evt.event === 'image') {
-              const key = `${evtModelId}_${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
-              if (obj.type === 'imageStart') {
-                const item: ImageViewItem = {
-                  key,
-                  status: 'running',
-                  prompt: String(obj.prompt ?? ''),
-                  createdAt: Date.now(),
-                  itemIndex: Number(obj.itemIndex ?? 0),
-                  imageIndex: Number(obj.imageIndex ?? 0),
-                  sourceModelId: m.modelId,
-                  sourceModelName: m.modelName,
-                  sourceDisplayName: m.displayName,
-                };
-                setBatchItems((p) => ({ ...p, [key]: item }));
-                return;
-              }
-              if (obj.type === 'imageDone') {
-                setBatchItems((p) => {
-                  const cur = p[key] || {
+              if (evt.event === 'image') {
+                const key = `${evtModelId}_${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
+                if (obj.type === 'imageStart') {
+                  const item: ImageViewItem = {
                     key,
-                    createdAt: Date.now(),
+                    status: 'running',
                     prompt: String(obj.prompt ?? ''),
-                    status: 'running' as const,
+                    createdAt: Date.now(),
                     itemIndex: Number(obj.itemIndex ?? 0),
                     imageIndex: Number(obj.imageIndex ?? 0),
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
                   };
-                  return {
-                    ...p,
-                    [key]: {
-                      ...cur,
-                      status: 'done',
-                      base64: obj.base64 ?? null,
-                      url: obj.url ?? null,
-                      revisedPrompt: obj.revisedPrompt ?? null,
-                    },
-                  };
-                });
-                return;
+                  setBatchItems((p) => ({ ...p, [key]: item }));
+                  return;
+                }
+                if (obj.type === 'imageDone') {
+                  setBatchItems((p) => {
+                    const cur = p[key] || {
+                      key,
+                      createdAt: Date.now(),
+                      prompt: String(obj.prompt ?? ''),
+                      status: 'running' as const,
+                      itemIndex: Number(obj.itemIndex ?? 0),
+                      imageIndex: Number(obj.imageIndex ?? 0),
+                      sourceModelId: m.modelId,
+                      sourceModelName: m.modelName,
+                      sourceDisplayName: m.displayName,
+                    };
+                    return {
+                      ...p,
+                      [key]: {
+                        ...cur,
+                        status: 'done',
+                        base64: obj.base64 ?? null,
+                        url: obj.url ?? null,
+                        revisedPrompt: obj.revisedPrompt ?? null,
+                      },
+                    };
+                  });
+                  return;
+                }
+                if (obj.type === 'imageError') {
+                  setBatchItems((p) => {
+                    const cur = p[key] || {
+                      key,
+                      createdAt: Date.now(),
+                      prompt: String(obj.prompt ?? ''),
+                      status: 'running' as const,
+                      itemIndex: Number(obj.itemIndex ?? 0),
+                      imageIndex: Number(obj.imageIndex ?? 0),
+                      sourceModelId: m.modelId,
+                      sourceModelName: m.modelName,
+                      sourceDisplayName: m.displayName,
+                    };
+                    return {
+                      ...p,
+                      [key]: {
+                        ...cur,
+                        status: 'error',
+                        errorMessage: obj.errorMessage || '失败',
+                      },
+                    };
+                  });
+                  return;
+                }
               }
-              if (obj.type === 'imageError') {
-                setBatchItems((p) => {
-                  const cur = p[key] || {
-                    key,
-                    createdAt: Date.now(),
-                    prompt: String(obj.prompt ?? ''),
-                    status: 'running' as const,
-                    itemIndex: Number(obj.itemIndex ?? 0),
-                    imageIndex: Number(obj.imageIndex ?? 0),
-                    sourceModelId: m.modelId,
-                    sourceModelName: m.modelName,
-                    sourceDisplayName: m.displayName,
-                  };
-                  return {
-                    ...p,
-                    [key]: {
-                      ...cur,
-                      status: 'error',
-                      errorMessage: obj.errorMessage || '失败',
-                    },
-                  };
-                });
-                return;
-              }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
-          }
-        },
-      });
+          },
+        });
 
-      if (!res.success) {
-        setBatchError(res.error?.message || '批量生图失败');
-        setBatchRunning(false);
-        setBatchActiveModelLabel('');
-        return;
+        if (!res.success) {
+          setBatchError(res.error?.message || '批量生图失败');
+          setBatchRunning(false);
+          setBatchActiveModelLabel('');
+          return;
+        }
       }
+    } finally {
+      batchAbortRef.current = null;
+      setBatchRunning(false);
+      setBatchActiveModelLabel('');
+      emitBackdropBusyEnd();
     }
-
-    batchAbortRef.current = null;
-    setBatchRunning(false);
-    setBatchActiveModelLabel('');
   };
 
   const resolveConfigModelId = (evtModelId: unknown, evtModelName: unknown): string | null => {
@@ -1533,6 +1545,22 @@ export default function LlmLabTab() {
   const startRun = async () => {
     if (!activeExperimentId) return alert('请先选择实验');
     if (selectedModels.length === 0) return alert('请先加入至少 1 个模型');
+
+    // 安全提示：如果选中列表里包含“生图模型”，一键实验可能造成较高费用/更长耗时（尤其在生图相关套件）
+    const imageGenModelIds = new Set(allModelsRef.current.filter((m) => (m as any).isImageGen).map((m) => m.id));
+    const imageGenModelNames = new Set(
+      allModelsRef.current
+        .filter((m) => (m as any).isImageGen)
+        .map((m) => String(m.modelName ?? '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const hasImageGenSelected = (selectedModels ?? []).some(
+      (sm) => imageGenModelIds.has(sm.modelId) || (sm.modelName ? imageGenModelNames.has(String(sm.modelName).trim().toLowerCase()) : false)
+    );
+    if (hasImageGenSelected) {
+      const ok = window.confirm('检测到已选择模型中包含“生图模型”。一键开始实验可能导致更长耗时/更高费用，是否继续？');
+      if (!ok) return;
+    }
 
     // 临时禁用：本次运行只跑“未禁用模型”，不改实验配置
     const enabledModels = (selectedModels ?? []).filter((m) => !disabledModelKeys[modelKeyOfSelected(m)]);
@@ -2190,7 +2218,7 @@ export default function LlmLabTab() {
                                   className={cn(
                                     'w-full rounded-[12px] px-3 py-[6px] text-xs flex items-center justify-between gap-3 min-w-0',
                                     'transition-[transform,filter,background-color,border-color] duration-150',
-                                    isDisabled ? 'hover:brightness-[1.03]' : 'hover:-translate-y-[1px] hover:brightness-[1.06]'
+                                    isDisabled ? 'hover:brightness-[1.03]' : 'hover:-translate-y-px hover:brightness-[1.06]'
                                   )}
                                   style={{
                                     border: isDisabled ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(255,255,255,0.10)',
@@ -2458,6 +2486,13 @@ export default function LlmLabTab() {
           <textarea
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
+            onKeyDown={(e) => {
+              // 部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 可能失效，这里兜底强制全选
+              if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                e.preventDefault();
+                (e.currentTarget as HTMLTextAreaElement).select();
+              }
+            }}
             className="mt-2 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
             placeholder={
@@ -3097,7 +3132,7 @@ export default function LlmLabTab() {
                                   'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                   'transition-all duration-150',
                                   'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
                                 ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -3116,7 +3151,7 @@ export default function LlmLabTab() {
                                   'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                   'transition-all duration-150',
                                   'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
                                 ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -3440,7 +3475,7 @@ export default function LlmLabTab() {
                                     'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                     'transition-all duration-150',
                                     'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
                                   ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3459,7 +3494,7 @@ export default function LlmLabTab() {
                                     'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                     'transition-all duration-150',
                                     'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-[1px]',
+                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
                                   ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3668,7 +3703,8 @@ export default function LlmLabTab() {
         title={imagePreviewDialog.title || '图片预览'}
         description="点击图片缩略图可打开此预览"
         maxWidth={1100}
-        contentStyle={{ height: 'min(86vh, 820px)' }}
+        // 重要：预览图必须“完整可见”，避免使用基于 viewport 的 maxHeight 导致在 Dialog 头部/内边距存在时出现上下裁切
+        contentStyle={{ height: 'min(90vh, 880px)' }}
         content={
           <div className="h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-end gap-2 pb-2">
@@ -3699,8 +3735,14 @@ export default function LlmLabTab() {
                   <img
                     src={imagePreviewDialog.src}
                     alt={imagePreviewDialog.title}
-                    className="block max-w-full h-auto"
-                    style={{ maxHeight: '78vh', objectFit: 'contain' }}
+                    className="block"
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: '100%',
+                      width: 'auto',
+                      height: 'auto',
+                      objectFit: 'contain',
+                    }}
                   />
                 </div>
               ) : (

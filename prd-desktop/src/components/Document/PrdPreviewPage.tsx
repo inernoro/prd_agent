@@ -8,6 +8,7 @@ import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import PrdCommentsPanel from '../Comments/PrdCommentsPanel';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import PrdSectionAskPanel from './PrdSectionAskPanel';
+import { applyHighlights as applyHighlightsHelper, clearHighlights as clearHighlightsHelper, focusCitation } from './prdCitationHighlighter';
 
 export default function PrdPreviewPage() {
   const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
@@ -318,270 +319,31 @@ export default function PrdPreviewPage() {
   const clearHighlights = useCallback(() => {
     const container = prdPreviewContentRef.current;
     if (!container) return;
-    const marks = Array.from(container.querySelectorAll('mark[data-prd-citation="1"]'));
-    marks.forEach((m) => {
-      const el = m as HTMLElement;
-      const parent = el.parentNode;
-      if (!parent) return;
-      while (el.firstChild) parent.insertBefore(el.firstChild, el);
-      parent.removeChild(el);
-      parent.normalize();
-    });
-
-    // 清理“块级高亮”（当无法精确包裹文本时的兜底方案）
-    const blocks = Array.from(container.querySelectorAll('[data-prd-citation-block="1"]')) as HTMLElement[];
-    blocks.forEach((b) => {
-      b.removeAttribute('data-prd-citation-block');
-      b.removeAttribute('data-citation-idx');
-      b.style.backgroundColor = '';
-      b.style.borderRadius = '';
-      b.style.padding = '';
-      b.style.outline = '';
-      b.style.outlineOffset = '';
-    });
+    clearHighlightsHelper(container);
   }, []);
 
-  const normalizeExcerptForMatch = (t: string) => {
-    // 不要折叠空白：我们需要字符偏移与 TextNode 对齐
-    const s = String(t || '').replace(/…/g, '').trim();
-    return s.length > 0 ? s : '';
-  };
-
-  const highlightOne = useCallback((excerpt: string, citationIdx: number) => {
-    const container = prdPreviewContentRef.current;
-    if (!container) return false;
-    const needle = normalizeExcerptForMatch(excerpt);
-    if (!needle) return false;
-
-    // 避免超长匹配：截断到 80，减少误跨节点
-    // 为了避免跨节点导致包裹失败，这里刻意用更短的 key（允许多标黄/略模糊）
-    const key = needle.length > 36 ? needle.slice(0, 36) : needle;
-
-    // 优先在常见文本块内匹配，避免跨段落
-    const blocks = Array.from(container.querySelectorAll('p,li,blockquote,td,th')) as HTMLElement[];
-    for (const block of blocks) {
-      // 跳过代码块内部
-      if (block.closest('pre,code')) continue;
-
-      const keyLower = key.toLowerCase();
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const n = walker.currentNode as Text;
-        if (!n.nodeValue) continue;
-        // 避免重复在已经标黄的内容里再标黄
-        if ((n.parentElement as HTMLElement | null)?.closest('mark[data-prd-citation=\"1\"]')) continue;
-
-        const v = n.nodeValue;
-        const idx = v.toLowerCase().indexOf(keyLower);
-        if (idx < 0) continue;
-
-        const before = v.slice(0, idx);
-        const mid = v.slice(idx, idx + key.length);
-        const after = v.slice(idx + key.length);
-
-        const mark = document.createElement('mark');
-        mark.setAttribute('data-prd-citation', '1');
-        mark.setAttribute('data-citation-idx', String(citationIdx));
-        mark.style.backgroundColor = 'rgba(250, 204, 21, 0.55)'; // yellow-400-ish
-        mark.style.borderRadius = '6px';
-        mark.style.padding = '0 2px';
-        mark.textContent = mid;
-
-        const parent = n.parentNode;
-        if (!parent) break;
-        if (before) parent.insertBefore(document.createTextNode(before), n);
-        parent.insertBefore(mark, n);
-        if (after) parent.insertBefore(document.createTextNode(after), n);
-        parent.removeChild(n);
-        return true;
-      }
-    }
-
-    return false;
-  }, [normalizeExcerptForMatch]);
-
-  const normalizeLoose = (raw: string) => {
-    const s = String(raw || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
-    // 去掉常见标点/符号（提高跨节点/格式差异的命中率）
-    return s.replace(/[\p{P}\p{S}]+/gu, '');
-  };
-
-  const highlightBlockFallback = useCallback((excerpt: string, citationIdx: number) => {
-    const container = prdPreviewContentRef.current;
-    if (!container) return false;
-    const needle = normalizeExcerptForMatch(excerpt);
-    if (!needle) return false;
-
-    // 更短的 key，避免误匹配；同时做“宽松归一化”以跨越 inline markdown 分割节点的问题
-    const key = needle.length > 28 ? needle.slice(0, 28) : needle;
-    const keyLoose = normalizeLoose(key);
-    if (!keyLoose) return false;
-
-    const blocks = Array.from(container.querySelectorAll('p,li,blockquote,td,th,h1,h2,h3,h4,h5,h6')) as HTMLElement[];
-    for (const block of blocks) {
-      if (block.closest('pre,code')) continue;
-      const text = block.textContent || '';
-      const tLoose = normalizeLoose(text);
-      if (!tLoose) continue;
-      if (!tLoose.includes(keyLoose)) continue;
-
-      // 使用块级高亮：不破坏 DOM 结构（避免跨节点包裹的复杂度）
-      block.setAttribute('data-prd-citation-block', '1');
-      block.setAttribute('data-citation-idx', String(citationIdx));
-      block.style.backgroundColor = 'rgba(250, 204, 21, 0.22)'; // 更淡一些，避免影响阅读
-      block.style.borderRadius = '10px';
-      block.style.padding = '2px 4px';
-      return true;
-    }
-
-    return false;
-  }, [normalizeExcerptForMatch]);
-
-  const highlightFuzzyFallback = useCallback((excerpt: string, citationIdx: number) => {
-    const container = prdPreviewContentRef.current;
-    if (!container) return false;
-    const needle = normalizeExcerptForMatch(excerpt);
-    if (!needle) return false;
-
-    const e = normalizeLoose(needle);
-    if (!e || e.length < 10) return false;
-
-    // 取多个窗口片段，做“包含计分”，避免必须完整子串
-    const windowLen = Math.min(16, Math.max(10, Math.floor(e.length / 4)));
-    const picks = new Set<string>();
-    const steps = Math.min(6, Math.max(2, Math.floor(e.length / windowLen)));
-    for (let i = 0; i < steps; i += 1) {
-      const start = Math.floor((i * (e.length - windowLen)) / Math.max(1, steps - 1));
-      const seg = e.slice(start, start + windowLen);
-      if (seg.length >= 10) picks.add(seg);
-    }
-    const segs = Array.from(picks);
-    if (segs.length === 0) return false;
-
-    const blocks = Array.from(container.querySelectorAll('p,li,blockquote,td,th,h1,h2,h3,h4,h5,h6')) as HTMLElement[];
-    let best: { el: HTMLElement; score: number } | null = null;
-    for (const block of blocks) {
-      if (block.closest('pre,code')) continue;
-      const t = normalizeLoose(block.textContent || '');
-      if (!t || t.length < 10) continue;
-      let score = 0;
-      for (const seg of segs) {
-        if (t.includes(seg)) score += 1;
-      }
-      if (score <= 0) continue;
-      if (!best || score > best.score) best = { el: block, score };
-      // 快速退出：满分不必继续
-      if (best && best.score >= segs.length) break;
-    }
-
-    // 至少命中 2 个片段才认为可靠
-    if (!best || best.score < 2) return false;
-
-    best.el.setAttribute('data-prd-citation-block', '1');
-    best.el.setAttribute('data-citation-idx', String(citationIdx));
-    best.el.style.backgroundColor = 'rgba(250, 204, 21, 0.18)';
-    best.el.style.borderRadius = '10px';
-    best.el.style.padding = '2px 4px';
-    return true;
-  }, [normalizeExcerptForMatch]);
-
-  const highlightHeadingFallback = useCallback((citation: DocCitation, citationIdx: number) => {
-    const container = prdPreviewContentRef.current;
-    if (!container) return false;
-    const hid = (citation?.headingId || '').trim();
-    const htitle = (citation?.headingTitle || '').trim();
-    const resolved = resolveHeadingIdForNav({ headingId: hid || null, headingTitle: htitle || null });
-    if (!resolved) return false;
-    const esc = (window as any).CSS?.escape
-      ? (window as any).CSS.escape(resolved)
-      : resolved.replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
-    const el = container.querySelector(`#${esc}`) as HTMLElement | null;
-    if (!el) return false;
-    // 只高亮 heading 节点（视觉更稳定），并复用 block 高亮属性供 focusActiveCitation 使用
-    el.setAttribute('data-prd-citation-block', '1');
-    el.setAttribute('data-citation-idx', String(citationIdx));
-    el.style.backgroundColor = 'rgba(250, 204, 21, 0.18)';
-    el.style.borderRadius = '10px';
-    el.style.padding = '2px 4px';
-    return true;
-  }, [resolveHeadingIdForNav]);
-
   const applyHighlights = useCallback((citations: DocCitation[]) => {
-    clearHighlights();
-    const list = (citations ?? []).slice(0, 30);
-    let ok = 0;
-    let okBlock = 0;
-    let okFuzzy = 0;
-    let okHeading = 0;
-    const failed: number[] = [];
-    list.forEach((c, idx) => {
-      if (!c?.excerpt) {
-        // 没 excerpt 仍然尝试用章节标题兜底标黄
-        const hitHeading = highlightHeadingFallback(c, idx);
-        if (hitHeading) okHeading += 1;
-        else failed.push(idx);
-        return;
-      }
-      const hit = highlightOne(c.excerpt, idx);
-      if (hit) {
-        ok += 1;
-        return;
-      }
-      const hitBlock = highlightBlockFallback(c.excerpt, idx);
-      if (hitBlock) {
-        okBlock += 1;
-        return;
-      }
-      const hitFuzzy = highlightFuzzyFallback(c.excerpt, idx);
-      if (hitFuzzy) {
-        okFuzzy += 1;
-        return;
-      }
-      const hitHeading = highlightHeadingFallback(c, idx);
-      if (hitHeading) {
-        okHeading += 1;
-        return;
-      }
-      failed.push(idx);
+    const container = prdPreviewContentRef.current;
+    if (!container) return;
+    applyHighlightsHelper({
+      container,
+      citations,
+      resolveHeadingIdForNav,
     });
     setHighlightReady(true);
-  }, [clearHighlights, highlightOne, highlightBlockFallback, highlightFuzzyFallback, highlightHeadingFallback]);
+  }, [resolveHeadingIdForNav]);
 
   const focusActiveCitation = useCallback(() => {
     const container = prdPreviewContentRef.current;
     if (!container) return;
-    const idx = navActiveIndex ?? 0;
-    const esc = (window as any).CSS?.escape ? (window as any).CSS.escape(String(idx)) : String(idx).replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
-    const target = container.querySelector(`mark[data-prd-citation="1"][data-citation-idx="${esc}"]`) as HTMLElement | null;
-    const blockTarget = container.querySelector(`[data-prd-citation-block="1"][data-citation-idx="${esc}"]`) as HTMLElement | null;
-    if (!target && !blockTarget) {
-      // 兜底：没找到标黄（多为 excerpt 无法定位），至少跳到该引用所属章节，避免“下一条没反应”的体验
-      const c = Array.isArray(navCitations) ? navCitations[idx] : null;
-      const hid = (c?.headingId || '').trim();
-      const htitle = (c?.headingTitle || '').trim();
-      const resolved = resolveHeadingIdForNav({ headingId: hid || null, headingTitle: htitle || null });
-      if (resolved) scrollToHeading(resolved);
-      return;
-    }
-    const chosen = target || blockTarget;
-    // 高亮当前引用：边框更醒目
-    Array.from(container.querySelectorAll('mark[data-prd-citation="1"]')).forEach((m) => {
-      (m as HTMLElement).style.outline = '';
+    focusCitation({
+      container,
+      citationIdx: navActiveIndex ?? 0,
+      citations: navCitations,
+      resolveHeadingIdForNav,
+      scrollToHeading,
     });
-    Array.from(container.querySelectorAll('[data-prd-citation-block="1"]')).forEach((m) => {
-      (m as HTMLElement).style.outline = '';
-    });
-    chosen!.style.outline = '2px solid rgba(59,130,246,0.75)';
-    chosen!.style.outlineOffset = '2px';
-    // 不用 scrollIntoView：在某些 WebView/嵌套滚动容器下会触发“滚动到奇怪位置”的乱跳
-    const containerRect = container.getBoundingClientRect();
-    const elRect = chosen!.getBoundingClientRect();
-    const top = container.scrollTop + (elRect.top - containerRect.top) - Math.max(12, (container.clientHeight / 2 - elRect.height / 2));
-    container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-  }, [navActiveIndex, navCitations, resolveHeadingIdForNav]);
+  }, [navActiveIndex, navCitations, resolveHeadingIdForNav, scrollToHeading]);
 
   const clearSelectionToolbar = () => setSelectionToolbar(null);
 
