@@ -15,6 +15,7 @@ type CanvasImageItem = {
   src: string;
   status: 'done' | 'error' | 'running';
   errorMessage?: string | null;
+  refId?: number;
 };
 
 type UiMsg = {
@@ -125,6 +126,13 @@ export default function AdvancedImageMasterTab() {
   const [zoom, setZoom] = useState(1);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [selectedImageSize, setSelectedImageSize] = useState<{ w: number; h: number } | null>(null);
+  const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [pendingFit, setPendingFit] = useState(false);
+
+  // @imgN 占位符
+  const [nextRefId, setNextRefId] = useState(1);
+
+  const clampZoom = (z: number) => Math.max(0.25, Math.min(3, z));
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
@@ -150,6 +158,40 @@ export default function AdvancedImageMasterTab() {
     bottomRef.current?.scrollIntoView({ behavior: busy ? 'auto' : 'smooth' });
   }, [messages, busy]);
 
+  // 监听画布尺寸变化（用于居中/适配）
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setStageSize({ w: el.clientWidth || 0, h: el.clientHeight || 0 });
+    });
+    ro.observe(el);
+    setStageSize({ w: el.clientWidth || 0, h: el.clientHeight || 0 });
+    return () => ro.disconnect();
+  }, []);
+
+  // Mac 触控板捏合缩放（Chrome/Edge 通常体现为 ctrlKey + wheel）
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+
+    const onWheel = (ev: WheelEvent) => {
+      // 空态不缩放
+      if (!selected?.src) return;
+      // pinch / ctrl+wheel
+      if (!ev.ctrlKey && !ev.metaKey) return;
+      ev.preventDefault();
+
+      const dy = ev.deltaY;
+      // dy > 0 通常表示缩小
+      const factor = dy > 0 ? 1 / 1.12 : 1.12;
+      setZoom((z) => clampZoom(z * factor));
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel as EventListener);
+  }, [selected?.src]);
+
   const pushMsg = (role: UiMsg['role'], content: string) => {
     setMessages((prev) => prev.concat({ id: `${role}-${Date.now()}`, role, content, ts: Date.now() }));
   };
@@ -160,9 +202,10 @@ export default function AdvancedImageMasterTab() {
     return { ok: true as const };
   };
 
-  const runFromText = async (text: string) => {
-    const t = String(text ?? '').trim();
-    if (!t) return;
+  const runFromText = async (displayText: string, requestText: string, primaryRef: CanvasImageItem | null) => {
+    const display = String(displayText ?? '').trim();
+    const reqText = String(requestText ?? '').trim();
+    if (!reqText) return;
     const modelCheck = ensureModel();
     if (!modelCheck.ok) {
       setError(modelCheck.reason);
@@ -172,11 +215,11 @@ export default function AdvancedImageMasterTab() {
 
     setError('');
     setBusy(true);
-    pushMsg('User', t);
+    pushMsg('User', display || reqText);
 
     let plan: ImageGenPlanResponse | null = null;
     try {
-      const pres = await planImageGen({ text: t, maxItems: 8 });
+      const pres = await planImageGen({ text: reqText, maxItems: 8 });
       if (!pres.success) {
         const msg = pres.error?.message || '解析失败';
         setError(msg);
@@ -192,14 +235,20 @@ export default function AdvancedImageMasterTab() {
     }
 
     const items = Array.isArray(plan?.items) ? plan!.items : [];
-    const firstPrompt = String(items[0]?.prompt ?? '').trim() || t;
+    const firstPrompt = String(items[0]?.prompt ?? '').trim() || reqText;
+
+    const isVolcesSeedream = /volces|doubao|seedream/i.test(String(activeModel?.modelName || ''));
 
     pushMsg(
       'Assistant',
       [
         `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
         items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
-        selected ? '你已选中一张图片作为“首帧图”。本次将作为图生图首帧传给生图接口（若上游平台不支持，会返回参数错误）。' : '',
+        (primaryRef || selected) && isVolcesSeedream
+          ? '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
+          : (primaryRef || selected)
+            ? '你已选中一张图片作为“首帧图”。本次将作为图生图首帧传给生图接口（若上游平台不支持，会返回参数错误）。'
+            : '',
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -219,13 +268,14 @@ export default function AdvancedImageMasterTab() {
     });
 
     try {
+      const initSrc = (primaryRef?.src || selected?.src) ?? '';
       const gres = await generateImageGen({
         modelId: activeModel!.id,
         prompt: firstPrompt,
         n: 1,
         size: DEFAULT_SIZE,
         responseFormat: DEFAULT_RESPONSE_FORMAT,
-        initImageBase64: selected?.src && selected.src.startsWith('data:') ? selected.src : undefined,
+        initImageBase64: initSrc && initSrc.startsWith('data:') ? initSrc : undefined,
       });
       if (!gres.success) {
         const msg = gres.error?.message || '生成失败';
@@ -251,30 +301,101 @@ export default function AdvancedImageMasterTab() {
     }
   };
 
-  const onSend = async () => {
-    const t = input.trim();
-    if (!t) return;
-    setInput('');
-    await runFromText(t);
+  const insertAtCursor = (text: string) => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const value = ta.value ?? '';
+    const start = ta.selectionStart ?? value.length;
+    const end = ta.selectionEnd ?? value.length;
+    const next = value.slice(0, start) + text + value.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + text.length;
+      ta.setSelectionRange(pos, pos);
+    });
   };
 
-  const onUploadImage = async (file: File | null) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('请选择图片文件');
-      return;
+  const ensureRefIdForKey = (key: string) => {
+    const it = canvas.find((x) => x.key === key) ?? null;
+    if (!it) return null;
+    if (it.refId != null) return it.refId;
+    const id = nextRefId;
+    setNextRefId((n) => n + 1);
+    setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, refId: id } : x)));
+    return id;
+  };
+
+  const extractReferencedImagesInOrder = (text: string) => {
+    const s = String(text ?? '');
+    const rx = /@img(\d+)/g;
+    const ids: number[] = [];
+    const seen = new Set<number>();
+    let m: RegExpExecArray | null;
+    while ((m = rx.exec(s))) {
+      const id = Number(m[1]);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
     }
-    const reader = new FileReader();
-    const key = `upload_${Date.now()}`;
-    reader.onload = () => {
-      const src = String(reader.result || '');
-      if (!src) return;
-      const item: CanvasImageItem = { key, createdAt: Date.now(), prompt: file.name || 'uploaded', src, status: 'done' };
-      setCanvas((prev) => [item, ...prev].slice(0, 60));
-      setSelectedKey(key);
-      pushMsg('Assistant', '已把你上传的图片加入画板。点击图片可选中，后续可作为首帧图使用。');
-    };
-    reader.readAsDataURL(file);
+    const items: CanvasImageItem[] = [];
+    for (const id of ids) {
+      const it = canvas.find((x) => x.refId === id);
+      if (it) items.push(it);
+    }
+    return items;
+  };
+
+  const buildRequestTextWithRefs = (rawText: string) => {
+    const refs = extractReferencedImagesInOrder(rawText);
+    if (refs.length === 0) return { requestText: rawText, primaryRef: null as CanvasImageItem | null };
+    const lines = refs.map((it) => `- @img${it.refId}: ${it.prompt || '（无描述）'}`);
+    const requestText = `${rawText}\n\n【引用图片（按顺序）】\n${lines.join('\n')}`;
+    return { requestText, primaryRef: refs[0] ?? null };
+  };
+
+  const onSend = async () => {
+    const raw = input.trim();
+    if (!raw) return;
+    const { requestText, primaryRef } = buildRequestTextWithRefs(raw);
+    setInput('');
+    await runFromText(raw, requestText, primaryRef);
+  };
+
+  const onUploadImages = async (files: File[]) => {
+    const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
+    if (list.length === 0) return;
+
+    const added: CanvasImageItem[] = [];
+    const now = Date.now();
+
+    await Promise.all(
+      list.slice(0, 20).map(
+        (file, idx) =>
+          new Promise<void>((resolve) => {
+            const reader = new FileReader();
+            const key = `upload_${now}_${idx}`;
+            reader.onload = () => {
+              const src = String(reader.result || '');
+              if (src) {
+                added.push({ key, createdAt: Date.now(), prompt: file.name || 'uploaded', src, status: 'done' });
+              }
+              resolve();
+            };
+            reader.onerror = () => resolve();
+            reader.readAsDataURL(file);
+          })
+      )
+    );
+
+    if (added.length === 0) return;
+    // 保持顺序：用户选中的文件顺序
+    added.sort((a, b) => a.createdAt - b.createdAt);
+    setCanvas((prev) => [...added.reverse(), ...prev].slice(0, 60));
+    setSelectedKey((cur) => cur || added[0].key);
+    pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
+    setPendingFit(true);
   };
 
   const templates = [
@@ -282,8 +403,6 @@ export default function AdvancedImageMasterTab() {
     { id: 'coffee', title: 'Coffee Shop Branding', desc: '为咖啡店生成品牌视觉方向与主视觉' },
     { id: 'story', title: 'Story Board', desc: '生成短片分镜首帧图（情绪与镜头）' },
   ] as const;
-
-  const clampZoom = (z: number) => Math.max(0.25, Math.min(3, z));
 
   const fitToStage = () => {
     const el = stageRef.current;
@@ -303,6 +422,30 @@ export default function AdvancedImageMasterTab() {
     setZoom(clampZoom(scale));
   };
 
+  // 在图片加载/切换后做一次“适配 + 居中”，避免一开始出现在两边（无法左右滚动的错觉）
+  useEffect(() => {
+    if (!pendingFit) return;
+    if (!selected?.src) return;
+    if (!selectedImageSize) return;
+    const el = stageRef.current;
+    if (!el) return;
+
+    // 先适配，再将滚动定位到中心（避免依赖 fitToStage 导致 lint warning）
+    const w = el.clientWidth - 80;
+    const h = el.clientHeight - 220;
+    if (w > 0 && h > 0) {
+      const scale = Math.min(w / selectedImageSize.w, h / selectedImageSize.h) * 0.98;
+      setZoom(clampZoom(scale));
+    }
+    requestAnimationFrame(() => {
+      const cx = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
+      const cy = Math.max(0, (el.scrollHeight - el.clientHeight) / 2);
+      el.scrollLeft = cx;
+      el.scrollTop = cy;
+      setPendingFit(false);
+    });
+  }, [pendingFit, selected?.src, selectedImageSize]);
+
   return (
     <div className="h-full min-h-0 flex gap-4">
       {/* 左侧：画板 */}
@@ -316,6 +459,15 @@ export default function AdvancedImageMasterTab() {
               background: 'rgba(0,0,0,0.10)',
             }}
             tabIndex={0}
+            onMouseDown={() => stageRef.current?.focus()}
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const fs = Array.from(e.dataTransfer.files ?? []);
+              void onUploadImages(fs);
+            }}
             onKeyDown={(e) => {
               const isMod = e.metaKey || e.ctrlKey;
               if (!isMod) return;
@@ -331,35 +483,46 @@ export default function AdvancedImageMasterTab() {
               }
             }}
           >
-            <div className="min-h-full w-full flex items-center justify-center px-10 pt-16 pb-[152px]">
+            <div className={selected?.src ? 'min-h-full w-full px-10 pt-16 pb-[152px]' : 'min-h-full w-full px-10 py-10'}>
               {!selected?.src ? (
                 <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   画布暂无图片。右侧输入需求点击“生成”，或先上传一张图片作为首帧。
                 </div>
               ) : (
                 <div
+                  className="grid place-items-center"
                   style={{
-                    width: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.w * zoom)) : 'auto',
-                    height: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.h * zoom)) : 'auto',
+                    minWidth: Math.max(stageSize.w || 0, selectedImageSize ? Math.round(selectedImageSize.w * zoom) : 0),
+                    minHeight: Math.max(stageSize.h || 0, selectedImageSize ? Math.round(selectedImageSize.h * zoom) : 0),
                   }}
                 >
-                  <img
-                    src={selected.src}
-                    alt={selected.prompt}
+                  <div
                     style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'contain',
-                      display: 'block',
-                      boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                      width: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.w * zoom)) : 'auto',
+                      height: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.h * zoom)) : 'auto',
                     }}
-                    onLoad={(e) => {
-                      const img = e.currentTarget;
-                      const w = img.naturalWidth || 0;
-                      const h = img.naturalHeight || 0;
-                      if (w > 0 && h > 0) setSelectedImageSize({ w, h });
-                    }}
-                  />
+                  >
+                    <img
+                      src={selected.src}
+                      alt={selected.prompt}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        display: 'block',
+                        boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                      }}
+                      onLoad={(e) => {
+                        const img = e.currentTarget;
+                        const w = img.naturalWidth || 0;
+                        const h = img.naturalHeight || 0;
+                        if (w > 0 && h > 0) {
+                          setSelectedImageSize({ w, h });
+                          setPendingFit(true);
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -426,7 +589,7 @@ export default function AdvancedImageMasterTab() {
           {/* 左侧悬浮工具条 */}
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
             <div
-              className="rounded-[18px] p-2 flex flex-col gap-2"
+              className="rounded-[16px] p-[6px] flex flex-col gap-2"
               style={{
                 border: '1px solid rgba(255,255,255,0.12)',
                 background: 'rgba(0,0,0,0.22)',
@@ -437,7 +600,7 @@ export default function AdvancedImageMasterTab() {
             >
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-white/5"
+                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => fileRef.current?.click()}
                 title="上传图片到画板"
@@ -447,7 +610,7 @@ export default function AdvancedImageMasterTab() {
               </button>
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-white/5"
+                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => {
                   const ok = window.confirm('确认清空画板？');
@@ -466,7 +629,7 @@ export default function AdvancedImageMasterTab() {
               {/* 预留：选择/拖拽工具（先占位，后续可扩展） */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center"
+                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center"
                 style={{ color: 'rgba(255,255,255,0.28)' }}
                 title="选择/拖拽（预留）"
                 aria-label="选择/拖拽（预留）"
@@ -509,8 +672,8 @@ export default function AdvancedImageMasterTab() {
                         }}
                         onClick={() => {
                           setSelectedKey(it.key);
-                          setZoom(1);
                           setSelectedImageSize(null);
+                          setPendingFit(true);
                         }}
                         title={it.prompt}
                       >
@@ -554,10 +717,11 @@ export default function AdvancedImageMasterTab() {
             type="file"
             className="hidden"
             accept="image/*"
+            multiple
             onChange={(e) => {
-              const f = e.currentTarget.files?.[0] ?? null;
+              const fs = Array.from(e.currentTarget.files ?? []);
               e.currentTarget.value = '';
-              void onUploadImage(f);
+              void onUploadImages(fs);
             }}
           />
         </div>
@@ -650,6 +814,20 @@ export default function AdvancedImageMasterTab() {
                   {selected ? `已选中首帧：${selected.prompt}` : '未选择首帧'}
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!selectedKey || !selected}
+                    onClick={() => {
+                      if (!selectedKey) return;
+                      const id = ensureRefIdForKey(selectedKey);
+                      if (!id) return;
+                      insertAtCursor(`${input && !input.endsWith(' ') ? ' ' : ''}@img${id} `);
+                    }}
+                    title="在输入框插入 @imgN 引用"
+                  >
+                    插入引用
+                  </Button>
                   <Tooltip
                     content={
                       <div className="leading-relaxed">

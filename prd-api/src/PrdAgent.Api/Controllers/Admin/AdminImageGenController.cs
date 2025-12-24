@@ -10,6 +10,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
+using System.Text.RegularExpressions;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -168,6 +169,28 @@ public class AdminImageGenController : ControllerBase
         var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
 
+        // seedream/volces：多数情况下不支持 OpenAI 标准 images/edits 的“首帧图生图”语义。
+        // 策略：检测到 volces API 时，将首帧图交给 Vision 模型提取风格描述，拼进 prompt，再走 images/generations。
+        if (!string.IsNullOrWhiteSpace(initImageBase64))
+        {
+            var apiUrlForDetect = await TryResolveImageGenApiUrlAsync(modelId, platformId, ct);
+            if (IsVolcesApiUrl(apiUrlForDetect))
+            {
+                var styleHint = await TryExtractStyleHintAsync(initImageBase64, ct);
+                if (!string.IsNullOrWhiteSpace(styleHint))
+                {
+                    prompt = $"{prompt}\n\n【参考首帧风格】\n{styleHint}";
+                    // 不再走 edits（避免“看似支持但实际忽略”的错觉）
+                    initImageBase64 = null;
+                }
+                else
+                {
+                    // 无法提取风格：仍降级为纯文生图（并让前端通过提示告知用户）
+                    initImageBase64 = null;
+                }
+            }
+        }
+
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
@@ -193,6 +216,114 @@ public class AdminImageGenController : ControllerBase
         }
 
         return Ok(ApiResponse<ImageGenResult>.Ok(res.Data!));
+    }
+
+    private async Task<string?> TryResolveImageGenApiUrlAsync(string? modelId, string? platformId, CancellationToken ct)
+    {
+        // 优先模型配置
+        if (!string.IsNullOrWhiteSpace(modelId))
+        {
+            var m = await _db.LLMModels.Find(x => x.Id == modelId && x.Enabled).FirstOrDefaultAsync(ct);
+            if (m != null)
+            {
+                if (!string.IsNullOrWhiteSpace(m.ApiUrl)) return m.ApiUrl;
+                if (!string.IsNullOrWhiteSpace(m.PlatformId))
+                {
+                    var p = await _db.LLMPlatforms.Find(x => x.Id == m.PlatformId && x.Enabled).FirstOrDefaultAsync(ct);
+                    if (p != null && !string.IsNullOrWhiteSpace(p.ApiUrl)) return p.ApiUrl;
+                }
+            }
+        }
+
+        // 平台回退调用
+        if (!string.IsNullOrWhiteSpace(platformId))
+        {
+            var p = await _db.LLMPlatforms.Find(x => x.Id == platformId && x.Enabled).FirstOrDefaultAsync(ct);
+            if (p != null && !string.IsNullOrWhiteSpace(p.ApiUrl)) return p.ApiUrl;
+        }
+        return null;
+    }
+
+    private static bool IsVolcesApiUrl(string? apiUrl)
+    {
+        var raw = (apiUrl ?? string.Empty).Trim().TrimEnd('#');
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var u)) return false;
+        return u.Host.EndsWith("volces.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<string?> TryExtractStyleHintAsync(string initImageBase64, CancellationToken ct)
+    {
+        if (!TryParseDataUrlOrBase64(initImageBase64, out var mime, out var b64)) return null;
+        if (string.IsNullOrWhiteSpace(b64)) return null;
+
+        try
+        {
+            var client = await _modelDomain.GetClientAsync(ModelPurpose.Vision, ct);
+
+            var systemPrompt =
+                "你是“图片风格提取器”。你的任务：根据输入图片，提取可直接用于生图模型的风格描述。\n" +
+                "要求：\n" +
+                "- 只输出风格描述，不要解释过程\n" +
+                "- 输出中文，80-160字\n" +
+                "- 关注：构图、光照、色彩、材质、镜头感、景深、氛围、画面风格（写实/插画/3D/胶片等）\n" +
+                "- 不要出现“这张图里有……”的叙述口吻；用“风格指令”写法\n";
+
+            var msg = new LLMMessage
+            {
+                Role = "user",
+                Content = "请提取该图片的风格指令。",
+                Attachments = new List<LLMAttachment>
+                {
+                    new()
+                    {
+                        Type = "image",
+                        MimeType = mime,
+                        Base64Data = b64
+                    }
+                }
+            };
+
+            var raw = await CollectToTextAsync(client, systemPrompt, new List<LLMMessage> { msg }, ct);
+            var s = NormalizeStyleHint(raw);
+            return string.IsNullOrWhiteSpace(s) ? null : s;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string NormalizeStyleHint(string raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+        // 取第一段，避免模型输出多段
+        s = Regex.Replace(s, @"\n{3,}", "\n\n");
+        if (s.Length > 220) s = s[..220].Trim();
+        return s;
+    }
+
+    private static bool TryParseDataUrlOrBase64(string raw, out string mime, out string base64)
+    {
+        mime = "image/png";
+        base64 = string.Empty;
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        if (s.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            var comma = s.IndexOf(',');
+            if (comma < 0) return false;
+            var header = s.Substring(5, comma - 5);
+            var payload = s[(comma + 1)..];
+            var semi = header.IndexOf(';');
+            var ct = semi >= 0 ? header[..semi] : header;
+            if (!string.IsNullOrWhiteSpace(ct)) mime = ct.Trim();
+            s = payload.Trim();
+        }
+        // 仅保留 base64 内容
+        base64 = s;
+        return !string.IsNullOrWhiteSpace(base64);
     }
 
     /// <summary>

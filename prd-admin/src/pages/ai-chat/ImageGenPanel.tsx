@@ -292,96 +292,6 @@ export default function ImageGenPanel() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              图片创作（功能测试）
-            </div>
-            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              复用 /api/v1/admin/image-gen 接口：单次生成 + plan + 批量 SSE（参数自动选择）
-            </div>
-          </div>
-          {batchRunning ? (
-            <Button variant="danger" size="sm" onClick={stopBatch}>
-              <Square size={16} />
-              停止
-            </Button>
-          ) : null}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-            {modelsLoading ? '加载模型中...' : activeModel ? `默认模型：${activeModel.name || activeModel.modelName}` : '暂无生图模型（请先在“模型管理”启用 isImageGen 模型）'}
-          </div>
-          <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-            {`默认参数：${DEFAULT_SIZE} · ${DEFAULT_N} 张 · base64`}
-          </div>
-        </div>
-
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          className="mt-4 w-full min-h-[120px] rounded-[16px] px-4 py-3 text-sm outline-none"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
-          placeholder="输入生图提示词（也用于批量 plan）"
-        />
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="primary" onClick={runSingle} disabled={!activeModel || singleLoading || batchRunning || !prompt.trim()}>
-            {singleLoading ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
-            单次生成
-          </Button>
-          <Button variant="secondary" onClick={buildPlan} disabled={planLoading || batchRunning || !prompt.trim()}>
-            {planLoading ? <Loader2 size={16} className="animate-spin" /> : null}
-            生成批量计划
-          </Button>
-          <Button variant="secondary" onClick={startBatch} disabled={!activeModel || batchRunning || !planResult}>
-            批量执行（SSE）
-          </Button>
-          <Button variant="ghost" onClick={() => setImages([])} disabled={images.length === 0 || batchRunning || singleLoading}>
-            清空结果
-          </Button>
-        </div>
-
-        {singleError ? (
-          <div className="mt-3 text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
-            {singleError}
-          </div>
-        ) : null}
-
-        {planResult ? (
-          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              批量计划：{planResult.total} 张（{planResult.items?.length ?? 0} 项）
-            </div>
-            <div className="mt-2 space-y-1">
-              {(planResult.items ?? []).map((it, idx) => (
-                <div key={idx} className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {idx + 1}. {it.count} × {it.prompt}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {batchRunning || batchLog ? (
-          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                批量进度
-              </div>
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                total={batchMeta.total ?? '-'} done={batchMeta.done ?? '-'} failed={batchMeta.failed ?? '-'}
-              </div>
-            </div>
-            <pre className="mt-2 text-xs whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>
-              {batchLog || '（等待事件）'}
-            </pre>
-          </div>
-        ) : null}
-      </Card>
-
       <Card className="flex-1 min-h-0 overflow-hidden">
         <div className="h-full min-h-0 flex flex-col">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -523,6 +433,96 @@ export default function ImageGenPanel() {
             )}
           </div>
         </div>
+      </Card>
+
+      <Card>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              图片创作（功能测试）
+            </div>
+            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              复用 /api/v1/admin/image-gen 接口：单次生成 + plan + 批量 SSE（参数自动选择）
+            </div>
+          </div>
+          {batchRunning ? (
+            <Button variant="danger" size="sm" onClick={stopBatch}>
+              <Square size={16} />
+              停止
+            </Button>
+          ) : null}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+            {modelsLoading ? '加载模型中...' : activeModel ? `默认模型：${activeModel.name || activeModel.modelName}` : '暂无生图模型（请先在“模型管理”启用 isImageGen 模型）'}
+          </div>
+          <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+            {`默认参数：${DEFAULT_SIZE} · ${DEFAULT_N} 张 · base64`}
+          </div>
+        </div>
+
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          className="mt-4 w-full min-h-[120px] rounded-[16px] px-4 py-3 text-sm outline-none"
+          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+          placeholder="输入生图提示词（也用于批量 plan）"
+        />
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button variant="primary" onClick={runSingle} disabled={!activeModel || singleLoading || batchRunning || !prompt.trim()}>
+            {singleLoading ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+            单次生成
+          </Button>
+          <Button variant="secondary" onClick={buildPlan} disabled={planLoading || batchRunning || !prompt.trim()}>
+            {planLoading ? <Loader2 size={16} className="animate-spin" /> : null}
+            生成批量计划
+          </Button>
+          <Button variant="secondary" onClick={startBatch} disabled={!activeModel || batchRunning || !planResult}>
+            批量执行（SSE）
+          </Button>
+          <Button variant="ghost" onClick={() => setImages([])} disabled={images.length === 0 || batchRunning || singleLoading}>
+            清空结果
+          </Button>
+        </div>
+
+        {singleError ? (
+          <div className="mt-3 text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
+            {singleError}
+          </div>
+        ) : null}
+
+        {planResult ? (
+          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              批量计划：{planResult.total} 张（{planResult.items?.length ?? 0} 项）
+            </div>
+            <div className="mt-2 space-y-1">
+              {(planResult.items ?? []).map((it, idx) => (
+                <div key={idx} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {idx + 1}. {it.count} × {it.prompt}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {batchRunning || batchLog ? (
+          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                批量进度
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                total={batchMeta.total ?? '-'} done={batchMeta.done ?? '-'} failed={batchMeta.failed ?? '-'}
+              </div>
+            </div>
+            <pre className="mt-2 text-xs whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>
+              {batchLog || '（等待事件）'}
+            </pre>
+          </div>
+        ) : null}
       </Card>
 
       <Dialog
