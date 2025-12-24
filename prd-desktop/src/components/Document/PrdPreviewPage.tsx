@@ -183,7 +183,7 @@ export default function PrdPreviewPage(props?: {
     }
   };
 
-  const scrollToHeading = (id: string) => {
+  const scrollToHeading = useCallback((id: string) => {
     const container = prdPreviewContentRef.current;
     if (!container) return;
     const esc = (window as any).CSS?.escape ? (window as any).CSS.escape(id) : id.replace(/([ #;?%&,.+*~\':"!^$[\]()=>|/@])/g, '\\$1');
@@ -201,7 +201,7 @@ export default function PrdPreviewPage(props?: {
       container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     };
     tryScroll(0);
-  };
+  }, []);
 
   const resolveHeadingIdForNav = useCallback((args: { headingId?: string | null; headingTitle?: string | null }) => {
     const container = prdPreviewContentRef.current;
@@ -350,17 +350,11 @@ export default function PrdPreviewPage(props?: {
     setHighlightReady(true);
   }, [resolveHeadingIdForNav]);
 
-  const focusActiveCitation = useCallback(() => {
-    const container = prdPreviewContentRef.current;
-    if (!container) return;
-    focusCitation({
-      container,
-      citationIdx: navActiveIndex ?? 0,
-      citations: navCitations,
-      resolveHeadingIdForNav,
-      scrollToHeading,
-    });
-  }, [navActiveIndex, navCitations, resolveHeadingIdForNav, scrollToHeading]);
+  // “从聊天点击依据 -> 打开预览并跳转” 的最后兜底 headingId：
+  // - 避免同时触发 scrollToHeading + focusCitation 两次 smooth scroll 互相打架导致“上下弹跳”
+  const pendingNavFallbackHeadingRef = useRef<string | null>(null);
+  const pendingNavFocusOnceRef = useRef(false);
+  const lastFocusedKeyRef = useRef<string | null>(null);
 
   const clearSelectionToolbar = () => setSelectionToolbar(null);
 
@@ -702,9 +696,11 @@ export default function PrdPreviewPage(props?: {
         // ignore
       }
       mo = null;
-      scrollToHeading(resolved);
+      // 关键：不要在这里先滚一次（scrollToHeading），否则后续 focusCitation 的 smooth scroll 会再滚一次，
+      // 两个动画目标不同会表现为“上下弹跳/回弹”。
+      pendingNavFallbackHeadingRef.current = resolved;
+      pendingNavFocusOnceRef.current = true;
       applyHighlights(navCitations);
-      requestAnimationFrame(() => focusActiveCitation());
       // 关键：只“消费掉一次性跳转目标”，保留 citations/activeIndex，
       // 从而避免该 effect 之后因为任何重渲染/索引变化再次把滚动拉回，导致“目录点不动/引用无效/乱跳”。
       consumeNavTarget();
@@ -760,7 +756,6 @@ export default function PrdPreviewPage(props?: {
     prdPreviewError,
     prdPreview?.content,
     applyHighlights,
-    focusActiveCitation,
     resolveHeadingIdForNav,
     consumeNavTarget,
   ]);
@@ -769,9 +764,28 @@ export default function PrdPreviewPage(props?: {
   useEffect(() => {
     if (!Array.isArray(navCitations) || navCitations.length === 0) return;
     if (!highlightReady) return;
-    const raf = requestAnimationFrame(() => focusActiveCitation());
+    const idx = navActiveIndex ?? 0;
+    const key = `${idx}:${navCitations.length}`;
+    // 防抖：避免同一索引/同一引用集在短时间内重复触发 smooth scroll，导致“弹跳”
+    if (!pendingNavFocusOnceRef.current && lastFocusedKeyRef.current === key) return;
+    lastFocusedKeyRef.current = key;
+    const fallbackHeadingId = pendingNavFallbackHeadingRef.current;
+    pendingNavFallbackHeadingRef.current = null;
+    pendingNavFocusOnceRef.current = false;
+    const raf = requestAnimationFrame(() => {
+      const container = prdPreviewContentRef.current;
+      if (!container) return;
+      focusCitation({
+        container,
+        citationIdx: idx,
+        citations: navCitations,
+        resolveHeadingIdForNav,
+        scrollToHeading,
+        fallbackHeadingId,
+      });
+    });
     return () => cancelAnimationFrame(raf);
-  }, [navActiveIndex, navCitations?.length, focusActiveCitation, highlightReady]);
+  }, [navActiveIndex, navCitations?.length, highlightReady, resolveHeadingIdForNav]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">

@@ -32,6 +32,8 @@ export type GenerateImageGenContract = (input: {
   n?: number;
   size?: string;
   responseFormat?: 'b64_json' | 'url';
+  /** 图生图首帧（DataURL 或纯 base64） */
+  initImageBase64?: string;
 }) => Promise<ApiResponse<ImageGenGenerateResponse>>;
 
 export type ImageGenBatchStreamInput = {

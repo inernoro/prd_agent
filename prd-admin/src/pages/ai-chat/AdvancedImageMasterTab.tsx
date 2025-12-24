@@ -1,10 +1,11 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { generateImageGen, getModels, planImageGen } from '@/services';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
-import { Copy, Download, ImagePlus, Loader2, Maximize2, Trash2, Wand2 } from 'lucide-react';
+import { Copy, Download, ImagePlus, Info, Loader2, Maximize2, MousePointer2, Trash2, Wand2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 type CanvasImageItem = {
@@ -120,6 +121,11 @@ export default function AdvancedImageMasterTab() {
 
   const selected = useMemo(() => canvas.find((x) => x.key === selectedKey) ?? null, [canvas, selectedKey]);
 
+  // 画布（大图预览）缩放
+  const [zoom, setZoom] = useState(1);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [selectedImageSize, setSelectedImageSize] = useState<{ w: number; h: number } | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
 
@@ -193,7 +199,7 @@ export default function AdvancedImageMasterTab() {
       [
         `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
         items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
-        selected ? '你已选中一张图片作为“首帧图”。当前后端生图接口尚未开放图生图参数，本次先按文本生图；后端支持后将自动带上首帧。' : '',
+        selected ? '你已选中一张图片作为“首帧图”。本次将作为图生图首帧传给生图接口（若上游平台不支持，会返回参数错误）。' : '',
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -219,6 +225,7 @@ export default function AdvancedImageMasterTab() {
         n: 1,
         size: DEFAULT_SIZE,
         responseFormat: DEFAULT_RESPONSE_FORMAT,
+        initImageBase64: selected?.src && selected.src.startsWith('data:') ? selected.src : undefined,
       });
       if (!gres.success) {
         const msg = gres.error?.message || '生成失败';
@@ -276,174 +283,265 @@ export default function AdvancedImageMasterTab() {
     { id: 'story', title: 'Story Board', desc: '生成短片分镜首帧图（情绪与镜头）' },
   ] as const;
 
+  const clampZoom = (z: number) => Math.max(0.25, Math.min(3, z));
+
+  const fitToStage = () => {
+    const el = stageRef.current;
+    const sz = selectedImageSize;
+    if (!el || !sz || sz.w <= 0 || sz.h <= 0) {
+      setZoom(1);
+      return;
+    }
+    // 画布内部有 padding + 顶部/底部浮层的可视区域扣减，避免 fit 后仍被遮挡
+    const w = el.clientWidth - 80;
+    const h = el.clientHeight - 220;
+    if (w <= 0 || h <= 0) {
+      setZoom(1);
+      return;
+    }
+    const scale = Math.min(w / sz.w, h / sz.h) * 0.98;
+    setZoom(clampZoom(scale));
+  };
+
   return (
     <div className="h-full min-h-0 flex gap-4">
       {/* 左侧：画板 */}
       <Card className="flex-1 min-h-0 overflow-hidden">
-        <div className="h-full min-h-0 flex">
-          <div className="w-[52px] shrink-0 flex flex-col items-center gap-2 py-3">
-            <button
-              type="button"
-              className="h-10 w-10 rounded-[14px] inline-flex items-center justify-center hover:bg-white/5"
-              style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
-              onClick={() => fileRef.current?.click()}
-              title="上传图片到画板"
-            >
-              <ImagePlus size={18} />
-            </button>
-            <button
-              type="button"
-              className="h-10 w-10 rounded-[14px] inline-flex items-center justify-center hover:bg-white/5"
-              style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
-              onClick={() => {
-                const ok = window.confirm('确认清空画板？');
-                if (!ok) return;
-                setCanvas([]);
-                setSelectedKey('');
-              }}
-              title="清空画板"
-              disabled={canvas.length === 0}
-            >
-              <Trash2 size={18} />
-            </button>
-          </div>
-
-          <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  画板
-                </div>
-                <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                  {selected ? `已选中：${selected.prompt}` : '点击图片可选中；选中后可作为首帧图'}
-                </div>
-              </div>
-              <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                {activeModel ? `默认模型：${activeModel.name || activeModel.modelName}` : modelsLoading ? '加载模型中...' : '暂无生图模型'}
-              </div>
-            </div>
-
-            <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1">
-              {canvas.length === 0 ? (
-                <div className="h-full min-h-[240px] flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                  画板暂无图片。右侧输入需求点击“生成”，或上传一张图片作为首帧。
+        <div className="h-full min-h-0 relative">
+          {/* 主画布（可滚动） */}
+          <div
+            ref={stageRef}
+            className="absolute inset-0 overflow-auto"
+            style={{
+              background: 'rgba(0,0,0,0.10)',
+            }}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              const isMod = e.metaKey || e.ctrlKey;
+              if (!isMod) return;
+              if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                setZoom((z) => clampZoom(z * 1.15));
+              } else if (e.key === '-') {
+                e.preventDefault();
+                setZoom((z) => clampZoom(z / 1.15));
+              } else if (e.key === '0') {
+                e.preventDefault();
+                setZoom(1);
+              }
+            }}
+          >
+            <div className="min-h-full w-full flex items-center justify-center px-10 pt-16 pb-[152px]">
+              {!selected?.src ? (
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  画布暂无图片。右侧输入需求点击“生成”，或先上传一张图片作为首帧。
                 </div>
               ) : (
-                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+                <div
+                  style={{
+                    width: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.w * zoom)) : 'auto',
+                    height: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.h * zoom)) : 'auto',
+                  }}
+                >
+                  <img
+                    src={selected.src}
+                    alt={selected.prompt}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      display: 'block',
+                      boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                    }}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      const w = img.naturalWidth || 0;
+                      const h = img.naturalHeight || 0;
+                      if (w > 0 && h > 0) setSelectedImageSize({ w, h });
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 顶部居中：缩放浮层 */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+            <div
+              className="h-11 rounded-[999px] px-2 inline-flex items-center gap-1"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(0,0,0,0.25)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <button
+                type="button"
+                className="h-9 w-9 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                onClick={() => setZoom((z) => clampZoom(z / 1.15))}
+                title="缩小"
+                aria-label="缩小"
+                disabled={!selected?.src}
+              >
+                <ZoomOut size={18} />
+              </button>
+              <div className="px-2 text-[12px] font-semibold tabular-nums" title="缩放比例">
+                {Math.round(zoom * 100)}%
+              </div>
+              <button
+                type="button"
+                className="h-9 w-9 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                onClick={() => setZoom((z) => clampZoom(z * 1.15))}
+                title="放大"
+                aria-label="放大"
+                disabled={!selected?.src}
+              >
+                <ZoomIn size={18} />
+              </button>
+              <div className="mx-1 h-6 w-px bg-white/10" />
+              <button
+                type="button"
+                className="h-9 px-3 rounded-[999px] text-[12px] font-semibold hover:bg-white/5"
+                onClick={fitToStage}
+                disabled={!selected?.src}
+                title="适配画布"
+              >
+                适配
+              </button>
+              <button
+                type="button"
+                className="h-9 px-3 rounded-[999px] text-[12px] font-semibold hover:bg-white/5"
+                onClick={() => setZoom(1)}
+                disabled={!selected?.src}
+                title="回到 100%"
+              >
+                100%
+              </button>
+            </div>
+          </div>
+
+          {/* 左侧悬浮工具条 */}
+          <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
+            <div
+              className="rounded-[18px] p-2 flex flex-col gap-2"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(0,0,0,0.22)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
+              }}
+            >
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-white/5"
+                style={{ color: 'var(--text-secondary)' }}
+                onClick={() => fileRef.current?.click()}
+                title="上传图片到画板"
+                aria-label="上传图片到画板"
+              >
+                <ImagePlus size={18} />
+              </button>
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-white/5"
+                style={{ color: 'var(--text-secondary)' }}
+                onClick={() => {
+                  const ok = window.confirm('确认清空画板？');
+                  if (!ok) return;
+                  setCanvas([]);
+                  setSelectedKey('');
+                  setZoom(1);
+                  setSelectedImageSize(null);
+                }}
+                title="清空画板"
+                aria-label="清空画板"
+                disabled={canvas.length === 0}
+              >
+                <Trash2 size={18} />
+              </button>
+              {/* 预留：选择/拖拽工具（先占位，后续可扩展） */}
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center"
+                style={{ color: 'rgba(255,255,255,0.28)' }}
+                title="选择/拖拽（预留）"
+                aria-label="选择/拖拽（预留）"
+                disabled
+              >
+                <MousePointer2 size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* 底部缩略图条（overlay） */}
+          <div className="absolute left-4 right-4 bottom-4 z-20">
+            <div
+              className="rounded-[18px] px-3 py-2 overflow-x-auto"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(0,0,0,0.22)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
+              }}
+            >
+              {canvas.length === 0 ? (
+                <div className="h-[92px] flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                  暂无图片
+                </div>
+              ) : (
+                <div className="flex gap-2">
                   {canvas.map((it) => {
-                    const selectedNow = it.key === selectedKey;
+                    const active = it.key === selectedKey;
                     const canOpen = it.status === 'done' && !!it.src;
                     return (
-                      <div
+                      <button
                         key={it.key}
-                        className="rounded-[16px] p-3"
+                        type="button"
+                        className="shrink-0 w-[140px] h-[92px] rounded-[14px] overflow-hidden relative"
                         style={{
-                          border: selectedNow ? '1px solid rgba(250,204,21,0.65)' : '1px solid var(--border-subtle)',
-                          background: selectedNow ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                          border: active ? '1px solid rgba(250,204,21,0.55)' : '1px solid rgba(255,255,255,0.10)',
+                          background: 'rgba(0,0,0,0.18)',
                         }}
+                        onClick={() => {
+                          setSelectedKey(it.key);
+                          setZoom(1);
+                          setSelectedImageSize(null);
+                        }}
+                        title={it.prompt}
                       >
-                        <div className="text-xs mb-2 truncate" style={{ color: 'var(--text-muted)' }} title={it.prompt}>
-                          {it.status === 'running' ? '生成中' : it.status === 'error' ? '失败' : '完成'} · {it.prompt}
-                        </div>
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          className="w-full rounded-[12px] overflow-hidden"
-                          style={{
-                            height: 180,
-                            background: 'rgba(0,0,0,0.18)',
-                            border: '1px solid rgba(255,255,255,0.10)',
-                            position: 'relative',
-                          }}
-                          onClick={() => {
-                            setSelectedKey(it.key);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setSelectedKey(it.key);
-                            }
-                          }}
-                          title="点击选中（可作为首帧图）"
-                        >
-                          {it.status === 'running' ? (
-                            <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-                              <Loader2 size={22} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
-                              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                生成中…
-                              </div>
-                            </div>
-                          ) : it.status === 'error' ? (
-                            <div className="w-full h-full flex items-center justify-center px-3 text-center text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                              {it.errorMessage || '失败'}
-                            </div>
-                          ) : (
-                            <img src={it.src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
-                          )}
-
-                          {canOpen ? (
-                            <button
-                              type="button"
-                              className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                background: 'rgba(0,0,0,0.20)',
-                                color: 'var(--text-secondary)',
-                              }}
-                              title="放大预览"
-                              aria-label="放大预览"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPreview({ open: true, src: it.src, prompt: it.prompt });
-                              }}
-                            >
-                              <Maximize2 size={14} />
-                            </button>
-                          ) : null}
-
-                          <div className="absolute right-2 bottom-2 flex items-center gap-1">
-                            <button
-                              type="button"
-                              className={[
-                                'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
-                                'transition-all duration-150',
-                                'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
-                              ].join(' ')}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void copyToClipboard(it.prompt);
-                              }}
-                              aria-label="复制提示词"
-                              title="复制提示词"
-                              disabled={!it.prompt}
-                            >
-                              <Copy size={12} />
-                              复制
-                            </button>
-                            <button
-                              type="button"
-                              className={[
-                                'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
-                                'transition-all duration-150',
-                                'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
-                              ].join(' ')}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!it.src) return;
-                                void downloadImage(it.src, it.prompt || 'image');
-                              }}
-                              aria-label="下载图片"
-                              title="下载图片"
-                              disabled={it.status !== 'done' || !it.src}
-                            >
-                              <Download size={12} />
-                              下载
-                            </button>
+                        {it.status === 'running' ? (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
                           </div>
-                        </div>
-                      </div>
+                        ) : it.status === 'error' ? (
+                          <div className="w-full h-full flex items-center justify-center px-2 text-center text-[11px]" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                            {it.errorMessage || '失败'}
+                          </div>
+                        ) : (
+                          <img src={it.src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                        )}
+
+                        {canOpen ? (
+                          <button
+                            type="button"
+                            className="absolute left-2 bottom-2 h-7 w-7 rounded-[10px] inline-flex items-center justify-center"
+                            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}
+                            title="放大预览"
+                            aria-label="放大预览"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreview({ open: true, src: it.src, prompt: it.prompt });
+                            }}
+                          >
+                            <Maximize2 size={14} />
+                          </button>
+                        ) : null}
+                      </button>
                     );
                   })}
                 </div>
@@ -551,10 +649,43 @@ export default function AdvancedImageMasterTab() {
                 <div className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
                   {selected ? `已选中首帧：${selected.prompt}` : '未选择首帧'}
                 </div>
-                <Button variant="primary" onClick={() => void onSend()} disabled={busy || !input.trim()}>
-                  <Wand2 size={16} />
-                  {busy ? '生成中...' : '生成'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Tooltip
+                    content={
+                      <div className="leading-relaxed">
+                        <div className="font-semibold">默认生图模型</div>
+                        <div className="mt-1">
+                          {activeModel ? (
+                            <span>
+                              {activeModel.name || activeModel.modelName}
+                              {activeModel.priority != null ? `（priority=${activeModel.priority}）` : ''}
+                            </span>
+                          ) : modelsLoading ? (
+                            '加载中...'
+                          ) : (
+                            '暂无可用 isImageGen 模型'
+                          )}
+                        </div>
+                      </div>
+                    }
+                    side="top"
+                    align="end"
+                  >
+                    <button
+                      type="button"
+                      className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
+                      style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
+                      aria-label="查看默认模型"
+                      title="查看默认模型"
+                    >
+                      <Info size={18} />
+                    </button>
+                  </Tooltip>
+                  <Button variant="primary" onClick={() => void onSend()} disabled={busy || !input.trim()}>
+                    <Wand2 size={16} />
+                    {busy ? '生成中...' : '生成'}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

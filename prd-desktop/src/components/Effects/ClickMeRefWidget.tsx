@@ -25,6 +25,8 @@ export default function ClickMeRefWidget({ effect = 'spin', label = '讲解', sc
 <meta charset="utf-8" />
 <style>
 :root {
+  /* 文本填充色（原 ref 里有该变量；这里必须显式定义，否则文字会透明不可见） */
+  --bg: #111827;
   --shimmer-hue-1: 213deg;
   --shimmer-sat-1: 95%;
   --shimmer-lit-1: 91%;
@@ -233,7 +235,7 @@ button .text {
   color: transparent;
   -webkit-background-clip: text;
   background-clip: text;
-  background-color: var(--bg);
+  background-color: var(--bg, #111827);
   background-image: linear-gradient(120deg, transparent, hsla(var(--shimmer-hue-1),100%,80%,0.66) 40%, hsla(var(--shimmer-hue-2),100%,90%,.9) 50%, transparent 52%);
   background-repeat: no-repeat;
   background-size: 300% 300%;

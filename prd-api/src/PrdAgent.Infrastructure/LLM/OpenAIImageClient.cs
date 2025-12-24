@@ -52,7 +52,8 @@ public class OpenAIImageClient
         CancellationToken ct,
         string? modelId = null,
         string? platformId = null,
-        string? modelName = null)
+        string? modelName = null,
+        string? initImageBase64 = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -147,7 +148,8 @@ public class OpenAIImageClient
         }
 
         var isVolces = IsVolcesImagesApi(apiUrl);
-        var endpoint = GetImagesEndpoint(apiUrl);
+        initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
+        var endpoint = initImageBase64 == null ? GetImagesEndpoint(apiUrl) : GetImagesEditEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API URL 无效");
@@ -172,42 +174,82 @@ public class OpenAIImageClient
 
         var providerForLog = isVolces ? "Volces" : "OpenAI";
         object reqObj;
-        if (isVolces)
+        if (initImageBase64 == null)
         {
-            // Volces Ark Images API（/api/v3/images/generations）
-            // 兼容前端统一输入：即使前端请求 b64_json，Volces 侧也强制用 url（再由后端下载转 base64/dataURL 回传）
-            var volcesResponseFormat = "url";
-            var volcesSize = NormalizeVolcesSize(size);
-            reqObj = new VolcesImageRequest
+            if (isVolces)
             {
-                Model = effectiveModelName,
-                Prompt = prompt.Trim(),
-                N = n,
-                Size = volcesSize,
-                ResponseFormat = volcesResponseFormat,
-                SequentialImageGeneration = "disabled",
-                Stream = false,
-                Watermark = true
-            };
+                // Volces Ark Images API（/api/v3/images/generations）
+                // 兼容前端统一输入：即使前端请求 b64_json，Volces 侧也强制用 url（再由后端下载转 base64/dataURL 回传）
+                var volcesResponseFormat = "url";
+                var volcesSize = NormalizeVolcesSize(size);
+                reqObj = new VolcesImageRequest
+                {
+                    Model = effectiveModelName,
+                    Prompt = prompt.Trim(),
+                    N = n,
+                    Size = volcesSize,
+                    ResponseFormat = volcesResponseFormat,
+                    SequentialImageGeneration = "disabled",
+                    Stream = false,
+                    Watermark = true
+                };
+            }
+            else
+            {
+                reqObj = new OpenAIImageRequest
+                {
+                    Model = effectiveModelName,
+                    Prompt = prompt.Trim(),
+                    N = n,
+                    Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
+                    ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
+                };
+            }
         }
         else
         {
-            reqObj = new OpenAIImageRequest
+            // 图生图（首帧）：使用 images/edits（multipart/form-data）
+            if (isVolces)
             {
-                Model = effectiveModelName,
-                Prompt = prompt.Trim(),
-                N = n,
-                Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
-                ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
-            };
+                reqObj = new VolcesImageEditRequest
+                {
+                    Model = effectiveModelName,
+                    Prompt = prompt.Trim(),
+                    N = n,
+                    Size = NormalizeVolcesSize(size),
+                    ResponseFormat = "url",
+                    Watermark = true
+                };
+            }
+            else
+            {
+                reqObj = new OpenAIImageEditRequest
+                {
+                    Model = effectiveModelName,
+                    Prompt = prompt.Trim(),
+                    N = n,
+                    Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
+                    ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
+                };
+            }
         }
 
         // 写入 LLM 请求日志（生图）
         if (_logWriter != null)
         {
-            var reqRawJson = isVolces
-                ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
-                : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+            var reqRawJson = initImageBase64 == null
+                ? (isVolces
+                    ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
+                    : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest))
+                : JsonSerializer.Serialize(new
+                {
+                    model = effectiveModelName,
+                    prompt = prompt.Trim(),
+                    n,
+                    size = isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size,
+                    responseFormat = isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat,
+                    hasInitImage = true
+                });
             var reqLogJson = LlmLogRedactor.RedactJson(reqRawJson);
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
@@ -218,12 +260,12 @@ public class OpenAIImageClient
                     Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : endpoint.TrimStart('/'),
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
-                        ["content-type"] = "application/json",
+                        ["content-type"] = initImageBase64 == null ? "application/json" : "multipart/form-data",
                         ["authorization"] = "Bearer ***"
                     },
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
-                    QuestionText: isVolces ? ((VolcesImageRequest)reqObj).Prompt : ((OpenAIImageRequest)reqObj).Prompt,
+                    QuestionText: prompt.Trim(),
                     SystemPromptChars: null,
                     SystemPromptHash: null,
                     SystemPromptText: null,
@@ -234,7 +276,7 @@ public class OpenAIImageClient
                     ViewRole: ctx?.ViewRole,
                     DocumentChars: null,
                     DocumentHash: null,
-                    UserPromptChars: (isVolces ? ((VolcesImageRequest)reqObj).Prompt : ((OpenAIImageRequest)reqObj).Prompt)?.Length ?? 0,
+                    UserPromptChars: prompt.Trim().Length,
                     StartedAt: startedAt,
                     RequestType: (ctx?.RequestType ?? "imageGen"),
                     RequestPurpose: (ctx?.RequestPurpose ?? "imageGen.generate")),
@@ -246,20 +288,65 @@ public class OpenAIImageClient
         {
             async Task<HttpResponseMessage> SendOnceAsync(CancellationToken token)
             {
-                var reqJsonInner = isVolces
-                    ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
-                    : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
-                var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
                 var targetUriInner = endpointUri != null && endpointUri.IsAbsoluteUri
                     ? endpointUri
                     : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
-                return await httpClient.PostAsync(targetUriInner, contentInner, token);
+                if (initImageBase64 == null)
+                {
+                    var reqJsonInner = isVolces
+                        ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
+                        : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                    var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
+                    return await httpClient.PostAsync(targetUriInner, contentInner, token);
+                }
+
+                if (!TryDecodeDataUrlOrBase64(initImageBase64, out var imgBytes, out var imgMime))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent("{\"error\":{\"message\":\"initImageBase64 无效\"}}", Encoding.UTF8, "application/json")
+                    };
+                }
+                if (imgBytes.Length > 10 * 1024 * 1024)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.RequestEntityTooLarge)
+                    {
+                        Content = new StringContent("{\"error\":{\"message\":\"initImageBase64 图片过大（上限 10MB）\"}}", Encoding.UTF8, "application/json")
+                    };
+                }
+
+                var mp = new MultipartFormDataContent();
+                var imgContent = new ByteArrayContent(imgBytes);
+                imgContent.Headers.ContentType = new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(imgMime) ? "image/png" : imgMime);
+                mp.Add(imgContent, "image", "init.png");
+
+                if (isVolces)
+                {
+                    var r = (VolcesImageEditRequest)reqObj;
+                    mp.Add(new StringContent(r.Model ?? string.Empty), "model");
+                    mp.Add(new StringContent(r.Prompt ?? string.Empty), "prompt");
+                    mp.Add(new StringContent(r.N.ToString()), "n");
+                    if (!string.IsNullOrWhiteSpace(r.Size)) mp.Add(new StringContent(r.Size), "size");
+                    if (!string.IsNullOrWhiteSpace(r.ResponseFormat)) mp.Add(new StringContent(r.ResponseFormat), "response_format");
+                    if (r.Watermark.HasValue) mp.Add(new StringContent(r.Watermark.Value ? "true" : "false"), "watermark");
+                }
+                else
+                {
+                    var r = (OpenAIImageEditRequest)reqObj;
+                    mp.Add(new StringContent(r.Model ?? string.Empty), "model");
+                    mp.Add(new StringContent(r.Prompt ?? string.Empty), "prompt");
+                    mp.Add(new StringContent(r.N.ToString()), "n");
+                    if (!string.IsNullOrWhiteSpace(r.Size)) mp.Add(new StringContent(r.Size), "size");
+                    if (!string.IsNullOrWhiteSpace(r.ResponseFormat)) mp.Add(new StringContent(r.ResponseFormat), "response_format");
+                }
+
+                return await httpClient.PostAsync(targetUriInner, mp, token);
             }
 
             resp = await SendOnceAsync(ct);
 
             // Volces：size 太小会 400，自动升级到最小要求并重试一次（前端无需改）
-            if (isVolces && resp.StatusCode == HttpStatusCode.BadRequest)
+            if (isVolces && initImageBase64 == null && resp.StatusCode == HttpStatusCode.BadRequest)
             {
                 var firstBody = await resp.Content.ReadAsStringAsync(ct);
                 if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg) &&
@@ -432,8 +519,12 @@ public class OpenAIImageClient
             if (logId != null)
             {
                 var endedAt = DateTime.UtcNow;
-                var responseFormatForLog = isVolces ? ((VolcesImageRequest)reqObj).ResponseFormat : ((OpenAIImageRequest)reqObj).ResponseFormat;
-                var sizeForLog = isVolces ? ((VolcesImageRequest)reqObj).Size : ((OpenAIImageRequest)reqObj).Size;
+                var responseFormatForLog = initImageBase64 == null
+                    ? (isVolces ? ((VolcesImageRequest)reqObj).ResponseFormat : ((OpenAIImageRequest)reqObj).ResponseFormat)
+                    : (isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat);
+                var sizeForLog = initImageBase64 == null
+                    ? (isVolces ? ((VolcesImageRequest)reqObj).Size : ((OpenAIImageRequest)reqObj).Size)
+                    : (isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size);
                 var summary = new
                 {
                     images = images.Count,
@@ -565,6 +656,53 @@ public class OpenAIImageClient
             return BuildVolcesEndpoint(apiUrl, "images/generations");
         }
         return OpenAICompatUrl.BuildEndpoint(apiUrl, "images/generations");
+    }
+
+    public static string GetImagesEditEndpoint(string apiUrl)
+    {
+        if (IsVolcesImagesApi(apiUrl))
+        {
+            return BuildVolcesEndpoint(apiUrl, "images/edits");
+        }
+        return OpenAICompatUrl.BuildEndpoint(apiUrl, "images/edits");
+    }
+
+    private static bool TryDecodeDataUrlOrBase64(string raw, out byte[] bytes, out string mime)
+    {
+        bytes = Array.Empty<byte>();
+        mime = "image/png";
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return false;
+
+        if (s.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            var comma = s.IndexOf(',');
+            if (comma < 0) return false;
+            var header = s.Substring(5, comma - 5);
+            var payload = s[(comma + 1)..];
+            var semi = header.IndexOf(';');
+            var ct = semi >= 0 ? header[..semi] : header;
+            if (!string.IsNullOrWhiteSpace(ct)) mime = ct.Trim();
+            s = payload.Trim();
+        }
+
+        try
+        {
+            bytes = Convert.FromBase64String(s);
+            if (bytes.Length >= 12)
+            {
+                if (bytes[0] == 0xFF && bytes[1] == 0xD8) mime = "image/jpeg";
+                else if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) mime = "image/png";
+                else if (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) mime = "image/gif";
+                else if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+                         bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) mime = "image/webp";
+            }
+            return bytes.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -938,5 +1076,24 @@ internal class VolcesImageRequest
 [JsonSerializable(typeof(VolcesImageRequest))]
 internal partial class VolcesImageJsonContext : JsonSerializerContext
 {
+}
+
+internal class OpenAIImageEditRequest
+{
+    public string? Model { get; set; }
+    public string? Prompt { get; set; }
+    public int N { get; set; } = 1;
+    public string? Size { get; set; }
+    public string? ResponseFormat { get; set; }
+}
+
+internal class VolcesImageEditRequest
+{
+    public string? Model { get; set; }
+    public string? Prompt { get; set; }
+    public int N { get; set; } = 1;
+    public string? Size { get; set; }
+    public string? ResponseFormat { get; set; }
+    public bool? Watermark { get; set; }
 }
 

@@ -44,6 +44,7 @@ export const generateImageGenReal: GenerateImageGenContract = async (input) => {
       n: input.n,
       size: input.size,
       responseFormat: input.responseFormat,
+      initImageBase64: input.initImageBase64,
     },
   });
 };

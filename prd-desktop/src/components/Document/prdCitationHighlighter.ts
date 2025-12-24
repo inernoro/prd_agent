@@ -202,8 +202,10 @@ export function focusCitation(args: {
   citations: DocCitation[];
   resolveHeadingIdForNav: (opts: { headingId?: string | null; headingTitle?: string | null }) => string | null;
   scrollToHeading: (headingId: string) => void;
+  /** 当 citation 自身无法定位/解析时，用该 headingId 作为最后兜底（例如“从聊天点击依据”进入预览页）。 */
+  fallbackHeadingId?: string | null;
 }) {
-  const { container, citationIdx, citations, resolveHeadingIdForNav, scrollToHeading } = args;
+  const { container, citationIdx, citations, resolveHeadingIdForNav, scrollToHeading, fallbackHeadingId } = args;
   const idx = Math.max(0, citationIdx);
   const esc = cssEscape(String(idx));
   const target = container.querySelector(`mark[data-prd-citation="1"][data-citation-idx="${esc}"]`) as HTMLElement | null;
@@ -215,6 +217,7 @@ export function focusCitation(args: {
     const htitle = (c?.headingTitle || '').trim();
     const resolved = resolveHeadingIdForNav({ headingId: hid || null, headingTitle: htitle || null });
     if (resolved) scrollToHeading(resolved);
+    else if (fallbackHeadingId) scrollToHeading(fallbackHeadingId);
     return;
   }
 

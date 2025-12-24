@@ -615,23 +615,6 @@ export default function AiChatPage() {
 
   const leftPanel = (
     <div className="w-[340px] shrink-0 min-h-0 flex flex-col gap-4">
-      <Card>
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              临时会话
-            </div>
-            <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-              上传 PRD → sessionId → 对话（功能测试向）
-            </div>
-          </div>
-          <Button variant="primary" size="sm" className="shrink-0" onClick={() => setCreateOpen(true)} disabled={!userId}>
-            <Plus size={16} />
-            新建
-          </Button>
-        </div>
-      </Card>
-
       <Card className="flex-1 min-h-0 overflow-hidden">
         <div className="h-full min-h-0 flex flex-col">
           <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
@@ -682,6 +665,23 @@ export default function AiChatPage() {
               })
             )}
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              临时会话
+            </div>
+            <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+              上传 PRD → sessionId → 对话（功能测试向）
+            </div>
+          </div>
+          <Button variant="primary" size="sm" className="shrink-0" onClick={() => setCreateOpen(true)} disabled={!userId}>
+            <Plus size={16} />
+            新建
+          </Button>
         </div>
       </Card>
     </div>

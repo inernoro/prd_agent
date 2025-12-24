@@ -4,7 +4,6 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
 import { Message } from '../../types';
-import ClickMeRefWidget from '../Effects/ClickMeRefWidget';
 
 const steps = [
   { step: 1, pmTitle: '项目背景', devTitle: '技术方案概述', qaTitle: '功能模块清单' },
@@ -223,7 +222,7 @@ export default function ChatInput() {
             <button
               onClick={handleIntro}
               disabled={!sessionId || isStreaming}
-              className="px-2.5 py-1.5 text-xs rounded-md border border-border text-text-secondary hover:text-primary-500 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="min-w-[3.25rem] px-2.5 py-1.5 text-xs rounded-md border border-border text-text-secondary hover:text-primary-500 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="简要概括该阶段"
             >
               简介
@@ -232,17 +231,16 @@ export default function ChatInput() {
               <button
                 onClick={handleExplain}
                 disabled={!sessionId || isStreaming}
-                className="inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="min-w-[3.25rem] px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 title="开始讲解该阶段"
               >
-                <span className="sr-only">讲解</span>
-                <ClickMeRefWidget effect="spin" label="讲解" size={64} scale={0.3} />
+                讲解
               </button>
             ) : (
               <button
                 onClick={handleExplain}
                 disabled={!sessionId || isStreaming}
-                className="px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="min-w-[3.25rem] px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 title="开始讲解该阶段"
               >
                 讲解
