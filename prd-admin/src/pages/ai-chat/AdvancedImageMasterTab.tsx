@@ -671,7 +671,6 @@ export default function AdvancedImageMasterTab() {
     }
   };
 
-  const getActiveValue = () => (activeComposerRef.current === 'quick' ? quickInput : input);
   const setActiveValue = (next: string) => {
     if (activeComposerRef.current === 'quick') setQuickInput(next);
     else setInput(next);
