@@ -269,12 +269,10 @@ export default function AdvancedImageMasterTab() {
   const lastUiSyncRef = useRef(0);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
-  const worldUiRef = useRef<HTMLDivElement | null>(null);
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
   const applyWorldTransform = useCallback(() => {
     const el = worldRef.current;
-    const ui = worldUiRef.current;
     if (!el) return;
     const z = zoomRef.current;
     const cam = cameraRef.current;
@@ -283,12 +281,6 @@ export default function AdvancedImageMasterTab() {
     el.style.transformOrigin = '0 0';
     el.style.setProperty('--zoom', String(z));
     el.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
-    if (ui) {
-      ui.style.transform = tf;
-      ui.style.transformOrigin = '0 0';
-      ui.style.setProperty('--zoom', String(z));
-      ui.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
-    }
   }, []);
 
   const scheduleWorldTransform = useCallback(
