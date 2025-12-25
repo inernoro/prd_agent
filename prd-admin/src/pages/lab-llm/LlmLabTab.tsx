@@ -1307,46 +1307,46 @@ export default function LlmLabTab() {
     // 这里不暴露给用户选择返回格式：默认 b64_json（更利于直接展示/下载，且避免部分网关跨域问题）
     let anyFailed = false;
     try {
-      for (const m of imageGenModels) {
-        const res = await generateImageGen({
-          modelId: m.modelId,
-          platformId: m.platformId,
-          modelName: m.modelName,
-          prompt,
-          n: perModelN,
-          size: imgSize,
-          responseFormat: 'b64_json',
-        });
-        if (!res.success) {
-          anyFailed = true;
-          const msg = res.error?.message || '生图失败';
-          setImageItems((prev) =>
-            prev.map((x) => (x.groupId === groupId && x.sourceModelId === m.modelId ? { ...x, status: 'error', errorMessage: msg } : x))
-          );
-          continue;
-        }
-
-        const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
-        setImageItems((prev) => {
-          return prev.map((x) => {
-            if (x.groupId !== groupId) return x;
-            if (x.sourceModelId !== m.modelId) return x;
-            const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
-            const img = images[idx];
-            if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
-            return {
-              ...x,
-              status: 'done',
-              base64: (img as any).base64 ?? null,
-              url: (img as any).url ?? null,
-              revisedPrompt: (img as any).revisedPrompt ?? null,
-            };
-          });
-        });
+    for (const m of imageGenModels) {
+      const res = await generateImageGen({
+        modelId: m.modelId,
+        platformId: m.platformId,
+        modelName: m.modelName,
+        prompt,
+        n: perModelN,
+        size: imgSize,
+        responseFormat: 'b64_json',
+      });
+      if (!res.success) {
+        anyFailed = true;
+        const msg = res.error?.message || '生图失败';
+        setImageItems((prev) =>
+          prev.map((x) => (x.groupId === groupId && x.sourceModelId === m.modelId ? { ...x, status: 'error', errorMessage: msg } : x))
+        );
+        continue;
       }
-      if (anyFailed) setImageError('部分模型生成失败（请查看对应图片卡片）');
+
+      const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
+      setImageItems((prev) => {
+        return prev.map((x) => {
+          if (x.groupId !== groupId) return x;
+          if (x.sourceModelId !== m.modelId) return x;
+          const idx = typeof x.variantIndex === 'number' ? x.variantIndex : 0;
+          const img = images[idx];
+          if (!img) return { ...x, status: 'error', errorMessage: '未返回对应图片' };
+          return {
+            ...x,
+            status: 'done',
+            base64: (img as any).base64 ?? null,
+            url: (img as any).url ?? null,
+            revisedPrompt: (img as any).revisedPrompt ?? null,
+          };
+        });
+      });
+    }
+    if (anyFailed) setImageError('部分模型生成失败（请查看对应图片卡片）');
     } finally {
-      setImageRunning(false);
+    setImageRunning(false);
       emitBackdropBusyEnd();
     }
   };
@@ -1401,115 +1401,115 @@ export default function LlmLabTab() {
 
     const items = (planResult.items ?? []) as ImageGenPlanItem[];
     try {
-      for (const m of imageGenModels) {
-        if (batchStopRequestedRef.current) break;
-        setBatchActiveModelLabel(m.displayName);
-        const ac = new AbortController();
-        batchAbortRef.current = ac;
+    for (const m of imageGenModels) {
+      if (batchStopRequestedRef.current) break;
+      setBatchActiveModelLabel(m.displayName);
+      const ac = new AbortController();
+      batchAbortRef.current = ac;
 
-        const res = await runImageGenBatchStream({
-          input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json', maxConcurrency: params.maxConcurrency },
-          signal: ac.signal,
-          onEvent: (evt) => {
-            if (!evt.data) return;
-            try {
-              const obj = JSON.parse(evt.data);
-              const evtModelId = String(obj.modelId ?? m.modelId ?? '').trim() || m.modelId;
-              if (evt.event === 'run') {
-                if (obj.type === 'error') {
-                  setBatchError(obj.errorMessage || '批量生图失败');
-                  batchStopRequestedRef.current = true;
-                  setBatchRunning(false);
-                  setBatchActiveModelLabel('');
-                  return;
-                }
+      const res = await runImageGenBatchStream({
+        input: { modelId: m.modelId, platformId: m.platformId, modelName: m.modelName, items, size: imgSize, responseFormat: 'b64_json', maxConcurrency: params.maxConcurrency },
+        signal: ac.signal,
+        onEvent: (evt) => {
+          if (!evt.data) return;
+          try {
+            const obj = JSON.parse(evt.data);
+            const evtModelId = String(obj.modelId ?? m.modelId ?? '').trim() || m.modelId;
+            if (evt.event === 'run') {
+              if (obj.type === 'error') {
+                setBatchError(obj.errorMessage || '批量生图失败');
+                batchStopRequestedRef.current = true;
+                setBatchRunning(false);
+                setBatchActiveModelLabel('');
                 return;
               }
-              if (evt.event === 'image') {
-                const key = `${evtModelId}_${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
-                if (obj.type === 'imageStart') {
-                  const item: ImageViewItem = {
+              return;
+            }
+            if (evt.event === 'image') {
+              const key = `${evtModelId}_${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
+              if (obj.type === 'imageStart') {
+                const item: ImageViewItem = {
+                  key,
+                  status: 'running',
+                  prompt: String(obj.prompt ?? ''),
+                  createdAt: Date.now(),
+                  itemIndex: Number(obj.itemIndex ?? 0),
+                  imageIndex: Number(obj.imageIndex ?? 0),
+                  sourceModelId: m.modelId,
+                  sourceModelName: m.modelName,
+                  sourceDisplayName: m.displayName,
+                };
+                setBatchItems((p) => ({ ...p, [key]: item }));
+                return;
+              }
+              if (obj.type === 'imageDone') {
+                setBatchItems((p) => {
+                  const cur = p[key] || {
                     key,
-                    status: 'running',
-                    prompt: String(obj.prompt ?? ''),
                     createdAt: Date.now(),
+                    prompt: String(obj.prompt ?? ''),
+                    status: 'running' as const,
                     itemIndex: Number(obj.itemIndex ?? 0),
                     imageIndex: Number(obj.imageIndex ?? 0),
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
                   };
-                  setBatchItems((p) => ({ ...p, [key]: item }));
-                  return;
-                }
-                if (obj.type === 'imageDone') {
-                  setBatchItems((p) => {
-                    const cur = p[key] || {
-                      key,
-                      createdAt: Date.now(),
-                      prompt: String(obj.prompt ?? ''),
-                      status: 'running' as const,
-                      itemIndex: Number(obj.itemIndex ?? 0),
-                      imageIndex: Number(obj.imageIndex ?? 0),
-                      sourceModelId: m.modelId,
-                      sourceModelName: m.modelName,
-                      sourceDisplayName: m.displayName,
-                    };
-                    return {
-                      ...p,
-                      [key]: {
-                        ...cur,
-                        status: 'done',
-                        base64: obj.base64 ?? null,
-                        url: obj.url ?? null,
-                        revisedPrompt: obj.revisedPrompt ?? null,
-                      },
-                    };
-                  });
-                  return;
-                }
-                if (obj.type === 'imageError') {
-                  setBatchItems((p) => {
-                    const cur = p[key] || {
-                      key,
-                      createdAt: Date.now(),
-                      prompt: String(obj.prompt ?? ''),
-                      status: 'running' as const,
-                      itemIndex: Number(obj.itemIndex ?? 0),
-                      imageIndex: Number(obj.imageIndex ?? 0),
-                      sourceModelId: m.modelId,
-                      sourceModelName: m.modelName,
-                      sourceDisplayName: m.displayName,
-                    };
-                    return {
-                      ...p,
-                      [key]: {
-                        ...cur,
-                        status: 'error',
-                        errorMessage: obj.errorMessage || '失败',
-                      },
-                    };
-                  });
-                  return;
-                }
+                  return {
+                    ...p,
+                    [key]: {
+                      ...cur,
+                      status: 'done',
+                      base64: obj.base64 ?? null,
+                      url: obj.url ?? null,
+                      revisedPrompt: obj.revisedPrompt ?? null,
+                    },
+                  };
+                });
+                return;
               }
-            } catch {
-              // ignore
+              if (obj.type === 'imageError') {
+                setBatchItems((p) => {
+                  const cur = p[key] || {
+                    key,
+                    createdAt: Date.now(),
+                    prompt: String(obj.prompt ?? ''),
+                    status: 'running' as const,
+                    itemIndex: Number(obj.itemIndex ?? 0),
+                    imageIndex: Number(obj.imageIndex ?? 0),
+                    sourceModelId: m.modelId,
+                    sourceModelName: m.modelName,
+                    sourceDisplayName: m.displayName,
+                  };
+                  return {
+                    ...p,
+                    [key]: {
+                      ...cur,
+                      status: 'error',
+                      errorMessage: obj.errorMessage || '失败',
+                    },
+                  };
+                });
+                return;
+              }
             }
-          },
-        });
+          } catch {
+            // ignore
+          }
+        },
+      });
 
-        if (!res.success) {
-          setBatchError(res.error?.message || '批量生图失败');
-          setBatchRunning(false);
-          setBatchActiveModelLabel('');
-          return;
-        }
+      if (!res.success) {
+        setBatchError(res.error?.message || '批量生图失败');
+        setBatchRunning(false);
+        setBatchActiveModelLabel('');
+        return;
       }
+    }
     } finally {
-      batchAbortRef.current = null;
-      setBatchRunning(false);
-      setBatchActiveModelLabel('');
+    batchAbortRef.current = null;
+    setBatchRunning(false);
+    setBatchActiveModelLabel('');
       emitBackdropBusyEnd();
     }
   };

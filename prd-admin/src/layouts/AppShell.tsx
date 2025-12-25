@@ -37,7 +37,9 @@ export default function AppShell() {
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
-  const mainPadLeft = asideWidth + asideGap * 2;
+  // 专注模式（fullBleedMain）下隐藏侧栏，主区最大化
+  const focusHideAside = fullBleedMain;
+  const mainPadLeft = focusHideAside ? asideGap : asideWidth + asideGap * 2;
 
   return (
     <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
@@ -84,16 +86,17 @@ export default function AppShell() {
             left: asideGap,
             top: asideGap,
             bottom: asideGap,
-            width: asideWidth,
+            width: focusHideAside ? 0 : asideWidth,
             zIndex: 20,
             borderRadius: 18,
-            opacity: 0.8,
+            opacity: focusHideAside ? 0 : 0.8,
             // 让线条能透出来，但内容依旧清晰
             background:
               'linear-gradient(180deg, rgba(10,10,12,0.78) 0%, rgba(10,10,12,0.72) 100%)',
             border: '1px solid color-mix(in srgb, var(--border-subtle) 78%, rgba(255,255,255,0.10))',
             boxShadow: '0 26px 120px rgba(0,0,0,0.60)',
             backdropFilter: 'blur(12px)',
+            pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
           <div

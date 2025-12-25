@@ -16,7 +16,24 @@ import {
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterMessage, ImageMasterSession } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
-import { ArrowUp, AtSign, Check, Copy, Download, ImagePlus, Loader2, MousePointer2, Paperclip, SlidersHorizontal, Trash, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  ArrowUp,
+  AtSign,
+  Check,
+  Copy,
+  Download,
+  ImagePlus,
+  Loader2,
+  MousePointer2,
+  Paperclip,
+  SlidersHorizontal,
+  Square,
+  Type,
+  Trash,
+  Video,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -26,12 +43,15 @@ type CanvasImageItem = {
   prompt: string;
   src: string;
   status: 'done' | 'error' | 'running';
+  kind?: 'image' | 'generator';
   errorMessage?: string | null;
   refId?: number;
   checked?: boolean;
   checkedAt?: number;
   assetId?: string;
   sha256?: string;
+  naturalW?: number;
+  naturalH?: number;
   // “开放世界”画布位置/尺寸（基础单位，渲染时乘以 zoom）
   x?: number;
   y?: number;
@@ -53,6 +73,38 @@ const zoomFactorFromDeltaY = (deltaY: number) => {
   const k = 0.0016;
   return clampZoomFactor(Math.exp(-deltaY * k));
 };
+
+function renderMentionHighlights(text: string) {
+  const s = String(text ?? '');
+  // 仅高亮“原子 tag”：@model(...) / @vision(...) / @imgN
+  const rx = /@model\([^)]+\)|@vision\([^)]+\)|@img\d+/g;
+  const out: Array<JSX.Element | string> = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(s))) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (start > last) out.push(s.slice(last, start));
+    const token = s.slice(start, end);
+    out.push(
+      <span
+        key={`${start}_${end}`}
+        style={{
+          background: 'rgba(250, 204, 21, 0.18)',
+          border: '1px solid rgba(250, 204, 21, 0.22)',
+          borderRadius: 10,
+          boxDecorationBreak: 'clone',
+          WebkitBoxDecorationBreak: 'clone',
+        }}
+      >
+        {token}
+      </span>
+    );
+    last = end;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out.length > 0 ? out : [''];
+}
 
 function firstEnabledImageModel(models: Model[]): Model | null {
   const list = (models ?? []).filter((m) => m.enabled && m.isImageGen);
@@ -112,6 +164,28 @@ async function downloadImage(src: string, filename: string) {
   document.body.removeChild(a);
 }
 
+async function readImageSizeFromSrc(src: string): Promise<{ w: number; h: number } | null> {
+  const s = String(src ?? '');
+  if (!s) return null;
+  try {
+    const img = new Image();
+    // data: 同源；http(s) 可能跨域，但失败时我们会 fallback
+    img.decoding = 'async';
+    img.src = s;
+    // decode 更可靠，不支持则走 onload
+    await (img.decode ? img.decode() : new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('load failed'));
+    }));
+    const w = img.naturalWidth || 0;
+    const h = img.naturalHeight || 0;
+    if (!w || !h) return null;
+    return { w, h };
+  } catch {
+    return null;
+  }
+}
+
 function buildTemplate(name: string) {
   if (name === 'wine') {
     return `为一家精品红酒商店设计一张海报：\n- 风格：高级、克制、现代\n- 主色：深酒红 + 金色点缀\n- 文案：Wine List / 2026 Spring Collection\n- 版式：留白，中心主视觉\n请输出：设计要点 + 生图提示词`;
@@ -127,8 +201,9 @@ function buildTemplate(name: string) {
 
 export default function AdvancedImageMasterTab() {
   // 固定默认参数：用户不需要选择
-  const DEFAULT_SIZE = '1024x1024';
   const DEFAULT_RESPONSE_FORMAT = 'b64_json' as const;
+  // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
+  const imageGenSize = '1024x1024' as const;
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -160,9 +235,15 @@ export default function AdvancedImageMasterTab() {
     },
   ]);
 
+  // 右侧对话输入（与画布快捷输入互不影响）
   const [input, setInput] = useState('');
+  // 画布快捷输入（仅在选中生成器区域时出现）
+  const [quickInput, setQuickInput] = useState('');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const quickInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const activeComposerRef = useRef<'right' | 'quick'>('right');
   const inputPanelRef = useRef<HTMLDivElement | null>(null);
+  const highlightRef = useRef<HTMLDivElement | null>(null);
   const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
   const [taHeight, setTaHeight] = useState<number>(MIN_TA_HEIGHT);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -178,11 +259,64 @@ export default function AdvancedImageMasterTab() {
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
 
   // 画布（无限平面）视口：camera + zoom
+  // 性能关键：高频交互（wheel/pan/drag）不走 React setState，否则会触发整棵画布重渲染导致“不跟手”
+  // 用 ref + rAF 直接更新 worldRef 的 transform；state 仅用于 UI 展示（低频同步）
   const [zoom, setZoom] = useState(1);
   const [camera, setCamera] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const cameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const rafTransformRef = useRef<number | null>(null);
+  const lastUiSyncRef = useRef(0);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
+  const worldUiRef = useRef<HTMLDivElement | null>(null);
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  const applyWorldTransform = useCallback(() => {
+    const el = worldRef.current;
+    const ui = worldUiRef.current;
+    if (!el) return;
+    const z = zoomRef.current;
+    const cam = cameraRef.current;
+    const tf = `translate(${Math.round(cam.x)}px, ${Math.round(cam.y)}px) scale(${z})`;
+    el.style.transform = tf;
+    el.style.transformOrigin = '0 0';
+    el.style.setProperty('--zoom', String(z));
+    el.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
+    if (ui) {
+      ui.style.transform = tf;
+      ui.style.transformOrigin = '0 0';
+      ui.style.setProperty('--zoom', String(z));
+      ui.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
+    }
+  }, []);
+
+  const scheduleWorldTransform = useCallback(
+    (syncUi = false) => {
+      if (rafTransformRef.current != null) return;
+      rafTransformRef.current = window.requestAnimationFrame(() => {
+        rafTransformRef.current = null;
+        applyWorldTransform();
+        const now = Date.now();
+        // UI 展示低频同步：避免每帧 setState
+        if (syncUi || now - lastUiSyncRef.current > 80) {
+          lastUiSyncRef.current = now;
+          setZoom(zoomRef.current);
+          setCamera({ ...cameraRef.current });
+        }
+      });
+    },
+    [applyWorldTransform]
+  );
+
+  const setViewport = useCallback(
+    (nextZoom: number, nextCamera: { x: number; y: number }, opts?: { syncUi?: boolean }) => {
+      zoomRef.current = nextZoom;
+      cameraRef.current = nextCamera;
+      scheduleWorldTransform(Boolean(opts?.syncUi));
+    },
+    [scheduleWorldTransform]
+  );
 
   // Space 平移 + 框选
   const [spacePressed, setSpacePressed] = useState(false);
@@ -215,6 +349,32 @@ export default function AdvancedImageMasterTab() {
 
   // @imgN 占位符
   const [nextRefId, setNextRefId] = useState(1);
+
+  const ensureRefIdForKey = useCallback(
+    (key: string) => {
+      const it = canvas.find((x) => x.key === key) ?? null;
+      if (!it) return null;
+      if (typeof it.refId === 'number' && Number.isFinite(it.refId) && it.refId > 0) return it.refId;
+
+      const maxExisting = canvas.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+      const id = Math.max(nextRefId, maxExisting + 1);
+      setNextRefId(id + 1);
+      setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, refId: id } : x)));
+      return id;
+    },
+    [canvas, nextRefId]
+  );
+
+  const focusComposer = useCallback(() => {
+    try {
+      inputPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } catch {
+      // ignore
+    }
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, []);
 
 
   // splitter：右侧宽度（px）
@@ -335,6 +495,11 @@ export default function AdvancedImageMasterTab() {
             prompt: a.prompt ?? '',
             src: a.url || '',
             status: 'done' as const,
+            // 规则：若后端记录了像素尺寸，则画布直接按原始尺寸展示
+            w: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
+            h: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
+            naturalW: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
+            naturalH: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
           }))
           .filter((x) => !!x.src)
           .slice(0, 60);
@@ -447,20 +612,21 @@ export default function AdvancedImageMasterTab() {
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const el = stageRef.current;
     if (!el) {
-      setZoom(nextZoom);
+      setViewport(nextZoom, cameraRef.current, { syncUi: true });
       return;
     }
     const rect = el.getBoundingClientRect();
     const sx = clientX - rect.left;
     const sy = clientY - rect.top;
-    const wx = (sx - camera.x) / zoom;
-    const wy = (sy - camera.y) / zoom;
+    const curZ = zoomRef.current;
+    const curCam = cameraRef.current;
+    const wx = (sx - curCam.x) / curZ;
+    const wy = (sy - curCam.y) / curZ;
     // 保持鼠标所在世界点不动：sx = wx*next + camX'
     const nextCamX = sx - wx * nextZoom;
     const nextCamY = sy - wy * nextZoom;
-    setZoom(nextZoom);
-    setCamera({ x: nextCamX, y: nextCamY });
-  }, [camera.x, camera.y, zoom]);
+    setViewport(nextZoom, { x: nextCamX, y: nextCamY });
+  }, [setViewport]);
 
   const stageCenterClient = useCallback(() => {
     const el = stageRef.current;
@@ -480,13 +646,21 @@ export default function AdvancedImageMasterTab() {
       // pinch / ctrl+wheel
       if (!ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault();
-      const next = clampZoom(zoom * zoomFactorFromDeltaY(ev.deltaY));
+      const next = clampZoom(zoomRef.current * zoomFactorFromDeltaY(ev.deltaY));
       zoomAt(ev.clientX, ev.clientY, next);
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel as EventListener);
-  }, [canvas.length, zoomAt, zoom]);
+  }, [canvas.length, zoomAt]);
+
+  // 初始化/刷新时：确保 DOM transform 与 state/ref 一致
+  useEffect(() => {
+    zoomRef.current = zoom;
+    cameraRef.current = camera;
+    scheduleWorldTransform(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pushMsg = (role: UiMsg['role'], content: string) => {
     const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
@@ -497,14 +671,33 @@ export default function AdvancedImageMasterTab() {
     }
   };
 
+  const getActiveValue = () => (activeComposerRef.current === 'quick' ? quickInput : input);
+  const setActiveValue = (next: string) => {
+    if (activeComposerRef.current === 'quick') setQuickInput(next);
+    else setInput(next);
+  };
+
+  const getActiveTa = () => {
+    if (activeComposerRef.current === 'quick') return quickInputRef.current;
+    return inputRef.current;
+  };
+
+  const focusQuickComposer = () => {
+    const ta = quickInputRef.current;
+    if (!ta) return;
+    requestAnimationFrame(() => {
+      ta.focus();
+    });
+  };
+
   const replaceMentionAtCursor = (replacement: string) => {
-    const ta = inputRef.current;
+    const ta = getActiveTa();
     if (!ta) return;
     const value = ta.value ?? '';
     const start = mentionAtPos ?? (ta.selectionStart ?? value.length);
     const end = ta.selectionStart ?? value.length;
     const next = value.slice(0, start) + replacement + value.slice(end);
-    setInput(next);
+    setActiveValue(next);
     setMentionOpen(false);
     setMentionQuery('');
     setMentionAtPos(null);
@@ -516,19 +709,57 @@ export default function AdvancedImageMasterTab() {
   };
 
   const insertTextAtCursor = (text: string, opts?: { openMention?: boolean }) => {
-    const ta = inputRef.current;
+    const ta = getActiveTa();
     if (!ta) return;
     const value = ta.value ?? '';
     const start = ta.selectionStart ?? value.length;
     const end = ta.selectionEnd ?? start;
     const next = value.slice(0, start) + text + value.slice(end);
-    setInput(next);
+    setActiveValue(next);
     requestAnimationFrame(() => {
       ta.focus();
       const pos = start + text.length;
       ta.setSelectionRange(pos, pos);
       if (opts?.openMention) refreshMention(next, pos);
     });
+  };
+
+  const findAtomicTagRangeAt = (s: string, caret: number) => {
+    const patterns = [
+      /@model\([^)]+\)\s?/g,
+      /@vision\([^)]+\)\s?/g,
+      /@img\d+\s?/g,
+    ];
+    for (const rx of patterns) {
+      let m: RegExpExecArray | null;
+      while ((m = rx.exec(s))) {
+        const start = m.index;
+        const end = start + m[0].length;
+        if (caret > start && caret < end) return { start, end };
+        if (caret === end) return { start, end };
+      }
+    }
+    return null;
+  };
+
+  const applyAtomicDelete = (taArg?: HTMLTextAreaElement | null) => {
+    const ta = taArg ?? getActiveTa();
+    if (!ta) return false;
+    const value = ta.value ?? '';
+    const start = ta.selectionStart ?? value.length;
+    const end = ta.selectionEnd ?? start;
+    if (start !== end) return false;
+    const caret = start;
+    const range = findAtomicTagRangeAt(value, caret);
+    if (!range) return false;
+    // backspace 删除时：caret 可能在 token 中或 token 末尾；delete 也同理
+    const next = value.slice(0, range.start) + value.slice(range.end);
+    setActiveValue(next);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(range.start, range.start);
+    });
+    return true;
   };
 
   const makeAsciiArt = (text: string) => {
@@ -545,6 +776,8 @@ export default function AdvancedImageMasterTab() {
   };
 
   const refreshMention = (val: string, caret: number) => {
+    // 快捷输入面板：暂不弹 @ 菜单（避免菜单出现在右侧输入框区域）；仍可手动输入 @tag
+    if (activeComposerRef.current === 'quick') return;
     const s = String(val ?? '');
     const pos = Math.max(0, Math.min(caret, s.length));
     const before = s.slice(0, pos);
@@ -576,7 +809,15 @@ export default function AdvancedImageMasterTab() {
     while ((m = re.exec(s))) {
       last = String(m[1] ?? '').trim();
     }
-    const clean = s.replace(re, '').replace(/\s{2,}/g, ' ').trim();
+    // 同类多次 @model(...)：取最后一个生效；其余从文本中剔除
+    const all = Array.from(s.matchAll(re));
+    const lastFull = all.length > 0 ? String(all[all.length - 1]?.[0] ?? '') : '';
+    const keepLast = lastFull ? s.replace(lastFull, '__KEEP_LAST_MODEL__') : s;
+    const clean = keepLast
+      .replace(re, '')
+      .replace('__KEEP_LAST_MODEL__', lastFull)
+      .replace(/\s{2,}/g, ' ')
+      .trim();
     if (!last) return { forced: null, clean };
     const key = last.toLowerCase();
     const forced =
@@ -659,7 +900,7 @@ export default function AdvancedImageMasterTab() {
         (primaryRef || selected) && pickedIsVolcesSeedream
           ? '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
           : (primaryRef || selected)
-            ? '你已选中一张图片作为“首帧图”。本次将作为图生图首帧传给生图接口（若上游平台不支持，会返回参数错误）。'
+            ? '你已选中一张图片作为参考图。本次将作为图生图参考传给生图接口（若上游平台不支持，会返回参数错误）。'
             : '',
       ]
         .filter(Boolean)
@@ -675,6 +916,9 @@ export default function AdvancedImageMasterTab() {
         prompt: firstPrompt,
         src: '',
         status: 'running',
+          // 规则：不假定尺寸；等图片真实 load 后再用 naturalWidth/Height 回填
+          w: 1,
+          h: 1,
       };
       return [placeholder, ...prev].slice(0, 60);
     });
@@ -685,7 +929,7 @@ export default function AdvancedImageMasterTab() {
         modelId: pickedModel!.id,
         prompt: firstPrompt,
         n: 1,
-        size: DEFAULT_SIZE,
+        size: resolvedSizeForGen,
         responseFormat: DEFAULT_RESPONSE_FORMAT,
         initImageBase64: initSrc && initSrc.startsWith('data:') ? initSrc : undefined,
       });
@@ -725,8 +969,8 @@ export default function AdvancedImageMasterTab() {
 
       // 上传并持久化资产：把外部签名 URL / base64 转为自托管 URL（避免过期）
       if (masterSession?.id) {
-        const width = DEFAULT_SIZE.startsWith('1024') ? 1024 : undefined;
-        const height = DEFAULT_SIZE.endsWith('1024') ? 1024 : undefined;
+        const width = resolvedSizeForGen.startsWith('1024') ? 1024 : resolvedSizeForGen.startsWith('768') ? 768 : resolvedSizeForGen.startsWith('512') ? 512 : undefined;
+        const height = resolvedSizeForGen.endsWith('1024') ? 1024 : resolvedSizeForGen.endsWith('768') ? 768 : resolvedSizeForGen.endsWith('512') ? 512 : undefined;
         const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
         if (!isAlreadyHosted) {
           const up = await uploadImageAsset({
@@ -773,33 +1017,6 @@ export default function AdvancedImageMasterTab() {
     });
   };
 
-  const ensureRefIdForKey = (key: string) => {
-    const it = canvas.find((x) => x.key === key) ?? null;
-    if (!it) return null;
-    if (it.refId != null) return it.refId;
-    const id = nextRefId;
-    setNextRefId((n) => n + 1);
-    setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, refId: id } : x)));
-    return id;
-  };
-
-  const ensureCheckedWithRefId = (key: string, v: boolean) => {
-    const now = Date.now();
-    const id = v ? ensureRefIdForKey(key) : null;
-    setCanvas((prev) =>
-      prev.map((x) =>
-        x.key === key
-          ? {
-              ...x,
-              checked: v,
-              checkedAt: v ? now : undefined,
-              refId: v ? (id ?? x.refId) : x.refId,
-            }
-          : x
-      )
-    );
-  };
-
   const extractReferencedImagesInOrder = (text: string) => {
     const s = String(text ?? '');
     const rx = /@img(\d+)/g;
@@ -816,17 +1033,13 @@ export default function AdvancedImageMasterTab() {
     const items: CanvasImageItem[] = [];
     for (const id of ids) {
       const it = canvas.find((x) => x.refId === id);
-      if (it) items.push(it);
+      if (it && (it.kind ?? 'image') === 'image') items.push(it);
     }
     return items;
   };
 
   const buildRequestTextWithRefs = (rawText: string) => {
     const refsByText = extractReferencedImagesInOrder(rawText);
-    const checked = canvas
-      .filter((x) => x.checked)
-      .slice()
-      .sort((a, b) => Number(a.checkedAt ?? 0) - Number(b.checkedAt ?? 0));
 
     const merged: CanvasImageItem[] = [];
     const seen = new Set<string>();
@@ -835,33 +1048,62 @@ export default function AdvancedImageMasterTab() {
       seen.add(it.key);
       merged.push(it);
     }
-    for (const it of checked) {
-      if (seen.has(it.key)) continue;
-      seen.add(it.key);
-      merged.push(it);
+    // 若文本没有 @imgN 引用：默认用当前选中（按 selectedKeys 顺序）作为引用顺序
+    if (merged.length === 0 && selectedKeys.length > 0) {
+      for (const k of selectedKeys) {
+        const it = canvas.find((x) => x.key === k);
+        if (!it) continue;
+        if ((it.kind ?? 'image') !== 'image') continue;
+        if (!it.src) continue;
+        if (seen.has(it.key)) continue;
+        seen.add(it.key);
+        merged.push(it);
+      }
     }
 
     if (merged.length === 0) return { requestText: rawText, primaryRef: null as CanvasImageItem | null };
-    const lines = merged.map((it) => `- @img${it.refId ?? '?'}: ${it.prompt || '（无描述）'}`);
+    const lines = merged.map((it) => {
+      const id = it.refId ?? ensureRefIdForKey(it.key) ?? '?';
+      return `- @img${id}: ${it.prompt || '（无描述）'}`;
+    });
     const requestText = `${rawText}\n\n【引用图片（按顺序）】\n${lines.join('\n')}`;
     return { requestText, primaryRef: merged[0] ?? null };
+  };
+
+  const sendText = async (rawText: string) => {
+    const raw = String(rawText ?? '').trim();
+    if (!raw) return;
+    const { requestText, primaryRef } = buildRequestTextWithRefs(raw);
+    await runFromText(raw, requestText, primaryRef);
   };
 
   const onSend = async () => {
     const raw = input.trim();
     if (!raw) return;
-    const { requestText, primaryRef } = buildRequestTextWithRefs(raw);
     setInput('');
-    await runFromText(raw, requestText, primaryRef);
+    await sendText(raw);
   };
+
+  const onSendQuick = async () => {
+    const raw = quickInput.trim();
+    if (!raw) return;
+    setQuickInput('');
+    await sendText(raw);
+  };
+
+  const resolvedSizeForGen = imageGenSize;
 
   const onUploadImages = async (files: File[]) => {
     const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (list.length === 0) return;
 
-    // 选中单张时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
+    // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
     if (list.length === 1 && selectedKeys.length === 1) {
       const targetKey = selectedKeys[0]!;
+      const target = canvas.find((x) => x.key === targetKey);
+      if (!target || (target.kind ?? 'image') !== 'image') {
+        // 如果当前选中的是“生成器区域”等非图片对象，则走新增逻辑
+      } else {
       const file = list[0]!;
       const now = Date.now();
       const src = await new Promise<string>((resolve) => {
@@ -871,6 +1113,7 @@ export default function AdvancedImageMasterTab() {
         reader.readAsDataURL(file);
       });
       if (!src) return;
+      const dim = await readImageSizeFromSrc(src);
 
       setCanvas((prev) =>
         prev.map((it) =>
@@ -884,6 +1127,11 @@ export default function AdvancedImageMasterTab() {
                 errorMessage: null,
                 assetId: undefined,
                 sha256: undefined,
+                // 规则：图片多大，就按其 natural 多大显示（之后只通过画布 zoom 改变）
+                w: dim?.w ?? it.w,
+                h: dim?.h ?? it.h,
+                naturalW: dim?.w ?? it.naturalW,
+                naturalH: dim?.h ?? it.naturalH,
               }
             : it
         )
@@ -910,6 +1158,7 @@ export default function AdvancedImageMasterTab() {
         }
       }
       return;
+      }
     }
 
     const added: CanvasImageItem[] = [];
@@ -921,10 +1170,21 @@ export default function AdvancedImageMasterTab() {
           new Promise<void>((resolve) => {
             const reader = new FileReader();
             const key = `upload_${now}_${idx}`;
-            reader.onload = () => {
+            reader.onload = async () => {
               const src = String(reader.result || '');
               if (src) {
-                added.push({ key, createdAt: Date.now(), prompt: file.name || 'uploaded', src, status: 'done' });
+                const dim = await readImageSizeFromSrc(src);
+                added.push({
+                  key,
+                  createdAt: Date.now(),
+                  prompt: file.name || 'uploaded',
+                  src,
+                  status: 'done',
+                  w: dim?.w,
+                  h: dim?.h,
+                  naturalW: dim?.w,
+                  naturalH: dim?.h,
+                });
               }
               resolve();
             };
@@ -939,17 +1199,16 @@ export default function AdvancedImageMasterTab() {
     added.sort((a, b) => a.createdAt - b.createdAt);
     setCanvas((prev) => {
       // 新增：落在当前视口中心附近（更像“开放世界”）
-      const baseX = (stageSize.w / 2 - camera.x) / zoom;
-      const baseY = (stageSize.h / 2 - camera.y) / zoom;
+      const baseX = (stageSize.w / 2 - cameraRef.current.x) / zoomRef.current;
+      const baseY = (stageSize.h / 2 - cameraRef.current.y) / zoomRef.current;
       const gap = 24;
-      const baseW = 320;
-      const baseH = 220;
       const placed = added.map((it, i) => ({
         ...it,
-        w: it.w ?? baseW,
-        h: it.h ?? baseH,
-        x: (it.x ?? baseX) + (i % 3) * (baseW + gap),
-        y: (it.y ?? baseY) + Math.floor(i / 3) * (baseH + gap),
+        // 规则：不改比例，不设默认 320x220；未知尺寸时先用 1px 占位，等 onLoad 再补齐
+        w: it.w ?? 1,
+        h: it.h ?? 1,
+        x: (it.x ?? baseX) + (i % 3) * ((it.w ?? 1) + gap),
+        y: (it.y ?? baseY) + Math.floor(i / 3) * ((it.h ?? 1) + gap),
       }));
       const merged = [...placed.reverse(), ...prev].slice(0, 60);
       return ensureLayoutForNewItems(merged, 0);
@@ -992,13 +1251,14 @@ export default function AdvancedImageMasterTab() {
   const fitToStage = () => {
     const el = stageRef.current;
     if (!el) return;
-    const itemsAll = canvas.filter((x) => x.status !== 'error' && (!!x.src || x.status === 'running'));
+    const itemsAll = canvas.filter(
+      (x) => x.status !== 'error' && ((x.kind ?? 'image') === 'generator' || !!x.src || x.status === 'running')
+    );
     const items =
       selectedKeys.length > 0 ? itemsAll.filter((x) => selectedKeys.includes(x.key)) : itemsAll;
     if (items.length === 0) {
       // 回到原点附近
-      setZoom(1);
-      setCamera({ x: Math.round(stageSize.w / 2), y: Math.round(stageSize.h / 2) });
+      setViewport(1, { x: Math.round(stageSize.w / 2), y: Math.round(stageSize.h / 2) }, { syncUi: true });
       return;
     }
     const minX = Math.min(...items.map((it) => it.x ?? 0));
@@ -1015,30 +1275,38 @@ export default function AdvancedImageMasterTab() {
     const cy = minY + bboxH / 2;
     const camX = stageSize.w / 2 - cx * nextZoom;
     const camY = stageSize.h / 2 - cy * nextZoom;
-    setZoom(nextZoom);
-    setCamera({ x: camX, y: camY });
+    setViewport(nextZoom, { x: camX, y: camY }, { syncUi: true });
   };
 
   const ensureLayoutForNewItems = (items: CanvasImageItem[], baseIndexStart: number) => {
     // 让新图片自然地“出现在大画布里”：简单网格排布（开放世界的第一步）
     const gap = 24;
-    const baseW = 320;
-    const baseH = 220;
-    const cols = Math.max(2, Math.min(5, Math.floor((stageSize.w || 900) / (baseW + gap))));
+    const cols = Math.max(2, Math.min(5, Math.floor((stageSize.w || 900) / (420 + gap))));
     return items.map((it, i) => {
       if (it.x != null && it.y != null) return it;
       const idx = baseIndexStart + i;
       const col = idx % cols;
       const row = Math.floor(idx / cols);
+      const w = it.w ?? 1;
+      const h = it.h ?? 1;
       return {
         ...it,
-        w: it.w ?? baseW,
-        h: it.h ?? baseH,
-        x: col * (baseW + gap),
-        y: row * (baseH + gap),
+        w,
+        h,
+        x: col * (w + gap),
+        y: row * (h + gap),
       };
     });
   };
+
+  const selectedGenerator = useMemo(() => {
+    const k = selectedKeys[0];
+    if (!k) return null;
+    const it = canvas.find((x) => x.key === k) ?? null;
+    if (!it) return null;
+    if ((it.kind ?? 'image') !== 'generator') return null;
+    return it;
+  }, [canvas, selectedKeys]);
 
   return (
     <div ref={containerRef} className="h-full min-h-0">
@@ -1057,6 +1325,12 @@ export default function AdvancedImageMasterTab() {
             }}
             tabIndex={0}
             onMouseDown={() => stageRef.current?.focus()}
+            onBlur={() => {
+              // 失焦时清掉框选残留
+              setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
+              panRef.current.active = false;
+              dragItemsRef.current.active = false;
+            }}
             onPointerDown={(e) => {
               // 只处理“空白区域”的 pointerdown；点击图片会 stopPropagation
               const isBlank = e.target === e.currentTarget || e.target === worldRef.current;
@@ -1070,8 +1344,8 @@ export default function AdvancedImageMasterTab() {
                   pointerId: e.pointerId,
                   startX: e.clientX,
                   startY: e.clientY,
-                  baseCamX: camera.x,
-                  baseCamY: camera.y,
+                  baseCamX: cameraRef.current.x,
+                  baseCamY: cameraRef.current.y,
                 };
                 (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
                 e.preventDefault();
@@ -1086,12 +1360,33 @@ export default function AdvancedImageMasterTab() {
               (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
               e.preventDefault();
             }}
+            onPointerCancel={(e) => {
+              // pointer 被系统取消时（例如手势/滚动打断），清理所有交互态，避免“长方形框选”残留
+              dragItemsRef.current.active = false;
+              panRef.current.active = false;
+              setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
+              try {
+                (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+              } catch {
+                // ignore
+              }
+            }}
+            onPointerLeave={(e) => {
+              // 离开画布也清理 marquee（极端情况下 pointerup 没触发）
+              if (!marquee.active) return;
+              setMarquee((prev) => ({ ...prev, active: false, w: 0, h: 0 }));
+              try {
+                (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+              } catch {
+                // ignore
+              }
+            }}
             onPointerMove={(e) => {
               // dragging selected items
               const drag = dragItemsRef.current;
               if (drag.active && drag.pointerId === e.pointerId) {
-                const dx = (e.clientX - drag.startClientX) / zoom;
-                const dy = (e.clientY - drag.startClientY) / zoom;
+                const dx = (e.clientX - drag.startClientX) / zoomRef.current;
+                const dy = (e.clientY - drag.startClientY) / zoomRef.current;
                 const set = new Set(drag.keys);
                 setCanvas((prev) =>
                   prev.map((it) => {
@@ -1108,7 +1403,7 @@ export default function AdvancedImageMasterTab() {
               if (pan.active && pan.pointerId === e.pointerId) {
                 const dx = e.clientX - pan.startX;
                 const dy = e.clientY - pan.startY;
-                setCamera({ x: pan.baseCamX + dx, y: pan.baseCamY + dy });
+                setViewport(zoomRef.current, { x: pan.baseCamX + dx, y: pan.baseCamY + dy });
                 e.preventDefault();
                 return;
               }
@@ -1163,16 +1458,19 @@ export default function AdvancedImageMasterTab() {
               }
 
               // 框选：转世界坐标并命中图片 bbox
-              const x0 = (box.x - camera.x) / zoom;
-              const y0 = (box.y - camera.y) / zoom;
-              const x1 = (box.x + box.w - camera.x) / zoom;
-              const y1 = (box.y + box.h - camera.y) / zoom;
+              const x0 = (box.x - cameraRef.current.x) / zoomRef.current;
+              const y0 = (box.y - cameraRef.current.y) / zoomRef.current;
+              const x1 = (box.x + box.w - cameraRef.current.x) / zoomRef.current;
+              const y1 = (box.y + box.h - cameraRef.current.y) / zoomRef.current;
               const minX = Math.min(x0, x1);
               const minY = Math.min(y0, y1);
               const maxX = Math.max(x0, x1);
               const maxY = Math.max(y0, y1);
               const hits = canvas
-                .filter((it) => it.status !== 'error' && (!!it.src || it.status === 'running'))
+                .filter(
+                  (it) =>
+                    it.status !== 'error' && ((it.kind ?? 'image') === 'generator' || !!it.src || it.status === 'running')
+                )
                 .filter((it) => {
                   const ix0 = it.x ?? 0;
                   const iy0 = it.y ?? 0;
@@ -1239,11 +1537,11 @@ export default function AdvancedImageMasterTab() {
               if (e.key === '+' || e.key === '=') {
                 e.preventDefault();
                 const c = stageCenterClient();
-                zoomAt(c.x, c.y, clampZoom(zoom * 1.07));
+                zoomAt(c.x, c.y, clampZoom(zoomRef.current * 1.07));
               } else if (e.key === '-') {
                 e.preventDefault();
                 const c = stageCenterClient();
-                zoomAt(c.x, c.y, clampZoom(zoom / 1.07));
+                zoomAt(c.x, c.y, clampZoom(zoomRef.current / 1.07));
               } else if (e.key === '0') {
                 e.preventDefault();
                 const c = stageCenterClient();
@@ -1254,14 +1552,12 @@ export default function AdvancedImageMasterTab() {
             <div
               ref={worldRef}
               className="absolute inset-0"
-              style={{
-                transform: `translate(${Math.round(camera.x)}px, ${Math.round(camera.y)}px) scale(${zoom})`,
-                transformOrigin: '0 0',
-              }}
+              style={{ transformOrigin: '0 0' }}
             >
               {canvas.map((it) => {
                 if (it.status === 'error') return null;
-                if (!it.src && it.status !== 'running') return null;
+                const kind = it.kind ?? 'image';
+                if (kind === 'image' && !it.src && it.status !== 'running') return null;
                 const x = it.x ?? 0;
                 const y = it.y ?? 0;
                 const w = it.w ?? 320;
@@ -1270,15 +1566,19 @@ export default function AdvancedImageMasterTab() {
                 return (
                   <div
                     key={it.key}
-                    className="absolute rounded-[16px] overflow-hidden"
+                    className="absolute rounded-[16px]"
                     style={{
                       left: Math.round(x),
                       top: Math.round(y),
                       width: Math.max(40, Math.round(w)),
                       height: Math.max(40, Math.round(h)),
-                      border: active ? '1px solid rgba(250,204,21,0.55)' : '1px solid rgba(255,255,255,0.10)',
-                      background: 'rgba(0,0,0,0.18)',
-                      boxShadow: active ? '0 24px 90px rgba(0,0,0,0.55)' : '0 18px 60px rgba(0,0,0,0.35)',
+                      // 外层容器仅负责布局/拖拽命中；边框应贴合图片本体，因此容器不画边框
+                      border: '1px solid transparent',
+                      // 根因：这里的 background/boxShadow 会永远渲染一个“长方形卡片”
+                      // 需求：元素本体就是图片本身，不应出现任何额外长方形框 => 直接去掉
+                      background: 'transparent',
+                      boxShadow: 'none',
+                      overflow: 'visible',
                       cursor: 'pointer',
                     }}
                     onMouseDown={(e) => {
@@ -1317,6 +1617,29 @@ export default function AdvancedImageMasterTab() {
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      // 生成器区域：仅做选中，不做 @img 引用插入
+                      if ((it.kind ?? 'image') === 'generator') {
+                        if (e.shiftKey) {
+                          setSelectedKeys((prev) => {
+                            const set = new Set(prev);
+                            if (set.has(it.key)) set.delete(it.key);
+                            else set.add(it.key);
+                            return Array.from(set);
+                          });
+                        } else {
+                          setSelectedKeys([it.key]);
+                        }
+                        focusComposer();
+                        return;
+                      }
+                      // Cmd/Ctrl + 点击：插入图片引用 @imgN
+                      if (e.metaKey || e.ctrlKey) {
+                        setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
+                        const id = ensureRefIdForKey(it.key);
+                        if (id) insertAtCursor(`@img${id} `);
+                        focusComposer();
+                        return;
+                      }
                       if (e.shiftKey) {
                         setSelectedKeys((prev) => {
                           const set = new Set(prev);
@@ -1331,37 +1654,193 @@ export default function AdvancedImageMasterTab() {
                     title={it.prompt}
                   >
                     {/* 多选 checkbox（开放世界也保留） */}
-                    <button
-                      type="button"
-                      className="absolute left-2 top-2 h-6 w-6 rounded-[8px] inline-flex items-center justify-center z-10"
-                      style={{
-                        border: it.checked ? '1px solid rgba(250,204,21,0.65)' : '1px solid rgba(255,255,255,0.14)',
-                        background: it.checked ? 'rgba(250,204,21,0.18)' : 'rgba(0,0,0,0.22)',
-                        color: it.checked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.65)',
-                        backdropFilter: 'blur(8px)',
-                        WebkitBackdropFilter: 'blur(8px)',
-                      }}
-                      aria-label={it.checked ? '取消选择引用' : '选择引用'}
-                      title={it.checked ? '取消选择引用' : '选择引用'}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        const next = !it.checked;
-                        ensureCheckedWithRefId(it.key, next);
-                      }}
-                    >
-                      {it.checked ? <span className="text-[12px] font-extrabold">✓</span> : <span className="text-[10px] font-semibold">+</span>}
-                    </button>
+                    {/* 已移除：左上角“+选择引用”按钮（用户反馈不需要） */}
 
                     {it.status === 'running' ? (
                       <div className="w-full h-full flex items-center justify-center">
                         <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
                       </div>
+                    ) : (it.kind ?? 'image') === 'generator' ? (
+                      <div
+                        className="w-full h-full rounded-[16px] relative"
+                        style={{
+                          background: 'rgba(96,165,250,0.16)',
+                          border: active ? '2px solid rgba(96,165,250,0.85)' : '1px solid rgba(96,165,250,0.25)',
+                          boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.18) inset' : 'none',
+                        }}
+                      >
+                        <div className="absolute inset-0 flex items-center justify-center" style={{ color: 'rgba(96,165,250,0.35)' }}>
+                          <ImagePlus size={54} />
+                        </div>
+                      </div>
                     ) : (
-                      <img src={it.src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                      <div className="w-full h-full flex items-center justify-center">
+                        <img
+                          src={it.src}
+                          alt={it.prompt}
+                          className="w-full h-full block"
+                          style={{
+                            objectFit: 'contain',
+                            borderRadius: 14,
+                            // 规则：不制造任何“假边框”；选中仅做高亮效果（光晕），不改变尺寸/比例
+                            filter: active
+                              ? 'drop-shadow(0 0 2px rgba(250,204,21,0.95)) drop-shadow(0 0 14px rgba(250,204,21,0.45))'
+                              : 'none',
+                          }}
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            const nw = img.naturalWidth || 0;
+                            const nh = img.naturalHeight || 0;
+                            if (!nw || !nh) return;
+                            setCanvas((prev) =>
+                              prev.map((x) => {
+                                if (x.key !== it.key) return x;
+                                // 规则：图片的显示尺寸 = natural 像素尺寸（比例关系只由画布 zoom 改变）
+                                return { ...x, naturalW: nw, naturalH: nh, w: nw, h: nh };
+                              })
+                            );
+                          }}
+                        />
+                      </div>
                     )}
                   </div>
                 );
               })}
+            </div>
+
+            {/* 画布 UI 覆盖层：随 camera/zoom 移动；分为“展示层（不吃事件）”与“交互层（可输入）” */}
+            <div ref={worldUiRef} className="absolute inset-0 z-30" style={{ transformOrigin: '0 0' }}>
+              {/* 展示层：永远可读且压在图片上方 */}
+              <div className="absolute inset-0 pointer-events-none">
+                {canvas
+                  .filter((x) => (x.kind ?? 'image') === 'generator')
+                  .map((g) => {
+                    const x = g.x ?? 0;
+                    const y = g.y ?? 0;
+                    const w = g.w ?? 1024;
+                    const h = g.h ?? 1024;
+                    return (
+                      <div key={`ui_${g.key}`} className="absolute" style={{ left: Math.round(x), top: Math.round(y), width: Math.round(w), height: Math.round(h) }}>
+                        <div
+                          className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                          style={{
+                            left: 0,
+                            top: 0,
+                            transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
+                            transformOrigin: 'left bottom',
+                            background: 'rgba(255,255,255,0.80)',
+                            border: '1px solid rgba(0,0,0,0.10)',
+                            color: 'rgba(0,0,0,0.55)',
+                            boxShadow: '0 10px 24px rgba(0,0,0,0.10)',
+                          }}
+                        >
+                          Image Generator
+                        </div>
+                        <div
+                          className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                          style={{
+                            right: 0,
+                            top: 0,
+                            transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
+                            transformOrigin: 'right bottom',
+                            background: 'rgba(255,255,255,0.72)',
+                            border: '1px solid rgba(0,0,0,0.10)',
+                            color: 'rgba(0,0,0,0.45)',
+                          }}
+                        >
+                          {Math.round(w)} × {Math.round(h)}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* 交互层：选中生成器时显示快捷输入（可输入/可删除/可发送） */}
+              {selectedGenerator ? (
+                <div
+                  className="absolute"
+                  style={{
+                    left: Math.round((selectedGenerator.x ?? 0) + (selectedGenerator.w ?? 1024) / 2),
+                    top: `calc(${Math.round((selectedGenerator.y ?? 0) + (selectedGenerator.h ?? 1024))}px + 26px * var(--invZoom))`,
+                    transform: 'translate(-50%, 0) scale(var(--invZoom))',
+                    transformOrigin: 'center top',
+                    pointerEvents: 'auto',
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    activeComposerRef.current = 'quick';
+                    focusQuickComposer();
+                  }}
+                >
+                  <div
+                    className="w-[560px] max-w-[82vw] rounded-[12px]"
+                    style={{
+                      background: 'rgba(255,255,255,0.88)',
+                      border: '1px solid rgba(0,0,0,0.10)',
+                      boxShadow: '0 24px 90px rgba(0,0,0,0.18)',
+                      padding: 16,
+                      minHeight: 168,
+                    }}
+                  >
+                    <textarea
+                      ref={quickInputRef}
+                      value={quickInput}
+                      onFocus={() => {
+                        activeComposerRef.current = 'quick';
+                      }}
+                      onChange={(e) => {
+                        setQuickInput(e.target.value);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Backspace') {
+                          if (applyAtomicDelete(e.currentTarget)) {
+                            e.preventDefault();
+                            return;
+                          }
+                        }
+                        if (e.key === 'Delete') {
+                          if (applyAtomicDelete(e.currentTarget)) {
+                            e.preventDefault();
+                            return;
+                          }
+                        }
+                        if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                          e.preventDefault();
+                          e.currentTarget.select();
+                          return;
+                        }
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void onSendQuick();
+                        }
+                      }}
+                      placeholder="今天我们要创作什么"
+                      className="w-full resize-none outline-none focus:outline-none focus-visible:outline-none"
+                      style={{
+                        height: 104,
+                        background: 'transparent',
+                        border: 'none',
+                        outline: 'none',
+                        boxShadow: 'none',
+                        color: 'rgba(0,0,0,0.86)',
+                        // 字体缩小约 1/3：22 -> 15
+                        fontSize: 15,
+                        fontWeight: 600,
+                        lineHeight: '20px',
+                      }}
+                    />
+
+                    <div className="mt-2 flex items-end justify-between gap-3">
+                      <div className="text-[14px]" style={{ color: 'rgba(0,0,0,0.92)' }}>
+                        {effectiveModel?.name || effectiveModel?.modelName || '自动模型'}
+                      </div>
+                      <div className="text-[13px]" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        Enter 发送，Shift+Enter 换行
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             {/* 框选矩形（屏幕坐标） */}
@@ -1401,7 +1880,7 @@ export default function AdvancedImageMasterTab() {
                 className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
                 onClick={() => {
                   const c = stageCenterClient();
-                  zoomAt(c.x, c.y, clampZoom(zoom / 1.07));
+                  zoomAt(c.x, c.y, clampZoom(zoomRef.current / 1.07));
                 }}
                 title="缩小"
                 aria-label="缩小"
@@ -1417,7 +1896,7 @@ export default function AdvancedImageMasterTab() {
                 className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
                 onClick={() => {
                   const c = stageCenterClient();
-                  zoomAt(c.x, c.y, clampZoom(zoom * 1.07));
+                  zoomAt(c.x, c.y, clampZoom(zoomRef.current * 1.07));
                 }}
                 title="放大"
                 aria-label="放大"
@@ -1449,73 +1928,237 @@ export default function AdvancedImageMasterTab() {
             </div>
           </div>
 
-          {/* 左侧悬浮工具条 */}
+          {/* 左侧工具栏（图1-5 风格，除画笔外都可用） */}
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
             <div
-              className="rounded-[16px] p-[6px] flex flex-col gap-2"
+              className="rounded-[20px] p-2 flex flex-col gap-2"
               style={{
                 border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(0,0,0,0.22)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
+                background: 'rgba(255,255,255,0.10)',
+                backdropFilter: 'blur(14px)',
+                WebkitBackdropFilter: 'blur(14px)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.35)',
               }}
             >
+              {/* 选择 */}
               <button
                 type="button"
-                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
-                style={{ color: 'var(--text-secondary)' }}
-                onClick={() => fileRef.current?.click()}
-                title="上传图片到画板"
-                aria-label="上传图片到画板"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
+                title="选择"
+                aria-label="选择"
+                onClick={() => stageRef.current?.focus()}
+              >
+                <MousePointer2 size={18} />
+              </button>
+
+              {/* +新增 */}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-black/5"
+                    style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
+                    title="新增"
+                    aria-label="新增"
+                  >
+                    <span className="text-[22px] leading-none font-semibold">+</span>
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    side="right"
+                    align="start"
+                    sideOffset={12}
+                    className="z-50 rounded-[18px] p-3"
+                    style={{
+                      minWidth: 260,
+                      background: 'rgba(255,255,255,0.92)',
+                      border: '1px solid rgba(0,0,0,0.08)',
+                      boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                      color: '#0b0b0f',
+                    }}
+                  >
+                    <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      新增
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                        onClick={() => fileRef.current?.click()}
+                      >
+                        <ImagePlus size={18} color="#0b0b0f" />
+                        <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                          上传图片
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
+                        disabled
+                      >
+                        <Video size={18} color="#0b0b0f" />
+                        <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                          上传视频
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
+                        disabled
+                      >
+                        <span className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                          #
+                        </span>
+                        <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                          智能画板
+                        </span>
+                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
+                          F
+                        </span>
+                      </button>
+                    </div>
+                    <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+
+              {/* 形状 */}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-black/5"
+                    style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
+                    title="形状"
+                    aria-label="形状"
+                  >
+                    <Square size={18} />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    side="right"
+                    align="start"
+                    sideOffset={12}
+                    className="z-50 rounded-[18px] p-3"
+                    style={{
+                      minWidth: 320,
+                      background: 'rgba(255,255,255,0.92)',
+                      border: '1px solid rgba(0,0,0,0.08)',
+                      boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                    }}
+                  >
+                    <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      形状
+                    </div>
+                    <div className="mt-3 grid grid-cols-4 gap-3">
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }} />
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }} />
+                    </div>
+                    <div className="mt-4 text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      形状文本
+                    </div>
+                    <div className="mt-3 grid grid-cols-5 gap-3">
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
+                    </div>
+                    <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+
+              {/* 文字 */}
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-black/5"
+                style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
+                title="文字（T）"
+                aria-label="文字"
+                onClick={() => {
+                  // v1：先只给提示，不做画布文字对象
+                  pushMsg('Assistant', '文字工具：即将支持在画布中插入/编辑文本（当前为占位）。');
+                }}
+              >
+                <Type size={18} />
+              </button>
+
+              {/* 图像生成器 */}
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-black/5"
+                style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
+                title="图像生成器（A）"
+                aria-label="图像生成器"
+                onClick={() => {
+                  // 画布中插入一个“生成器区域”（类似 Lovart），默认选中
+                  const exist = canvas.find((x) => (x.kind ?? 'image') === 'generator');
+                  const key = exist?.key ?? `generator_${Date.now()}`;
+                  if (!exist) {
+                    const w = 1024;
+                    const h = 1024;
+                    const baseX = (stageSize.w / 2 - cameraRef.current.x) / zoomRef.current;
+                    const baseY = (stageSize.h / 2 - cameraRef.current.y) / zoomRef.current;
+                    const next: CanvasImageItem = {
+                      key,
+                      kind: 'generator',
+                      createdAt: Date.now(),
+                      prompt: 'Image Generator',
+                      src: '',
+                      status: 'done',
+                      x: Math.round(baseX - w / 2),
+                      y: Math.round(baseY - h / 2),
+                      w,
+                      h,
+                    };
+                    // 放到数组最前：渲染在最底层，让图片盖在生成器区域之上
+                    setCanvas((prev) => [next, ...prev].slice(0, 80));
+                  }
+                  setSelectedKeys([key]);
+                  focusComposer();
+                }}
               >
                 <ImagePlus size={18} />
               </button>
+
+              {/* 视频生成器 */}
               <button
                 type="button"
-                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ color: 'var(--text-secondary)' }}
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-black/5"
+                style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
+                title="视频生成器"
+                aria-label="视频生成器"
+                onClick={() => {
+                  pushMsg('Assistant', '视频生成器：占位（后续接入后端）。');
+                }}
+              >
+                <Video size={18} />
+              </button>
+
+              {/* 删除选中（放到底部） */}
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center hover:bg-black/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ background: 'rgba(255,255,255,0.55)', color: '#1a1206' }}
                 onClick={() => {
                   if (selectedKeys.length === 0) return;
-                  const ok = window.confirm(`确认删除选中的 ${selectedKeys.length} 张图片？`);
+                  const ok = window.confirm(`确认删除选中的 ${selectedKeys.length} 项？`);
                   if (!ok) return;
                   const set = new Set(selectedKeys);
                   setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
                   setSelectedKeys([]);
                 }}
-                title="删除选中图片"
-                aria-label="删除选中图片"
                 disabled={selectedKeys.length === 0}
+                title="删除选中"
+                aria-label="删除选中"
               >
                 <Trash size={18} />
-              </button>
-              <button
-                type="button"
-                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
-                style={{ color: 'var(--text-secondary)' }}
-                onClick={() => {
-                  const ok = window.confirm('确认清空画板？');
-                  if (!ok) return;
-                  setCanvas([]);
-                  setSelectedKeys([]);
-                  setZoom(1);
-                }}
-                title="清空画板"
-                aria-label="清空画板"
-                disabled={canvas.length === 0}
-              >
-                <Trash2 size={18} />
-              </button>
-              {/* 预留：选择/拖拽工具（先占位，后续可扩展） */}
-              <button
-                type="button"
-                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center"
-                style={{ color: 'rgba(255,255,255,0.28)' }}
-                title="选择/拖拽（预留）"
-                aria-label="选择/拖拽（预留）"
-                disabled
-              >
-                <MousePointer2 size={18} />
               </button>
             </div>
           </div>
@@ -1629,9 +2272,36 @@ export default function AdvancedImageMasterTab() {
               className="mt-3 rounded-[18px] p-3 relative"
               style={{ border: '1px solid var(--border-subtle)', background: 'rgba(0,0,0,0.14)' }}
             >
+              {/* 图6 控制条（v1：先作为输入条上方的一行） */}
+              {/* 已移除：输入框上方 4 个控制按钮（模型/参考/大小/比例）与其右侧“生成”按钮；保持输入区极简 */}
+
+              {/* @tag 高亮层（不影响 textarea 编辑/选择），让用户感知“原子化整体” */}
+              <div
+                ref={highlightRef}
+                aria-hidden="true"
+                className="absolute left-3 right-3 top-3"
+                style={{
+                  height: taHeight,
+                  minHeight: MIN_TA_HEIGHT,
+                  maxHeight: '50%',
+                  overflow: 'auto',
+                  pointerEvents: 'none',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontSize: 14,
+                  lineHeight: '1.25rem',
+                  color: 'transparent',
+                }}
+              >
+                {renderMentionHighlights(input)}
+              </div>
+
               <textarea
                 ref={inputRef}
                 value={input}
+                onFocus={() => {
+                  activeComposerRef.current = 'right';
+                }}
                 onChange={(e) => {
                   const v = e.target.value;
                   setInput(v);
@@ -1640,7 +2310,27 @@ export default function AdvancedImageMasterTab() {
                 onInput={() => {
                   recomputeTextareaHeight();
                 }}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  const hl = highlightRef.current;
+                  if (hl) {
+                    hl.scrollTop = el.scrollTop;
+                    hl.scrollLeft = el.scrollLeft;
+                  }
+                }}
                 onKeyDown={(e) => {
+                  if (e.key === 'Backspace') {
+                    if (applyAtomicDelete()) {
+                      e.preventDefault();
+                      return;
+                    }
+                  }
+                  if (e.key === 'Delete') {
+                    if (applyAtomicDelete()) {
+                      e.preventDefault();
+                      return;
+                    }
+                  }
                   if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
                     e.preventDefault();
                     e.currentTarget.select();
@@ -1795,9 +2485,18 @@ export default function AdvancedImageMasterTab() {
                 </div>
               ) : null}
 
-              {selected ? (
-                <div className="mt-1 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
-                  已选中首帧：{selected.prompt}
+              {selectedKeys.some((k) => (canvas.find((x) => x.key === k)?.kind ?? 'image') === 'image') ? (
+                <div className="mt-1 text-[12px] whitespace-pre-line" style={{ color: 'var(--text-muted)' }}>
+                  {selectedKeys
+                    .slice(0, 6)
+                    .map((k, i) => {
+                      const it = canvas.find((x) => x.key === k);
+                      if (!it || (it.kind ?? 'image') !== 'image') return null;
+                      const title = it?.prompt || '（无描述）';
+                      return `选中图${i + 1}: ${title}`;
+                    })
+                    .filter(Boolean)
+                    .join('\n')}
                 </div>
               ) : null}
 

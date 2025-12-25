@@ -5,7 +5,7 @@ import { getAiChatHistory, suggestGroupName, uploadAiChatDocument } from '@/serv
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
-import { ArrowLeftToLine, Paperclip, Plus, Send, Square, Sparkles } from 'lucide-react';
+import { Maximize2, Minimize2, Paperclip, Plus, Send, Square, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -891,10 +891,10 @@ export default function AiChatPage() {
               color: 'var(--text-secondary)',
             }}
             onClick={() => toggleNavCollapsed()}
-            aria-label="退出专注"
-            title="退出专注"
+            aria-label="还原布局"
+            title="还原布局"
           >
-            <ArrowLeftToLine size={18} />
+            <Minimize2 size={18} />
           </button>
         </div>
       ) : (
@@ -909,9 +909,20 @@ export default function AiChatPage() {
             高级视觉创作
           </Button>
           {tab === 'imageMaster' ? (
-            <Button variant="secondary" onClick={() => toggleNavCollapsed()} title="专注模式：折叠/展开左侧导航，最大化画布面积">
-              {navCollapsed ? '退出专注' : '专注模式'}
-            </Button>
+            <button
+              type="button"
+              className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'var(--text-secondary)',
+              }}
+              onClick={() => toggleNavCollapsed()}
+              aria-label={navCollapsed ? '还原布局' : '最大化'}
+              title={navCollapsed ? '还原布局' : '最大化'}
+            >
+              {navCollapsed ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
           ) : null}
         </div>
       )}
