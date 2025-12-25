@@ -1,7 +1,8 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
-import { Tooltip } from '@/components/ui/Tooltip';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   addImageMasterMessage,
   createImageMasterSession,
@@ -15,8 +16,8 @@ import {
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterMessage, ImageMasterSession } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
-import { Copy, Download, ImagePlus, Info, Loader2, Maximize2, MousePointer2, Trash2, Wand2, ZoomIn, ZoomOut } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, AtSign, Check, Copy, Download, ImagePlus, Loader2, MousePointer2, Paperclip, SlidersHorizontal, Trash, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
 type CanvasImageItem = {
@@ -31,6 +32,11 @@ type CanvasImageItem = {
   checkedAt?: number;
   assetId?: string;
   sha256?: string;
+  // “开放世界”画布位置/尺寸（基础单位，渲染时乘以 zoom）
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
 };
 
 type UiMsg = {
@@ -126,12 +132,24 @@ export default function AdvancedImageMasterTab() {
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const activeModel = useMemo(() => firstEnabledImageModel(models), [models]);
+  const serverDefaultModel = useMemo(() => firstEnabledImageModel(models), [models]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
   const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 420;
+
+  // 模型偏好：按账号持久化（不写 DB）
+  const modelPrefKey = userId ? `prdAdmin.imageMaster.modelPref.${userId}` : '';
+  const [modelPrefOpen, setModelPrefOpen] = useState(false);
+  const [modelPrefAuto, setModelPrefAuto] = useState(true);
+  const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
+  const enabledImageModels = useMemo(() => (models ?? []).filter((m) => m.enabled && m.isImageGen), [models]);
+  const effectiveModel = useMemo(() => {
+    const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
+    if (modelPrefAuto) return serverDefaultModel;
+    return byId ?? serverDefaultModel;
+  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
   const [messages, setMessages] = useState<UiMsg[]>([
     {
@@ -144,6 +162,9 @@ export default function AdvancedImageMasterTab() {
 
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputPanelRef = useRef<HTMLDivElement | null>(null);
+  const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
+  const [taHeight, setTaHeight] = useState<number>(MIN_TA_HEIGHT);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
@@ -151,16 +172,46 @@ export default function AdvancedImageMasterTab() {
   const [asciiSource, setAsciiSource] = useState('');
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>('');
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const primarySelectedKey = selectedKeys[0] ?? '';
+  const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
+  const isSelectedKey = (k: string) => selectedKeys.includes(k);
 
-  const selected = useMemo(() => canvas.find((x) => x.key === selectedKey) ?? null, [canvas, selectedKey]);
-
-  // 画布（大图预览）缩放
+  // 画布（无限平面）视口：camera + zoom
   const [zoom, setZoom] = useState(1);
+  const [camera, setCamera] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const [selectedImageSize, setSelectedImageSize] = useState<{ w: number; h: number } | null>(null);
+  const worldRef = useRef<HTMLDivElement | null>(null);
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-  const [pendingFit, setPendingFit] = useState(false);
+
+  // Space 平移 + 框选
+  const [spacePressed, setSpacePressed] = useState(false);
+  const panRef = useRef<{ active: boolean; pointerId: number; startX: number; startY: number; baseCamX: number; baseCamY: number }>({
+    active: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    baseCamX: 0,
+    baseCamY: 0,
+  });
+  const dragItemsRef = useRef<{
+    active: boolean;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    keys: string[];
+    base: Record<string, { x: number; y: number }>;
+  }>({ active: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
+  const [marquee, setMarquee] = useState<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    shift: boolean;
+  }>({ active: false, startX: 0, startY: 0, x: 0, y: 0, w: 0, h: 0, shift: false });
 
   // @imgN 占位符
   const [nextRefId, setNextRefId] = useState(1);
@@ -174,7 +225,8 @@ export default function AdvancedImageMasterTab() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [masterSession, setMasterSession] = useState<ImageMasterSession | null>(null);
-  const [booting, setBooting] = useState(false);
+  const [, setBooting] = useState(false);
+  const initSessionRef = useRef<{ userId: string; started: boolean }>({ userId: '', started: false });
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -193,10 +245,49 @@ export default function AdvancedImageMasterTab() {
       .finally(() => setModelsLoading(false));
   }, []);
 
+  // 读取模型偏好（仅在有 userId 时）
+  useEffect(() => {
+    if (!modelPrefKey) return;
+    try {
+      const raw = localStorage.getItem(modelPrefKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { auto?: boolean; modelId?: string };
+      if (typeof parsed.auto === 'boolean') setModelPrefAuto(parsed.auto);
+      if (typeof parsed.modelId === 'string') setModelPrefModelId(parsed.modelId);
+    } catch {
+      // ignore
+    }
+  }, [modelPrefKey]);
+
+  // 写入模型偏好
+  useEffect(() => {
+    if (!modelPrefKey) return;
+    try {
+      localStorage.setItem(modelPrefKey, JSON.stringify({ auto: modelPrefAuto, modelId: modelPrefModelId }));
+    } catch {
+      // ignore
+    }
+  }, [modelPrefAuto, modelPrefKey, modelPrefModelId]);
+
+  // 如果手动选中的模型被禁用/不存在，自动回退到“自动”
+  useEffect(() => {
+    if (modelPrefAuto) return;
+    if (!modelPrefModelId) return;
+    const ok = enabledImageModels.some((m) => m.id === modelPrefModelId);
+    if (!ok) {
+      setModelPrefAuto(true);
+      setModelPrefModelId('');
+    }
+  }, [enabledImageModels, modelPrefAuto, modelPrefModelId]);
+
   // 启动时：按账号持久化加载/创建会话，并回放历史消息+画板资产
   useEffect(() => {
     if (!userId) return;
-    if (booting) return;
+    // 关键：只初始化一次；否则 setBooting(false) 会触发依赖变化导致死循环请求
+    if (initSessionRef.current.userId === userId && initSessionRef.current.started) return;
+    initSessionRef.current = { userId, started: true };
+
+    let cancelled = false;
     setBooting(true);
     (async () => {
       const list = await listImageMasterSessions({ limit: 10 });
@@ -204,13 +295,21 @@ export default function AdvancedImageMasterTab() {
       if (list.success && Array.isArray(list.data?.items) && list.data!.items.length > 0) {
         sid = list.data!.items[0].id;
       } else {
-        const created = await createImageMasterSession({ title: '高级图片大师' });
+        const created = await createImageMasterSession({ title: '高级视觉创作' });
         if (created.success) sid = created.data.session.id;
       }
-      if (!sid) return;
+      if (!sid) {
+        // 不自动重试，避免触发后端限流（429）
+        if (!cancelled) setError(list.success ? '创建会话失败' : (list.error?.message || '加载会话失败'));
+        return;
+      }
 
       const detail = await getImageMasterSession({ id: sid, messageLimit: 200, assetLimit: 80 });
-      if (!detail.success) return;
+      if (!detail.success) {
+        if (!cancelled) setError(detail.error?.message || '加载会话详情失败');
+        return;
+      }
+      if (cancelled) return;
       setMasterSession(detail.data.session);
 
       const ms = Array.isArray(detail.data.messages) ? detail.data.messages : [];
@@ -240,10 +339,23 @@ export default function AdvancedImageMasterTab() {
           .filter((x) => !!x.src)
           .slice(0, 60);
         setCanvas(items);
-        if (items.length > 0) setSelectedKey((cur) => cur || items[0].key);
+        if (items.length > 0) {
+          setSelectedKeys((cur) => (cur.length > 0 ? cur : [items[0].key]));
+        }
       }
-    })().finally(() => setBooting(false));
-  }, [userId, booting]);
+    })()
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : '加载会话失败');
+      })
+      .finally(() => {
+        if (!cancelled) setBooting(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // 初始化右侧宽度：localStorage 优先，否则默认 20%
   useEffect(() => {
@@ -308,6 +420,55 @@ export default function AdvancedImageMasterTab() {
     return () => ro.disconnect();
   }, []);
 
+  // Space 键：按住拖拽平移（像 Figma）
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.code === 'Space') {
+        // 避免 Space 滚动页面
+        e.preventDefault();
+        setSpacePressed(true);
+      }
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        setSpacePressed(false);
+      }
+    };
+    const opts: AddEventListenerOptions = { passive: false };
+    window.addEventListener('keydown', onDown, opts);
+    window.addEventListener('keyup', onUp, opts);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+    };
+  }, []);
+
+  const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
+    const el = stageRef.current;
+    if (!el) {
+      setZoom(nextZoom);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+    const wx = (sx - camera.x) / zoom;
+    const wy = (sy - camera.y) / zoom;
+    // 保持鼠标所在世界点不动：sx = wx*next + camX'
+    const nextCamX = sx - wx * nextZoom;
+    const nextCamY = sy - wy * nextZoom;
+    setZoom(nextZoom);
+    setCamera({ x: nextCamX, y: nextCamY });
+  }, [camera.x, camera.y, zoom]);
+
+  const stageCenterClient = useCallback(() => {
+    const el = stageRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }, []);
+
   // Mac 触控板捏合缩放（Chrome/Edge 通常体现为 ctrlKey + wheel）
   useEffect(() => {
     const el = stageRef.current;
@@ -315,17 +476,17 @@ export default function AdvancedImageMasterTab() {
 
     const onWheel = (ev: WheelEvent) => {
       // 空态不缩放
-      if (!selected?.src) return;
+      if (canvas.length === 0) return;
       // pinch / ctrl+wheel
       if (!ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault();
-
-      setZoom((z) => clampZoom(z * zoomFactorFromDeltaY(ev.deltaY)));
+      const next = clampZoom(zoom * zoomFactorFromDeltaY(ev.deltaY));
+      zoomAt(ev.clientX, ev.clientY, next);
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel as EventListener);
-  }, [selected?.src]);
+  }, [canvas.length, zoomAt, zoom]);
 
   const pushMsg = (role: UiMsg['role'], content: string) => {
     const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
@@ -351,6 +512,22 @@ export default function AdvancedImageMasterTab() {
       ta.focus();
       const pos = start + replacement.length;
       ta.setSelectionRange(pos, pos);
+    });
+  };
+
+  const insertTextAtCursor = (text: string, opts?: { openMention?: boolean }) => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const value = ta.value ?? '';
+    const start = ta.selectionStart ?? value.length;
+    const end = ta.selectionEnd ?? start;
+    const next = value.slice(0, start) + text + value.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + text.length;
+      ta.setSelectionRange(pos, pos);
+      if (opts?.openMention) refreshMention(next, pos);
     });
   };
 
@@ -391,20 +568,59 @@ export default function AdvancedImageMasterTab() {
     setMentionOpen(true);
   };
 
-  const ensureModel = () => {
-    if (modelsLoading) return { ok: false as const, reason: '模型加载中' };
-    if (!activeModel) return { ok: false as const, reason: '暂无可用生图模型（请先在“模型管理”启用 isImageGen 模型）' };
-    return { ok: true as const };
+  const extractForcedImageModel = (text: string): { forced: Model | null; clean: string } => {
+    const s = String(text ?? '');
+    const re = /@model\(([^)]+)\)/gi;
+    let m: RegExpExecArray | null = null;
+    let last: string | null = null;
+    while ((m = re.exec(s))) {
+      last = String(m[1] ?? '').trim();
+    }
+    const clean = s.replace(re, '').replace(/\s{2,}/g, ' ').trim();
+    if (!last) return { forced: null, clean };
+    const key = last.toLowerCase();
+    const forced =
+      enabledImageModels.find((x) => String(x.name || '').trim().toLowerCase() === key) ??
+      enabledImageModels.find((x) => String(x.modelName || '').trim().toLowerCase() === key) ??
+      enabledImageModels.find((x) => String(x.name || x.modelName || '').toLowerCase().includes(key)) ??
+      null;
+    return { forced, clean };
   };
+
+  const recomputeTextareaHeight = useCallback(() => {
+    const ta = inputRef.current;
+    const wrap = inputPanelRef.current;
+    if (!ta || !wrap) return;
+    // max: 父容器高度的一半
+    const parent = wrap.parentElement;
+    const parentH = parent?.clientHeight ?? 0;
+    const maxH = Math.max(MIN_TA_HEIGHT, Math.floor(parentH / 2));
+    // 先清空高度再测 scrollHeight
+    ta.style.height = 'auto';
+    const next = Math.min(Math.max(ta.scrollHeight, MIN_TA_HEIGHT), maxH);
+    setTaHeight(next);
+  }, [MIN_TA_HEIGHT]);
+
+  useEffect(() => {
+    recomputeTextareaHeight();
+  }, [input, mentionOpen, recomputeTextareaHeight, rightWidth]);
+
+  useEffect(() => {
+    const onResize = () => recomputeTextareaHeight();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [recomputeTextareaHeight]);
 
   const runFromText = async (displayText: string, requestText: string, primaryRef: CanvasImageItem | null) => {
     const display = String(displayText ?? '').trim();
-    const reqText = String(requestText ?? '').trim();
+    const forcedPick = extractForcedImageModel(requestText);
+    const reqText = String(forcedPick.clean ?? '').trim();
     if (!reqText) return;
-    const modelCheck = ensureModel();
-    if (!modelCheck.ok) {
-      setError(modelCheck.reason);
-      pushMsg('Assistant', modelCheck.reason);
+    const pickedModel = forcedPick.forced ?? effectiveModel;
+    if (!pickedModel) {
+      const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请先在“模型管理”启用 isImageGen 模型）';
+      setError(msg);
+      pushMsg('Assistant', '暂无可用生图模型（请先在“模型管理”启用 isImageGen 模型）');
       return;
     }
 
@@ -432,14 +648,15 @@ export default function AdvancedImageMasterTab() {
     const items = Array.isArray(plan?.items) ? plan!.items : [];
     const firstPrompt = String(items[0]?.prompt ?? '').trim() || reqText;
 
-    const isVolcesSeedream = /volces|doubao|seedream/i.test(String(activeModel?.modelName || ''));
+    const pickedIsVolcesSeedream = /volces|doubao|seedream/i.test(String(pickedModel?.modelName || ''));
 
     pushMsg(
       'Assistant',
       [
+        `本次使用模型：${pickedModel?.name || pickedModel?.modelName}${forcedPick.forced ? '（@ 强制）' : ''}`,
         `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
         items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
-        (primaryRef || selected) && isVolcesSeedream
+        (primaryRef || selected) && pickedIsVolcesSeedream
           ? '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
           : (primaryRef || selected)
             ? '你已选中一张图片作为“首帧图”。本次将作为图生图首帧传给生图接口（若上游平台不支持，会返回参数错误）。'
@@ -465,7 +682,7 @@ export default function AdvancedImageMasterTab() {
     try {
       const initSrc = (primaryRef?.src || selected?.src) ?? '';
       const gres = await generateImageGen({
-        modelId: activeModel!.id,
+        modelId: pickedModel!.id,
         prompt: firstPrompt,
         n: 1,
         size: DEFAULT_SIZE,
@@ -490,7 +707,21 @@ export default function AdvancedImageMasterTab() {
         return;
       }
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'done', src } : x)));
-      setSelectedKey((cur) => cur || key);
+      // 新生成的图：确保有画布位置，并默认选中它（更符合“开放世界新增一张”）
+      setCanvas((prev) => {
+        const next = prev.map((x) =>
+          x.key === key
+            ? {
+                ...x,
+                status: 'done' as const,
+                src,
+              }
+            : x
+        );
+        const withPos = ensureLayoutForNewItems(next, 0);
+        return withPos;
+      });
+      setSelectedKeys([key]);
 
       // 上传并持久化资产：把外部签名 URL / base64 转为自托管 URL（避免过期）
       if (masterSession?.id) {
@@ -628,6 +859,59 @@ export default function AdvancedImageMasterTab() {
     const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (list.length === 0) return;
 
+    // 选中单张时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
+    if (list.length === 1 && selectedKeys.length === 1) {
+      const targetKey = selectedKeys[0]!;
+      const file = list[0]!;
+      const now = Date.now();
+      const src = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(file);
+      });
+      if (!src) return;
+
+      setCanvas((prev) =>
+        prev.map((it) =>
+          it.key === targetKey
+            ? {
+                ...it,
+                createdAt: now,
+                prompt: file.name || it.prompt,
+                src,
+                status: 'done',
+                errorMessage: null,
+                assetId: undefined,
+                sha256: undefined,
+              }
+            : it
+        )
+      );
+      pushMsg('Assistant', '已替换当前选中图片。');
+
+      // 持久化替换后的图片
+      if (masterSession?.id) {
+        const up = await uploadImageAsset({ data: src, prompt: file.name || 'uploaded' });
+        if (up.success) {
+          const a = up.data.asset;
+          setCanvas((prev) =>
+            prev.map((x) =>
+              x.key === targetKey
+                ? {
+                    ...x,
+                    assetId: a.id,
+                    sha256: a.sha256,
+                    src: a.url || x.src,
+                  }
+                : x
+            )
+          );
+        }
+      }
+      return;
+    }
+
     const added: CanvasImageItem[] = [];
     const now = Date.now();
 
@@ -653,10 +937,26 @@ export default function AdvancedImageMasterTab() {
     if (added.length === 0) return;
     // 保持顺序：用户选中的文件顺序
     added.sort((a, b) => a.createdAt - b.createdAt);
-    setCanvas((prev) => [...added.reverse(), ...prev].slice(0, 60));
-    setSelectedKey((cur) => cur || added[0].key);
+    setCanvas((prev) => {
+      // 新增：落在当前视口中心附近（更像“开放世界”）
+      const baseX = (stageSize.w / 2 - camera.x) / zoom;
+      const baseY = (stageSize.h / 2 - camera.y) / zoom;
+      const gap = 24;
+      const baseW = 320;
+      const baseH = 220;
+      const placed = added.map((it, i) => ({
+        ...it,
+        w: it.w ?? baseW,
+        h: it.h ?? baseH,
+        x: (it.x ?? baseX) + (i % 3) * (baseW + gap),
+        y: (it.y ?? baseY) + Math.floor(i / 3) * (baseH + gap),
+      }));
+      const merged = [...placed.reverse(), ...prev].slice(0, 60);
+      return ensureLayoutForNewItems(merged, 0);
+    });
+    // 默认选中最新一张（更像你说的“新增到开放世界里”）
+    setSelectedKeys([added[0].key]);
     pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
-    setPendingFit(true);
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
     if (masterSession?.id) {
@@ -691,45 +991,54 @@ export default function AdvancedImageMasterTab() {
 
   const fitToStage = () => {
     const el = stageRef.current;
-    const sz = selectedImageSize;
-    if (!el || !sz || sz.w <= 0 || sz.h <= 0) {
+    if (!el) return;
+    const itemsAll = canvas.filter((x) => x.status !== 'error' && (!!x.src || x.status === 'running'));
+    const items =
+      selectedKeys.length > 0 ? itemsAll.filter((x) => selectedKeys.includes(x.key)) : itemsAll;
+    if (items.length === 0) {
+      // 回到原点附近
       setZoom(1);
+      setCamera({ x: Math.round(stageSize.w / 2), y: Math.round(stageSize.h / 2) });
       return;
     }
-    // 画布内部有 padding + 顶部/底部浮层的可视区域扣减，避免 fit 后仍被遮挡
-    const w = el.clientWidth - 80;
-    const h = el.clientHeight - 220;
-    if (w <= 0 || h <= 0) {
-      setZoom(1);
-      return;
-    }
-    const scale = Math.min(w / sz.w, h / sz.h) * 0.98;
-    setZoom(clampZoom(scale));
+    const minX = Math.min(...items.map((it) => it.x ?? 0));
+    const minY = Math.min(...items.map((it) => it.y ?? 0));
+    const maxX = Math.max(...items.map((it) => (it.x ?? 0) + (it.w ?? 320)));
+    const maxY = Math.max(...items.map((it) => (it.y ?? 0) + (it.h ?? 220)));
+    const bboxW = Math.max(1, maxX - minX);
+    const bboxH = Math.max(1, maxY - minY);
+    const pad = 80;
+    const viewW = Math.max(1, stageSize.w - pad * 2);
+    const viewH = Math.max(1, stageSize.h - pad * 2);
+    const nextZoom = clampZoom(Math.min(viewW / bboxW, viewH / bboxH));
+    const cx = minX + bboxW / 2;
+    const cy = minY + bboxH / 2;
+    const camX = stageSize.w / 2 - cx * nextZoom;
+    const camY = stageSize.h / 2 - cy * nextZoom;
+    setZoom(nextZoom);
+    setCamera({ x: camX, y: camY });
   };
 
-  // 在图片加载/切换后做一次“适配 + 居中”，避免一开始出现在两边（无法左右滚动的错觉）
-  useEffect(() => {
-    if (!pendingFit) return;
-    if (!selected?.src) return;
-    if (!selectedImageSize) return;
-    const el = stageRef.current;
-    if (!el) return;
-
-    // 先适配，再将滚动定位到中心（避免依赖 fitToStage 导致 lint warning）
-    const w = el.clientWidth - 80;
-    const h = el.clientHeight - 220;
-    if (w > 0 && h > 0) {
-      const scale = Math.min(w / selectedImageSize.w, h / selectedImageSize.h) * 0.98;
-      setZoom(clampZoom(scale));
-    }
-    requestAnimationFrame(() => {
-      const cx = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
-      const cy = Math.max(0, (el.scrollHeight - el.clientHeight) / 2);
-      el.scrollLeft = cx;
-      el.scrollTop = cy;
-      setPendingFit(false);
+  const ensureLayoutForNewItems = (items: CanvasImageItem[], baseIndexStart: number) => {
+    // 让新图片自然地“出现在大画布里”：简单网格排布（开放世界的第一步）
+    const gap = 24;
+    const baseW = 320;
+    const baseH = 220;
+    const cols = Math.max(2, Math.min(5, Math.floor((stageSize.w || 900) / (baseW + gap))));
+    return items.map((it, i) => {
+      if (it.x != null && it.y != null) return it;
+      const idx = baseIndexStart + i;
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      return {
+        ...it,
+        w: it.w ?? baseW,
+        h: it.h ?? baseH,
+        x: col * (baseW + gap),
+        y: row * (baseH + gap),
+      };
     });
-  }, [pendingFit, selected?.src, selectedImageSize]);
+  };
 
   return (
     <div ref={containerRef} className="h-full min-h-0">
@@ -739,22 +1048,157 @@ export default function AdvancedImageMasterTab() {
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
         <div className="h-full min-h-0 relative">
-          {/* 主画布（可滚动） */}
+          {/* 主画布（无限视口） */}
           <div
             ref={stageRef}
-            className="absolute inset-0 overflow-auto"
+            className="absolute inset-0 overflow-hidden"
             style={{
               background: 'rgba(0,0,0,0.10)',
             }}
             tabIndex={0}
             onMouseDown={() => stageRef.current?.focus()}
-              onClick={(e) => {
-                // 点击空白处可取消选中（逆选中）
-                if (e.target === e.currentTarget) {
-                  setSelectedKey('');
-                  setSelectedImageSize(null);
+            onPointerDown={(e) => {
+              // 只处理“空白区域”的 pointerdown；点击图片会 stopPropagation
+              const isBlank = e.target === e.currentTarget || e.target === worldRef.current;
+              if (!isBlank) return;
+              stageRef.current?.focus();
+
+              // Space + 拖拽：平移
+              if (spacePressed) {
+                panRef.current = {
+                  active: true,
+                  pointerId: e.pointerId,
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  baseCamX: camera.x,
+                  baseCamY: camera.y,
+                };
+                (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                e.preventDefault();
+                return;
+              }
+
+              // 空白拖拽：框选（Marquee）
+              const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+              const sx = e.clientX - rect.left;
+              const sy = e.clientY - rect.top;
+              setMarquee({ active: true, startX: sx, startY: sy, x: sx, y: sy, w: 0, h: 0, shift: e.shiftKey });
+              (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+              e.preventDefault();
+            }}
+            onPointerMove={(e) => {
+              // dragging selected items
+              const drag = dragItemsRef.current;
+              if (drag.active && drag.pointerId === e.pointerId) {
+                const dx = (e.clientX - drag.startClientX) / zoom;
+                const dy = (e.clientY - drag.startClientY) / zoom;
+                const set = new Set(drag.keys);
+                setCanvas((prev) =>
+                  prev.map((it) => {
+                    if (!set.has(it.key)) return it;
+                    const b = drag.base[it.key] ?? { x: it.x ?? 0, y: it.y ?? 0 };
+                    return { ...it, x: b.x + dx, y: b.y + dy };
+                  })
+                );
+                e.preventDefault();
+                return;
+              }
+              // pan
+              const pan = panRef.current;
+              if (pan.active && pan.pointerId === e.pointerId) {
+                const dx = e.clientX - pan.startX;
+                const dy = e.clientY - pan.startY;
+                setCamera({ x: pan.baseCamX + dx, y: pan.baseCamY + dy });
+                e.preventDefault();
+                return;
+              }
+              // marquee
+              if (marquee.active) {
+                const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                const sx = e.clientX - rect.left;
+                const sy = e.clientY - rect.top;
+                const x = Math.min(marquee.startX, sx);
+                const y = Math.min(marquee.startY, sy);
+                const w = Math.abs(sx - marquee.startX);
+                const h = Math.abs(sy - marquee.startY);
+                setMarquee((prev) => ({ ...prev, x, y, w, h }));
+                e.preventDefault();
+              }
+            }}
+            onPointerUp={(e) => {
+              // end dragging items
+              const drag = dragItemsRef.current;
+              if (drag.active && drag.pointerId === e.pointerId) {
+                dragItemsRef.current.active = false;
+                try {
+                  (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                } catch {
+                  // ignore
                 }
-              }}
+                e.preventDefault();
+                return;
+              }
+              // end pan
+              const pan = panRef.current;
+              if (pan.active && pan.pointerId === e.pointerId) {
+                panRef.current.active = false;
+                try {
+                  (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                } catch {
+                  // ignore
+                }
+                e.preventDefault();
+                return;
+              }
+              // end marquee
+              if (!marquee.active) return;
+              const box = marquee;
+              setMarquee((prev) => ({ ...prev, active: false, w: 0, h: 0 }));
+
+              const isClick = box.w < 6 && box.h < 6;
+              if (isClick) {
+                // 点击空白：取消选中
+                if (!box.shift) setSelectedKeys([]);
+                return;
+              }
+
+              // 框选：转世界坐标并命中图片 bbox
+              const x0 = (box.x - camera.x) / zoom;
+              const y0 = (box.y - camera.y) / zoom;
+              const x1 = (box.x + box.w - camera.x) / zoom;
+              const y1 = (box.y + box.h - camera.y) / zoom;
+              const minX = Math.min(x0, x1);
+              const minY = Math.min(y0, y1);
+              const maxX = Math.max(x0, x1);
+              const maxY = Math.max(y0, y1);
+              const hits = canvas
+                .filter((it) => it.status !== 'error' && (!!it.src || it.status === 'running'))
+                .filter((it) => {
+                  const ix0 = it.x ?? 0;
+                  const iy0 = it.y ?? 0;
+                  const ix1 = ix0 + (it.w ?? 320);
+                  const iy1 = iy0 + (it.h ?? 220);
+                  const inter = ix0 <= maxX && ix1 >= minX && iy0 <= maxY && iy1 >= minY;
+                  return inter;
+                })
+                .map((it) => it.key);
+
+              if (!box.shift) {
+                setSelectedKeys(hits);
+              } else {
+                setSelectedKeys((prev) => {
+                  const set = new Set(prev);
+                  for (const k of hits) set.add(k);
+                  return Array.from(set);
+                });
+              }
+
+              try {
+                (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+              } catch {
+                // ignore
+              }
+            }}
             onDragOver={(e) => {
               e.preventDefault();
             }}
@@ -764,70 +1208,186 @@ export default function AdvancedImageMasterTab() {
               void onUploadImages(fs);
             }}
             onKeyDown={(e) => {
+              // Delete / Backspace：删除选中
+              if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKeys.length > 0) {
+                // 避免在输入框中删除字符：这里只在画布获得焦点时触发
+                e.preventDefault();
+                const ok = window.confirm(`确认删除选中的 ${selectedKeys.length} 张图片？`);
+                if (!ok) return;
+                const set = new Set(selectedKeys);
+                setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+                setSelectedKeys([]);
+                return;
+              }
+
+              // 方向键微调（Figma-ish）
+              if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                if (selectedKeys.length === 0) return;
+                e.preventDefault();
+                const step = e.shiftKey ? 10 : 1;
+                const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+                const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+                const set = new Set(selectedKeys);
+                setCanvas((prev) =>
+                  prev.map((it) => (set.has(it.key) ? { ...it, x: (it.x ?? 0) + dx, y: (it.y ?? 0) + dy } : it))
+                );
+                return;
+              }
+
               const isMod = e.metaKey || e.ctrlKey;
               if (!isMod) return;
               if (e.key === '+' || e.key === '=') {
                 e.preventDefault();
-                  setZoom((z) => clampZoom(z * 1.07));
+                const c = stageCenterClient();
+                zoomAt(c.x, c.y, clampZoom(zoom * 1.07));
               } else if (e.key === '-') {
                 e.preventDefault();
-                  setZoom((z) => clampZoom(z / 1.07));
+                const c = stageCenterClient();
+                zoomAt(c.x, c.y, clampZoom(zoom / 1.07));
               } else if (e.key === '0') {
                 e.preventDefault();
-                setZoom(1);
+                const c = stageCenterClient();
+                zoomAt(c.x, c.y, 1);
               }
             }}
           >
-            <div className={selected?.src ? 'min-h-full w-full px-10 pt-16 pb-[152px]' : 'min-h-full w-full px-10 py-10'}>
-              {!selected?.src ? (
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  画布暂无图片。右侧输入需求点击“生成”，或先上传一张图片作为首帧。
-                </div>
-              ) : (
-                <div
-                  className="grid place-items-center"
-                  style={{
-                    minWidth: Math.max(stageSize.w || 0, selectedImageSize ? Math.round(selectedImageSize.w * zoom) : 0),
-                    minHeight: Math.max(stageSize.h || 0, selectedImageSize ? Math.round(selectedImageSize.h * zoom) : 0),
-                  }}
-                >
+            <div
+              ref={worldRef}
+              className="absolute inset-0"
+              style={{
+                transform: `translate(${Math.round(camera.x)}px, ${Math.round(camera.y)}px) scale(${zoom})`,
+                transformOrigin: '0 0',
+              }}
+            >
+              {canvas.map((it) => {
+                if (it.status === 'error') return null;
+                if (!it.src && it.status !== 'running') return null;
+                const x = it.x ?? 0;
+                const y = it.y ?? 0;
+                const w = it.w ?? 320;
+                const h = it.h ?? 220;
+                const active = isSelectedKey(it.key);
+                return (
                   <div
+                    key={it.key}
+                    className="absolute rounded-[16px] overflow-hidden"
                     style={{
-                      width: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.w * zoom)) : 'auto',
-                      height: selectedImageSize ? Math.max(1, Math.round(selectedImageSize.h * zoom)) : 'auto',
+                      left: Math.round(x),
+                      top: Math.round(y),
+                      width: Math.max(40, Math.round(w)),
+                      height: Math.max(40, Math.round(h)),
+                      border: active ? '1px solid rgba(250,204,21,0.55)' : '1px solid rgba(255,255,255,0.10)',
+                      background: 'rgba(0,0,0,0.18)',
+                      boxShadow: active ? '0 24px 90px rgba(0,0,0,0.55)' : '0 18px 60px rgba(0,0,0,0.35)',
+                      cursor: 'pointer',
                     }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                    }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
+                      const shift = e.shiftKey;
+                      const cur = selectedKeys;
+                      let nextKeys: string[];
+                      if (shift) {
+                        // shift+拖拽不做“取消选择”，只做追加选择
+                        nextKeys = cur.includes(it.key) ? cur : cur.concat(it.key);
+                        setSelectedKeys(nextKeys);
+                      } else {
+                        nextKeys = cur.includes(it.key) ? cur : [it.key];
+                        setSelectedKeys(nextKeys);
+                      }
+                      // 开始拖拽（多选整体移动）
+                      const base: Record<string, { x: number; y: number }> = {};
+                      for (const k of nextKeys) {
+                        const found = canvas.find((x) => x.key === k);
+                        base[k] = { x: found?.x ?? 0, y: found?.y ?? 0 };
+                      }
+                      dragItemsRef.current = {
+                        active: true,
+                        pointerId: e.pointerId,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        keys: nextKeys,
+                        base,
+                      };
+                      (stageRef.current as HTMLDivElement | null)?.setPointerCapture(e.pointerId);
+                      e.preventDefault();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (e.shiftKey) {
+                        setSelectedKeys((prev) => {
+                          const set = new Set(prev);
+                          if (set.has(it.key)) set.delete(it.key);
+                          else set.add(it.key);
+                          return Array.from(set);
+                        });
+                      } else {
+                        setSelectedKeys([it.key]);
+                      }
+                    }}
+                    title={it.prompt}
                   >
-                    <img
-                      src={selected.src}
-                      alt={selected.prompt}
+                    {/* 多选 checkbox（开放世界也保留） */}
+                    <button
+                      type="button"
+                      className="absolute left-2 top-2 h-6 w-6 rounded-[8px] inline-flex items-center justify-center z-10"
                       style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                        display: 'block',
-                        boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                        border: it.checked ? '1px solid rgba(250,204,21,0.65)' : '1px solid rgba(255,255,255,0.14)',
+                        background: it.checked ? 'rgba(250,204,21,0.18)' : 'rgba(0,0,0,0.22)',
+                        color: it.checked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.65)',
+                        backdropFilter: 'blur(8px)',
+                        WebkitBackdropFilter: 'blur(8px)',
                       }}
-                      onLoad={(e) => {
-                        const img = e.currentTarget;
-                        const w = img.naturalWidth || 0;
-                        const h = img.naturalHeight || 0;
-                        if (w > 0 && h > 0) {
-                          setSelectedImageSize({ w, h });
-                          setPendingFit(true);
-                        }
+                      aria-label={it.checked ? '取消选择引用' : '选择引用'}
+                      title={it.checked ? '取消选择引用' : '选择引用'}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        const next = !it.checked;
+                        ensureCheckedWithRefId(it.key, next);
                       }}
-                    />
+                    >
+                      {it.checked ? <span className="text-[12px] font-extrabold">✓</span> : <span className="text-[10px] font-semibold">+</span>}
+                    </button>
+
+                    {it.status === 'running' ? (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
+                      </div>
+                    ) : (
+                      <img src={it.src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })}
             </div>
+
+            {/* 框选矩形（屏幕坐标） */}
+            {marquee.active && marquee.w > 0 && marquee.h > 0 ? (
+              <div
+                className="absolute"
+                style={{
+                  left: Math.round(marquee.x),
+                  top: Math.round(marquee.y),
+                  width: Math.round(marquee.w),
+                  height: Math.round(marquee.h),
+                  border: '1px solid rgba(96,165,250,0.75)',
+                  background: 'rgba(96,165,250,0.10)',
+                  boxShadow: '0 0 0 1px rgba(0,0,0,0.35) inset',
+                  pointerEvents: 'none',
+                }}
+              />
+            ) : null}
           </div>
 
           {/* 顶部居中：缩放浮层 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
             <div
-              className="h-11 rounded-[999px] px-2 inline-flex items-center gap-1"
+              className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1"
               style={{
+                width: 222,
                 border: '1px solid rgba(255,255,255,0.12)',
                 background: 'rgba(0,0,0,0.25)',
                 backdropFilter: 'blur(10px)',
@@ -838,42 +1398,50 @@ export default function AdvancedImageMasterTab() {
             >
               <button
                 type="button"
-                className="h-9 w-9 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
-                onClick={() => setZoom((z) => clampZoom(z / 1.07))}
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                onClick={() => {
+                  const c = stageCenterClient();
+                  zoomAt(c.x, c.y, clampZoom(zoom / 1.07));
+                }}
                 title="缩小"
                 aria-label="缩小"
-                disabled={!selected?.src}
+                disabled={canvas.length === 0}
               >
-                <ZoomOut size={18} />
+                <ZoomOut size={16} />
               </button>
-              <div className="px-2 text-[12px] font-semibold tabular-nums" title="缩放比例">
+              <div className="px-1 text-[10px] font-semibold tabular-nums" title="缩放比例">
                 {Math.round(zoom * 100)}%
               </div>
               <button
                 type="button"
-                className="h-9 w-9 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
-                onClick={() => setZoom((z) => clampZoom(z * 1.07))}
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                onClick={() => {
+                  const c = stageCenterClient();
+                  zoomAt(c.x, c.y, clampZoom(zoom * 1.07));
+                }}
                 title="放大"
                 aria-label="放大"
-                disabled={!selected?.src}
+                disabled={canvas.length === 0}
               >
-                <ZoomIn size={18} />
+                <ZoomIn size={16} />
               </button>
-              <div className="mx-1 h-6 w-px bg-white/10" />
               <button
                 type="button"
-                className="h-9 px-3 rounded-[999px] text-[12px] font-semibold hover:bg-white/5"
+                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
                 onClick={fitToStage}
-                disabled={!selected?.src}
+                disabled={canvas.length === 0}
                 title="适配画布"
               >
                 适配
               </button>
               <button
                 type="button"
-                className="h-9 px-3 rounded-[999px] text-[12px] font-semibold hover:bg-white/5"
-                onClick={() => setZoom(1)}
-                disabled={!selected?.src}
+                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
+                onClick={() => {
+                  const c = stageCenterClient();
+                  zoomAt(c.x, c.y, 1);
+                }}
+                disabled={canvas.length === 0}
                 title="回到 100%"
               >
                 100%
@@ -905,15 +1473,32 @@ export default function AdvancedImageMasterTab() {
               </button>
               <button
                 type="button"
+                className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ color: 'var(--text-secondary)' }}
+                onClick={() => {
+                  if (selectedKeys.length === 0) return;
+                  const ok = window.confirm(`确认删除选中的 ${selectedKeys.length} 张图片？`);
+                  if (!ok) return;
+                  const set = new Set(selectedKeys);
+                  setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+                  setSelectedKeys([]);
+                }}
+                title="删除选中图片"
+                aria-label="删除选中图片"
+                disabled={selectedKeys.length === 0}
+              >
+                <Trash size={18} />
+              </button>
+              <button
+                type="button"
                 className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => {
                   const ok = window.confirm('确认清空画板？');
                   if (!ok) return;
                   setCanvas([]);
-                  setSelectedKey('');
+                  setSelectedKeys([]);
                   setZoom(1);
-                  setSelectedImageSize(null);
                 }}
                 title="清空画板"
                 aria-label="清空画板"
@@ -935,116 +1520,7 @@ export default function AdvancedImageMasterTab() {
             </div>
           </div>
 
-          {/* 底部缩略图条（overlay） */}
-          <div className="absolute left-4 right-4 bottom-4 z-20">
-            <div
-              className="rounded-[18px] px-3 py-2 overflow-x-auto"
-              style={{
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(0,0,0,0.22)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
-              }}
-            >
-              {canvas.length === 0 ? (
-                <div className="h-[92px] flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                  暂无图片
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  {canvas.map((it) => {
-                    const active = it.key === selectedKey;
-                    const canOpen = it.status === 'done' && !!it.src;
-                    return (
-                      <button
-                        key={it.key}
-                        type="button"
-                        className="shrink-0 w-[140px] h-[92px] rounded-[14px] overflow-hidden relative"
-                        style={{
-                          border: active ? '1px solid rgba(250,204,21,0.55)' : '1px solid rgba(255,255,255,0.10)',
-                          background: 'rgba(0,0,0,0.18)',
-                        }}
-                        onClick={(e) => {
-                          // Ctrl/Cmd + 点击：快捷插入 @imgN（不改变选中，不影响缩放）
-                          if (e.metaKey || e.ctrlKey) {
-                            const id = ensureRefIdForKey(it.key);
-                            if (id) insertAtCursor(`@img${id} `);
-                            // 让画布保持可交互（避免“插入后缩放失效”的错觉）
-                            requestAnimationFrame(() => stageRef.current?.focus());
-                            return;
-                          }
-                          // 普通点击：切换选中；再次点击取消选中
-                          if (active) {
-                            setSelectedKey('');
-                            setSelectedImageSize(null);
-                            return;
-                          }
-                          setSelectedKey(it.key);
-                          setSelectedImageSize(null);
-                          setPendingFit(true);
-                        }}
-                        title={it.prompt}
-                      >
-                        {/* 多选 checkbox：不触发选中切换 */}
-                        <button
-                          type="button"
-                          className="absolute left-2 top-2 h-6 w-6 rounded-[8px] inline-flex items-center justify-center"
-                          style={{
-                            border: it.checked ? '1px solid rgba(250,204,21,0.65)' : '1px solid rgba(255,255,255,0.14)',
-                            background: it.checked ? 'rgba(250,204,21,0.18)' : 'rgba(0,0,0,0.22)',
-                            color: it.checked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.65)',
-                            backdropFilter: 'blur(8px)',
-                            WebkitBackdropFilter: 'blur(8px)',
-                          }}
-                          aria-label={it.checked ? '取消选择引用' : '选择引用'}
-                          title={it.checked ? '取消选择引用' : '选择引用'}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            const next = !it.checked;
-                            ensureCheckedWithRefId(it.key, next);
-                          }}
-                        >
-                          {it.checked ? (
-                            <span className="text-[12px] font-extrabold">✓</span>
-                          ) : (
-                            <span className="text-[10px] font-semibold">+</span>
-                          )}
-                        </button>
-                        {it.status === 'running' ? (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
-                          </div>
-                        ) : it.status === 'error' ? (
-                          <div className="w-full h-full flex items-center justify-center px-2 text-center text-[11px]" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                            {it.errorMessage || '失败'}
-                          </div>
-                        ) : (
-                          <img src={it.src} alt={it.prompt} className="w-full h-full block" style={{ objectFit: 'contain' }} />
-                        )}
-
-                        {canOpen ? (
-                          <button
-                            type="button"
-                            className="absolute left-2 bottom-2 h-7 w-7 rounded-[10px] inline-flex items-center justify-center"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}
-                            title="放大预览"
-                            aria-label="放大预览"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPreview({ open: true, src: it.src, prompt: it.prompt });
-                            }}
-                          >
-                            <Maximize2 size={14} />
-                          </button>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
+          {/* 底部缩略图条：你想要“开放世界”，默认不再显示；如未来需要可在这里恢复 */}
 
           <input
             ref={fileRef}
@@ -1091,7 +1567,7 @@ export default function AdvancedImageMasterTab() {
                 <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 Hi，我是你的 AI 设计师
               </div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 右侧是唯一对话上下文；左侧是画板。点画板图片即可选中，未来可作为图生图首帧。
               </div>
             </div>
@@ -1112,7 +1588,7 @@ export default function AdvancedImageMasterTab() {
                   <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                     {t.title}
                   </div>
-                  <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                     {t.desc}
                   </div>
                 </button>
@@ -1148,7 +1624,11 @@ export default function AdvancedImageMasterTab() {
               </div>
             ) : null}
 
-            <div className="mt-3 rounded-[18px] p-2.5" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.03)' }}>
+            <div
+              ref={inputPanelRef}
+              className="mt-3 rounded-[18px] p-3 relative"
+              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(0,0,0,0.14)' }}
+            >
               <textarea
                 ref={inputRef}
                 value={input}
@@ -1157,7 +1637,15 @@ export default function AdvancedImageMasterTab() {
                   setInput(v);
                   refreshMention(v, e.target.selectionStart ?? v.length);
                 }}
+                onInput={() => {
+                  recomputeTextareaHeight();
+                }}
                 onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                    e.preventDefault();
+                    e.currentTarget.select();
+                    return;
+                  }
                   if (mentionOpen && e.key === 'Escape') {
                     e.preventDefault();
                     setMentionOpen(false);
@@ -1175,27 +1663,79 @@ export default function AdvancedImageMasterTab() {
                   refreshMention(ta.value, ta.selectionStart ?? ta.value.length);
                 }}
                 placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
-                className="w-full min-h-[86px] resize-none rounded-[14px] px-3 py-2.5 text-sm outline-none"
-                style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                className="w-full resize-none rounded-none px-0 py-0 text-sm outline-none focus:outline-none focus-visible:outline-none"
+                style={{
+                  height: taHeight,
+                  minHeight: MIN_TA_HEIGHT,
+                  maxHeight: '50%',
+                  overflowY: 'auto',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  boxShadow: 'none',
+                }}
                 disabled={busy}
               />
 
               {mentionOpen ? (
                 <div
-                  className="mt-2 rounded-[14px] overflow-hidden"
-                  style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.32)' }}
+                  className="absolute left-2 right-2 z-30 rounded-[14px] overflow-hidden"
+                  style={{
+                    bottom: 56, // 让出底部工具条高度，避免挤压
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(0,0,0,0.32)',
+                    boxShadow: '0 24px 90px rgba(0,0,0,0.65)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                  }}
                 >
                   <div className="px-3 py-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    @ 提示（输入 @vision 或 @ascii）
+                    @ 提示（输入 @model / @vision / @ascii）
                   </div>
                   <div className="max-h-[220px] overflow-auto">
                     {(() => {
                       const q = mentionQuery || '';
+                      const showModel = q === '' || 'model'.startsWith(q) || q.startsWith('m');
                       const showVision = q === '' || 'vision'.startsWith(q) || q.startsWith('v');
                       const showAscii = q === '' || 'ascii'.startsWith(q) || q.startsWith('a');
                       const visionModels = (models ?? []).filter((m) => m.enabled && m.isVision);
+                      const imageModels = (models ?? []).filter((m) => m.enabled && m.isImageGen);
                       return (
                         <div className="p-2 space-y-2">
+                          {showModel ? (
+                            <div>
+                              <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                生图模型（强制）
+                              </div>
+                              {imageModels.length === 0 ? (
+                                <div className="px-2 py-1.5 text-[12px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                                  暂无启用的 isImageGen 模型（可在“模型管理”设置）
+                                </div>
+                              ) : (
+                                imageModels
+                                  .slice()
+                                  .sort((a, b) => Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9))
+                                  .map((m) => (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      className="w-full text-left rounded-[10px] px-2 py-1.5 hover:bg-white/5"
+                                      style={{ color: 'var(--text-primary)' }}
+                                      onClick={() => {
+                                        replaceMentionAtCursor(`@model(${m.name || m.modelName}) `);
+                                      }}
+                                    >
+                                      <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>
+                                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                        插入 @model(...) 标记（将覆盖模型偏好）
+                                      </div>
+                                    </button>
+                                  ))
+                              )}
+                            </div>
+                          ) : null}
+
                           {showVision ? (
                             <div>
                               <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
@@ -1255,47 +1795,203 @@ export default function AdvancedImageMasterTab() {
                 </div>
               ) : null}
 
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <div className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
-                  {selected ? `已选中首帧：${selected.prompt}` : '未选择首帧'}
+              {selected ? (
+                <div className="mt-1 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
+                  已选中首帧：{selected.prompt}
                 </div>
+              ) : null}
+
+              <div className="mt-1 flex items-center justify-between gap-2">
+                {/* 左侧：附件 + @（强制入口） */}
                 <div className="flex items-center gap-2">
-                  {/* “插入引用”改为快捷操作：Ctrl/Cmd+点击缩略图 或 左上角多选；此处不再占用主按钮位 */}
-                  <Tooltip
-                    content={
-                      <div className="leading-relaxed">
-                        <div className="font-semibold">默认生图模型</div>
-                        <div className="mt-1">
-                          {activeModel ? (
-                            <span>
-                              {activeModel.name || activeModel.modelName}
-                              {activeModel.priority != null ? `（priority=${activeModel.priority}）` : ''}
+                  <button
+                    type="button"
+                    className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'var(--text-secondary)',
+                    }}
+                    aria-label="附件"
+                    title="附件"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={busy}
+                  >
+                    <Paperclip size={18} />
+                  </button>
+
+                  <button
+                    type="button"
+                    className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'var(--text-secondary)',
+                    }}
+                    aria-label="@"
+                    title="@"
+                    onClick={() => insertTextAtCursor('@', { openMention: true })}
+                    disabled={busy}
+                  >
+                    <AtSign size={18} />
+                  </button>
+                </div>
+
+                {/* 右侧：模型偏好 + 发送 */}
+                <div className="flex items-center gap-2">
+                  {/* 图2：发送左边的按钮是“模型偏好” */}
+                  <DropdownMenu.Root open={modelPrefOpen} onOpenChange={setModelPrefOpen}>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.10)',
+                          background: 'rgba(255,255,255,0.04)',
+                          color: 'var(--text-secondary)',
+                        }}
+                        aria-label="模型偏好"
+                        title="模型偏好"
+                      >
+                        <SlidersHorizontal size={18} />
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        side="top"
+                        align="end"
+                        sideOffset={10}
+                        className="z-50 rounded-[18px] p-4"
+                        style={{
+                          width: 420,
+                          maxWidth: 'min(92vw, 420px)',
+                          background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+                          border: '1px solid var(--border-default)',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              模型偏好
+                            </div>
+                            <div className="mt-0.5 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
+                              仅影响本页生图；候选项以启用 isImageGen 为准
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                              自动
                             </span>
-                          ) : modelsLoading ? (
-                            '加载中...'
+                            <Switch checked={modelPrefAuto} onCheckedChange={(v) => setModelPrefAuto(v)} ariaLabel="自动选择模型" />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex items-center gap-2 rounded-[14px] p-1" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}>
+                          <button
+                            type="button"
+                            className="h-8 px-3 rounded-[12px] text-[13px] font-semibold"
+                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                          >
+                            Image
+                          </button>
+                          <button
+                            type="button"
+                            className="h-8 px-3 rounded-[12px] text-[13px] font-semibold"
+                            style={{ background: 'transparent', border: '1px solid transparent', color: 'rgba(255,255,255,0.45)' }}
+                            disabled
+                          >
+                            Video
+                          </button>
+                          <button
+                            type="button"
+                            className="h-8 px-3 rounded-[12px] text-[13px] font-semibold"
+                            style={{ background: 'transparent', border: '1px solid transparent', color: 'rgba(255,255,255,0.45)' }}
+                            disabled
+                          >
+                            3D
+                          </button>
+                        </div>
+
+                        <div className="mt-3 max-h-[360px] overflow-auto pr-1">
+                          {enabledImageModels.length === 0 ? (
+                            <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                              暂无启用的 isImageGen 模型（可在“模型管理”开启）
+                            </div>
                           ) : (
-                            '暂无可用 isImageGen 模型'
+                            <div className="space-y-2">
+                              {enabledImageModels
+                                .slice()
+                                .sort((a, b) => Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9))
+                                .map((m) => {
+                                  const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
+                                  return (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      className="w-full text-left rounded-[16px] px-3 py-2 hover:bg-white/5 transition-colors"
+                                      style={{
+                                        border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                        background: 'rgba(255,255,255,0.02)',
+                                      }}
+                                      onClick={() => {
+                                        setModelPrefAuto(false);
+                                        setModelPrefModelId(m.id);
+                                        setModelPrefOpen(false);
+                                      }}
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                            {m.name || m.modelName}
+                                          </div>
+                                          <div className="mt-0.5 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                            {m.modelName}
+                                          </div>
+                                        </div>
+                                        <div className="shrink-0">
+                                          <span
+                                            className="inline-flex items-center justify-center h-8 w-8 rounded-full"
+                                            style={{
+                                              background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                              border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                              color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                            }}
+                                            aria-label={picked ? '已选择' : '未选择'}
+                                          >
+                                            <Check size={18} />
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                            </div>
                           )}
                         </div>
-                      </div>
-                    }
-                    side="top"
-                    align="end"
+
+                        <DropdownMenu.Arrow className="fill-(--bg-elevated)" style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }} />
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+
+                  {/* 图2：发送（圆形箭头） */}
+                  <button
+                    type="button"
+                    onClick={() => void onSend()}
+                    disabled={busy || !input.trim()}
+                    className="h-10 w-10 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      background: busy || !input.trim() ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)',
+                      color: busy || !input.trim() ? 'rgba(255,255,255,0.45)' : 'var(--text-primary)',
+                    }}
+                    aria-label="生成"
+                    title="生成"
                   >
-                    <button
-                      type="button"
-                      className="h-10 w-10 rounded-[12px] inline-flex items-center justify-center hover:bg-white/5"
-                      style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
-                      aria-label="查看默认模型"
-                      title="查看默认模型"
-                    >
-                      <Info size={18} />
-                    </button>
-                  </Tooltip>
-                  <Button variant="primary" onClick={() => void onSend()} disabled={busy || !input.trim()}>
-                    <Wand2 size={16} />
-                    {busy ? '生成中...' : '生成'}
-                  </Button>
+                    {busy ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1359,6 +2055,12 @@ export default function AdvancedImageMasterTab() {
             <textarea
               value={asciiSource}
               onChange={(e) => setAsciiSource(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                  e.preventDefault();
+                  e.currentTarget.select();
+                }
+              }}
               className="w-full min-h-[96px] resize-none rounded-[14px] px-3 py-2.5 text-sm outline-none"
               style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
               placeholder="输入要生成字符画的内容（建议英文/数字；中文也可尝试但可能宽度不一致）"
@@ -1368,7 +2070,7 @@ export default function AdvancedImageMasterTab() {
               style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.16)' }}
             >
               <pre
-                className="text-[12px] leading-[1.25] whitespace-pre"
+                className="text-[12px] leading-tight whitespace-pre"
                 style={{
                   color: 'rgba(255,255,255,0.86)',
                   fontFamily:

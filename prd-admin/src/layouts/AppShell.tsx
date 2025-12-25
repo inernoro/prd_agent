@@ -16,6 +16,7 @@ export default function AppShell() {
   const user = useAuthStore((s) => s.user);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
+  const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
   const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
@@ -180,8 +181,8 @@ export default function AppShell() {
               type="button"
               onClick={() => logout()}
               className={cn(
-                'mt-3 w-full inline-flex items-center justify-center gap-2 rounded-[12px] px-3 py-2',
-                'transition-colors hover:bg-white/5'
+                'inline-flex items-center justify-center rounded-[12px] transition-colors hover:bg-white/5',
+                collapsed ? 'w-9 h-9 p-0' : 'mt-3 w-full gap-2 px-3 py-2'
               )}
               style={{ color: 'var(--text-secondary)' }}
             >
@@ -204,7 +205,12 @@ export default function AppShell() {
                 'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.08) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.035) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.025) 0%, transparent 70%)',
             }}
           />
-          <div className="relative mx-auto w-full max-w-[1440px] px-5 py-5 flex-1 min-h-0 flex flex-col">
+          <div
+            className={cn(
+              'relative w-full flex-1 min-h-0 flex flex-col',
+              fullBleedMain ? 'px-3 py-3' : 'mx-auto max-w-[1440px] px-5 py-5'
+            )}
+          >
             <div className="flex-1 min-h-0">
               <Outlet />
             </div>

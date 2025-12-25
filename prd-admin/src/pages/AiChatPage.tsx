@@ -5,7 +5,7 @@ import { getAiChatHistory, suggestGroupName, uploadAiChatDocument } from '@/serv
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
-import { Paperclip, Plus, Send, Square, Sparkles } from 'lucide-react';
+import { ArrowLeftToLine, Paperclip, Plus, Send, Square, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -225,6 +225,7 @@ export default function AiChatPage() {
   const token = useAuthStore((s) => s.token);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const navCollapsed = useLayoutStore((s) => s.navCollapsed);
+  const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
 
   const userId = authUser?.userId ?? '';
 
@@ -874,29 +875,60 @@ export default function AiChatPage() {
   );
 
   const rightPanel = (
-    <div className="flex-1 min-h-0 flex flex-col gap-4">
-      <div className="flex items-center gap-2 shrink-0">
-        <Button variant={tab === 'chat' ? 'primary' : 'secondary'} onClick={() => setTab('chat')}>
-          对话
-        </Button>
-        <Button variant={tab === 'imageGen' ? 'primary' : 'secondary'} onClick={() => setTab('imageGen')}>
-          图片创作
-        </Button>
-        <Button variant={tab === 'imageMaster' ? 'primary' : 'secondary'} onClick={() => setTab('imageMaster')}>
-          高级图片大师
-        </Button>
-        {tab === 'imageMaster' ? (
-          <Button variant="secondary" onClick={() => toggleNavCollapsed()} title="专注模式：折叠/展开左侧导航，最大化画布面积">
-            {navCollapsed ? '退出专注' : '专注模式'}
+    <div className="flex-1 min-h-0 flex flex-col gap-4 relative">
+      {/* 顶部 Tab：专注模式下不占布局，避免压缩画布高度 */}
+      {tab === 'imageMaster' && navCollapsed ? (
+        <div className="absolute left-0 top-0 z-30" style={{ paddingLeft: 12, paddingTop: 12 }}>
+          <button
+            type="button"
+            className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+            style={{
+              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(0,0,0,0.28)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
+              color: 'var(--text-secondary)',
+            }}
+            onClick={() => toggleNavCollapsed()}
+            aria-label="退出专注"
+            title="退出专注"
+          >
+            <ArrowLeftToLine size={18} />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant={tab === 'chat' ? 'primary' : 'secondary'} onClick={() => setTab('chat')}>
+            初级对话交互
           </Button>
-        ) : null}
-      </div>
+          <Button variant={tab === 'imageGen' ? 'primary' : 'secondary'} onClick={() => setTab('imageGen')}>
+            中级图片绘制
+          </Button>
+          <Button variant={tab === 'imageMaster' ? 'primary' : 'secondary'} onClick={() => setTab('imageMaster')}>
+            高级视觉创作
+          </Button>
+          {tab === 'imageMaster' ? (
+            <Button variant="secondary" onClick={() => toggleNavCollapsed()} title="专注模式：折叠/展开左侧导航，最大化画布面积">
+              {navCollapsed ? '退出专注' : '专注模式'}
+            </Button>
+          ) : null}
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col">
         {tab === 'chat' ? chatPanel : tab === 'imageGen' ? <ImageGenPanel /> : <AdvancedImageMasterTab />}
       </div>
     </div>
   );
+
+  // 专注模式：同时开启 full-bleed 主内容区（跳出 AppShell 的 max-width 框架）
+  // 仅在 高级视觉创作 + 已折叠导航 时启用
+  useEffect(() => {
+    const on = tab === 'imageMaster' && navCollapsed;
+    setFullBleedMain(on);
+    return () => setFullBleedMain(false);
+  }, [navCollapsed, setFullBleedMain, tab]);
 
   return (
     <div className="h-full min-h-0 flex gap-4">

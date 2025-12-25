@@ -195,6 +195,97 @@ function validateStrictJson(raw: string): { ok: true } | { ok: false; reason: st
   }
 }
 
+function decodeEscapedTextForDisplay(input: string): string {
+  // 目标：把文本中的 \uXXXX（以及常见转义）解码为真实字符，便于阅读日志 Raw。
+  // 约束：只用于“显示/复制”的可见性增强，不改变源数据，也不用于严格 JSON 校验。
+  const s = String(input ?? '');
+  if (!s) return '';
+
+  const isHex4At = (str: string, at: number) => {
+    if (at + 4 > str.length) return false;
+    for (let i = 0; i < 4; i++) {
+      const c = str.charCodeAt(at + i);
+      const isNum = c >= 48 && c <= 57; // 0-9
+      const isAF = c >= 65 && c <= 70; // A-F
+      const isaf = c >= 97 && c <= 102; // a-f
+      if (!(isNum || isAF || isaf)) return false;
+    }
+    return true;
+  };
+
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch !== '\\' || i + 1 >= s.length) {
+      out += ch;
+      continue;
+    }
+
+    const n = s[i + 1];
+    // 常见转义
+    if (n === 'n') {
+      out += '\n';
+      i += 1;
+      continue;
+    }
+    if (n === 'r') {
+      out += '\r';
+      i += 1;
+      continue;
+    }
+    if (n === 't') {
+      out += '\t';
+      i += 1;
+      continue;
+    }
+    if (n === 'b') {
+      out += '\b';
+      i += 1;
+      continue;
+    }
+    if (n === 'f') {
+      out += '\f';
+      i += 1;
+      continue;
+    }
+    if (n === '"' || n === '\\' || n === '/') {
+      out += n;
+      i += 1;
+      continue;
+    }
+
+    // Unicode 转义：\uXXXX（包含 surrogate pair 组合）
+    if (n === 'u' && isHex4At(s, i + 2)) {
+      const hi = parseInt(s.slice(i + 2, i + 6), 16);
+
+      // surrogate pair: \uD800-\uDBFF + \uDC00-\uDFFF
+      if (
+        hi >= 0xd800 &&
+        hi <= 0xdbff &&
+        s[i + 6] === '\\' &&
+        s[i + 7] === 'u' &&
+        isHex4At(s, i + 8)
+      ) {
+        const lo = parseInt(s.slice(i + 8, i + 12), 16);
+        if (lo >= 0xdc00 && lo <= 0xdfff) {
+          const cp = (hi - 0xd800) * 0x400 + (lo - 0xdc00) + 0x10000;
+          out += String.fromCodePoint(cp);
+          i += 11;
+          continue;
+        }
+      }
+
+      out += String.fromCharCode(hi);
+      i += 5;
+      continue;
+    }
+
+    // 未识别：保留原样
+    out += ch;
+  }
+  return out;
+}
+
 function shellSingleQuote(text: string): string {
   // Bash/zsh 安全单引号转义：' -> '"'"'
   return `'${String(text).replace(/'/g, `'"'"'`)}'`;
@@ -551,6 +642,7 @@ export default function LlmLogsPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(30);
   const [answerView, setAnswerView] = useState<'preview' | 'raw'>('preview');
+  const [answerVisibleChars, setAnswerVisibleChars] = useState(false);
   const [answerHint, setAnswerHint] = useState<string>('');
   const [jsonCheckPhase, setJsonCheckPhase] = useState<'idle' | 'scanning' | 'passed' | 'failed'>('idle');
   const jsonCheckLastRef = useRef<{ ok: boolean; reason?: string } | null>(null);
@@ -607,6 +699,7 @@ export default function LlmLogsPage() {
     setDetailLoading(true);
     setDetail(null);
     setCopiedHint('');
+    setAnswerVisibleChars(false);
     resetJsonCheck();
     try {
       const res = await getLlmLogDetail(id);
@@ -640,6 +733,15 @@ export default function LlmLogsPage() {
   const prettyRequestBody = useMemo(() => (detail ? tryPrettyJsonText(detail.requestBodyRedacted || '') : ''), [detail]);
   const curlText = useMemo(() => (detail ? buildCurlFromLog(detail) : ''), [detail]);
   const answerText = useMemo(() => (detail?.answerText ?? '').trim(), [detail]);
+  const answerHasUnicodeEscapes = useMemo(() => /\\u[0-9a-fA-F]{4}/.test(answerText), [answerText]);
+  const answerDisplayText = useMemo(
+    () => (answerVisibleChars ? decodeEscapedTextForDisplay(answerText) : answerText),
+    [answerVisibleChars, answerText]
+  );
+  useEffect(() => {
+    // 内容不再包含 \uXXXX 时，自动关闭“可见字符”避免误解
+    if (!answerHasUnicodeEscapes && answerVisibleChars) setAnswerVisibleChars(false);
+  }, [answerHasUnicodeEscapes, answerVisibleChars]);
   const assembledSummary = useMemo(() => {
     if (!detail) return '';
     const chars = detail.assembledTextChars;
@@ -1215,12 +1317,27 @@ export default function LlmLogsPage() {
                         >
                           Raw
                         </button>
+                        {answerHasUnicodeEscapes ? (
+                          <button
+                            type="button"
+                            onClick={() => setAnswerVisibleChars((v) => !v)}
+                            className="h-8 px-3 rounded-[10px] text-xs font-semibold"
+                            title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
+                            style={{
+                              color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
+                              background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
+                              border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                            }}
+                          >
+                            可见字符
+                          </button>
+                        ) : null}
                       </div>
                       <Button
                         variant="secondary"
                         size="sm"
                         onClick={async () => {
-                          const text = answerText || '';
+                          const text = answerDisplayText || '';
                           try {
                             await navigator.clipboard.writeText(text || '');
                             setCopiedHint('已复制');
@@ -1299,7 +1416,7 @@ export default function LlmLogsPage() {
                   <div className="mt-3">
                     {answerView === 'raw' ? (
                       <pre style={codeBoxStyle()}>
-                        {answerText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
+                        {answerDisplayText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
                       </pre>
                     ) : (
                       <div
@@ -1346,7 +1463,7 @@ export default function LlmLogsPage() {
                               ),
                             }}
                           >
-                            {answerText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
+                            {answerDisplayText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
                           </ReactMarkdown>
                         </div>
                       </div>

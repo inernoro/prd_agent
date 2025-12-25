@@ -58,7 +58,7 @@ public class AdminImageMasterController : ControllerBase
         }
 
         var title = (request?.Title ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(title)) title = "高级图片大师";
+        if (string.IsNullOrWhiteSpace(title)) title = "高级视觉创作";
         if (title.Length > 40) title = title[..40].Trim();
 
         var now = DateTime.UtcNow;
