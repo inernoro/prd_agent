@@ -42,6 +42,9 @@ public class MongoDbContext
     public IMongoCollection<ModelLabRunItem> ModelLabRunItems => _database.GetCollection<ModelLabRunItem>("model_lab_run_items");
     public IMongoCollection<ModelLabModelSet> ModelLabModelSets => _database.GetCollection<ModelLabModelSet>("model_lab_model_sets");
     public IMongoCollection<ModelLabGroup> ModelLabGroups => _database.GetCollection<ModelLabGroup>("model_lab_groups");
+    public IMongoCollection<ImageMasterSession> ImageMasterSessions => _database.GetCollection<ImageMasterSession>("image_master_sessions");
+    public IMongoCollection<ImageMasterMessage> ImageMasterMessages => _database.GetCollection<ImageMasterMessage>("image_master_messages");
+    public IMongoCollection<ImageAsset> ImageAssets => _database.GetCollection<ImageAsset>("image_assets");
 
     private void CreateIndexes()
     {
@@ -149,5 +152,20 @@ public class MongoDbContext
             new CreateIndexOptions { Unique = true }));
         ModelLabGroups.Indexes.CreateOne(new CreateIndexModel<ModelLabGroup>(
             Builders<ModelLabGroup>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
+
+        // ImageMasterSessions：按 owner + updatedAt
+        ImageMasterSessions.Indexes.CreateOne(new CreateIndexModel<ImageMasterSession>(
+            Builders<ImageMasterSession>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt)));
+
+        // ImageMasterMessages：按 session + createdAt
+        ImageMasterMessages.Indexes.CreateOne(new CreateIndexModel<ImageMasterMessage>(
+            Builders<ImageMasterMessage>.IndexKeys.Ascending(x => x.SessionId).Ascending(x => x.CreatedAt)));
+
+        // ImageAssets：按 owner + createdAt；按 owner + sha256 去重
+        ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
+            Builders<ImageAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt)));
+        ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
+            Builders<ImageAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Sha256),
+            new CreateIndexOptions { Unique = true }));
     }
 }

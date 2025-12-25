@@ -2,8 +2,18 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
-import { generateImageGen, getModels, planImageGen } from '@/services';
+import {
+  addImageMasterMessage,
+  createImageMasterSession,
+  generateImageGen,
+  getImageMasterSession,
+  getModels,
+  listImageMasterSessions,
+  planImageGen,
+  uploadImageAsset,
+} from '@/services';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
+import type { ImageAsset, ImageMasterMessage, ImageMasterSession } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
 import { Copy, Download, ImagePlus, Info, Loader2, Maximize2, MousePointer2, Trash2, Wand2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -17,6 +27,10 @@ type CanvasImageItem = {
   status: 'done' | 'error' | 'running';
   errorMessage?: string | null;
   refId?: number;
+  checked?: boolean;
+  checkedAt?: number;
+  assetId?: string;
+  sha256?: string;
 };
 
 type UiMsg = {
@@ -24,6 +38,14 @@ type UiMsg = {
   role: 'User' | 'Assistant';
   content: string;
   ts: number;
+};
+
+const clampZoom = (z: number) => Math.max(0.25, Math.min(3, z));
+const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
+const zoomFactorFromDeltaY = (deltaY: number) => {
+  // 更细腻：factor = exp(-dy*k)，并限制单次变化幅度，避免“一滚就跳”
+  const k = 0.0016;
+  return clampZoomFactor(Math.exp(-deltaY * k));
 };
 
 function firstEnabledImageModel(models: Model[]): Model | null {
@@ -122,6 +144,11 @@ export default function AdvancedImageMasterTab() {
 
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
+  const [asciiOpen, setAsciiOpen] = useState(false);
+  const [asciiSource, setAsciiSource] = useState('');
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>('');
@@ -138,7 +165,6 @@ export default function AdvancedImageMasterTab() {
   // @imgN 占位符
   const [nextRefId, setNextRefId] = useState(1);
 
-  const clampZoom = (z: number) => Math.max(0.25, Math.min(3, z));
 
   // splitter：右侧宽度（px）
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -147,6 +173,8 @@ export default function AdvancedImageMasterTab() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
+  const [masterSession, setMasterSession] = useState<ImageMasterSession | null>(null);
+  const [booting, setBooting] = useState(false);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -164,6 +192,58 @@ export default function AdvancedImageMasterTab() {
       })
       .finally(() => setModelsLoading(false));
   }, []);
+
+  // 启动时：按账号持久化加载/创建会话，并回放历史消息+画板资产
+  useEffect(() => {
+    if (!userId) return;
+    if (booting) return;
+    setBooting(true);
+    (async () => {
+      const list = await listImageMasterSessions({ limit: 10 });
+      let sid = '';
+      if (list.success && Array.isArray(list.data?.items) && list.data!.items.length > 0) {
+        sid = list.data!.items[0].id;
+      } else {
+        const created = await createImageMasterSession({ title: '高级图片大师' });
+        if (created.success) sid = created.data.session.id;
+      }
+      if (!sid) return;
+
+      const detail = await getImageMasterSession({ id: sid, messageLimit: 200, assetLimit: 80 });
+      if (!detail.success) return;
+      setMasterSession(detail.data.session);
+
+      const ms = Array.isArray(detail.data.messages) ? detail.data.messages : [];
+      if (ms.length > 0) {
+        setMessages(
+          ms.map((m) => ({
+            id: m.id,
+            role: m.role === 'Assistant' ? 'Assistant' : 'User',
+            content: String(m.content ?? ''),
+            ts: Number.isFinite(Date.parse(m.createdAt)) ? Date.parse(m.createdAt) : Date.now(),
+          }))
+        );
+      }
+
+      const assets = Array.isArray(detail.data.assets) ? detail.data.assets : [];
+      if (assets.length > 0) {
+        const items: CanvasImageItem[] = (assets as ImageAsset[])
+          .map((a) => ({
+            key: a.id,
+            assetId: a.id,
+            sha256: a.sha256,
+            createdAt: Number.isFinite(Date.parse(a.createdAt)) ? Date.parse(a.createdAt) : Date.now(),
+            prompt: a.prompt ?? '',
+            src: a.url || '',
+            status: 'done' as const,
+          }))
+          .filter((x) => !!x.src)
+          .slice(0, 60);
+        setCanvas(items);
+        if (items.length > 0) setSelectedKey((cur) => cur || items[0].key);
+      }
+    })().finally(() => setBooting(false));
+  }, [userId, booting]);
 
   // 初始化右侧宽度：localStorage 优先，否则默认 20%
   useEffect(() => {
@@ -240,10 +320,7 @@ export default function AdvancedImageMasterTab() {
       if (!ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault();
 
-      const dy = ev.deltaY;
-      // dy > 0 通常表示缩小
-      const factor = dy > 0 ? 1 / 1.12 : 1.12;
-      setZoom((z) => clampZoom(z * factor));
+      setZoom((z) => clampZoom(z * zoomFactorFromDeltaY(ev.deltaY)));
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
@@ -251,7 +328,67 @@ export default function AdvancedImageMasterTab() {
   }, [selected?.src]);
 
   const pushMsg = (role: UiMsg['role'], content: string) => {
-    setMessages((prev) => prev.concat({ id: `${role}-${Date.now()}`, role, content, ts: Date.now() }));
+    const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
+    setMessages((prev) => prev.concat(msg));
+    if (masterSession?.id) {
+      const backendRole: ImageMasterMessage['role'] = role === 'User' ? 'User' : 'Assistant';
+      void addImageMasterMessage({ sessionId: masterSession.id, role: backendRole, content });
+    }
+  };
+
+  const replaceMentionAtCursor = (replacement: string) => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const value = ta.value ?? '';
+    const start = mentionAtPos ?? (ta.selectionStart ?? value.length);
+    const end = ta.selectionStart ?? value.length;
+    const next = value.slice(0, start) + replacement + value.slice(end);
+    setInput(next);
+    setMentionOpen(false);
+    setMentionQuery('');
+    setMentionAtPos(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + replacement.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  };
+
+  const makeAsciiArt = (text: string) => {
+    const lines = String(text ?? '')
+      .replaceAll('\r\n', '\n')
+      .split('\n')
+      .map((x) => x.replaceAll('\t', '    '));
+    const width = Math.min(72, Math.max(12, Math.max(...lines.map((l) => l.length), 0)));
+    const padLine = (l: string) => (l.length >= width ? l.slice(0, width) : l + ' '.repeat(width - l.length));
+    const top = `┌${'─'.repeat(width)}┐`;
+    const bottom = `└${'─'.repeat(width)}┘`;
+    const body = lines.map((l) => `│${padLine(l)}│`).join('\n');
+    return `${top}\n${body}\n${bottom}`;
+  };
+
+  const refreshMention = (val: string, caret: number) => {
+    const s = String(val ?? '');
+    const pos = Math.max(0, Math.min(caret, s.length));
+    const before = s.slice(0, pos);
+    const at = before.lastIndexOf('@');
+    if (at < 0) {
+      setMentionOpen(false);
+      setMentionQuery('');
+      setMentionAtPos(null);
+      return;
+    }
+    const token = before.slice(at + 1);
+    // token 内出现空白/换行，视为不在 @ 模式
+    if (token.length > 24 || /\s/.test(token)) {
+      setMentionOpen(false);
+      setMentionQuery('');
+      setMentionAtPos(null);
+      return;
+    }
+    setMentionAtPos(at);
+    setMentionQuery(token.toLowerCase());
+    setMentionOpen(true);
   };
 
   const ensureModel = () => {
@@ -354,6 +491,37 @@ export default function AdvancedImageMasterTab() {
       }
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'done', src } : x)));
       setSelectedKey((cur) => cur || key);
+
+      // 上传并持久化资产：把外部签名 URL / base64 转为自托管 URL（避免过期）
+      if (masterSession?.id) {
+        const width = DEFAULT_SIZE.startsWith('1024') ? 1024 : undefined;
+        const height = DEFAULT_SIZE.endsWith('1024') ? 1024 : undefined;
+        const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
+        if (!isAlreadyHosted) {
+          const up = await uploadImageAsset({
+            data: src.startsWith('data:') ? src : undefined,
+            sourceUrl: src.startsWith('http') ? src : undefined,
+            prompt: firstPrompt,
+            width,
+            height,
+          });
+          if (up.success) {
+            const a = up.data.asset;
+            setCanvas((prev) =>
+              prev.map((x) =>
+                x.key === key
+                  ? {
+                      ...x,
+                      assetId: a.id,
+                      sha256: a.sha256,
+                      src: a.url || x.src,
+                    }
+                  : x
+              )
+            );
+          }
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -384,6 +552,23 @@ export default function AdvancedImageMasterTab() {
     return id;
   };
 
+  const ensureCheckedWithRefId = (key: string, v: boolean) => {
+    const now = Date.now();
+    const id = v ? ensureRefIdForKey(key) : null;
+    setCanvas((prev) =>
+      prev.map((x) =>
+        x.key === key
+          ? {
+              ...x,
+              checked: v,
+              checkedAt: v ? now : undefined,
+              refId: v ? (id ?? x.refId) : x.refId,
+            }
+          : x
+      )
+    );
+  };
+
   const extractReferencedImagesInOrder = (text: string) => {
     const s = String(text ?? '');
     const rx = /@img(\d+)/g;
@@ -406,11 +591,29 @@ export default function AdvancedImageMasterTab() {
   };
 
   const buildRequestTextWithRefs = (rawText: string) => {
-    const refs = extractReferencedImagesInOrder(rawText);
-    if (refs.length === 0) return { requestText: rawText, primaryRef: null as CanvasImageItem | null };
-    const lines = refs.map((it) => `- @img${it.refId}: ${it.prompt || '（无描述）'}`);
+    const refsByText = extractReferencedImagesInOrder(rawText);
+    const checked = canvas
+      .filter((x) => x.checked)
+      .slice()
+      .sort((a, b) => Number(a.checkedAt ?? 0) - Number(b.checkedAt ?? 0));
+
+    const merged: CanvasImageItem[] = [];
+    const seen = new Set<string>();
+    for (const it of refsByText) {
+      if (seen.has(it.key)) continue;
+      seen.add(it.key);
+      merged.push(it);
+    }
+    for (const it of checked) {
+      if (seen.has(it.key)) continue;
+      seen.add(it.key);
+      merged.push(it);
+    }
+
+    if (merged.length === 0) return { requestText: rawText, primaryRef: null as CanvasImageItem | null };
+    const lines = merged.map((it) => `- @img${it.refId ?? '?'}: ${it.prompt || '（无描述）'}`);
     const requestText = `${rawText}\n\n【引用图片（按顺序）】\n${lines.join('\n')}`;
-    return { requestText, primaryRef: refs[0] ?? null };
+    return { requestText, primaryRef: merged[0] ?? null };
   };
 
   const onSend = async () => {
@@ -454,6 +657,30 @@ export default function AdvancedImageMasterTab() {
     setSelectedKey((cur) => cur || added[0].key);
     pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
     setPendingFit(true);
+
+    // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
+    if (masterSession?.id) {
+      void (async () => {
+        for (const it of added) {
+          if (!it.src || !it.src.startsWith('data:')) continue;
+          const up = await uploadImageAsset({ data: it.src, prompt: it.prompt });
+          if (!up.success) continue;
+          const a = up.data.asset;
+          setCanvas((prev) =>
+            prev.map((x) =>
+              x.key === it.key
+                ? {
+                    ...x,
+                    assetId: a.id,
+                    sha256: a.sha256,
+                    src: a.url || x.src,
+                  }
+                : x
+            )
+          );
+        }
+      })();
+    }
   };
 
   const templates = [
@@ -521,6 +748,13 @@ export default function AdvancedImageMasterTab() {
             }}
             tabIndex={0}
             onMouseDown={() => stageRef.current?.focus()}
+              onClick={(e) => {
+                // 点击空白处可取消选中（逆选中）
+                if (e.target === e.currentTarget) {
+                  setSelectedKey('');
+                  setSelectedImageSize(null);
+                }
+              }}
             onDragOver={(e) => {
               e.preventDefault();
             }}
@@ -534,10 +768,10 @@ export default function AdvancedImageMasterTab() {
               if (!isMod) return;
               if (e.key === '+' || e.key === '=') {
                 e.preventDefault();
-                setZoom((z) => clampZoom(z * 1.15));
+                  setZoom((z) => clampZoom(z * 1.07));
               } else if (e.key === '-') {
                 e.preventDefault();
-                setZoom((z) => clampZoom(z / 1.15));
+                  setZoom((z) => clampZoom(z / 1.07));
               } else if (e.key === '0') {
                 e.preventDefault();
                 setZoom(1);
@@ -605,7 +839,7 @@ export default function AdvancedImageMasterTab() {
               <button
                 type="button"
                 className="h-9 w-9 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
-                onClick={() => setZoom((z) => clampZoom(z / 1.15))}
+                onClick={() => setZoom((z) => clampZoom(z / 1.07))}
                 title="缩小"
                 aria-label="缩小"
                 disabled={!selected?.src}
@@ -618,7 +852,7 @@ export default function AdvancedImageMasterTab() {
               <button
                 type="button"
                 className="h-9 w-9 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
-                onClick={() => setZoom((z) => clampZoom(z * 1.15))}
+                onClick={() => setZoom((z) => clampZoom(z * 1.07))}
                 title="放大"
                 aria-label="放大"
                 disabled={!selected?.src}
@@ -731,13 +965,52 @@ export default function AdvancedImageMasterTab() {
                           border: active ? '1px solid rgba(250,204,21,0.55)' : '1px solid rgba(255,255,255,0.10)',
                           background: 'rgba(0,0,0,0.18)',
                         }}
-                        onClick={() => {
+                        onClick={(e) => {
+                          // Ctrl/Cmd + 点击：快捷插入 @imgN（不改变选中，不影响缩放）
+                          if (e.metaKey || e.ctrlKey) {
+                            const id = ensureRefIdForKey(it.key);
+                            if (id) insertAtCursor(`@img${id} `);
+                            // 让画布保持可交互（避免“插入后缩放失效”的错觉）
+                            requestAnimationFrame(() => stageRef.current?.focus());
+                            return;
+                          }
+                          // 普通点击：切换选中；再次点击取消选中
+                          if (active) {
+                            setSelectedKey('');
+                            setSelectedImageSize(null);
+                            return;
+                          }
                           setSelectedKey(it.key);
                           setSelectedImageSize(null);
                           setPendingFit(true);
                         }}
                         title={it.prompt}
                       >
+                        {/* 多选 checkbox：不触发选中切换 */}
+                        <button
+                          type="button"
+                          className="absolute left-2 top-2 h-6 w-6 rounded-[8px] inline-flex items-center justify-center"
+                          style={{
+                            border: it.checked ? '1px solid rgba(250,204,21,0.65)' : '1px solid rgba(255,255,255,0.14)',
+                            background: it.checked ? 'rgba(250,204,21,0.18)' : 'rgba(0,0,0,0.22)',
+                            color: it.checked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.65)',
+                            backdropFilter: 'blur(8px)',
+                            WebkitBackdropFilter: 'blur(8px)',
+                          }}
+                          aria-label={it.checked ? '取消选择引用' : '选择引用'}
+                          title={it.checked ? '取消选择引用' : '选择引用'}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            const next = !it.checked;
+                            ensureCheckedWithRefId(it.key, next);
+                          }}
+                        >
+                          {it.checked ? (
+                            <span className="text-[12px] font-extrabold">✓</span>
+                          ) : (
+                            <span className="text-[10px] font-semibold">+</span>
+                          )}
+                        </button>
                         {it.status === 'running' ? (
                           <div className="w-full h-full flex items-center justify-center">
                             <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
@@ -879,12 +1152,27 @@ export default function AdvancedImageMasterTab() {
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setInput(v);
+                  refreshMention(v, e.target.selectionStart ?? v.length);
+                }}
                 onKeyDown={(e) => {
+                  if (mentionOpen && e.key === 'Escape') {
+                    e.preventDefault();
+                    setMentionOpen(false);
+                    setMentionQuery('');
+                    setMentionAtPos(null);
+                    return;
+                  }
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     void onSend();
                   }
+                }}
+                onKeyUp={(e) => {
+                  const ta = e.currentTarget;
+                  refreshMention(ta.value, ta.selectionStart ?? ta.value.length);
                 }}
                 placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
                 className="w-full min-h-[86px] resize-none rounded-[14px] px-3 py-2.5 text-sm outline-none"
@@ -892,25 +1180,87 @@ export default function AdvancedImageMasterTab() {
                 disabled={busy}
               />
 
+              {mentionOpen ? (
+                <div
+                  className="mt-2 rounded-[14px] overflow-hidden"
+                  style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.32)' }}
+                >
+                  <div className="px-3 py-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    @ 提示（输入 @vision 或 @ascii）
+                  </div>
+                  <div className="max-h-[220px] overflow-auto">
+                    {(() => {
+                      const q = mentionQuery || '';
+                      const showVision = q === '' || 'vision'.startsWith(q) || q.startsWith('v');
+                      const showAscii = q === '' || 'ascii'.startsWith(q) || q.startsWith('a');
+                      const visionModels = (models ?? []).filter((m) => m.enabled && m.isVision);
+                      return (
+                        <div className="p-2 space-y-2">
+                          {showVision ? (
+                            <div>
+                              <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                视觉模型
+                              </div>
+                              {visionModels.length === 0 ? (
+                                <div className="px-2 py-1.5 text-[12px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                                  暂无启用的 isVision 模型（可在“模型管理”设置）
+                                </div>
+                              ) : (
+                                visionModels.map((m) => (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    className="w-full text-left rounded-[10px] px-2 py-1.5 hover:bg-white/5"
+                                    style={{ color: 'var(--text-primary)' }}
+                                    onClick={() => {
+                                      replaceMentionAtCursor(`@vision(${m.name || m.modelName}) `);
+                                    }}
+                                  >
+                                    <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>
+                                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                      插入 @vision(...) 标记
+                                    </div>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          ) : null}
+
+                          {showAscii ? (
+                            <div>
+                              <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                字符画
+                              </div>
+                              <button
+                                type="button"
+                                className="w-full text-left rounded-[10px] px-2 py-1.5 hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onClick={() => {
+                                  setMentionOpen(false);
+                                  setMentionQuery('');
+                                  setAsciiOpen(true);
+                                }}
+                              >
+                                <div className="text-[13px] font-semibold">@ascii（生成字符画并插入）</div>
+                                <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                  等宽字体预览，避免字符漂移
+                                </div>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="mt-2 flex items-center justify-between gap-2">
                 <div className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
                   {selected ? `已选中首帧：${selected.prompt}` : '未选择首帧'}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!selectedKey || !selected}
-                    onClick={() => {
-                      if (!selectedKey) return;
-                      const id = ensureRefIdForKey(selectedKey);
-                      if (!id) return;
-                      insertAtCursor(`${input && !input.endsWith(' ') ? ' ' : ''}@img${id} `);
-                    }}
-                    title="在输入框插入 @imgN 引用"
-                  >
-                    插入引用
-                  </Button>
+                  {/* “插入引用”改为快捷操作：Ctrl/Cmd+点击缩略图 或 左上角多选；此处不再占用主按钮位 */}
                   <Tooltip
                     content={
                       <div className="leading-relaxed">
@@ -992,6 +1342,62 @@ export default function AdvancedImageMasterTab() {
                   （无图片）
                 </div>
               )}
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={asciiOpen}
+        onOpenChange={(open) => setAsciiOpen(open)}
+        title="字符画"
+        description="等宽字体预览；确认后会插入到输入框当前位置"
+        maxWidth={920}
+        contentStyle={{ height: 'min(86vh, 760px)' }}
+        content={
+          <div className="h-full min-h-0 flex flex-col gap-3">
+            <textarea
+              value={asciiSource}
+              onChange={(e) => setAsciiSource(e.target.value)}
+              className="w-full min-h-[96px] resize-none rounded-[14px] px-3 py-2.5 text-sm outline-none"
+              style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+              placeholder="输入要生成字符画的内容（建议英文/数字；中文也可尝试但可能宽度不一致）"
+            />
+            <div
+              className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3"
+              style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.16)' }}
+            >
+              <pre
+                className="text-[12px] leading-[1.25] whitespace-pre"
+                style={{
+                  color: 'rgba(255,255,255,0.86)',
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                  fontVariantLigatures: 'none',
+                }}
+              >
+                {makeAsciiArt(asciiSource || 'ASCII')}
+              </pre>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setAsciiOpen(false)}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const art = makeAsciiArt(asciiSource || 'ASCII');
+                  if (mentionAtPos != null) {
+                    replaceMentionAtCursor(`@ascii\n${art}\n`);
+                  } else {
+                    insertAtCursor(`\n@ascii\n${art}\n`);
+                  }
+                  setAsciiOpen(false);
+                  setAsciiSource('');
+                }}
+              >
+                插入
+              </Button>
             </div>
           </div>
         }

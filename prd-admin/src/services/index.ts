@@ -29,6 +29,13 @@ import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertMod
 import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
 import type {
+  AddImageMasterMessageContract,
+  CreateImageMasterSessionContract,
+  GetImageMasterSessionContract,
+  ListImageMasterSessionsContract,
+  UploadImageAssetContract,
+} from '@/services/contracts/imageMaster';
+import type {
   DeleteAdminGroupContract,
   GenerateAdminGapSummaryContract,
   GetAdminGroupGapsContract,
@@ -65,6 +72,13 @@ import { generateImageGenReal, planImageGenReal, runImageGenBatchStreamReal } fr
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
 import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
 import { suggestGroupNameReal } from '@/services/real/intent';
+import {
+  addImageMasterMessageReal,
+  createImageMasterSessionReal,
+  getImageMasterSessionReal,
+  listImageMasterSessionsReal,
+  uploadImageAssetReal,
+} from '@/services/real/imageMaster';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -169,3 +183,9 @@ export const uploadAiChatDocument: AiChatUploadDocumentContract = withAuth(uploa
 export const getAiChatHistory: AiChatGetHistoryContract = withAuth(getAiChatHistoryReal);
 
 export const suggestGroupName: SuggestGroupNameContract = withAuth(suggestGroupNameReal);
+
+export const createImageMasterSession: CreateImageMasterSessionContract = withAuth(createImageMasterSessionReal);
+export const listImageMasterSessions: ListImageMasterSessionsContract = withAuth(listImageMasterSessionsReal);
+export const getImageMasterSession: GetImageMasterSessionContract = withAuth(getImageMasterSessionReal);
+export const addImageMasterMessage: AddImageMasterMessageContract = withAuth(addImageMasterMessageReal);
+export const uploadImageAsset: UploadImageAssetContract = withAuth(uploadImageAssetReal);

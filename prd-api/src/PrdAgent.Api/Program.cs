@@ -18,6 +18,7 @@ using Serilog.Sinks.SystemConsole.Themes;
 using PrdAgent.Infrastructure.Prompts;
 using PrdAgent.Infrastructure.Repositories;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Serilog;
 using Serilog.Events;
 
@@ -111,6 +112,15 @@ builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
 // OpenAI 兼容 Images API（用于“生图模型”）
 builder.Services.AddScoped<OpenAIImageClient>();
+
+// ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
+builder.Services.AddSingleton<IAssetStorage>(_ =>
+{
+    // 可通过配置覆盖 Assets:LocalDir；默认放到 app/data/assets
+    var baseDir = builder.Configuration["Assets:LocalDir"]
+                 ?? Path.Combine(AppContext.BaseDirectory, "data", "assets");
+    return new LocalAssetStorage(baseDir);
+});
 
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";

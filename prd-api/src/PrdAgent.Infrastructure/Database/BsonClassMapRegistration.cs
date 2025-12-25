@@ -39,6 +39,9 @@ public static class BsonClassMapRegistration
             RegisterModelLabRunItem();
             RegisterModelLabModelSet();
             RegisterModelLabGroup();
+            RegisterImageMasterSession();
+            RegisterImageMasterMessage();
+            RegisterImageAsset();
 
             _registered = true;
         }
@@ -121,6 +124,45 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.SessionId)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterImageMasterSession()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ImageMasterSession))) return;
+        BsonClassMap.RegisterClassMap<ImageMasterSession>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterImageMasterMessage()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ImageMasterMessage))) return;
+        BsonClassMap.RegisterClassMap<ImageMasterMessage>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterImageAsset()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ImageAsset))) return;
+        BsonClassMap.RegisterClassMap<ImageAsset>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 
