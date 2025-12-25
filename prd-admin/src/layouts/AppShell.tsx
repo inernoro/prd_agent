@@ -1,8 +1,9 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
+import { useLayoutStore } from '@/stores/layoutStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 
@@ -13,7 +14,8 @@ export default function AppShell() {
   const location = useLocation();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
-  const [collapsed, setCollapsed] = useState(false);
+  const collapsed = useLayoutStore((s) => s.navCollapsed);
+  const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
   const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
@@ -115,7 +117,7 @@ export default function AppShell() {
             )}
             <button
               type="button"
-              onClick={() => setCollapsed((v) => !v)}
+              onClick={() => toggleNavCollapsed()}
               className={cn(
                 'h-9 w-9 inline-flex items-center justify-center rounded-[12px] transition-colors',
                 'hover:bg-white/5'
@@ -190,7 +192,7 @@ export default function AppShell() {
         </aside>
 
         <main
-          className="relative h-full w-full overflow-auto flex flex-col"
+          className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
           // 让递归线条背景可见；前景可读性由 Card 等“实底组件”承担
           style={{ background: 'transparent', paddingLeft: mainPadLeft, zIndex: 10 }}
         >

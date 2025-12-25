@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import ImageGenPanel from '@/pages/ai-chat/ImageGenPanel';
 import AdvancedImageMasterTab from '@/pages/ai-chat/AdvancedImageMasterTab';
+import { useLayoutStore } from '@/stores/layoutStore';
 
 type LocalSession = {
   sessionId: string;
@@ -222,6 +223,8 @@ function formatTime(ts: number) {
 export default function AiChatPage() {
   const authUser = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
+  const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
+  const navCollapsed = useLayoutStore((s) => s.navCollapsed);
 
   const userId = authUser?.userId ?? '';
 
@@ -882,6 +885,11 @@ export default function AiChatPage() {
         <Button variant={tab === 'imageMaster' ? 'primary' : 'secondary'} onClick={() => setTab('imageMaster')}>
           高级图片大师
         </Button>
+        {tab === 'imageMaster' ? (
+          <Button variant="secondary" onClick={() => toggleNavCollapsed()} title="专注模式：折叠/展开左侧导航，最大化画布面积">
+            {navCollapsed ? '退出专注' : '专注模式'}
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col">

@@ -7,6 +7,7 @@ import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
 import { Copy, Download, ImagePlus, Info, Loader2, Maximize2, MousePointer2, Trash2, Wand2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useAuthStore } from '@/stores/authStore';
 
 type CanvasImageItem = {
   key: string;
@@ -105,6 +106,11 @@ export default function AdvancedImageMasterTab() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const activeModel = useMemo(() => firstEnabledImageModel(models), [models]);
 
+  const userId = useAuthStore((s) => s.user?.userId ?? '');
+  const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
+  const SPLIT_MIN = 240;
+  const SPLIT_MAX = 420;
+
   const [messages, setMessages] = useState<UiMsg[]>([
     {
       id: 'assistant-hello',
@@ -134,6 +140,11 @@ export default function AdvancedImageMasterTab() {
 
   const clampZoom = (z: number) => Math.max(0.25, Math.min(3, z));
 
+  // splitter：右侧宽度（px）
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [rightWidth, setRightWidth] = useState(0);
+  const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
 
@@ -153,6 +164,53 @@ export default function AdvancedImageMasterTab() {
       })
       .finally(() => setModelsLoading(false));
   }, []);
+
+  // 初始化右侧宽度：localStorage 优先，否则默认 20%
+  useEffect(() => {
+    const el = containerRef.current;
+    const cw = el?.clientWidth ?? 0;
+    const fallback = Math.round((cw || 1200) * 0.2);
+    const def = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, fallback));
+    let next = def;
+    if (splitKey) {
+      const raw = localStorage.getItem(splitKey);
+      const n = raw ? Number(raw) : NaN;
+      if (Number.isFinite(n) && n > 0) next = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, Math.round(n)));
+    }
+    setRightWidth(next);
+  }, [splitKey]);
+
+  // 拖拽 splitter
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const st = dragRef.current;
+      if (!st?.dragging) return;
+      const dx = e.clientX - st.startX;
+      const next = st.startRight - dx;
+      setRightWidth(Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, Math.round(next))));
+      e.preventDefault();
+    };
+    const onUp = () => {
+      const st = dragRef.current;
+      if (!st?.dragging) return;
+      dragRef.current = { dragging: false, startX: 0, startRight: 0 };
+      if (splitKey) {
+        try {
+          localStorage.setItem(splitKey, String(rightWidth));
+        } catch {
+          // ignore
+        }
+      }
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [rightWidth, splitKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: busy ? 'auto' : 'smooth' });
@@ -447,9 +505,12 @@ export default function AdvancedImageMasterTab() {
   }, [pendingFit, selected?.src, selectedImageSize]);
 
   return (
-    <div className="h-full min-h-0 flex gap-4">
-      {/* 左侧：画板 */}
-      <Card className="flex-1 min-h-0 overflow-hidden">
+    <div ref={containerRef} className="h-full min-h-0">
+      {/* 单一框架：左右无缝拼接 */}
+      <Card className="h-full min-h-0 overflow-hidden p-0!">
+        <div className="h-full min-h-0 flex">
+          {/* 左侧：画板 */}
+          <div className="flex-1 min-w-0 min-h-0">
         <div className="h-full min-h-0 relative">
           {/* 主画布（可滚动） */}
           <div
@@ -725,14 +786,36 @@ export default function AdvancedImageMasterTab() {
             }}
           />
         </div>
-      </Card>
+          </div>
 
-      {/* 右侧：单对话/上下文 */}
-      <div className="w-[420px] shrink-0 min-h-0 flex flex-col gap-4">
-        <Card className="flex-1 min-h-0 overflow-hidden">
-          <div className="h-full min-h-0 flex flex-col">
+          {/* splitter */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            className="relative shrink-0 w-[10px]"
+            style={{ background: 'rgba(255,255,255,0.02)' }}
+            onMouseDown={(e) => {
+              dragRef.current = { dragging: true, startX: e.clientX, startRight: rightWidth };
+              document.body.style.cursor = 'col-resize';
+              document.body.style.userSelect = 'none';
+              e.preventDefault();
+            }}
+          >
+            <div
+              className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px"
+              style={{ background: 'rgba(255,255,255,0.08)' }}
+            />
+            <div
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-1.5 rounded-[999px]"
+              style={{ background: 'rgba(255,255,255,0.10)' }}
+            />
+          </div>
+
+          {/* 右侧：单对话/上下文（无独立卡片隔断） */}
+          <div className="shrink-0 min-h-0 flex flex-col" style={{ width: rightWidth || 280 }}>
+            <div className="h-full min-h-0 flex flex-col p-3" style={{ background: 'rgba(255,255,255,0.015)' }}>
             <div className="min-w-0">
-              <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 Hi，我是你的 AI 设计师
               </div>
               <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -740,12 +823,12 @@ export default function AdvancedImageMasterTab() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-2">
+            <div className="mt-3 grid gap-2">
               {templates.map((t) => (
                 <button
                   key={t.id}
                   type="button"
-                  className="w-full text-left rounded-[16px] p-3 hover:bg-white/5 transition-colors"
+                  className="w-full text-left rounded-[14px] px-3 py-2.5 hover:bg-white/5 transition-colors"
                   style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
                   onClick={() => {
                     const text = buildTemplate(t.id);
@@ -753,7 +836,7 @@ export default function AdvancedImageMasterTab() {
                     requestAnimationFrame(() => inputRef.current?.focus());
                   }}
                 >
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                     {t.title}
                   </div>
                   <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -763,13 +846,13 @@ export default function AdvancedImageMasterTab() {
               ))}
             </div>
 
-            <div ref={scrollRef} className="mt-4 flex-1 min-h-0 overflow-auto pr-1 space-y-3">
+            <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-2.5">
               {messages.map((m) => {
                 const isUser = m.role === 'User';
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="max-w-[92%] rounded-[16px] px-4 py-3 text-sm"
+                      className="max-w-[92%] rounded-[14px] px-3 py-2.5 text-sm"
                       style={{
                         background: isUser ? 'color-mix(in srgb, var(--accent-gold) 28%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.04)',
                         border: '1px solid var(--border-subtle)',
@@ -792,7 +875,7 @@ export default function AdvancedImageMasterTab() {
               </div>
             ) : null}
 
-            <div className="mt-3 rounded-[20px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.03)' }}>
+            <div className="mt-3 rounded-[18px] p-2.5" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.03)' }}>
               <textarea
                 ref={inputRef}
                 value={input}
@@ -804,7 +887,7 @@ export default function AdvancedImageMasterTab() {
                   }
                 }}
                 placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
-                className="w-full min-h-[96px] resize-none rounded-[16px] px-4 py-3 text-sm outline-none"
+                className="w-full min-h-[86px] resize-none rounded-[14px] px-3 py-2.5 text-sm outline-none"
                 style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
                 disabled={busy}
               />
@@ -867,7 +950,7 @@ export default function AdvancedImageMasterTab() {
               </div>
             </div>
           </div>
-        </Card>
+        </div>
       </div>
 
       <Dialog
@@ -913,6 +996,7 @@ export default function AdvancedImageMasterTab() {
           </div>
         }
       />
+      </Card>
     </div>
   );
 }
