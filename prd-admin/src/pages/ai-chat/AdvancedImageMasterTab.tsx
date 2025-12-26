@@ -1557,11 +1557,6 @@ export default function AdvancedImageMasterTab() {
             }}
             tabIndex={0}
             onMouseDown={() => stageRef.current?.focus()}
-            onFocus={() => {
-              // #region agent log H1
-              fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1',location:'AdvancedImageMasterTab.tsx:stage:onFocus',message:'stage focused',data:{active:__agentElInfo(document.activeElement),stage:__agentElInfo(stageRef.current)},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
-            }}
             onBlur={() => {
               // 失焦时清掉框选残留
               setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
@@ -1573,9 +1568,6 @@ export default function AdvancedImageMasterTab() {
               const isBlank = e.target === e.currentTarget || e.target === worldRef.current;
               if (!isBlank) return;
               stageRef.current?.focus();
-              // #region agent log H1
-              fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1',location:'AdvancedImageMasterTab.tsx:stage:onPointerDown',message:'blank pointerdown -> focus',data:{active:__agentElInfo(document.activeElement),stage:__agentElInfo(stageRef.current)},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
 
               // Space + 拖拽：平移
               if (spacePressed) {
@@ -2218,12 +2210,6 @@ export default function AdvancedImageMasterTab() {
                 title="选择"
                 aria-label="选择"
                 onClick={() => stageRef.current?.focus()}
-                onMouseEnter={(e) => {
-                  const el = e.currentTarget;
-                  // #region agent log H2
-                  fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2',location:'AdvancedImageMasterTab.tsx:toolbar:select:onMouseEnter',message:'toolbar button hover',data:{btn:__agentElInfo(el),computedBg:window.getComputedStyle(el).backgroundColor,inlineBg:el.style.background||null,inlineBgColor:el.style.backgroundColor||null},timestamp:Date.now()})}).catch(()=>{});
-                  // #endregion
-                }}
               >
                 <MousePointer2 size={18} />
               </button>
