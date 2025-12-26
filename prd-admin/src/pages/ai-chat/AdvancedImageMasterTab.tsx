@@ -1610,7 +1610,7 @@ export default function AdvancedImageMasterTab() {
           {/* 主画布（无限视口） */}
           <div
             ref={stageRef}
-            className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20 focus-visible:ring-inset"
+            className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:!outline-none focus-visible:!shadow-none"
             style={{
               background: 'rgba(0,0,0,0.10)',
             }}
@@ -2261,7 +2261,7 @@ export default function AdvancedImageMasterTab() {
           {/* 左侧工具栏（图1-5 风格，除画笔外都可用） */}
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
             <div
-              className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent transition-colors hover:bg-zinc-500/20"
+              className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent transition-colors hover:bg-white/8"
               style={{
                 border: '1px solid rgba(255,255,255,0.12)',
                 backdropFilter: 'blur(14px)',
@@ -2272,7 +2272,7 @@ export default function AdvancedImageMasterTab() {
               {/* 选择 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
                 title="选择"
                 aria-label="选择"
@@ -2292,7 +2292,7 @@ export default function AdvancedImageMasterTab() {
                 <DropdownMenu.Trigger asChild>
                   <button
                     type="button"
-                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25"
+                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                     style={{ color: 'rgba(255,255,255,0.86)' }}
                     title="新增"
                     aria-label="新增"
@@ -2364,7 +2364,7 @@ export default function AdvancedImageMasterTab() {
                 <DropdownMenu.Trigger asChild>
                   <button
                     type="button"
-                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25"
+                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                     style={{ color: 'rgba(255,255,255,0.86)' }}
                     title="形状"
                     aria-label="形状"
@@ -2412,7 +2412,7 @@ export default function AdvancedImageMasterTab() {
               {/* 文字 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
                 title="文字（T）"
                 aria-label="文字"
@@ -2427,7 +2427,7 @@ export default function AdvancedImageMasterTab() {
               {/* 图像生成器 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
                 title="图像生成器（A）"
                 aria-label="图像生成器"
@@ -2472,7 +2472,7 @@ export default function AdvancedImageMasterTab() {
               {/* 视频生成器 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
                 title="视频生成器"
                 aria-label="视频生成器"
@@ -2486,7 +2486,7 @@ export default function AdvancedImageMasterTab() {
               {/* 删除选中（放到底部） */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-zinc-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
                 onClick={() => {
                   if (selectedKeys.length === 0) return;
