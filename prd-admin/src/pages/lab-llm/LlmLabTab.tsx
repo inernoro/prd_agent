@@ -74,6 +74,8 @@ type ImageViewItem = {
   key: string;
   status: 'running' | 'done' | 'error';
   prompt: string;
+  /** 实际使用的 size（批量时可能来自单条覆盖）；用于展示/复核 */
+  size?: string;
   createdAt: number;
   groupId?: string;
   variantIndex?: number;
@@ -131,7 +133,7 @@ type LlmLabCacheV1 = {
 };
 
 type AspectOption = {
-  id: '1:1' | '4:3' | '3:4' | '16:9' | '9:16';
+  id: '1:1' | '4:3' | '3:4' | '4:5' | '5:4' | '16:9' | '9:16';
   label: string;
   // 传给后端 images api 的 size（兼容 openai-like 的宽x高）
   size: string;
@@ -144,9 +146,82 @@ const ASPECT_OPTIONS: AspectOption[] = [
   { id: '1:1', label: '1:1', size: '1024x1024', iconW: 20, iconH: 20 },
   { id: '4:3', label: '4:3', size: '1024x768', iconW: 22, iconH: 16 },
   { id: '3:4', label: '3:4', size: '768x1024', iconW: 16, iconH: 22 },
+  { id: '4:5', label: '4:5', size: '1024x1280', iconW: 16, iconH: 20 },
+  { id: '5:4', label: '5:4', size: '1280x1024', iconW: 20, iconH: 16 },
   { id: '16:9', label: '16:9', size: '1280x720', iconW: 24, iconH: 14 },
   { id: '9:16', label: '9:16', size: '720x1280', iconW: 14, iconH: 24 },
 ];
+
+type PromptSizeMeta = {
+  size?: string;
+  width?: number;
+  height?: number;
+  ratio?: string; // e.g. "4:5"
+};
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x || 1;
+}
+
+function simplifyRatio(w: number, h: number): string | null {
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  const g = gcd(w, h);
+  return `${Math.round(w / g)}:${Math.round(h / g)}`;
+}
+
+function ratioFromSizeString(size: string | undefined | null): string | null {
+  const s = String(size ?? '').trim();
+  if (!s) return null;
+  const m = /^\s*(\d+)\s*[xX]\s*(\d+)\s*$/.exec(s);
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return simplifyRatio(w, h);
+}
+
+function parsePromptSizeMeta(prompt: string): PromptSizeMeta {
+  const text = String(prompt ?? '');
+  if (!text.trim()) return {};
+
+  // 1) 优先：像素 WxH（支持 x/X/×/*）
+  const px = /(\d{2,5})\s*[xX×＊*]\s*(\d{2,5})/.exec(text);
+  if (px) {
+    const w = Number(px[1]);
+    const h = Number(px[2]);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      // 在 size 附近再尝试抓一次显式比例（如 "（4:5）"），用于展示更符合用户写法
+      const around = text.slice(Math.max(0, (px.index ?? 0) - 24), Math.min(text.length, (px.index ?? 0) + px[0].length + 24));
+      const rm = /(\d{1,2})\s*[:：]\s*(\d{1,2})/.exec(around);
+      const ratio = rm ? simplifyRatio(Number(rm[1]), Number(rm[2])) : simplifyRatio(w, h);
+      return { size: `${w}x${h}`, width: w, height: h, ratio: ratio ?? undefined };
+    }
+  }
+
+  // 2) 只有比例（优先括号内）
+  const ratioCandidates = [
+    /[（(]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*[）)]/.exec(text),
+    /(\d{1,2})\s*[:：]\s*(\d{1,2})/.exec(text),
+  ].filter(Boolean) as RegExpExecArray[];
+  if (ratioCandidates.length) {
+    const m = ratioCandidates[0];
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    const ratio = simplifyRatio(a, b);
+    if (!ratio) return {};
+    // 映射到一个“可用”的默认像素，避免批量时无 size 无法落到后端
+    const opt = ASPECT_OPTIONS.find((x) => x.id === ratio);
+    return { ratio, size: opt?.size };
+  }
+
+  return {};
+}
 
 function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
   // 用于“是否需要自动保存”的变更检测；与 setSelectedModelsDedupe 的唯一性规则保持一致（平台 + modelName）
@@ -1368,6 +1443,18 @@ export default function LlmLabTab() {
         return;
       }
       nextPlan = res.data ?? null;
+      // 批量场景：从每条 prompt 里解析尺寸/比例（如 "1080x1350（4:5）"），并写入 item.size（单条覆盖）
+      if (nextPlan?.items?.length) {
+        nextPlan = {
+          ...nextPlan,
+          items: nextPlan.items.map((it) => {
+            const existingSize = String(it.size ?? '').trim();
+            if (existingSize) return { ...it, size: existingSize };
+            const meta = parsePromptSizeMeta(it.prompt);
+            return meta.size ? { ...it, size: meta.size } : it;
+          }),
+        };
+      }
     } finally {
       setPlanLoading(false);
       stopId = emitBackdropBusyEnd() || null;
@@ -1432,6 +1519,7 @@ export default function LlmLabTab() {
                   key,
                   status: 'running',
                   prompt: String(obj.prompt ?? ''),
+                  size: String(obj.size ?? '').trim() || undefined,
                   createdAt: Date.now(),
                   itemIndex: Number(obj.itemIndex ?? 0),
                   imageIndex: Number(obj.imageIndex ?? 0),
@@ -1454,6 +1542,7 @@ export default function LlmLabTab() {
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
+                    size: String(obj.size ?? '').trim() || undefined,
                   };
                   return {
                     ...p,
@@ -1463,6 +1552,7 @@ export default function LlmLabTab() {
                       base64: obj.base64 ?? null,
                       url: obj.url ?? null,
                       revisedPrompt: obj.revisedPrompt ?? null,
+                      size: String(obj.size ?? '').trim() || cur.size,
                     },
                   };
                 });
@@ -1480,6 +1570,7 @@ export default function LlmLabTab() {
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
+                    size: String(obj.size ?? '').trim() || undefined,
                   };
                   return {
                     ...p,
@@ -1487,6 +1578,7 @@ export default function LlmLabTab() {
                       ...cur,
                       status: 'error',
                       errorMessage: obj.errorMessage || '失败',
+                      size: String(obj.size ?? '').trim() || cur.size,
                     },
                   };
                 });
@@ -3409,6 +3501,13 @@ export default function LlmLabTab() {
                                 <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
                                   来源：{it.sourceDisplayName || it.sourceModelName || it.sourceModelId || '未知'}
                                 </span>
+                                <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                  {(() => {
+                                    const sizeText = String(it.size ?? '').trim() || imgSize;
+                                    const ratio = ratioFromSizeString(sizeText) ?? parsePromptSizeMeta(it.prompt).ratio ?? null;
+                                    return `尺寸：${sizeText}${ratio ? `（${ratio}）` : ''}`;
+                                  })()}
+                                </span>
                               </div>
                               <div
                                 className="text-xs shrink-0"
@@ -3605,6 +3704,42 @@ export default function LlmLabTab() {
                         <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
                           {Math.max(1, Number(it.count || 1))} 张
                         </div>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {(() => {
+                          const explicit = String(it.size ?? '').trim();
+                          const meta = explicit ? { size: explicit, ratio: ratioFromSizeString(explicit) } : parsePromptSizeMeta(it.prompt);
+                          const usedSize = String(meta.size ?? '').trim() || imgSize;
+                          const ratio = meta.ratio ?? ratioFromSizeString(usedSize) ?? null;
+                          const sizeLabel = explicit || meta.size ? usedSize : `继承 ${imgSize}`;
+                          return (
+                            <>
+                              <span
+                                className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
+                                style={{
+                                  border: '1px solid rgba(255,255,255,0.10)',
+                                  background: 'rgba(0,0,0,0.20)',
+                                  color: 'var(--text-secondary)',
+                                }}
+                                title="解析到的尺寸（单条覆盖）或回退全局尺寸"
+                              >
+                                尺寸：{sizeLabel}
+                              </span>
+                              <span
+                                className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
+                                style={{
+                                  border: '1px solid rgba(255,255,255,0.10)',
+                                  background: 'rgba(0,0,0,0.20)',
+                                  color: 'var(--text-secondary)',
+                                }}
+                                title="从提示词/尺寸推导出的比例"
+                              >
+                                比例：{ratio ?? '—'}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </div>
 
                       {/* 中间区域：做成“预览窗”尺寸与风格，内容展示提示词 */}

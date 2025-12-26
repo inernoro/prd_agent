@@ -390,6 +390,7 @@ public class AdminImageGenController : ControllerBase
                 continue;
             }
 
+            var itemSize = string.IsNullOrWhiteSpace(items[itemIndex].Size) ? size : items[itemIndex].Size!.Trim();
             var count = Math.Clamp(items[itemIndex].Count <= 0 ? 1 : items[itemIndex].Count, 1, 5);
             for (var k = 0; k < count; k++)
             {
@@ -398,6 +399,7 @@ public class AdminImageGenController : ControllerBase
                 var currentItemIndex = itemIndex;
                 var imageIndex = k;
                 var currentPrompt = prompt;
+                var currentSize = itemSize;
 
                 // 创建并发任务
                 tasks.Add(Task.Run(async () =>
@@ -409,7 +411,7 @@ public class AdminImageGenController : ControllerBase
                         await writeLock.WaitAsync(cancellationToken);
                         try
                         {
-                            await WriteEventAsync("image", new { type = "imageStart", runId, itemIndex = currentItemIndex, imageIndex, prompt = currentPrompt }, cancellationToken);
+                            await WriteEventAsync("image", new { type = "imageStart", runId, itemIndex = currentItemIndex, imageIndex, prompt = currentPrompt, size = currentSize }, cancellationToken);
                         }
                         finally
                         {
@@ -430,7 +432,7 @@ public class AdminImageGenController : ControllerBase
                                 RequestType: "imageGen",
                                 RequestPurpose: "imageGen.batch.generate"));
 
-                            var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, size, responseFormat, cancellationToken, modelId, platformId, modelName);
+                            var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, currentSize, responseFormat, cancellationToken, modelId, platformId, modelName);
                             
                             await writeLock.WaitAsync(cancellationToken);
                             try
@@ -445,6 +447,7 @@ public class AdminImageGenController : ControllerBase
                                         itemIndex = currentItemIndex,
                                         imageIndex,
                                         prompt = currentPrompt,
+                                        size = currentSize,
                                         modelId,
                                         platformId,
                                         modelName,
@@ -463,6 +466,7 @@ public class AdminImageGenController : ControllerBase
                                     itemIndex = currentItemIndex,
                                     imageIndex,
                                     prompt = currentPrompt,
+                                    size = currentSize,
                                     modelId,
                                     platformId,
                                     modelName,
@@ -489,6 +493,7 @@ public class AdminImageGenController : ControllerBase
                                     itemIndex = currentItemIndex,
                                     imageIndex,
                                     prompt = currentPrompt,
+                                    size = currentSize,
                                     modelId,
                                     platformId,
                                     modelName,
@@ -578,12 +583,15 @@ public class AdminImageGenController : ControllerBase
 
                 var prompt = it.TryGetProperty("prompt", out var pEl) && pEl.ValueKind == JsonValueKind.String ? pEl.GetString() : null;
                 var count = it.TryGetProperty("count", out var cEl) && cEl.ValueKind == JsonValueKind.Number ? cEl.GetInt32() : 1;
+                var size = it.TryGetProperty("size", out var sEl) && sEl.ValueKind == JsonValueKind.String ? sEl.GetString() : null;
 
                 prompt = (prompt ?? string.Empty).Trim();
                 if (string.IsNullOrWhiteSpace(prompt)) continue;
 
                 count = Math.Clamp(count <= 0 ? 1 : count, 1, 5);
-                items.Add(new ImageGenPlanItem { Prompt = prompt, Count = count });
+                size = (size ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(size)) size = null;
+                items.Add(new ImageGenPlanItem { Prompt = prompt, Count = count, Size = size });
                 total += count;
             }
 
@@ -635,6 +643,10 @@ public class ImageGenPlanItem
 {
     public string Prompt { get; set; } = string.Empty;
     public int Count { get; set; } = 1;
+    /// <summary>
+    /// 可选：单条覆盖的生图尺寸（如 "1024x1024"）。为空时回退到批量请求的 Size。
+    /// </summary>
+    public string? Size { get; set; }
 }
 
 public class ImageGenGenerateRequest

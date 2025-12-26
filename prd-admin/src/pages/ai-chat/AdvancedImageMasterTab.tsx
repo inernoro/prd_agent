@@ -2,6 +2,7 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
+import { PrdLoader } from '@/components/ui/PrdLoader';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   addImageMasterMessage,
@@ -22,8 +23,10 @@ import {
   Check,
   Copy,
   Download,
+  Hand,
   ImagePlus,
   Loader2,
+  MapPin,
   MousePointer2,
   Paperclip,
   SlidersHorizontal,
@@ -34,7 +37,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
 type CanvasImageItem = {
@@ -43,7 +46,7 @@ type CanvasImageItem = {
   prompt: string;
   src: string;
   status: 'done' | 'error' | 'running';
-  kind?: 'image' | 'generator';
+  kind?: 'image' | 'generator' | 'shape' | 'text';
   errorMessage?: string | null;
   refId?: number;
   checked?: boolean;
@@ -57,6 +60,16 @@ type CanvasImageItem = {
   y?: number;
   w?: number;
   h?: number;
+
+  // shape
+  shapeType?: 'rect' | 'circle' | 'triangle' | 'star';
+  fill?: string;
+  stroke?: string;
+
+  // text
+  text?: string;
+  fontSize?: number;
+  textColor?: string;
 };
 
 type UiMsg = {
@@ -66,6 +79,12 @@ type UiMsg = {
   ts: number;
 };
 
+type CanvasTool = 'select' | 'hand' | 'mark';
+type CanvasPlacing =
+  | null
+  | { kind: 'shape'; shapeType: NonNullable<CanvasImageItem['shapeType']> }
+  | { kind: 'text' };
+
 const clampZoom = (z: number) => Math.max(0.05, Math.min(3, z));
 const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
 const zoomFactorFromDeltaY = (deltaY: number) => {
@@ -73,6 +92,12 @@ const zoomFactorFromDeltaY = (deltaY: number) => {
   const k = 0.0016;
   return clampZoomFactor(Math.exp(-deltaY * k));
 };
+
+function loaderSizeForBox(w: number, h: number) {
+  // 需求：loader ≈ 面板的 1/2，并且随画布缩放一起缩放（这里用世界尺寸计算，最终会乘 zoom）
+  const base = Math.round(Math.max(24, Math.min(w, h) * 0.5));
+  return Math.max(44, Math.min(640, base));
+}
 
 function renderMentionHighlights(text: string) {
   const s = String(text ?? '');
@@ -274,6 +299,13 @@ export default function AdvancedImageMasterTab() {
   const primarySelectedKey = selectedKeys[0] ?? '';
   const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
+
+  const [activeTool, setActiveTool] = useState<CanvasTool>('select');
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  const toolMenuCloseTimerRef = useRef<number | null>(null);
+
+  const [placing, setPlacing] = useState<CanvasPlacing>(null);
+  const [textEdit, setTextEdit] = useState<{ open: boolean; key: string; value: string }>({ open: false, key: '', value: '' });
 
   // 画布（无限平面）视口：camera + zoom
   // 性能关键：高频交互（wheel/pan/drag）不走 React setState，否则会触发整棵画布重渲染导致“不跟手”
@@ -742,6 +774,70 @@ export default function AdvancedImageMasterTab() {
     []
   );
 
+  const placeAtPointer = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!placing) return false;
+      stageRef.current?.focus();
+      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const wx = (sx - cameraRef.current.x) / zoomRef.current;
+      const wy = (sy - cameraRef.current.y) / zoomRef.current;
+      const key = `${placing.kind}_${Date.now()}`;
+
+      if (placing.kind === 'shape') {
+        const st = placing.shapeType;
+        const w = st === 'circle' ? 180 : 240;
+        const h = st === 'circle' ? 180 : 160;
+        const next: CanvasImageItem = {
+          key,
+          kind: 'shape',
+          shapeType: st,
+          createdAt: Date.now(),
+          prompt: `Shape:${st}`,
+          src: '',
+          status: 'done',
+          x: Math.round(wx - w / 2),
+          y: Math.round(wy - h / 2),
+          w,
+          h,
+          fill: 'rgba(255,255,255,0.86)',
+          stroke: 'rgba(0,0,0,0.14)',
+        };
+        setCanvas((prev) => [next, ...prev].slice(0, 120));
+        setSelectedKeys([key]);
+        setPlacing(null);
+        return true;
+      }
+
+      const w = 320;
+      const h = 88;
+      const next: CanvasImageItem = {
+        key,
+        kind: 'text',
+        createdAt: Date.now(),
+        prompt: 'Text',
+        src: '',
+        status: 'done',
+        x: Math.round(wx - w / 2),
+        y: Math.round(wy - h / 2),
+        w,
+        h,
+        text: 'Text',
+        fontSize: 26,
+        textColor: 'rgba(11,11,15,0.92)',
+        fill: 'rgba(255,255,255,0.90)',
+        stroke: 'rgba(0,0,0,0.10)',
+      };
+      setCanvas((prev) => [next, ...prev].slice(0, 120));
+      setSelectedKeys([key]);
+      setPlacing(null);
+      setTextEdit({ open: true, key, value: next.text || 'Text' });
+      return true;
+    },
+    [placing]
+  );
+
   const cameraAnimRef = useRef<number | null>(null);
   const animateCameraToWorldCenter = useCallback(
     (worldCx: number, worldCy: number) => {
@@ -1072,7 +1168,15 @@ export default function AdvancedImageMasterTab() {
     const key = generatorExistingKey ?? `gen_${Date.now()}`;
     setCanvas((prev) => {
       const existingRects = prev
-        .filter((x) => x.status !== 'error' && ((x.kind ?? 'image') === 'generator' || !!x.src || x.status === 'running'))
+        .filter(
+          (x) =>
+            x.status !== 'error' &&
+            ((x.kind ?? 'image') === 'generator' ||
+              (x.kind ?? 'image') === 'shape' ||
+              (x.kind ?? 'image') === 'text' ||
+              !!x.src ||
+              x.status === 'running')
+        )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
       // 本页生成固定 1K 方形：用它占位，避免新图与旧图堆叠
       const genW = 1024;
@@ -1332,7 +1436,15 @@ export default function AdvancedImageMasterTab() {
           const cy = (it.y ?? 0) + (nextH / 2);
           const others = prev
             .filter((x) => x.key !== targetKey)
-            .filter((x) => x.status !== 'error' && ((x.kind ?? 'image') === 'generator' || !!x.src || x.status === 'running'))
+            .filter(
+              (x) =>
+                x.status !== 'error' &&
+                ((x.kind ?? 'image') === 'generator' ||
+                  (x.kind ?? 'image') === 'shape' ||
+                  (x.kind ?? 'image') === 'text' ||
+                  !!x.src ||
+                  x.status === 'running')
+            )
             .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
           const hit = others.some((r) => {
             const ax0 = (it.x ?? 0) - 18;
@@ -1436,7 +1548,15 @@ export default function AdvancedImageMasterTab() {
       // “最近路径”算法：从当前视口中心向外找最近空位，避免与现有元素堆叠
       const near = stageCenterWorld();
       const existingRects = prev
-        .filter((x) => x.status !== 'error' && ((x.kind ?? 'image') === 'generator' || !!x.src || x.status === 'running'))
+        .filter(
+          (x) =>
+            x.status !== 'error' &&
+            ((x.kind ?? 'image') === 'generator' ||
+              (x.kind ?? 'image') === 'shape' ||
+              (x.kind ?? 'image') === 'text' ||
+              !!x.src ||
+              x.status === 'running')
+        )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
       const placed: CanvasImageItem[] = [];
       let focus: { key: string; cx: number; cy: number } | null = null;
@@ -1503,7 +1623,13 @@ export default function AdvancedImageMasterTab() {
     const el = stageRef.current;
     if (!el) return;
     const itemsAll = canvas.filter(
-      (x) => x.status !== 'error' && ((x.kind ?? 'image') === 'generator' || !!x.src || x.status === 'running')
+      (x) =>
+        x.status !== 'error' &&
+        ((x.kind ?? 'image') === 'generator' ||
+          (x.kind ?? 'image') === 'shape' ||
+          (x.kind ?? 'image') === 'text' ||
+          !!x.src ||
+          x.status === 'running')
     );
     const items =
       selectedKeys.length > 0 ? itemsAll.filter((x) => selectedKeys.includes(x.key)) : itemsAll;
@@ -1554,8 +1680,16 @@ export default function AdvancedImageMasterTab() {
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:!outline-none focus-visible:!shadow-none"
             style={{
               background: 'rgba(0,0,0,0.10)',
+              cursor: activeTool === 'hand' ? 'grab' : 'default',
             }}
             tabIndex={0}
+            onPointerDownCapture={(e) => {
+              if (!placing) return;
+              const placed = placeAtPointer(e);
+              if (!placed) return;
+              e.preventDefault();
+              e.stopPropagation();
+            }}
             onMouseDown={() => stageRef.current?.focus()}
             onBlur={() => {
               // 失焦时清掉框选残留
@@ -1564,13 +1698,10 @@ export default function AdvancedImageMasterTab() {
               dragItemsRef.current.active = false;
             }}
             onPointerDown={(e) => {
-              // 只处理“空白区域”的 pointerdown；点击图片会 stopPropagation
-              const isBlank = e.target === e.currentTarget || e.target === worldRef.current;
-              if (!isBlank) return;
               stageRef.current?.focus();
 
-              // Space + 拖拽：平移
-              if (spacePressed) {
+              // Hand tool / Space + 拖拽：平移（Hand 模式允许在任意元素上拖动）
+              if (activeTool === 'hand' || spacePressed) {
                 panRef.current = {
                   active: true,
                   pointerId: e.pointerId,
@@ -1583,6 +1714,10 @@ export default function AdvancedImageMasterTab() {
                 e.preventDefault();
                 return;
               }
+
+              // 只处理“空白区域”的 pointerdown；点击图片会 stopPropagation
+              const isBlank = e.target === e.currentTarget || e.target === worldRef.current;
+              if (!isBlank) return;
 
               // 空白拖拽：框选（Marquee）
               const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
@@ -1701,7 +1836,12 @@ export default function AdvancedImageMasterTab() {
               const hits = canvas
                 .filter(
                   (it) =>
-                    it.status !== 'error' && ((it.kind ?? 'image') === 'generator' || !!it.src || it.status === 'running')
+                    it.status !== 'error' &&
+                    ((it.kind ?? 'image') === 'generator' ||
+                      (it.kind ?? 'image') === 'shape' ||
+                      (it.kind ?? 'image') === 'text' ||
+                      !!it.src ||
+                      it.status === 'running')
                 )
                 .filter((it) => {
                   const ix0 = it.x ?? 0;
@@ -1816,12 +1956,13 @@ export default function AdvancedImageMasterTab() {
                       background: 'transparent',
                       boxShadow: 'none',
                       overflow: 'visible',
-                      cursor: 'pointer',
+                      cursor: activeTool === 'hand' ? 'grab' : 'pointer',
                     }}
                     onMouseDown={(e) => {
-                      e.stopPropagation();
+                      if (activeTool !== 'hand') e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
+                      if (activeTool === 'hand') return;
                       e.stopPropagation();
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
                       const shift = e.shiftKey;
@@ -1854,8 +1995,9 @@ export default function AdvancedImageMasterTab() {
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (activeTool === 'hand') return;
                       // 生成器区域：仅做选中，不做 @img 引用插入
-                      if ((it.kind ?? 'image') === 'generator') {
+                      if (kind === 'generator') {
                         if (e.shiftKey) {
                           setSelectedKeys((prev) => {
                             const set = new Set(prev);
@@ -1870,7 +2012,7 @@ export default function AdvancedImageMasterTab() {
                         return;
                       }
                       // Cmd/Ctrl + 点击：插入图片引用 @imgN
-                      if (e.metaKey || e.ctrlKey) {
+                      if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
                         setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
                         const id = ensureRefIdForKey(it.key);
                         if (id) insertAtCursor(`@img${id} `);
@@ -1893,11 +2035,7 @@ export default function AdvancedImageMasterTab() {
                     {/* 多选 checkbox（开放世界也保留） */}
                     {/* 已移除：左上角“+选择引用”按钮（用户反馈不需要） */}
 
-                    {it.status === 'running' ? (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-secondary)' }} />
-                      </div>
-                    ) : (it.kind ?? 'image') === 'generator' ? (
+                    {kind === 'generator' ? (
                       <div
                         className="w-full h-full rounded-[16px] relative"
                         style={{
@@ -1906,7 +2044,11 @@ export default function AdvancedImageMasterTab() {
                           boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.18) inset' : 'none',
                         }}
                       >
-                        {it.src ? (
+                        {it.status === 'running' ? (
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <PrdLoader size={loaderSizeForBox(w, h)} />
+                          </div>
+                        ) : it.src ? (
                           <div className="absolute inset-0 flex items-center justify-center">
                             <img
                               src={it.src}
@@ -1920,6 +2062,55 @@ export default function AdvancedImageMasterTab() {
                             <ImagePlus size={54} />
                           </div>
                         )}
+                      </div>
+                    ) : it.status === 'running' ? (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <PrdLoader size={loaderSizeForBox(w, h)} />
+                      </div>
+                    ) : kind === 'shape' ? (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <div
+                          className="w-full h-full"
+                          style={{
+                            background: it.fill ?? 'rgba(255,255,255,0.86)',
+                            border:
+                              active
+                                ? '2px solid rgba(96,165,250,0.85)'
+                                : `1px solid ${it.stroke ?? 'rgba(0,0,0,0.14)'}`,
+                            borderRadius: it.shapeType === 'circle' ? 999 : 14,
+                            clipPath:
+                              it.shapeType === 'triangle'
+                                ? 'polygon(50% 12%, 8% 88%, 92% 88%)'
+                                : it.shapeType === 'star'
+                                  ? 'polygon(50% 8%, 61% 36%, 92% 36%, 67% 55%, 78% 90%, 50% 70%, 22% 90%, 33% 55%, 8% 36%, 39% 36%)'
+                                  : undefined,
+                            filter: active
+                              ? 'drop-shadow(0 0 2px rgba(96,165,250,0.95)) drop-shadow(0 0 14px rgba(96,165,250,0.35))'
+                              : 'none',
+                          }}
+                        />
+                      </div>
+                    ) : kind === 'text' ? (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <div
+                          className="w-full h-full rounded-[14px] px-3 inline-flex items-center justify-center text-center"
+                          style={{
+                            background: it.fill ?? 'rgba(255,255,255,0.90)',
+                            border:
+                              active
+                                ? '2px solid rgba(96,165,250,0.85)'
+                                : `1px solid ${it.stroke ?? 'rgba(0,0,0,0.10)'}`,
+                            color: it.textColor ?? 'rgba(11,11,15,0.92)',
+                            fontSize: it.fontSize ?? 26,
+                            fontWeight: 800,
+                            lineHeight: 1.1,
+                            filter: active
+                              ? 'drop-shadow(0 0 2px rgba(96,165,250,0.95)) drop-shadow(0 0 14px rgba(96,165,250,0.35))'
+                              : 'none',
+                          }}
+                        >
+                          {String(it.text ?? 'Text')}
+                        </div>
                       </div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
@@ -2095,9 +2286,83 @@ export default function AdvancedImageMasterTab() {
                   />
 
                   <div className="mt-2 flex items-end justify-between gap-3">
-                    <div className="text-[14px]" style={{ color: 'rgba(0,0,0,0.92)' }}>
-                      {effectiveModel?.name || effectiveModel?.modelName || '自动模型'}
-                    </div>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="text-[14px] font-semibold inline-flex items-center gap-1 rounded-[10px] px-2 py-1 hover:bg-black/5"
+                          style={{ color: 'rgba(0,0,0,0.92)' }}
+                          title="切换绘图模型"
+                        >
+                          <span className="truncate max-w-[260px]">
+                            {effectiveModel?.name || effectiveModel?.modelName || '自动模型'}
+                          </span>
+                          <span className="text-[12px]" style={{ color: 'rgba(0,0,0,0.35)' }}>
+                            ▾
+                          </span>
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content
+                          side="top"
+                          align="start"
+                          sideOffset={10}
+                          className="z-50 rounded-[18px] p-2"
+                          style={{
+                            minWidth: 320,
+                            background: 'rgba(255,255,255,0.92)',
+                            border: '1px solid rgba(0,0,0,0.08)',
+                            boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                            color: '#0b0b0f',
+                          }}
+                        >
+                          <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                            绘图模型（isImageGen）
+                          </div>
+                          <div className="max-h-[320px] overflow-auto p-1">
+                            {(models ?? [])
+                              .filter((m) => m.isImageGen)
+                              .slice()
+                              .sort(
+                                (a, b) =>
+                                  Number(Boolean(b.enabled)) - Number(Boolean(a.enabled)) ||
+                                  Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9) ||
+                                  String(a.name || a.modelName || '').localeCompare(String(b.name || b.modelName || ''), undefined, { numeric: true })
+                              )
+                              .map((m) => {
+                                const disabled = !m.enabled;
+                                const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
+                                return (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    className="w-full text-left rounded-[12px] px-3 py-2 hover:bg-black/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={disabled}
+                                    onClick={() => {
+                                      setModelPrefAuto(false);
+                                      setModelPrefModelId(m.id);
+                                    }}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="min-w-0">
+                                        <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
+                                          {m.name || m.modelName}
+                                        </div>
+                                        <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(0,0,0,0.40)' }}>
+                                          {disabled ? '已禁用（模型管理可启用）' : '已启用'}
+                                        </div>
+                                      </div>
+                                      <div className="ml-auto shrink-0">{using ? <Check size={16} color="#0b0b0f" /> : null}</div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                          </div>
+                          <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+
                     <div className="text-[13px]" style={{ color: 'rgba(0,0,0,0.45)' }}>
                       Enter 发送，Shift+Enter 换行
                     </div>
@@ -2194,7 +2459,7 @@ export default function AdvancedImageMasterTab() {
           {/* 左侧工具栏（图1-5 风格，除画笔外都可用） */}
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
             <div
-              className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent transition-colors hover:bg-white/8"
+              className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent"
               style={{
                 border: '1px solid rgba(255,255,255,0.12)',
                 backdropFilter: 'blur(14px)',
@@ -2202,17 +2467,115 @@ export default function AdvancedImageMasterTab() {
                 boxShadow: '0 18px 60px rgba(0,0,0,0.35)',
               }}
             >
-              {/* 选择 */}
-              <button
-                type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                style={{ color: 'rgba(255,255,255,0.86)' }}
-                title="选择"
-                aria-label="选择"
-                onClick={() => stageRef.current?.focus()}
+              {/* 工具（hover 弹出：Select / Hand / Mark[禁用]） */}
+              <div
+                onPointerEnter={() => {
+                  if (toolMenuCloseTimerRef.current != null) {
+                    window.clearTimeout(toolMenuCloseTimerRef.current);
+                    toolMenuCloseTimerRef.current = null;
+                  }
+                  setToolMenuOpen(true);
+                }}
+                onPointerLeave={() => {
+                  if (toolMenuCloseTimerRef.current != null) window.clearTimeout(toolMenuCloseTimerRef.current);
+                  toolMenuCloseTimerRef.current = window.setTimeout(() => {
+                    setToolMenuOpen(false);
+                    toolMenuCloseTimerRef.current = null;
+                  }, 140);
+                }}
               >
-                <MousePointer2 size={18} />
-              </button>
+                <DropdownMenu.Root open={toolMenuOpen} onOpenChange={setToolMenuOpen}>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
+                      style={{ color: 'rgba(255,255,255,0.86)' }}
+                      title={activeTool === 'hand' ? 'Hand tool' : activeTool === 'mark' ? 'Mark' : 'Select'}
+                      aria-label="工具"
+                      onClick={() => stageRef.current?.focus()}
+                    >
+                      {activeTool === 'hand' ? <Hand size={18} /> : activeTool === 'mark' ? <MapPin size={18} /> : <MousePointer2 size={18} />}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="right"
+                      align="start"
+                      sideOffset={12}
+                      className="z-50 rounded-[18px] p-2"
+                      style={{
+                        minWidth: 220,
+                        background: 'rgba(255,255,255,0.92)',
+                        border: '1px solid rgba(0,0,0,0.08)',
+                        boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                        color: '#0b0b0f',
+                      }}
+                      onPointerEnter={() => {
+                        if (toolMenuCloseTimerRef.current != null) {
+                          window.clearTimeout(toolMenuCloseTimerRef.current);
+                          toolMenuCloseTimerRef.current = null;
+                        }
+                      }}
+                      onPointerLeave={() => {
+                        if (toolMenuCloseTimerRef.current != null) window.clearTimeout(toolMenuCloseTimerRef.current);
+                        toolMenuCloseTimerRef.current = window.setTimeout(() => {
+                          setToolMenuOpen(false);
+                          toolMenuCloseTimerRef.current = null;
+                        }, 140);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                        onClick={() => {
+                          setActiveTool('select');
+                          setToolMenuOpen(false);
+                          stageRef.current?.focus();
+                        }}
+                      >
+                        <MousePointer2 size={18} color="#0b0b0f" />
+                        <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                          Select
+                        </span>
+                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
+                          V
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                        onClick={() => {
+                          setActiveTool('hand');
+                          setToolMenuOpen(false);
+                          stageRef.current?.focus();
+                        }}
+                      >
+                        <Hand size={18} color="#0b0b0f" />
+                        <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                          Hand tool
+                        </span>
+                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
+                          H
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 opacity-60 cursor-not-allowed"
+                        disabled
+                      >
+                        <MapPin size={18} color="#0b0b0f" />
+                        <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                          Mark
+                        </span>
+                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
+                          M
+                        </span>
+                      </button>
+                      <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
 
               {/* +新增 */}
               <DropdownMenu.Root>
@@ -2316,20 +2679,62 @@ export default function AdvancedImageMasterTab() {
                       形状
                     </div>
                     <div className="mt-3 grid grid-cols-4 gap-3">
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
-                      <button type="button" className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10" />
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }} />
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }} />
+                      <button
+                        type="button"
+                        className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                        title="矩形"
+                        aria-label="矩形"
+                        onClick={() => {
+                          setActiveTool('select');
+                          setPlacing({ kind: 'shape', shapeType: 'rect' });
+                          stageRef.current?.focus();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10"
+                        title="圆形"
+                        aria-label="圆形"
+                        onClick={() => {
+                          setActiveTool('select');
+                          setPlacing({ kind: 'shape', shapeType: 'circle' });
+                          stageRef.current?.focus();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                        style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }}
+                        title="三角形"
+                        aria-label="三角形"
+                        onClick={() => {
+                          setActiveTool('select');
+                          setPlacing({ kind: 'shape', shapeType: 'triangle' });
+                          stageRef.current?.focus();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                        style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }}
+                        title="星形"
+                        aria-label="星形"
+                        onClick={() => {
+                          setActiveTool('select');
+                          setPlacing({ kind: 'shape', shapeType: 'star' });
+                          stageRef.current?.focus();
+                        }}
+                      />
                     </div>
                     <div className="mt-4 text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
                       形状文本
                     </div>
                     <div className="mt-3 grid grid-cols-5 gap-3">
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
-                      <button type="button" className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10" />
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
-                      <button type="button" className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10" />
+                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                      <button type="button" className="h-12 rounded-[999px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
                     </div>
                     <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
                   </DropdownMenu.Content>
@@ -2344,8 +2749,9 @@ export default function AdvancedImageMasterTab() {
                 title="文字（T）"
                 aria-label="文字"
                 onClick={() => {
-                  // v1：先只给提示，不做画布文字对象
-                  pushMsg('Assistant', '文字工具：即将支持在画布中插入/编辑文本（当前为占位）。');
+                  setActiveTool('select');
+                  setPlacing({ kind: 'text' });
+                  stageRef.current?.focus();
                 }}
               >
                 <Type size={18} />
@@ -2366,7 +2772,15 @@ export default function AdvancedImageMasterTab() {
                   const key = `generator_${Date.now()}`;
                   setCanvas((prev) => {
                     const existingRects = prev
-                      .filter((x) => x.status !== 'error' && ((x.kind ?? 'image') === 'generator' || !!x.src || x.status === 'running'))
+                      .filter(
+                        (x) =>
+                          x.status !== 'error' &&
+                          ((x.kind ?? 'image') === 'generator' ||
+                            (x.kind ?? 'image') === 'shape' ||
+                            (x.kind ?? 'image') === 'text' ||
+                            !!x.src ||
+                            x.status === 'running')
+                      )
                       .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
                     const pos = findNearestFreeTopLeft(existingRects, w, h, near);
                     const next: CanvasImageItem = {
@@ -3077,6 +3491,62 @@ export default function AdvancedImageMasterTab() {
                 }}
               >
                 插入
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={textEdit.open}
+        onOpenChange={(open) => setTextEdit((p) => ({ ...p, open }))}
+        title="编辑文字"
+        description="确认后会写入画布文本元素"
+        maxWidth={640}
+        content={
+          <div className="h-full min-h-0 flex flex-col gap-3">
+            <textarea
+              value={textEdit.value}
+              onChange={(e) => setTextEdit((p) => ({ ...p, value: e.target.value }))}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                  e.preventDefault();
+                  e.currentTarget.select();
+                  return;
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                }
+              }}
+              className="w-full min-h-[120px] resize-none rounded-[14px] px-3 py-2.5 text-sm outline-none"
+              style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+              placeholder="输入文本（Enter=确认，Shift+Enter=换行）"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setTextEdit({ open: false, key: '', value: '' });
+                }}
+              >
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const key = textEdit.key;
+                  if (!key) {
+                    setTextEdit({ open: false, key: '', value: '' });
+                    return;
+                  }
+                  const val = String(textEdit.value ?? '').trim() || 'Text';
+                  setCanvas((prev) =>
+                    prev.map((it) => (it.key === key ? { ...it, kind: 'text', text: val, prompt: val } : it))
+                  );
+                  setTextEdit({ open: false, key: '', value: '' });
+                }}
+              >
+                确认
               </Button>
             </div>
           </div>

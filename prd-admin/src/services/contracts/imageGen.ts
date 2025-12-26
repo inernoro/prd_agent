@@ -3,6 +3,8 @@ import type { ApiResponse } from '@/types/api';
 export type ImageGenPlanItem = {
   prompt: string;
   count: number;
+  /** 可选：单条覆盖的生图尺寸（如 "1024x1024"）。为空时回退到批量请求的 size。 */
+  size?: string;
 };
 
 export type ImageGenPlanResponse = {
