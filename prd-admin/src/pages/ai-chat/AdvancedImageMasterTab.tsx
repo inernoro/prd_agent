@@ -37,32 +37,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
-function __agentElInfo(el: Element | null) {
-  if (!el) return null;
-  const e = el as HTMLElement;
-  const cs = window.getComputedStyle(e);
-  const rect = e.getBoundingClientRect();
-  return {
-    tag: e.tagName,
-    id: e.id || null,
-    className: e.className || null,
-    rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
-    outlineStyle: cs.outlineStyle,
-    outlineWidth: cs.outlineWidth,
-    outlineColor: cs.outlineColor,
-    boxShadow: cs.boxShadow,
-    borderColor: cs.borderColor,
-    borderWidth: cs.borderWidth,
-    backgroundColor: cs.backgroundColor,
-    inline: {
-      outline: e.style.outline || null,
-      boxShadow: e.style.boxShadow || null,
-      background: e.style.background || null,
-      backgroundColor: e.style.backgroundColor || null,
-    },
-  };
-}
-
 type CanvasImageItem = {
   key: string;
   createdAt: number;
@@ -428,8 +402,6 @@ export default function AdvancedImageMasterTab() {
 
   // splitter：右侧宽度（px）
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const __agentLastInputRef = useRef<'pointer' | 'key' | 'unknown'>('unknown');
-  const __agentLastStageKeyLogAtRef = useRef(0);
   const [rightWidth, setRightWidth] = useState(0);
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
 
@@ -445,37 +417,6 @@ export default function AdvancedImageMasterTab() {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const onPointerDown = () => {
-      __agentLastInputRef.current = 'pointer';
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      __agentLastInputRef.current = 'key';
-      const now = Date.now();
-      if (now - __agentLastStageKeyLogAtRef.current < 250) return;
-      const active = document.activeElement as Element | null;
-      if (active !== stageRef.current) return;
-      __agentLastStageKeyLogAtRef.current = now;
-      // #region agent log H1
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1',location:'AdvancedImageMasterTab.tsx:onKeyDown',message:'keydown while stage active',data:{lastInput:__agentLastInputRef.current,isPrintable:e.key.length===1,ctrlKey:e.ctrlKey,metaKey:e.metaKey,altKey:e.altKey,shiftKey:e.shiftKey,active:__agentElInfo(active),stage:__agentElInfo(stageRef.current),stageFocusVisible:stageRef.current?.matches(':focus-visible')??null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    };
-    const onFocusIn = (e: FocusEvent) => {
-      const t = e.target as Element | null;
-      // #region agent log H1
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1',location:'AdvancedImageMasterTab.tsx:onFocusIn',message:'focusin',data:{lastInput:__agentLastInputRef.current,active:__agentElInfo(document.activeElement),target:__agentElInfo(t),stage:__agentElInfo(stageRef.current),container:__agentElInfo(containerRef.current)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    };
-    document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('keydown', onKeyDown, true);
-    document.addEventListener('focusin', onFocusIn, true);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('keydown', onKeyDown, true);
-      document.removeEventListener('focusin', onFocusIn, true);
-    };
-  }, []);
 
   useEffect(() => {
     setModelsLoading(true);
