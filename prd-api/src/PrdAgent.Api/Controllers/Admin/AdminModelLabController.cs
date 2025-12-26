@@ -277,11 +277,22 @@ public class AdminModelLabController : ControllerBase
         long queueMs,
         CancellationToken ct)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == selected.ModelId).FirstOrDefaultAsync(ct);
-        // 兼容“未配置模型”：前端可能传入 modelId=modelName（平台可用模型列表），此时 llmmodels 查不到，需要回退到平台配置直接调用
+        // 统一语义：
+        // - selected.ModelId: 平台侧模型 ID（等价于旧语义的 ModelName）
+        // - selected.PlatformId: 平台 ID
+        // 兼容旧数据：ResolveEffectiveRunRequestAsync 会尽量把旧的“ModelId=llmmodels.id”转换为上述新语义。
+        var platformId = (selected.PlatformId ?? string.Empty).Trim();
+        var modelName = (string.IsNullOrWhiteSpace(selected.ModelName) ? selected.ModelId : selected.ModelName).Trim();
+
+        // 已配置模型（llmmodels）：按 platformId + modelName 精确匹配（避免跨平台同名冲突）
+        var model = string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelName)
+            ? null
+            : await _db.LLMModels.Find(m => m.PlatformId == platformId && m.ModelName == modelName).FirstOrDefaultAsync(ct);
+
+        // 未配置模型：直接使用平台配置 + modelName 调用
         if (model == null)
         {
-            if (string.IsNullOrWhiteSpace(selected.PlatformId) || string.IsNullOrWhiteSpace(selected.ModelName))
+            if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelName))
             {
                 // 这里无法为 repeat 拆分具体 item（缺少必要信息），直接写一个错误 item，避免前端“无回显”。
                 var errItem = new ModelLabRunItem
@@ -289,10 +300,10 @@ public class AdminModelLabController : ControllerBase
                     OwnerAdminId = run.OwnerAdminId,
                     RunId = run.Id,
                     ExperimentId = run.ExperimentId,
-                    ModelId = selected.ModelId,
-                    PlatformId = selected.PlatformId,
-                    DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
-                    ModelName = selected.ModelName,
+                    ModelId = (selected.ModelId ?? string.Empty).Trim(),
+                    PlatformId = platformId,
+                    DisplayName = (selected.ModelId ?? string.Empty).Trim(),
+                    ModelName = modelName,
                     Success = false,
                     ErrorCode = "MODEL_NOT_FOUND",
                     ErrorMessage = "模型不存在",
@@ -325,7 +336,7 @@ public class AdminModelLabController : ControllerBase
                 return;
             }
 
-            var platform = await _db.LLMPlatforms.Find(p => p.Id == selected.PlatformId).FirstOrDefaultAsync(ct);
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == platformId).FirstOrDefaultAsync(ct);
             if (platform == null || !platform.Enabled)
             {
                 var errItem = new ModelLabRunItem
@@ -333,10 +344,10 @@ public class AdminModelLabController : ControllerBase
                     OwnerAdminId = run.OwnerAdminId,
                     RunId = run.Id,
                     ExperimentId = run.ExperimentId,
-                    ModelId = selected.ModelId,
-                    PlatformId = selected.PlatformId,
-                    DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
-                    ModelName = selected.ModelName,
+                    ModelId = (selected.ModelId ?? string.Empty).Trim(),
+                    PlatformId = platformId,
+                    DisplayName = (selected.ModelId ?? string.Empty).Trim(),
+                    ModelName = modelName,
                     Success = false,
                     ErrorCode = "PLATFORM_NOT_FOUND",
                     ErrorMessage = "平台不存在或未启用",
@@ -377,10 +388,10 @@ public class AdminModelLabController : ControllerBase
                     OwnerAdminId = run.OwnerAdminId,
                     RunId = run.Id,
                     ExperimentId = run.ExperimentId,
-                    ModelId = selected.ModelId,
-                    PlatformId = selected.PlatformId,
-                    DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
-                    ModelName = selected.ModelName,
+                    ModelId = (selected.ModelId ?? string.Empty).Trim(),
+                    PlatformId = platformId,
+                    DisplayName = (selected.ModelId ?? string.Empty).Trim(),
+                    ModelName = modelName,
                     Success = false,
                     ErrorCode = "INVALID_CONFIG",
                     ErrorMessage = "平台 API 配置不完整",
@@ -418,7 +429,6 @@ public class AdminModelLabController : ControllerBase
             var httpClient2 = _httpClientFactory.CreateClient("LoggedHttpClient");
             httpClient2.BaseAddress = new Uri(platformApiUrl.TrimEnd('/'));
 
-            var modelName = selected.ModelName.Trim();
             ILLMClient client2 = fallbackPlatformType == "anthropic" || platformApiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
                 ? new ClaudeClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _claudeLogger, _logWriter, _ctxAccessor, platform.Id, platform.Name)
                 : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor, null, platform.Id, platform.Name);
@@ -435,10 +445,10 @@ public class AdminModelLabController : ControllerBase
                 OwnerAdminId = run.OwnerAdminId,
                 RunId = run.Id,
                 ExperimentId = run.ExperimentId,
-                ModelId = selected.ModelId,
-                PlatformId = selected.PlatformId,
-                DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
-                ModelName = selected.ModelName,
+                ModelId = (selected.ModelId ?? string.Empty).Trim(),
+                PlatformId = platformId,
+                DisplayName = (selected.ModelId ?? string.Empty).Trim(),
+                ModelName = modelName,
                 Success = false,
                 ErrorCode = "MODEL_NOT_FOUND",
                 ErrorMessage = "模型不存在或未启用",
@@ -479,10 +489,10 @@ public class AdminModelLabController : ControllerBase
                 OwnerAdminId = run.OwnerAdminId,
                 RunId = run.Id,
                 ExperimentId = run.ExperimentId,
-                ModelId = selected.ModelId,
-                PlatformId = selected.PlatformId,
-                DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
-                ModelName = selected.ModelName,
+                ModelId = (selected.ModelId ?? string.Empty).Trim(),
+                PlatformId = platformId,
+                DisplayName = (selected.ModelId ?? string.Empty).Trim(),
+                ModelName = modelName,
                 Success = false,
                 ErrorCode = "INVALID_CONFIG",
                 ErrorMessage = "模型 API 配置不完整",
@@ -788,9 +798,10 @@ public class AdminModelLabController : ControllerBase
             var ms = await _db.LLMModels.Find(m => ids.Contains(m.Id)).ToListAsync(ct);
             models = ms.Select(m => new ModelLabSelectedModel
             {
-                ModelId = m.Id,
+                // 兼容：这里 request.ModelIds 仍视为“配置模型内部 id”，但落到运行时统一转换为 platform 语义
+                ModelId = m.ModelName,
                 PlatformId = m.PlatformId ?? string.Empty,
-                Name = m.Name,
+                Name = m.ModelName,
                 ModelName = m.ModelName,
                 Group = m.Group
             }).ToList();
@@ -807,20 +818,81 @@ public class AdminModelLabController : ControllerBase
             var main = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
             if (main != null)
             {
-                var has = models.Any(x => string.Equals((x.ModelId ?? string.Empty).Trim(), main.Id, StringComparison.OrdinalIgnoreCase));
+                var mainPid = (main.PlatformId ?? string.Empty).Trim();
+                var mainMid = (main.ModelName ?? string.Empty).Trim();
+                var mainKey = $"{mainPid}:{mainMid}".ToLowerInvariant();
+                var has = models.Any(x =>
+                {
+                    var pid = (x.PlatformId ?? string.Empty).Trim();
+                    var mid = (string.IsNullOrWhiteSpace(x.ModelName) ? x.ModelId : x.ModelName).Trim();
+                    return $"{pid}:{mid}".ToLowerInvariant() == mainKey;
+                });
                 if (!has)
                 {
+                    if (string.IsNullOrWhiteSpace(mainPid) || string.IsNullOrWhiteSpace(mainMid)) { /* ignore */ }
                     models.Add(new ModelLabSelectedModel
                     {
-                        ModelId = main.Id,
-                        PlatformId = main.PlatformId ?? string.Empty,
-                        Name = $"标准答案 · {main.Name}".Trim(),
-                        ModelName = main.ModelName,
+                        ModelId = mainMid,
+                        PlatformId = mainPid,
+                        Name = $"标准答案 · {mainMid}".Trim(),
+                        ModelName = mainMid,
                         Group = main.Group
                     });
                 }
             }
         }
+
+        // 统一规范化：确保每个模型都具备 platformId + modelId(=modelName) 的业务语义
+        var normalized = new List<ModelLabSelectedModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sm in models)
+        {
+            var pid = (sm.PlatformId ?? string.Empty).Trim();
+            var mid = (sm.ModelId ?? string.Empty).Trim();
+            var mname = (sm.ModelName ?? string.Empty).Trim();
+            var group = sm.Group;
+
+            if (string.IsNullOrWhiteSpace(mid)) continue;
+
+            // 1) 兼容：如果传入的是内部 id（或旧实验数据），优先按 id 查一次，转换为平台语义
+            var byId = await _db.LLMModels.Find(m => m.Id == mid).FirstOrDefaultAsync(ct);
+            if (byId != null)
+            {
+                if (!string.IsNullOrWhiteSpace(byId.PlatformId)) pid = byId.PlatformId!.Trim();
+                if (!string.IsNullOrWhiteSpace(byId.ModelName)) mname = byId.ModelName.Trim();
+                mid = mname;
+                group ??= byId.Group;
+            }
+
+            // 2) 若未显式给 ModelName，则视为与 ModelId 同义（平台侧模型ID）
+            if (string.IsNullOrWhiteSpace(mname)) mname = mid;
+            // 强制一致：ModelId == ModelName（业务侧只用 ModelId；ModelName 仅保留兼容字段）
+            mid = mname;
+
+            if (string.IsNullOrWhiteSpace(pid) || string.IsNullOrWhiteSpace(mid))
+            {
+                continue;
+            }
+
+            var key = $"{pid}:{mid}".Trim().ToLowerInvariant();
+            if (!seen.Add(key)) continue;
+
+            normalized.Add(new ModelLabSelectedModel
+            {
+                PlatformId = pid,
+                ModelId = mid,
+                ModelName = mname,
+                Name = mid,
+                Group = group
+            });
+        }
+
+        if (normalized.Count == 0)
+        {
+            return EffectiveRunRequest.Fail("NO_MODELS", "未选择任何模型");
+        }
+
+        models = normalized;
 
         return EffectiveRunRequest.Ok(
             experimentId: exp?.Id,

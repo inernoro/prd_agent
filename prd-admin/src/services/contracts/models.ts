@@ -21,12 +21,16 @@ export type UpdateModelContract = (id: string, input: UpdateModelInput) => Promi
 export type DeleteModelContract = (id: string) => Promise<ApiResponse<true>>;
 
 export type TestModelContract = (id: string) => Promise<ApiResponse<{ success: boolean; duration: number; error?: string }>>;
-export type SetMainModelContract = (id: string) => Promise<ApiResponse<true>>;
-export type SetIntentModelContract = (id: string) => Promise<ApiResponse<true>>;
+
+/** 业务侧模型唯一键：platformId + modelId（平台侧模型 ID，等价于后端 llmmodels.modelName） */
+export type PlatformModelKey = { platformId: string; modelId: string };
+
+export type SetMainModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
+export type SetIntentModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
 export type ClearIntentModelContract = () => Promise<ApiResponse<true>>;
-export type SetVisionModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type SetVisionModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
 export type ClearVisionModelContract = () => Promise<ApiResponse<true>>;
-export type SetImageGenModelContract = (id: string) => Promise<ApiResponse<true>>;
+export type SetImageGenModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
 export type ClearImageGenModelContract = () => Promise<ApiResponse<true>>;
 
 export type ModelPriorityUpdate = { id: string; priority: number };

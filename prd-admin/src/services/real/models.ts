@@ -101,20 +101,20 @@ export const updateModelPrioritiesReal: UpdateModelPrioritiesContract = async (u
   });
 };
 
-export const setMainModelReal: SetMainModelContract = async (id: string) => {
+export const setMainModelReal: SetMainModelContract = async (input) => {
   const res = await apiRequest<{ modelId: string; isMain: boolean }>('/api/v1/config/main-model', {
     method: 'PUT',
-    body: { modelId: id },
+    body: { platformId: input.platformId, modelId: input.modelId },
   });
 
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);
 };
 
-export const setIntentModelReal: SetIntentModelContract = async (id: string) => {
+export const setIntentModelReal: SetIntentModelContract = async (input) => {
   const res = await apiRequest<{ modelId: string; isIntent: boolean }>('/api/v1/config/intent-model', {
     method: 'PUT',
-    body: { modelId: id },
+    body: { platformId: input.platformId, modelId: input.modelId },
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);
@@ -128,10 +128,10 @@ export const clearIntentModelReal: ClearIntentModelContract = async () => {
   return ok(true);
 };
 
-export const setVisionModelReal: SetVisionModelContract = async (id: string) => {
+export const setVisionModelReal: SetVisionModelContract = async (input) => {
   const res = await apiRequest<{ modelId: string; isVision: boolean }>('/api/v1/config/vision-model', {
     method: 'PUT',
-    body: { modelId: id },
+    body: { platformId: input.platformId, modelId: input.modelId },
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);
@@ -145,10 +145,10 @@ export const clearVisionModelReal: ClearVisionModelContract = async () => {
   return ok(true);
 };
 
-export const setImageGenModelReal: SetImageGenModelContract = async (id: string) => {
+export const setImageGenModelReal: SetImageGenModelContract = async (input) => {
   const res = await apiRequest<{ modelId: string; isImageGen: boolean }>('/api/v1/config/image-gen-model', {
     method: 'PUT',
-    body: { modelId: id },
+    body: { platformId: input.platformId, modelId: input.modelId },
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);

@@ -28,6 +28,7 @@ import type { GenerateImageGenContract, GetImageGenSizeCapsContract, PlanImageGe
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
 import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
+import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
 import type {
   AddImageMasterMessageContract,
   CreateImageMasterSessionContract,
@@ -79,6 +80,7 @@ import {
   listImageMasterSessionsReal,
   uploadImageAssetReal,
 } from '@/services/real/imageMaster';
+import { exportConfigReal, getDataSummaryReal, importConfigReal, purgeDataReal } from '@/services/real/data';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -190,3 +192,8 @@ export const listImageMasterSessions: ListImageMasterSessionsContract = withAuth
 export const getImageMasterSession: GetImageMasterSessionContract = withAuth(getImageMasterSessionReal);
 export const addImageMasterMessage: AddImageMasterMessageContract = withAuth(addImageMasterMessageReal);
 export const uploadImageAsset: UploadImageAssetContract = withAuth(uploadImageAssetReal);
+
+export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
+export const importConfig: ImportConfigContract = withAuth(importConfigReal);
+export const getDataSummary: GetDataSummaryContract = withAuth(getDataSummaryReal);
+export const purgeData: PurgeDataContract = withAuth(purgeDataReal);

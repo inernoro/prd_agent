@@ -45,6 +45,11 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminRegenerateInviteResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminMessageDto>>))]
 [JsonSerializable(typeof(ApiResponse<HealthCheckResponse>))]
+// Admin Data（配置导入导出 / 数据管理）
+[JsonSerializable(typeof(ApiResponse<ExportedConfigV1>))]
+[JsonSerializable(typeof(ApiResponse<DataConfigImportResponse>))]
+[JsonSerializable(typeof(ApiResponse<DataSummaryResponse>))]
+[JsonSerializable(typeof(ApiResponse<DataPurgeResponse>))]
 // 流式事件类型
 [JsonSerializable(typeof(ChatStreamEvent))]
 [JsonSerializable(typeof(GuideStreamEvent))]
@@ -67,6 +72,9 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdatePasswordRequest))]
 [JsonSerializable(typeof(GenerateInviteCodeRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
+// Admin Data 请求
+[JsonSerializable(typeof(DataConfigImportRequest))]
+[JsonSerializable(typeof(DataPurgeRequest))]
 // 预览提问请求
 [JsonSerializable(typeof(PreviewAskRequest))]
 // 密码验证响应

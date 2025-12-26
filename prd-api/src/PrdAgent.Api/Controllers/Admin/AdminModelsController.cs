@@ -83,8 +83,13 @@ public class AdminModelsController : ControllerBase
     [HttpPost("models")]
     public async Task<IActionResult> CreateModel([FromBody] CreateModelRequest request)
     {
-        // 检查模型名唯一性
-        var existing = await _db.LLMModels.Find(m => m.ModelName == request.ModelName).FirstOrDefaultAsync();
+        // 检查模型名唯一性（按 platformId + modelId(ModelName) 维度；允许跨平台同名）
+        var reqPid = (request.PlatformId ?? string.Empty).Trim();
+        var reqMid = (request.ModelName ?? string.Empty).Trim();
+        var existing = await _db.LLMModels.Find(m =>
+                (m.PlatformId ?? string.Empty) == reqPid
+                && m.ModelName == reqMid)
+            .FirstOrDefaultAsync();
         if (existing != null)
         {
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_MODEL", "模型名称已存在"));
@@ -137,8 +142,14 @@ public class AdminModelsController : ControllerBase
     [HttpPut("models/{id}")]
     public async Task<IActionResult> UpdateModel(string id, [FromBody] UpdateModelRequest request)
     {
-        // 检查模型名唯一性（排除自身）
-        var existing = await _db.LLMModels.Find(m => m.ModelName == request.ModelName && m.Id != id).FirstOrDefaultAsync();
+        // 检查模型名唯一性（按 platformId + modelId(ModelName) 维度；排除自身）
+        var reqPid = (request.PlatformId ?? string.Empty).Trim();
+        var reqMid = (request.ModelName ?? string.Empty).Trim();
+        var existing = await _db.LLMModels.Find(m =>
+                m.Id != id
+                && (m.PlatformId ?? string.Empty) == reqPid
+                && m.ModelName == reqMid)
+            .FirstOrDefaultAsync();
         if (existing != null)
         {
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_MODEL", "模型名称已存在"));
@@ -320,8 +331,12 @@ public class AdminModelsController : ControllerBase
     [HttpPut("main-model")]
     public async Task<IActionResult> SetMainModel([FromBody] SetMainModelRequest request)
     {
-        // 验证模型存在
-        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        // 兼容：支持 (platformId, modelId=ModelName) 与旧的 (modelId=内部Id)
+        var reqPid = (request.PlatformId ?? string.Empty).Trim();
+        var reqMid = (request.ModelId ?? string.Empty).Trim();
+        var model = string.IsNullOrWhiteSpace(reqPid)
+            ? await _db.LLMModels.Find(m => m.Id == reqMid).FirstOrDefaultAsync()
+            : await _db.LLMModels.Find(m => m.PlatformId == reqPid && m.ModelName == reqMid).FirstOrDefaultAsync();
         if (model == null)
         {
             return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
@@ -334,13 +349,13 @@ public class AdminModelsController : ControllerBase
 
         // 设置新的主模型
         await _db.LLMModels.UpdateOneAsync(
-            m => m.Id == request.ModelId,
+            m => m.Id == model.Id,
             Builders<LLMModel>.Update
                 .Set(m => m.IsMain, true)
                 .Set(m => m.UpdatedAt, DateTime.UtcNow));
 
-        _logger.LogInformation("Main model set: {Id}", request.ModelId);
-        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isMain = true }));
+        _logger.LogInformation("Main model set: {Id}", model.Id);
+        return Ok(ApiResponse<object>.Ok(new { platformId = model.PlatformId, modelId = model.ModelName, isMain = true }));
     }
 
     /// <summary>
@@ -372,7 +387,12 @@ public class AdminModelsController : ControllerBase
     [HttpPut("intent-model")]
     public async Task<IActionResult> SetIntentModel([FromBody] SetPurposeModelRequest request)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        // 兼容：支持 (platformId, modelId=ModelName) 与旧的 (modelId=内部Id)
+        var reqPid = (request.PlatformId ?? string.Empty).Trim();
+        var reqMid = (request.ModelId ?? string.Empty).Trim();
+        var model = string.IsNullOrWhiteSpace(reqPid)
+            ? await _db.LLMModels.Find(m => m.Id == reqMid).FirstOrDefaultAsync()
+            : await _db.LLMModels.Find(m => m.PlatformId == reqPid && m.ModelName == reqMid).FirstOrDefaultAsync();
         if (model == null)
         {
             return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
@@ -380,11 +400,11 @@ public class AdminModelsController : ControllerBase
 
         await _db.LLMModels.UpdateManyAsync(_ => true, Builders<LLMModel>.Update.Set(m => m.IsIntent, false));
         await _db.LLMModels.UpdateOneAsync(
-            m => m.Id == request.ModelId,
+            m => m.Id == model.Id,
             Builders<LLMModel>.Update.Set(m => m.IsIntent, true).Set(m => m.UpdatedAt, DateTime.UtcNow));
 
-        _logger.LogInformation("Intent model set: {Id}", request.ModelId);
-        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isIntent = true }));
+        _logger.LogInformation("Intent model set: {Id}", model.Id);
+        return Ok(ApiResponse<object>.Ok(new { platformId = model.PlatformId, modelId = model.ModelName, isIntent = true }));
     }
 
     /// <summary>
@@ -429,7 +449,12 @@ public class AdminModelsController : ControllerBase
     [HttpPut("vision-model")]
     public async Task<IActionResult> SetVisionModel([FromBody] SetPurposeModelRequest request)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        // 兼容：支持 (platformId, modelId=ModelName) 与旧的 (modelId=内部Id)
+        var reqPid = (request.PlatformId ?? string.Empty).Trim();
+        var reqMid = (request.ModelId ?? string.Empty).Trim();
+        var model = string.IsNullOrWhiteSpace(reqPid)
+            ? await _db.LLMModels.Find(m => m.Id == reqMid).FirstOrDefaultAsync()
+            : await _db.LLMModels.Find(m => m.PlatformId == reqPid && m.ModelName == reqMid).FirstOrDefaultAsync();
         if (model == null)
         {
             return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
@@ -437,11 +462,11 @@ public class AdminModelsController : ControllerBase
 
         await _db.LLMModels.UpdateManyAsync(_ => true, Builders<LLMModel>.Update.Set(m => m.IsVision, false));
         await _db.LLMModels.UpdateOneAsync(
-            m => m.Id == request.ModelId,
+            m => m.Id == model.Id,
             Builders<LLMModel>.Update.Set(m => m.IsVision, true).Set(m => m.UpdatedAt, DateTime.UtcNow));
 
-        _logger.LogInformation("Vision model set: {Id}", request.ModelId);
-        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isVision = true }));
+        _logger.LogInformation("Vision model set: {Id}", model.Id);
+        return Ok(ApiResponse<object>.Ok(new { platformId = model.PlatformId, modelId = model.ModelName, isVision = true }));
     }
 
     /// <summary>
@@ -486,7 +511,12 @@ public class AdminModelsController : ControllerBase
     [HttpPut("image-gen-model")]
     public async Task<IActionResult> SetImageGenModel([FromBody] SetPurposeModelRequest request)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == request.ModelId).FirstOrDefaultAsync();
+        // 兼容：支持 (platformId, modelId=ModelName) 与旧的 (modelId=内部Id)
+        var reqPid = (request.PlatformId ?? string.Empty).Trim();
+        var reqMid = (request.ModelId ?? string.Empty).Trim();
+        var model = string.IsNullOrWhiteSpace(reqPid)
+            ? await _db.LLMModels.Find(m => m.Id == reqMid).FirstOrDefaultAsync()
+            : await _db.LLMModels.Find(m => m.PlatformId == reqPid && m.ModelName == reqMid).FirstOrDefaultAsync();
         if (model == null)
         {
             return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
@@ -494,11 +524,11 @@ public class AdminModelsController : ControllerBase
 
         await _db.LLMModels.UpdateManyAsync(_ => true, Builders<LLMModel>.Update.Set(m => m.IsImageGen, false));
         await _db.LLMModels.UpdateOneAsync(
-            m => m.Id == request.ModelId,
+            m => m.Id == model.Id,
             Builders<LLMModel>.Update.Set(m => m.IsImageGen, true).Set(m => m.UpdatedAt, DateTime.UtcNow));
 
-        _logger.LogInformation("ImageGen model set: {Id}", request.ModelId);
-        return Ok(ApiResponse<object>.Ok(new { modelId = request.ModelId, isImageGen = true }));
+        _logger.LogInformation("ImageGen model set: {Id}", model.Id);
+        return Ok(ApiResponse<object>.Ok(new { platformId = model.PlatformId, modelId = model.ModelName, isImageGen = true }));
     }
 
     /// <summary>
@@ -563,7 +593,9 @@ public class AdminModelsController : ControllerBase
         foreach (var modelInfo in request.Models)
         {
             // 检查是否已存在
-            var existing = await _db.LLMModels.Find(m => m.ModelName == modelInfo.ModelName).FirstOrDefaultAsync();
+            var existing = await _db.LLMModels
+                .Find(m => m.PlatformId == request.PlatformId && m.ModelName == modelInfo.ModelName)
+                .FirstOrDefaultAsync();
             if (existing != null)
             {
                 skippedModels.Add(modelInfo.ModelName);
@@ -748,11 +780,13 @@ public class ModelPriorityUpdate
 public class SetMainModelRequest
 {
     public string ModelId { get; set; } = string.Empty;
+    public string? PlatformId { get; set; }
 }
 
 public class SetPurposeModelRequest
 {
     public string ModelId { get; set; } = string.Empty;
+    public string? PlatformId { get; set; }
 }
 
 public class BatchAddModelsRequest

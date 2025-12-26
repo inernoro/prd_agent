@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database } from 'lucide-react';
 import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
@@ -29,6 +29,7 @@ export default function AppShell() {
       { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} /> },
       { key: '/ai-chat', label: 'AI 对话', icon: <MessagesSquare size={18} /> },
       { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} /> },
+      { key: '/data', label: '数据管理', icon: <Database size={18} /> },
       { key: '/lab', label: '实验室', icon: <FlaskConical size={18} /> },
     ],
     []

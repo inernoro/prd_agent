@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import type { Model, Platform } from '@/types/admin';
+import type { Platform } from '@/types/admin';
 import type { ModelLabSelectedModel } from '@/services/contracts/modelLab';
 // lucide icons are used inside shared dialog component
 import { deleteModelLabGroup, listModelLabGroups, upsertModelLabGroup } from '@/services';
@@ -10,26 +10,18 @@ import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components
 
 type TabKey = 'byPlatform' | 'byLabGroup';
 
-function keyOf(m: Pick<ModelLabSelectedModel, 'platformId' | 'modelName'>) {
-  return `${m.platformId}:${m.modelName}`.toLowerCase();
+function keyOf(m: Pick<ModelLabSelectedModel, 'platformId' | 'modelId'>) {
+  return `${m.platformId}:${m.modelId}`.toLowerCase();
 }
 
-function dedupePreferConfigured(
-  list: ModelLabSelectedModel[],
-  configuredModelIds: Set<string>
-): ModelLabSelectedModel[] {
+function dedupeByPlatformAndModelId(list: ModelLabSelectedModel[]): ModelLabSelectedModel[] {
   const map = new Map<string, ModelLabSelectedModel>();
   for (const item of list) {
-    const k = keyOf(item);
-    const prev = map.get(k);
-    if (!prev) {
-      map.set(k, item);
-      continue;
-    }
-    const prevIsConfigured = configuredModelIds.has(prev.modelId);
-    const curIsConfigured = configuredModelIds.has(item.modelId);
-    // 同一平台同一 modelName：优先保留“已配置模型”（modelId 是 llmmodels 的 id），否则保持已有
-    if (!prevIsConfigured && curIsConfigured) map.set(k, item);
+    const pid = String(item.platformId ?? '').trim();
+    const mid = String(item.modelId ?? '').trim();
+    if (!pid || !mid) continue;
+    const k = `${pid}:${mid}`.toLowerCase();
+    if (!map.has(k)) map.set(k, item);
   }
   return Array.from(map.values());
 }
@@ -39,23 +31,13 @@ function toSelectedModelFromAvailable(args: {
   modelName: string;
   displayName: string;
   group?: string;
-  configuredModel?: Model | null;
 }): ModelLabSelectedModel {
-  const configured = args.configuredModel;
-  if (configured) {
-    return {
-      modelId: configured.id,
-      platformId: configured.platformId || args.platformId,
-      name: configured.name || configured.modelName || args.displayName,
-      modelName: configured.modelName || args.modelName,
-      group: configured.group ?? args.group ?? null,
-    };
-  }
-  // 未在 llmmodels 配置过的模型：用 modelName 作为“模型 id”（后端会按 platform 回退直接调用）
+  // 统一业务语义：modelId == 平台侧模型 ID（等价于 modelName）。
+  // 唯一性由 platformId + modelId 保证。
   return {
     modelId: args.modelName,
     platformId: args.platformId,
-    name: args.displayName || args.modelName,
+    name: args.modelName,
     modelName: args.modelName,
     group: args.group ?? null,
   };
@@ -65,34 +47,19 @@ function PlatformAvailableDialog({
   open,
   onOpenChange,
   platform,
-  allModels,
   selected,
   setSelected,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   platform: Platform | null;
-  allModels: Model[];
   selected: ModelLabSelectedModel[];
   setSelected: (updater: (prev: ModelLabSelectedModel[]) => ModelLabSelectedModel[]) => void;
 }) {
-  const configuredModelIds = useMemo(() => new Set(allModels.map((m) => m.id)), [allModels]);
-
   useEffect(() => {
     if (!open) return;
     // no-op: state handled in shared dialog
   }, [open]);
-
-  const configuredByModelName = useMemo(() => {
-    if (!platform?.id) return new Map<string, Model>();
-    const map = new Map<string, Model>();
-    for (const m of allModels) {
-      if (!m.enabled) continue;
-      if (m.platformId !== platform.id) continue;
-      if (!map.has(m.modelName)) map.set(m.modelName, m);
-    }
-    return map;
-  }, [allModels, platform?.id]);
 
   const bulkAddGroup = (ms: AvailableModel[]) => {
     if (!platform?.id) return;
@@ -102,15 +69,14 @@ function PlatformAvailableDialog({
         modelName: m.modelName,
         displayName: m.displayName || m.modelName,
         group: m.group,
-        configuredModel: configuredByModelName.get(m.modelName) ?? null,
       })
     );
-    setSelected((prev) => [...prev, ...adds]);
+    setSelected((prev) => dedupeByPlatformAndModelId([...prev, ...adds]));
   };
 
   const togglePoolModel = (m: AvailableModel) => {
     if (!platform?.id) return;
-    const k = keyOf({ platformId: platform.id, modelName: m.modelName });
+    const k = keyOf({ platformId: platform.id, modelId: m.modelName });
     const exists = selected.some((x) => keyOf(x) === k);
     if (exists) {
       setSelected((prev) => prev.filter((x) => keyOf(x) !== k));
@@ -122,9 +88,8 @@ function PlatformAvailableDialog({
       modelName: m.modelName,
       displayName: m.displayName || m.modelName,
       group: m.group,
-      configuredModel: configuredByModelName.get(m.modelName) ?? null,
     });
-    setSelected((prev) => dedupePreferConfigured([...prev, selectedItem], configuredModelIds));
+    setSelected((prev) => dedupeByPlatformAndModelId([...prev, selectedItem]));
   };
 
   const selectedCount = (selected ?? []).filter((x) => x.platformId === platform?.id).length;
@@ -140,7 +105,7 @@ function PlatformAvailableDialog({
       selectedBadgeText="已加入"
       isSelected={(m) => {
         if (!platform?.id) return false;
-        const k = keyOf({ platformId: platform.id, modelName: m.modelName });
+        const k = keyOf({ platformId: platform.id, modelId: m.modelName });
         return selected.some((x) => keyOf(x) === k);
       }}
       onToggle={(m) => togglePoolModel(m)}
@@ -152,34 +117,30 @@ function PlatformAvailableDialog({
 export function ModelPickerDialog({
   open,
   onOpenChange,
-  allModels,
   selectedModels,
   platforms,
   onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  allModels: Model[];
   selectedModels: ModelLabSelectedModel[];
   platforms: Platform[];
   onConfirm: (models: ModelLabSelectedModel[]) => void;
 }) {
-  const configuredModelIds = useMemo(() => new Set(allModels.map((m) => m.id)), [allModels]);
-
   const [tab, setTab] = useState<TabKey>('byPlatform');
 
   // 下栏共享池：作为“最终会加入到实验”的模型集合（初始化为当前 selectedModels）
   const [pool, setPoolRaw] = useState<ModelLabSelectedModel[]>([]);
 
   const setPool = (updater: (prev: ModelLabSelectedModel[]) => ModelLabSelectedModel[]) => {
-    setPoolRaw((prev) => dedupePreferConfigured(updater(prev), configuredModelIds));
+    setPoolRaw((prev) => dedupeByPlatformAndModelId(updater(prev)));
   };
 
   useEffect(() => {
     if (!open) return;
     // 每次打开都从外部当前选择初始化，避免上次未确认的临时选择污染
     setTab('byPlatform');
-    setPoolRaw(dedupePreferConfigured(selectedModels ?? [], configuredModelIds));
+    setPoolRaw(dedupeByPlatformAndModelId(selectedModels ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -198,7 +159,7 @@ export function ModelPickerDialog({
   const [groupAddPlatformId, setGroupAddPlatformId] = useState<string>('');
 
   const setGroupDraftModels = (updater: (prev: ModelLabSelectedModel[]) => ModelLabSelectedModel[]) => {
-    setGroupDraftModelsRaw((prev) => dedupePreferConfigured(updater(prev), configuredModelIds));
+    setGroupDraftModelsRaw((prev) => dedupeByPlatformAndModelId(updater(prev)));
   };
 
   const loadLabGroups = async (opts?: { silent?: boolean }) => {
@@ -229,8 +190,8 @@ export function ModelPickerDialog({
     const g = labGroups.find((x) => x.id === activeGroupId) ?? null;
     if (!g) return;
     setGroupDraftName(g.name || '');
-    setGroupDraftModelsRaw(dedupePreferConfigured(g.models ?? [], configuredModelIds));
-  }, [activeGroupId, configuredModelIds, labGroups]);
+    setGroupDraftModelsRaw(dedupeByPlatformAndModelId(g.models ?? []));
+  }, [activeGroupId, labGroups]);
 
   const platformList = useMemo(() => {
     const list = [...(platforms ?? [])];
@@ -393,7 +354,7 @@ export function ModelPickerDialog({
                         className="shrink-0"
                         disabled={count === 0}
                         onClick={() => {
-                          setPool((prev) => dedupePreferConfigured([...prev, ...(g.models ?? [])], configuredModelIds));
+                          setPool((prev) => dedupeByPlatformAndModelId([...prev, ...(g.models ?? [])]));
                         }}
                         title="将该分组模型追加到下方选择池"
                       >
@@ -473,7 +434,7 @@ export function ModelPickerDialog({
                   size="xs"
                   variant="secondary"
                   className="shrink-0"
-                  onClick={() => setGroupDraftModels((prev) => dedupePreferConfigured([...prev, ...pool], configuredModelIds))}
+                  onClick={() => setGroupDraftModels((prev) => dedupeByPlatformAndModelId([...prev, ...pool]))}
                   disabled={pool.length === 0}
                   title="将下方选择池中的模型追加到该分组"
                 >
@@ -636,7 +597,6 @@ export function ModelPickerDialog({
         open={availableOpen}
         onOpenChange={(o) => setAvailableOpen(o)}
         platform={availablePlatform}
-        allModels={allModels}
         selected={availableTarget === 'pool' ? pool : groupDraftModels}
         setSelected={availableTarget === 'pool' ? setPool : setGroupDraftModels}
       />

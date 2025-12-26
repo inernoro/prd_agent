@@ -7,6 +7,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelMapDialog } from './model-manage/ModelMapDialog';
+import { DataTransferDialog } from './model-manage/DataTransferDialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   clearIntentModel,
@@ -231,6 +232,7 @@ export default function ModelManagePage() {
   const [modelSearch, setModelSearch] = useState('');
 
   const [modelMapOpen, setModelMapOpen] = useState(false);
+  const [dataTransferOpen, setDataTransferOpen] = useState(false);
 
   const [platformDialogOpen, setPlatformDialogOpen] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
@@ -349,7 +351,7 @@ export default function ModelManagePage() {
 
   const onSetIntent = async (m: Model) => {
     setIntentJustSetId(m.id);
-    const res = await setIntentModel(m.id);
+    const res = await setIntentModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) {
       await load({ silent: true });
       return;
@@ -397,7 +399,7 @@ export default function ModelManagePage() {
 
   const onSetVision = async (m: Model) => {
     setVisionJustSetId(m.id);
-    const res = await setVisionModel(m.id);
+    const res = await setVisionModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) {
       await load({ silent: true });
       return;
@@ -407,7 +409,7 @@ export default function ModelManagePage() {
 
   const onSetImageGen = async (m: Model) => {
     setImageGenJustSetId(m.id);
-    const res = await setImageGenModel(m.id);
+    const res = await setImageGenModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) {
       await load({ silent: true });
       return;
@@ -853,7 +855,7 @@ export default function ModelManagePage() {
     );
     setMainJustSetId(m.id);
 
-    const res = await setMainModel(m.id);
+    const res = await setMainModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) {
       // 失败则静默回源校准
       await load({ silent: true });
@@ -1183,6 +1185,30 @@ export default function ModelManagePage() {
                       <path d="M50 10 L88 78 L12 78 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.92" />
                       <path d="M50 90 L12 22 L88 22 Z" fill="none" stroke="currentColor" strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity="0.72" />
                     </svg>
+                  </Button>
+                </span>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <div className="leading-snug">
+                    <div className="font-semibold">数据迁移</div>
+                    <div style={{ color: 'var(--text-muted)' }}>导入/导出平台 + 密钥 + 启用模型（JSON）</div>
+                  </div>
+                }
+                side="bottom"
+                align="end"
+              >
+                <span className="inline-flex">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDataTransferOpen(true)}
+                    aria-label="打开数据迁移"
+                    className="h-[35px] w-[35px] p-0 rounded-[12px]"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <DatabaseZap size={18} />
                   </Button>
                 </span>
               </Tooltip>
@@ -2067,6 +2093,14 @@ export default function ModelManagePage() {
         models={models}
         platforms={platforms}
         selectedPlatformId={selectedPlatformId}
+      />
+
+      <DataTransferDialog
+        open={dataTransferOpen}
+        onOpenChange={setDataTransferOpen}
+        onImported={async () => {
+          await load({ silent: true });
+        }}
       />
     </div>
   );

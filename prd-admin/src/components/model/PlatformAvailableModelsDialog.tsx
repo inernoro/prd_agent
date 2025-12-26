@@ -415,7 +415,8 @@ export function PlatformAvailableModelsDialog({
                       <div className="divide-y divide-white/30">
                         {ms.map((m) => {
                           const exist = isSelected(m);
-                          const label = (m.displayName || m.modelName).trim();
+                          // 统一展示：默认只显示平台侧模型 ID（modelName）
+                          const label = String(m.modelName ?? '').trim();
                           const avatarUrl =
                             (g || '').toLowerCase() === 'other' ? getAvatarUrlByModelName(m.modelName || label) : getAvatarUrlByGroup(g);
                           return (

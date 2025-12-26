@@ -47,7 +47,7 @@ type ViewRunItem = {
   modelId: string;
   displayName: string;
   modelName: string;
-  /** 配置模型的真实 id（用于“设为主/意图”等全局设置）。如果流里返回的 modelId 不是配置 id，会用 modelName 回查得到 */
+  /** 兼容字段：历史版本可能回传“配置模型内部 id”；当前以 platformId+modelId 为准 */
   configModelId?: string;
   status: 'running' | 'done' | 'error';
   /** repeatN > 1 时：第几次请求（后端会把每次请求拆成独立 itemId） */
@@ -228,9 +228,13 @@ function parsePromptSizeMeta(prompt: string): PromptSizeMeta {
 }
 
 function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
-  // 用于“是否需要自动保存”的变更检测；与 setSelectedModelsDedupe 的唯一性规则保持一致（平台 + modelName）
+  // 用于“是否需要自动保存”的变更检测；与 setSelectedModelsDedupe 的唯一性规则保持一致（平台 + modelId）
   return (list ?? [])
-    .map((m) => `${String(m.platformId ?? '').trim()}:${String(m.modelName ?? '').trim()}`.toLowerCase())
+    .map((m) => {
+      const pid = String(m.platformId ?? '').trim();
+      const mid = String((m as any).modelId ?? m.modelName ?? '').trim();
+      return `${pid}:${mid}`.toLowerCase();
+    })
     .filter(Boolean)
     .sort()
     .join('|');
@@ -238,8 +242,8 @@ function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
 
 function modelKeyOfSelected(m: ModelLabSelectedModel): string {
   const pid = String(m?.platformId ?? '').trim();
-  const name = String(m?.modelName ?? '').trim();
-  return `${pid}:${name}`.toLowerCase();
+  const mid = String((m as any)?.modelId ?? m?.modelName ?? '').trim();
+  return `${pid}:${mid}`.toLowerCase();
 }
 
 function filenameSafe(s: string) {
@@ -1194,19 +1198,23 @@ export default function LlmLabTab() {
   }, [activeExperiment]);
 
   const setSelectedModelsDedupe = (list: ModelLabSelectedModel[]) => {
-    // 唯一选择：平台 + modelName
+    // 唯一选择：平台 + modelId
     const map = new Map<string, ModelLabSelectedModel>();
     for (const m of list) {
-      const key = `${m.platformId}:${m.modelName}`.toLowerCase();
-      const prev = map.get(key);
-      // 若冲突，优先保留有 name 的那条（更像“配置模型”）
-      if (!prev || (m.name && !prev.name)) map.set(key, m);
+      const pid = String(m.platformId ?? '').trim();
+      const mid = String((m as any).modelId ?? m.modelName ?? '').trim();
+      if (!pid || !mid) continue;
+      const key = `${pid}:${mid}`.toLowerCase();
+      if (!map.has(key)) map.set(key, m);
     }
     setSelectedModels(Array.from(map.values()));
   };
 
-  const removeSelectedModel = (modelId: string) => {
-    setSelectedModels((prev) => prev.filter((x) => x.modelId !== modelId));
+  const removeSelectedModel = (m: Pick<ModelLabSelectedModel, 'platformId' | 'modelId'>) => {
+    const pid = String(m.platformId ?? '').trim();
+    const mid = String(m.modelId ?? '').trim();
+    if (!pid || !mid) return;
+    setSelectedModels((prev) => prev.filter((x) => modelKeyOfSelected(x) !== `${pid}:${mid}`.toLowerCase()));
   };
 
   const toggleDisabledSelectedModel = (m: ModelLabSelectedModel) => {
@@ -1882,14 +1890,18 @@ export default function LlmLabTab() {
 
   const onSetMainFromRun = async (modelId: string) => {
     setUniqueFlagLocal(modelId, 'isMain');
-    const res = await setMainModel(modelId);
+    const m = modelById.get(modelId) ?? null;
+    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
+    const res = await setMainModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) return await refreshModelsSilent();
     await refreshModelsSilent();
   };
 
   const onSetIntentFromRun = async (modelId: string) => {
     setUniqueFlagLocal(modelId, 'isIntent');
-    const res = await setIntentModel(modelId);
+    const m = modelById.get(modelId) ?? null;
+    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
+    const res = await setIntentModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) return await refreshModelsSilent();
     await refreshModelsSilent();
   };
@@ -1925,14 +1937,18 @@ export default function LlmLabTab() {
 
   const onSetVisionFromRun = async (modelId: string) => {
     setUniqueFlagLocal(modelId, 'isVision');
-    const res = await setVisionModel(modelId);
+    const m = modelById.get(modelId) ?? null;
+    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
+    const res = await setVisionModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) return await refreshModelsSilent();
     await refreshModelsSilent();
   };
 
   const onSetImageGenFromRun = async (modelId: string) => {
     setUniqueFlagLocal(modelId, 'isImageGen');
-    const res = await setImageGenModel(modelId);
+    const m = modelById.get(modelId) ?? null;
+    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
+    const res = await setImageGenModel({ platformId: m.platformId, modelId: m.modelName });
     if (!res.success) return await refreshModelsSilent();
     await refreshModelsSilent();
   };
@@ -2326,9 +2342,11 @@ export default function LlmLabTab() {
                           <div className="mt-2 flex flex-col gap-2">
                             {list.map((m) => {
                               const isDisabled = !!disabledModelKeys[modelKeyOfSelected(m)];
+                              const mid = String((m as any).modelId ?? m.modelName ?? '').trim();
+                              const rowKey = modelKeyOfSelected({ ...(m as any), modelId: mid });
                               return (
                                 <div
-                                  key={m.modelId}
+                                  key={rowKey}
                                   role="button"
                                   tabIndex={0}
                                   className={cn(
@@ -2349,7 +2367,7 @@ export default function LlmLabTab() {
                                       toggleDisabledSelectedModel(m);
                                     }
                                   }}
-                                  title={m.name || m.modelName}
+                                  title={mid}
                                 >
                                   <span className="flex items-center gap-2 min-w-0">
                                     <span
@@ -2359,7 +2377,7 @@ export default function LlmLabTab() {
                                         textDecoration: isDisabled ? 'line-through' : 'none',
                                       }}
                                     >
-                                      {m.name || m.modelName}
+                                      {mid}
                                     </span>
                                   </span>
                                   <button
@@ -2369,7 +2387,7 @@ export default function LlmLabTab() {
                                     title="从实验中移除该模型"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      removeSelectedModel(m.modelId);
+                                      removeSelectedModel({ platformId: m.platformId, modelId: mid });
                                       const k = modelKeyOfSelected(m);
                                       if (k)
                                         setDisabledModelKeys((p) => {
@@ -2857,7 +2875,7 @@ export default function LlmLabTab() {
                             return <PlatformLabel name={label} />;
                           })()}
                           <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {it.displayName}
+                            {String(it.modelId ?? '').trim() || String(it.modelName ?? '').trim() || '-'}
                           </div>
                           {typeof it.repeatN === 'number' && it.repeatN > 1 && typeof it.repeatIndex === 'number' ? (
                             <span
@@ -2873,21 +2891,6 @@ export default function LlmLabTab() {
                             </span>
                           ) : null}
                         </div>
-                        {(() => {
-                          const name = (it.modelName ?? '').trim();
-                          const id = (it.modelId ?? '').trim();
-                          const display = String(it.displayName ?? '').trim();
-                          const secondary = name && id && name !== id ? `${name} · ${id}` : name || id || '';
-                          // 避免与标题重复（常见：displayName == modelName）
-                          if (!secondary) return null;
-                          if (secondary === display) return null;
-                          if (secondary === name && name === display) return null;
-                          return (
-                            <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                              {secondary}
-                            </div>
-                          );
-                        })()}
                       </div>
                       <div className="shrink-0 flex items-center justify-end gap-2">
                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -3923,7 +3926,6 @@ export default function LlmLabTab() {
       <ModelPickerDialog
         open={pickerOpen}
         onOpenChange={(o) => setPickerOpen(o)}
-        allModels={allModels}
         platforms={platforms}
         selectedModels={selectedModels}
         onConfirm={(finalList) => {
