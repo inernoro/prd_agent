@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '../../lib/tauri';
+import { isSystemErrorCode } from '../../lib/systemError';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
@@ -158,12 +159,14 @@ export default function Sidebar() {
       });
 
       if (!resp.success || !resp.data) {
-        if (resp.error?.code === 'UNAUTHORIZED') {
-          alert('登录已过期或无效，请重新登录');
+        const errorCode = resp.error?.code ?? null;
+        if (errorCode === 'UNAUTHORIZED') {
           logout();
           return;
         }
-        setInlineError(resp.error?.message || '加入群组失败');
+        if (!isSystemErrorCode(errorCode)) {
+          setInlineError(resp.error?.message || '加入群组失败');
+        }
         return;
       }
 
@@ -172,7 +175,6 @@ export default function Sidebar() {
       setJoinOpen(false);
     } catch (err) {
       console.error('Failed to join group:', err);
-      setInlineError('加入群组失败');
     } finally {
       setBusy(null);
     }
@@ -200,12 +202,14 @@ export default function Sidebar() {
           content: createPrdContent,
         });
         if (!uploadResp.success || !uploadResp.data) {
-          if (uploadResp.error?.code === 'UNAUTHORIZED') {
-            alert('登录已过期或无效，请重新登录');
+          const errorCode = uploadResp.error?.code ?? null;
+          if (errorCode === 'UNAUTHORIZED') {
             logout();
             return;
           }
-          setInlineError(uploadResp.error?.message || '上传 PRD 失败');
+          if (!isSystemErrorCode(errorCode)) {
+            setInlineError(uploadResp.error?.message || '上传 PRD 失败');
+          }
           return;
         }
 
@@ -241,12 +245,14 @@ export default function Sidebar() {
         });
 
         if (!resp.success || !resp.data) {
-          if (resp.error?.code === 'UNAUTHORIZED') {
-            alert('登录已过期或无效，请重新登录');
+          const errorCode = resp.error?.code ?? null;
+          if (errorCode === 'UNAUTHORIZED') {
             logout();
             return;
           }
-          setInlineError(resp.error?.message || '创建群组失败');
+          if (!isSystemErrorCode(errorCode)) {
+            setInlineError(resp.error?.message || '创建群组失败');
+          }
           return;
         }
 
@@ -263,12 +269,14 @@ export default function Sidebar() {
       });
 
       if (!resp.success || !resp.data) {
-        if (resp.error?.code === 'UNAUTHORIZED') {
-          alert('登录已过期或无效，请重新登录');
+        const errorCode = resp.error?.code ?? null;
+        if (errorCode === 'UNAUTHORIZED') {
           logout();
           return;
         }
-        setInlineError(resp.error?.message || '创建群组失败');
+        if (!isSystemErrorCode(errorCode)) {
+          setInlineError(resp.error?.message || '创建群组失败');
+        }
         return;
       }
 
@@ -279,7 +287,6 @@ export default function Sidebar() {
       setCreateOpen(false);
     } catch (err) {
       console.error('Failed to create group:', err);
-      setInlineError('创建群组失败');
     } finally {
       setBusy(null);
     }
@@ -319,12 +326,14 @@ export default function Sidebar() {
         content,
       });
       if (!uploadResp.success || !uploadResp.data) {
-        if (uploadResp.error?.code === 'UNAUTHORIZED') {
-          alert('登录已过期或无效，请重新登录');
+        const errorCode = uploadResp.error?.code ?? null;
+        if (errorCode === 'UNAUTHORIZED') {
           logout();
           return;
         }
-        alert(uploadResp.error?.message || '上传 PRD 失败');
+        if (!isSystemErrorCode(errorCode)) {
+          alert(uploadResp.error?.message || '上传 PRD 失败');
+        }
         return;
       }
 
@@ -333,7 +342,10 @@ export default function Sidebar() {
         prdDocumentId: uploadResp.data.document.id,
       });
       if (!bindResp.success) {
-        alert(bindResp.error?.message || '绑定 PRD 失败');
+        const errorCode = bindResp.error?.code ?? null;
+        if (!isSystemErrorCode(errorCode)) {
+          alert(bindResp.error?.message || '绑定 PRD 失败');
+        }
         return;
       }
 
@@ -341,7 +353,6 @@ export default function Sidebar() {
       await openGroupSession(activeGroupId);
     } catch (err) {
       console.error('Failed to upload/bind PRD:', err);
-      alert('上传/绑定 PRD 失败');
     } finally {
       setBusy(null);
     }

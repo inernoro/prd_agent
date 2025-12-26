@@ -11,6 +11,8 @@ import ChatContainer from './components/Chat/ChatContainer';
 import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
 import LoginPage from './components/Auth/LoginPage';
 import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
+import SystemErrorModal from './components/Feedback/SystemErrorModal';
+import { isSystemErrorCode } from './lib/systemError';
 import type { ApiResponse, Document, Session, UserRole } from './types';
 
 function App() {
@@ -85,7 +87,11 @@ function App() {
         });
 
         if (!joinResp.success || !joinResp.data) {
-          alert(joinResp.error?.message || '加入群组失败');
+          const code = joinResp.error?.code ?? null;
+          // 系统性错误已由 invoke 层弹窗接管，这里只处理业务提示
+          if (!isSystemErrorCode(code)) {
+            alert(joinResp.error?.message || '加入群组失败');
+          }
           return;
         }
 
@@ -113,7 +119,7 @@ function App() {
         setSession(session, docResp.data);
       } catch (err) {
         console.error('Failed to handle deep link join:', err);
-        alert('处理邀请链接失败');
+        // invoke reject 已由全局弹窗接管
       } finally {
         setPendingInviteCode(null);
       }
@@ -155,6 +161,9 @@ function App() {
         {/* 引用小抽屉预览（不影响全屏 PrdPreviewPage 的引用浮层） */}
         <PrdCitationPreviewDrawer />
       </div>
+
+      {/* 全局系统级错误弹窗（invoke 层统一拦截触发） */}
+      <SystemErrorModal />
     </div>
   );
 }

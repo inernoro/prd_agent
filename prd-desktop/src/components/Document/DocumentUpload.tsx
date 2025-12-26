@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '../../lib/tauri';
+import { isSystemErrorCode } from '../../lib/systemError';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
@@ -94,7 +95,6 @@ export default function DocumentUpload() {
 
         if (!createResp.success || !createResp.data) {
           if (createResp.error?.code === 'UNAUTHORIZED') {
-            setError('登录已过期或无效，请退出后重新登录');
             logout();
             return;
           }
@@ -140,10 +140,15 @@ export default function DocumentUpload() {
 
         setSession(session, response.data.document);
       } else {
-        setError(response.error?.message || '上传失败');
+        const code = response.error?.code ?? null;
+        // 系统性错误交给全局弹窗接管，避免重复提示
+        if (!isSystemErrorCode(code)) {
+          setError(response.error?.message || '上传失败');
+        }
       }
     } catch (err) {
-      setError(String(err));
+      // invoke reject 已由全局弹窗接管
+      console.error('Upload failed:', err);
     } finally {
       setLoading(false);
     }

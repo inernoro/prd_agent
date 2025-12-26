@@ -1452,14 +1452,15 @@ export default function AdvancedImageMasterTab() {
 
   const resolvedSizeForGen = imageGenSize;
 
-  const onUploadImages = async (files: File[]) => {
+  const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
     const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (list.length === 0) return;
 
     // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
     const run = async () => {
     // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
-    if (list.length === 1 && selectedKeys.length === 1) {
+    const mode = opts?.mode ?? 'auto';
+    if (mode === 'auto' && list.length === 1 && selectedKeys.length === 1) {
       const targetKey = selectedKeys[0]!;
       const target = canvas.find((x) => x.key === targetKey);
       if (!target || (target.kind ?? 'image') !== 'image') {
@@ -1660,6 +1661,59 @@ export default function AdvancedImageMasterTab() {
     await canvasOpLockRef.current;
   };
 
+  const stageHoverRef = useRef(false);
+  const onUploadImagesRef = useRef(onUploadImages);
+  useEffect(() => {
+    onUploadImagesRef.current = onUploadImages;
+  });
+
+  // 画板支持 Ctrl/Cmd+V 粘贴图片（作为“新增一项”，不走替换逻辑）
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const cd = e.clipboardData;
+      if (!cd) return;
+
+      // 正在编辑输入框时，不劫持粘贴（允许用户在文本框内粘贴文本/图片）
+      const ae = document.activeElement as HTMLElement | null;
+      const tag = (ae?.tagName ?? '').toLowerCase();
+      const isEditable =
+        tag === 'textarea' ||
+        tag === 'input' ||
+        Boolean(ae?.isContentEditable) ||
+        Boolean(ae?.getAttribute?.('contenteditable'));
+      if (isEditable) return;
+
+      // 只有“在画板上操作”时才接管粘贴：画板 hover 或画板获得焦点
+      const stageEl = stageRef.current;
+      const isInStage =
+        (stageEl && ae && stageEl.contains(ae)) ||
+        stageHoverRef.current;
+      if (!isInStage) return;
+
+      const items = Array.from(cd.items ?? []);
+      const clipboardFiles = items
+        .filter((it) => it.kind === 'file' && (it.type || '').startsWith('image/'))
+        .map((it) => it.getAsFile())
+        .filter((x): x is File => Boolean(x));
+      if (clipboardFiles.length === 0) return;
+
+      e.preventDefault();
+
+      const now = Date.now();
+      const files = clipboardFiles.map((f, idx) => {
+        const type = (f.type || 'image/png').toLowerCase();
+        const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
+        const name = (f.name && f.name.trim()) ? f.name : `clipboard_${now}_${idx}.${ext}`;
+        return new File([f], name, { type });
+      });
+
+      void onUploadImagesRef.current(files, { mode: 'add' });
+    };
+
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, []);
+
   const templates = [
     { id: 'wine', title: 'Wine List', desc: '生成一张高级红酒海报（克制、留白、金色点缀）' },
     { id: 'coffee', title: 'Coffee Shop Branding', desc: '为咖啡店生成品牌视觉方向与主视觉' },
@@ -1730,6 +1784,9 @@ export default function AdvancedImageMasterTab() {
               cursor: activeTool === 'hand' ? 'grab' : 'default',
             }}
             tabIndex={0}
+            onPointerEnter={() => {
+              stageHoverRef.current = true;
+            }}
             onPointerDownCapture={(e) => {
               if (!placing) return;
               const placed = placeAtPointer(e);
@@ -1786,6 +1843,7 @@ export default function AdvancedImageMasterTab() {
               }
             }}
             onPointerLeave={(e) => {
+              stageHoverRef.current = false;
               // 离开画布也清理 marquee（极端情况下 pointerup 没触发）
               if (!marquee.active) return;
               setMarquee((prev) => ({ ...prev, active: false, w: 0, h: 0 }));
