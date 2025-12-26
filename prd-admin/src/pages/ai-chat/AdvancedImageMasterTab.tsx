@@ -260,6 +260,11 @@ export default function AdvancedImageMasterTab() {
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
   const enabledImageModels = useMemo(() => (models ?? []).filter((m) => m.enabled && m.isImageGen), [models]);
+  // 提示词模式：按账号持久化（不写 DB）
+  // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
+  // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
+  const directPromptKey = userId ? `prdAdmin.imageMaster.directPrompt.${userId}` : '';
+  const [directPrompt, setDirectPrompt] = useState(false);
   const effectiveModel = useMemo(() => {
     const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
     if (modelPrefAuto) return serverDefaultModel;
@@ -270,7 +275,8 @@ export default function AdvancedImageMasterTab() {
     {
       id: 'assistant-hello',
       role: 'Assistant',
-      content: 'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词，并把结果放到左侧画板。',
+      content:
+        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在“模型偏好”里开启“直连”。',
       ts: Date.now(),
     },
   ]);
@@ -300,9 +306,15 @@ export default function AdvancedImageMasterTab() {
   const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
 
+  const HOVER_MENU_CLOSE_DELAY_MS = 320;
+
   const [activeTool, setActiveTool] = useState<CanvasTool>('select');
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const toolMenuCloseTimerRef = useRef<number | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuCloseTimerRef = useRef<number | null>(null);
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
+  const shapeMenuCloseTimerRef = useRef<number | null>(null);
 
   const [placing, setPlacing] = useState<CanvasPlacing>(null);
   const [textEdit, setTextEdit] = useState<{ open: boolean; key: string; value: string }>({ open: false, key: '', value: '' });
@@ -483,6 +495,29 @@ export default function AdvancedImageMasterTab() {
       // ignore
     }
   }, [modelPrefAuto, modelPrefKey, modelPrefModelId]);
+
+  // 读取直连模式（仅在有 userId 时）
+  useEffect(() => {
+    if (!directPromptKey) return;
+    try {
+      const raw = localStorage.getItem(directPromptKey);
+      if (raw == null) return;
+      if (raw === '1' || raw === 'true') setDirectPrompt(true);
+      if (raw === '0' || raw === 'false') setDirectPrompt(false);
+    } catch {
+      // ignore
+    }
+  }, [directPromptKey]);
+
+  // 写入直连模式
+  useEffect(() => {
+    if (!directPromptKey) return;
+    try {
+      localStorage.setItem(directPromptKey, directPrompt ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [directPrompt, directPromptKey]);
 
   // 如果手动选中的模型被禁用/不存在，自动回退到“自动”
   useEffect(() => {
@@ -1105,7 +1140,10 @@ export default function AdvancedImageMasterTab() {
 
   const runFromText = async (displayText: string, requestText: string, primaryRef: CanvasImageItem | null) => {
     const display = String(displayText ?? '').trim();
-    const forcedPick = extractForcedImageModel(requestText);
+    // 直连模式：解析 @model(...) 只用于“强制选模型”，不应当把标记本身发给生图 prompt
+    const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
+
+    const forcedPick = extractForcedImageModel(directPrompt ? displayText : requestText);
     const reqText = String(forcedPick.clean ?? '').trim();
     if (!reqText) return;
     const pickedModel = forcedPick.forced ?? effectiveModel;
@@ -1120,25 +1158,38 @@ export default function AdvancedImageMasterTab() {
     setBusy(true);
     pushMsg('User', display || reqText);
 
-    let plan: ImageGenPlanResponse | null = null;
-    try {
-      const pres = await planImageGen({ text: reqText, maxItems: 8 });
-      if (!pres.success) {
-        const msg = pres.error?.message || '解析失败';
+    let items: Array<{ prompt: string }> = [];
+    let firstPrompt = '';
+    if (directPrompt) {
+      firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
+      if (!firstPrompt) {
+        const msg = '内容为空';
+        setError(msg);
+        pushMsg('Assistant', `生成失败：${msg}`);
+        return;
+      }
+    } else {
+      let plan: ImageGenPlanResponse | null = null;
+      try {
+        const pres = await planImageGen({ text: reqText, maxItems: 8 });
+        if (!pres.success) {
+          const msg = pres.error?.message || '解析失败';
+          setError(msg);
+          pushMsg('Assistant', `解析失败：${msg}`);
+          return;
+        }
+        plan = pres.data ?? null;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '网络错误';
         setError(msg);
         pushMsg('Assistant', `解析失败：${msg}`);
         return;
       }
-      plan = pres.data ?? null;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '网络错误';
-      setError(msg);
-      pushMsg('Assistant', `解析失败：${msg}`);
-      return;
-    }
 
-    const items = Array.isArray(plan?.items) ? plan!.items : [];
-    const firstPrompt = String(items[0]?.prompt ?? '').trim() || reqText;
+      items = Array.isArray(plan?.items) ? (plan!.items as Array<{ prompt: string }>) : [];
+      const fallbackPrompt = stripModelMention(reqText) || reqText;
+      firstPrompt = String(items[0]?.prompt ?? '').trim() || fallbackPrompt;
+    }
 
     const pickedIsVolcesSeedream = /volces|doubao|seedream/i.test(String(pickedModel?.modelName || ''));
 
@@ -1146,10 +1197,12 @@ export default function AdvancedImageMasterTab() {
       'Assistant',
       [
         `本次使用模型：${pickedModel?.name || pickedModel?.modelName}${forcedPick.forced ? '（@ 强制）' : ''}`,
-        `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
-        items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
+        directPrompt ? '直连模式：输入将原样作为提示词发送（未进行解析/改写）。' : `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
+        !directPrompt && items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
         (primaryRef || selected) && pickedIsVolcesSeedream
-          ? '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
+          ? directPrompt
+            ? '你选择了首帧图，但当前模型（seedream/Volces）通常不支持标准图生图首帧；且你开启了直连模式，本次不会自动做“风格提取→拼进提示词”，可能导致生成失败。需要该能力请关闭直连。'
+            : '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
           : (primaryRef || selected)
             ? '你已选中一张图片作为参考图。本次将作为图生图参考传给生图接口（若上游平台不支持，会返回参数错误）。'
             : '',
@@ -1276,33 +1329,31 @@ export default function AdvancedImageMasterTab() {
       });
 
       // 上传并持久化资产：把外部签名 URL / base64 转为自托管 URL（避免过期）
-      if (masterSession?.id) {
-        const width = resolvedSizeForGen.startsWith('1024') ? 1024 : resolvedSizeForGen.startsWith('768') ? 768 : resolvedSizeForGen.startsWith('512') ? 512 : undefined;
-        const height = resolvedSizeForGen.endsWith('1024') ? 1024 : resolvedSizeForGen.endsWith('768') ? 768 : resolvedSizeForGen.endsWith('512') ? 512 : undefined;
-        const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
-        if (!isAlreadyHosted) {
-          const up = await uploadImageAsset({
-            data: src.startsWith('data:') ? src : undefined,
-            sourceUrl: src.startsWith('http') ? src : undefined,
-            prompt: firstPrompt,
-            width,
-            height,
-          });
-          if (up.success) {
-            const a = up.data.asset;
-            setCanvas((prev) =>
-              prev.map((x) =>
-                x.key === key
-                  ? {
-                      ...x,
-                      assetId: a.id,
-                      sha256: a.sha256,
-                      src: a.url || x.src,
-                    }
-                  : x
-              )
-            );
-          }
+      const width = resolvedSizeForGen.startsWith('1024') ? 1024 : resolvedSizeForGen.startsWith('768') ? 768 : resolvedSizeForGen.startsWith('512') ? 512 : undefined;
+      const height = resolvedSizeForGen.endsWith('1024') ? 1024 : resolvedSizeForGen.endsWith('768') ? 768 : resolvedSizeForGen.endsWith('512') ? 512 : undefined;
+      const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
+      if (!isAlreadyHosted) {
+        const up = await uploadImageAsset({
+          data: src.startsWith('data:') ? src : undefined,
+          sourceUrl: src.startsWith('http') ? src : undefined,
+          prompt: firstPrompt,
+          width,
+          height,
+        });
+        if (up.success) {
+          const a = up.data.asset;
+          setCanvas((prev) =>
+            prev.map((x) =>
+              x.key === key
+                ? {
+                    ...x,
+                    assetId: a.id,
+                    sha256: a.sha256,
+                    src: a.url || x.src,
+                  }
+                : x
+            )
+          );
         }
       }
     } finally {
@@ -1485,23 +1536,21 @@ export default function AdvancedImageMasterTab() {
       pushMsg('Assistant', '已替换当前选中图片。');
 
       // 持久化替换后的图片
-      if (masterSession?.id) {
-        const up = await uploadImageAsset({ data: src, prompt: file.name || 'uploaded' });
-        if (up.success) {
-          const a = up.data.asset;
-          setCanvas((prev) =>
-            prev.map((x) =>
-              x.key === targetKey
-                ? {
-                    ...x,
-                    assetId: a.id,
-                    sha256: a.sha256,
-                    src: a.url || x.src,
-                  }
-                : x
-            )
-          );
-        }
+      const up = await uploadImageAsset({ data: src, prompt: file.name || 'uploaded' });
+      if (up.success) {
+        const a = up.data.asset;
+        setCanvas((prev) =>
+          prev.map((x) =>
+            x.key === targetKey
+              ? {
+                  ...x,
+                  assetId: a.id,
+                  sha256: a.sha256,
+                  src: a.url || x.src,
+                }
+              : x
+          )
+        );
       }
       return;
       }
@@ -1585,28 +1634,26 @@ export default function AdvancedImageMasterTab() {
     pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
-    if (masterSession?.id) {
-      void (async () => {
-        for (const it of added) {
-          if (!it.src || !it.src.startsWith('data:')) continue;
-          const up = await uploadImageAsset({ data: it.src, prompt: it.prompt });
-          if (!up.success) continue;
-          const a = up.data.asset;
-          setCanvas((prev) =>
-            prev.map((x) =>
-              x.key === it.key
-                ? {
-                    ...x,
-                    assetId: a.id,
-                    sha256: a.sha256,
-                    src: a.url || x.src,
-                  }
-                : x
-            )
-          );
-        }
-      })();
-    }
+    void (async () => {
+      for (const it of added) {
+        if (!it.src || !it.src.startsWith('data:')) continue;
+        const up = await uploadImageAsset({ data: it.src, prompt: it.prompt });
+        if (!up.success) continue;
+        const a = up.data.asset;
+        setCanvas((prev) =>
+          prev.map((x) =>
+            x.key === it.key
+              ? {
+                  ...x,
+                  assetId: a.id,
+                  sha256: a.sha256,
+                  src: a.url || x.src,
+                }
+              : x
+          )
+        );
+      }
+    })();
     };
 
     canvasOpLockRef.current = canvasOpLockRef.current.then(run, run);
@@ -1677,7 +1724,7 @@ export default function AdvancedImageMasterTab() {
           {/* 主画布（无限视口） */}
           <div
             ref={stageRef}
-            className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:!outline-none focus-visible:!shadow-none"
+            className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
               background: 'rgba(0,0,0,0.10)',
               cursor: activeTool === 'hand' ? 'grab' : 'default',
@@ -2481,10 +2528,17 @@ export default function AdvancedImageMasterTab() {
                   toolMenuCloseTimerRef.current = window.setTimeout(() => {
                     setToolMenuOpen(false);
                     toolMenuCloseTimerRef.current = null;
-                  }, 140);
+                  }, HOVER_MENU_CLOSE_DELAY_MS);
                 }}
               >
-                <DropdownMenu.Root open={toolMenuOpen} onOpenChange={setToolMenuOpen}>
+                <DropdownMenu.Root
+                  modal={false}
+                  open={toolMenuOpen}
+                  onOpenChange={(open) => {
+                    // hover 模式：仅允许外部关闭，不要让 Radix 的 open=true 干扰 hover 状态
+                    if (!open) setToolMenuOpen(false);
+                  }}
+                >
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
@@ -2501,7 +2555,7 @@ export default function AdvancedImageMasterTab() {
                     <DropdownMenu.Content
                       side="right"
                       align="start"
-                      sideOffset={12}
+                      sideOffset={8}
                       className="z-50 rounded-[18px] p-2"
                       style={{
                         minWidth: 220,
@@ -2521,9 +2575,18 @@ export default function AdvancedImageMasterTab() {
                         toolMenuCloseTimerRef.current = window.setTimeout(() => {
                           setToolMenuOpen(false);
                           toolMenuCloseTimerRef.current = null;
-                        }, 140);
+                        }, HOVER_MENU_CLOSE_DELAY_MS);
                       }}
                     >
+                      <div className="px-2 pb-2">
+                        <div className="text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                          悬浮 - 展开菜单
+                        </div>
+                        <div className="mt-0.5 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                          点按 - 选择工具
+                        </div>
+                        <div className="mt-2 h-px" style={{ background: 'rgba(0,0,0,0.10)' }} />
+                      </div>
                       <button
                         type="button"
                         className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
@@ -2537,8 +2600,9 @@ export default function AdvancedImageMasterTab() {
                         <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
                           Select
                         </span>
-                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
-                          V
+                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
+                          <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
+                          <span style={{ color: 'rgba(0,0,0,0.35)' }}>V</span>
                         </span>
                       </button>
                       <button
@@ -2554,8 +2618,9 @@ export default function AdvancedImageMasterTab() {
                         <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
                           Hand tool
                         </span>
-                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
-                          H
+                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
+                          <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
+                          <span style={{ color: 'rgba(0,0,0,0.35)' }}>H</span>
                         </span>
                       </button>
                       <button
@@ -2567,8 +2632,9 @@ export default function AdvancedImageMasterTab() {
                         <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
                           Mark
                         </span>
-                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
-                          M
+                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
+                          <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
+                          <span style={{ color: 'rgba(0,0,0,0.35)' }}>M</span>
                         </span>
                       </button>
                       <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
@@ -2578,168 +2644,267 @@ export default function AdvancedImageMasterTab() {
               </div>
 
               {/* +新增 */}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                    style={{ color: 'rgba(255,255,255,0.86)' }}
-                    title="新增"
-                    aria-label="新增"
-                  >
-                    <span className="text-[22px] leading-none font-semibold">+</span>
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    side="right"
-                    align="start"
-                    sideOffset={12}
-                    className="z-50 rounded-[18px] p-3"
-                    style={{
-                      minWidth: 260,
-                      background: 'rgba(255,255,255,0.92)',
-                      border: '1px solid rgba(0,0,0,0.08)',
-                      boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
-                      color: '#0b0b0f',
-                    }}
-                  >
-                    <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
-                      新增
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      <button
-                        type="button"
-                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
-                        onClick={() => fileRef.current?.click()}
-                      >
-                        <ImagePlus size={18} color="#0b0b0f" />
-                        <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
-                          上传图片
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
-                        disabled
-                      >
-                        <Video size={18} color="#0b0b0f" />
-                        <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
-                          上传视频
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
-                        disabled
-                      >
-                        <span className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black" style={{ color: 'rgba(11,11,15,0.65)' }}>
-                          #
-                        </span>
-                        <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
-                          智能画板
-                        </span>
-                        <span className="ml-auto text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.35)' }}>
-                          F
-                        </span>
-                      </button>
-                    </div>
-                    <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              <div
+                onPointerEnter={() => {
+                  if (addMenuCloseTimerRef.current != null) {
+                    window.clearTimeout(addMenuCloseTimerRef.current);
+                    addMenuCloseTimerRef.current = null;
+                  }
+                  setAddMenuOpen(true);
+                }}
+                onPointerLeave={() => {
+                  if (addMenuCloseTimerRef.current != null) window.clearTimeout(addMenuCloseTimerRef.current);
+                  addMenuCloseTimerRef.current = window.setTimeout(() => {
+                    setAddMenuOpen(false);
+                    addMenuCloseTimerRef.current = null;
+                  }, HOVER_MENU_CLOSE_DELAY_MS);
+                }}
+              >
+                <DropdownMenu.Root
+                  modal={false}
+                  open={addMenuOpen}
+                  onOpenChange={(open) => {
+                    if (!open) setAddMenuOpen(false);
+                  }}
+                >
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
+                      style={{ color: 'rgba(255,255,255,0.86)' }}
+                      title="新增"
+                      aria-label="新增"
+                    >
+                      <span className="text-[22px] leading-none font-semibold">+</span>
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="right"
+                      align="start"
+                      sideOffset={8}
+                      className="z-50 rounded-[18px] p-3"
+                      style={{
+                        minWidth: 260,
+                        background: 'rgba(255,255,255,0.92)',
+                        border: '1px solid rgba(0,0,0,0.08)',
+                        boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                        color: '#0b0b0f',
+                      }}
+                      onPointerEnter={() => {
+                        if (addMenuCloseTimerRef.current != null) {
+                          window.clearTimeout(addMenuCloseTimerRef.current);
+                          addMenuCloseTimerRef.current = null;
+                        }
+                      }}
+                      onPointerLeave={() => {
+                        if (addMenuCloseTimerRef.current != null) window.clearTimeout(addMenuCloseTimerRef.current);
+                        addMenuCloseTimerRef.current = window.setTimeout(() => {
+                          setAddMenuOpen(false);
+                          addMenuCloseTimerRef.current = null;
+                        }, HOVER_MENU_CLOSE_DELAY_MS);
+                      }}
+                    >
+                      <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                        新增
+                      </div>
+                      <div className="mt-2 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        悬浮 - 展开菜单
+                      </div>
+                      <div className="mt-0.5 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        点按 - 执行操作
+                      </div>
+                      <div className="mt-2 h-px" style={{ background: 'rgba(0,0,0,0.10)' }} />
+
+                      <div className="mt-3 grid gap-2">
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                          onClick={() => {
+                            setAddMenuOpen(false);
+                            fileRef.current?.click();
+                          }}
+                        >
+                          <ImagePlus size={18} color="#0b0b0f" />
+                          <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                            上传图片
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
+                          disabled
+                        >
+                          <Video size={18} color="#0b0b0f" />
+                          <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                            上传视频
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
+                          disabled
+                        >
+                          <span
+                            className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black"
+                            style={{ color: 'rgba(11,11,15,0.65)' }}
+                          >
+                            #
+                          </span>
+                          <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                            智能画板
+                          </span>
+                          <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
+                            <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
+                            <span style={{ color: 'rgba(0,0,0,0.35)' }}>F</span>
+                          </span>
+                        </button>
+                      </div>
+                      <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
 
               {/* 形状 */}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                    style={{ color: 'rgba(255,255,255,0.86)' }}
-                    title="形状"
-                    aria-label="形状"
-                  >
-                    <Square size={18} />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    side="right"
-                    align="start"
-                    sideOffset={12}
-                    className="z-50 rounded-[18px] p-3"
-                    style={{
-                      minWidth: 320,
-                      background: 'rgba(255,255,255,0.92)',
-                      border: '1px solid rgba(0,0,0,0.08)',
-                      boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
-                    }}
-                  >
-                    <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
-                      形状
-                    </div>
-                    <div className="mt-3 grid grid-cols-4 gap-3">
-                      <button
-                        type="button"
-                        className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
-                        title="矩形"
-                        aria-label="矩形"
-                        onClick={() => {
-                          setActiveTool('select');
-                          setPlacing({ kind: 'shape', shapeType: 'rect' });
-                          stageRef.current?.focus();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10"
-                        title="圆形"
-                        aria-label="圆形"
-                        onClick={() => {
-                          setActiveTool('select');
-                          setPlacing({ kind: 'shape', shapeType: 'circle' });
-                          stageRef.current?.focus();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
-                        style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }}
-                        title="三角形"
-                        aria-label="三角形"
-                        onClick={() => {
-                          setActiveTool('select');
-                          setPlacing({ kind: 'shape', shapeType: 'triangle' });
-                          stageRef.current?.focus();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
-                        style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }}
-                        title="星形"
-                        aria-label="星形"
-                        onClick={() => {
-                          setActiveTool('select');
-                          setPlacing({ kind: 'shape', shapeType: 'star' });
-                          stageRef.current?.focus();
-                        }}
-                      />
-                    </div>
-                    <div className="mt-4 text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
-                      形状文本
-                    </div>
-                    <div className="mt-3 grid grid-cols-5 gap-3">
-                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                      <button type="button" className="h-12 rounded-[999px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                      <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                    </div>
-                    <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              <div
+                onPointerEnter={() => {
+                  if (shapeMenuCloseTimerRef.current != null) {
+                    window.clearTimeout(shapeMenuCloseTimerRef.current);
+                    shapeMenuCloseTimerRef.current = null;
+                  }
+                  setShapeMenuOpen(true);
+                }}
+                onPointerLeave={() => {
+                  if (shapeMenuCloseTimerRef.current != null) window.clearTimeout(shapeMenuCloseTimerRef.current);
+                  shapeMenuCloseTimerRef.current = window.setTimeout(() => {
+                    setShapeMenuOpen(false);
+                    shapeMenuCloseTimerRef.current = null;
+                  }, HOVER_MENU_CLOSE_DELAY_MS);
+                }}
+              >
+                <DropdownMenu.Root
+                  modal={false}
+                  open={shapeMenuOpen}
+                  onOpenChange={(open) => {
+                    if (!open) setShapeMenuOpen(false);
+                  }}
+                >
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
+                      style={{ color: 'rgba(255,255,255,0.86)' }}
+                      title="形状"
+                      aria-label="形状"
+                    >
+                      <Square size={18} />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="right"
+                      align="start"
+                      sideOffset={8}
+                      className="z-50 rounded-[18px] p-3"
+                      style={{
+                        minWidth: 320,
+                        background: 'rgba(255,255,255,0.92)',
+                        border: '1px solid rgba(0,0,0,0.08)',
+                        boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                      }}
+                      onPointerEnter={() => {
+                        if (shapeMenuCloseTimerRef.current != null) {
+                          window.clearTimeout(shapeMenuCloseTimerRef.current);
+                          shapeMenuCloseTimerRef.current = null;
+                        }
+                      }}
+                      onPointerLeave={() => {
+                        if (shapeMenuCloseTimerRef.current != null) window.clearTimeout(shapeMenuCloseTimerRef.current);
+                        shapeMenuCloseTimerRef.current = window.setTimeout(() => {
+                          setShapeMenuOpen(false);
+                          shapeMenuCloseTimerRef.current = null;
+                        }, HOVER_MENU_CLOSE_DELAY_MS);
+                      }}
+                    >
+                      <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                        形状
+                      </div>
+                      <div className="mt-2 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        悬浮 - 展开菜单
+                      </div>
+                      <div className="mt-0.5 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        点按 - 在画布放置
+                      </div>
+                      <div className="mt-2 h-px" style={{ background: 'rgba(0,0,0,0.10)' }} />
+
+                      <div className="mt-3 grid grid-cols-4 gap-3">
+                        <button
+                          type="button"
+                          className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                          title="矩形"
+                          aria-label="矩形"
+                          onClick={() => {
+                            setShapeMenuOpen(false);
+                            setActiveTool('select');
+                            setPlacing({ kind: 'shape', shapeType: 'rect' });
+                            stageRef.current?.focus();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10"
+                          title="圆形"
+                          aria-label="圆形"
+                          onClick={() => {
+                            setShapeMenuOpen(false);
+                            setActiveTool('select');
+                            setPlacing({ kind: 'shape', shapeType: 'circle' });
+                            stageRef.current?.focus();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                          style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }}
+                          title="三角形"
+                          aria-label="三角形"
+                          onClick={() => {
+                            setShapeMenuOpen(false);
+                            setActiveTool('select');
+                            setPlacing({ kind: 'shape', shapeType: 'triangle' });
+                            stageRef.current?.focus();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                          style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }}
+                          title="星形"
+                          aria-label="星形"
+                          onClick={() => {
+                            setShapeMenuOpen(false);
+                            setActiveTool('select');
+                            setPlacing({ kind: 'shape', shapeType: 'star' });
+                            stageRef.current?.focus();
+                          }}
+                        />
+                      </div>
+                      <div className="mt-4 text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                        形状文本
+                      </div>
+                      <div className="mt-3 grid grid-cols-5 gap-3">
+                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                        <button type="button" className="h-12 rounded-[999px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                      </div>
+                      <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
 
               {/* 文字 */}
               <button
@@ -2756,6 +2921,9 @@ export default function AdvancedImageMasterTab() {
               >
                 <Type size={18} />
               </button>
+
+              {/* 分隔线（图1 中间那根杠）：区分“编辑工具”与“生成器/媒体” */}
+              <div className="my-1 h-px" style={{ background: 'rgba(255,255,255,0.12)' }} aria-hidden="true" />
 
               {/* 图像生成器 */}
               <button
@@ -3277,6 +3445,23 @@ export default function AdvancedImageMasterTab() {
                               自动
                             </span>
                             <Switch checked={modelPrefAuto} onCheckedChange={(v) => setModelPrefAuto(v)} ariaLabel="自动选择模型" />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              提示词模式
+                            </div>
+                            <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                              直连开启后不再调用解析接口，输入原样作为 prompt
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                              直连
+                            </span>
+                            <Switch checked={directPrompt} onCheckedChange={(v) => setDirectPrompt(v)} ariaLabel="直连模式（不解析）" />
                           </div>
                         </div>
 
