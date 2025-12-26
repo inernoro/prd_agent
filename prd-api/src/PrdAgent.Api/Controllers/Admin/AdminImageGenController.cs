@@ -110,9 +110,10 @@ public class AdminImageGenController : ControllerBase
             }
 
             // 统一限制：最多 20 张
-            if (plan.Total <= 0)
+            // 允许空清单：当文档中未识别到任何插图提示词时，返回 total=0 items=[]
+            if (plan.Total < 0)
             {
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "解析失败：total 必须 > 0"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "解析失败：total 不合法"));
             }
             if (plan.Total > 20)
             {
@@ -627,12 +628,6 @@ public class AdminImageGenController : ControllerBase
             }
 
             // total 以 items 汇总为准（避免模型输出不一致）
-            if (items.Count == 0)
-            {
-                error = "解析失败：items 为空";
-                return null;
-            }
-
             return new ParsedPlan { Total = total, Items = items };
         }
         catch

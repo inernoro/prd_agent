@@ -2653,7 +2653,7 @@ export default function LlmLabTab() {
                   })}
                 </div>
               </div>
-              {imageSubMode === 'batch' && planResult?.total ? (
+              {imageSubMode === 'batch' && planResult ? (
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   已解析：{planResult.total} 张
                 </span>
@@ -2676,7 +2676,7 @@ export default function LlmLabTab() {
             placeholder={
               mainMode === 'infer'
                 ? mode === 'imageGenPlan'
-                  ? '粘贴文章/PRD/需求（系统会用内置“生图意图解析”提示词生成 JSON：{total, items:[{prompt,count}] }）'
+                  ? '粘贴文章/PRD/需求（系统会用内置“生图意图解析”提示词生成 JSON：{total, items:[{prompt,count,size?}] }）'
                   : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
                 : imageSubMode === 'single'
                   ? '输入要生成的图片描述（将直接交给生图模型）'
