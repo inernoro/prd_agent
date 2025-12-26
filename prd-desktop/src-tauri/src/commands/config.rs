@@ -12,12 +12,15 @@ use crate::services::api_client;
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub api_base_url: String,
+    #[serde(default)]
+    pub is_developer: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             api_base_url: api_client::get_default_api_url(),
+            is_developer: false,
         }
     }
 }

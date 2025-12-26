@@ -3,11 +3,11 @@ import { invoke } from '../lib/tauri';
 
 interface AppConfig {
   apiBaseUrl: string;
+  isDeveloper: boolean;
 }
 
 interface SettingsState {
   config: AppConfig | null;
-  defaultApiUrl: string;
   isLoading: boolean;
   isModalOpen: boolean;
   
@@ -19,23 +19,19 @@ interface SettingsState {
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   config: null,
-  defaultApiUrl: 'http://localhost:5000',
   isLoading: false,
   isModalOpen: false,
 
   loadConfig: async () => {
     set({ isLoading: true });
     try {
-      const [config, defaultUrl] = await Promise.all([
-        invoke<AppConfig>('get_config'),
-        invoke<string>('get_default_api_url'),
-      ]);
-      set({ config, defaultApiUrl: defaultUrl });
+      const config = await invoke<AppConfig>('get_config');
+      set({ config });
     } catch (err) {
       console.error('Failed to load config:', err);
       // 使用默认配置
       set({
-        config: { apiBaseUrl: get().defaultApiUrl },
+        config: { apiBaseUrl: 'https://pa.759800.com', isDeveloper: false },
       });
     } finally {
       set({ isLoading: false });

@@ -16,6 +16,7 @@ import {
   createPlatform,
   deleteModel,
   deletePlatform,
+  getImageGenSizeCaps,
   getLlmModelStats,
   getModels,
   getPlatforms,
@@ -268,6 +269,7 @@ export default function ModelManagePage() {
   const [modelStatsDays, setModelStatsDays] = useState(7);
   const [modelStatsByModel, setModelStatsByModel] = useState<Record<string, AggregatedModelStats>>({});
   const [modelStatsLoading, setModelStatsLoading] = useState(false);
+  const [imageGenSizeCapsByModelId, setImageGenSizeCapsByModelId] = useState<Record<string, { allowedCount: number; updatedAt: string }>>({});
   const [densityMode, setDensityMode] = useState<'compact' | 'detailed'>('compact');
   const [expandedStatsModelIds, setExpandedStatsModelIds] = useState<Set<string>>(new Set());
   const [allStatsExpanded, setAllStatsExpanded] = useState(false);
@@ -290,12 +292,21 @@ export default function ModelManagePage() {
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      const [p, m] = await Promise.all([getPlatforms(), getModels()]);
+      const [p, m, caps] = await Promise.all([getPlatforms(), getModels(), getImageGenSizeCaps()]);
       if (p.success) {
         setPlatforms(p.data);
         setSelectedPlatformId((cur) => (cur ? cur : '__all__'));
       }
       if (m.success) setModels(m.data);
+      if (caps.success) {
+        const map: Record<string, { allowedCount: number; updatedAt: string }> = {};
+        for (const it of caps.data?.items ?? []) {
+          const mid = String(it.modelId ?? '').trim();
+          if (!mid) continue;
+          map[mid] = { allowedCount: Number(it.allowedCount ?? 0), updatedAt: String(it.updatedAt ?? '') };
+        }
+        setImageGenSizeCapsByModelId(map);
+      }
     } finally {
       if (!opts?.silent) setLoading(false);
     }
@@ -1646,6 +1657,23 @@ export default function ModelManagePage() {
                                       <ImagePlus size={16} className={imageGenJustSetId === m.id ? 'main-star-pop' : ''} />
                                     </Button>
                                     </div>
+
+                                    {(() => {
+                                      const caps = imageGenSizeCapsByModelId[m.id];
+                                      if (!m.isImageGen || !caps) return null;
+                                      return (
+                                        <StatLabel
+                                          icon={<ImagePlus size={12} />}
+                                          text="智能尺寸替换"
+                                          title={`已缓存允许尺寸：${caps.allowedCount} 个${caps.updatedAt ? `（更新于 ${new Date(caps.updatedAt).toLocaleString()}）` : ''}`}
+                                          style={{
+                                            background: 'rgba(168, 85, 247, 0.10)',
+                                            border: '1px solid rgba(168, 85, 247, 0.22)',
+                                            color: 'rgba(168, 85, 247, 0.95)',
+                                          }}
+                                        />
+                                      );
+                                    })()}
 
                                     {/* 更多菜单（使用 Portal，避免被 overflow-hidden 裁剪） */}
                                     <DropdownMenu.Root

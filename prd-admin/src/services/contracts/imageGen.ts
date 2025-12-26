@@ -20,8 +20,16 @@ export type ImageGenImage = {
   revisedPrompt?: string | null;
 };
 
+export type ImageGenGenerateMeta = {
+  requestedSize?: string | null;
+  effectiveSize?: string | null;
+  sizeAdjusted?: boolean;
+  ratioAdjusted?: boolean;
+};
+
 export type ImageGenGenerateResponse = {
   images: ImageGenImage[];
+  meta?: ImageGenGenerateMeta | null;
 };
 
 export type PlanImageGenContract = (input: { text: string; maxItems?: number }) => Promise<ApiResponse<ImageGenPlanResponse>>;
@@ -55,4 +63,18 @@ export type RunImageGenBatchStreamContract = (args: {
   onEvent: (evt: ImageGenBatchStreamEvent) => void;
   signal: AbortSignal;
 }) => Promise<ApiResponse<true>>;
+
+export type ImageGenSizeCapsItem = {
+  modelId?: string | null;
+  platformId?: string | null;
+  modelName?: string | null;
+  allowedCount: number;
+  updatedAt: string;
+};
+
+export type GetImageGenSizeCapsResponse = {
+  items: ImageGenSizeCapsItem[];
+};
+
+export type GetImageGenSizeCapsContract = (input?: { includeFallback?: boolean }) => Promise<ApiResponse<GetImageGenSizeCapsResponse>>;
 

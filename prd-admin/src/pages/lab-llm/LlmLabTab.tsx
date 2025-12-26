@@ -76,6 +76,10 @@ type ImageViewItem = {
   prompt: string;
   /** 实际使用的 size（批量时可能来自单条覆盖）；用于展示/复核 */
   size?: string;
+  requestedSize?: string;
+  effectiveSize?: string;
+  sizeAdjusted?: boolean;
+  ratioAdjusted?: boolean;
   createdAt: number;
   groupId?: string;
   variantIndex?: number;
@@ -1369,6 +1373,8 @@ export default function LlmLabTab() {
           variantIndex: i,
           status: 'running' as const,
           prompt,
+          size: imgSize,
+          requestedSize: imgSize,
           createdAt: now,
           sourceModelId: m.modelId,
           sourceModelName: m.modelName,
@@ -1402,6 +1408,7 @@ export default function LlmLabTab() {
       }
 
       const images = (res.data?.images ?? []) as ImageGenGenerateResponse['images'];
+      const meta = res.data?.meta ?? null;
       setImageItems((prev) => {
         return prev.map((x) => {
           if (x.groupId !== groupId) return x;
@@ -1415,6 +1422,10 @@ export default function LlmLabTab() {
             base64: (img as any).base64 ?? null,
             url: (img as any).url ?? null,
             revisedPrompt: (img as any).revisedPrompt ?? null,
+            requestedSize: String(meta?.requestedSize ?? x.requestedSize ?? imgSize),
+            effectiveSize: String(meta?.effectiveSize ?? x.effectiveSize ?? ''),
+            sizeAdjusted: Boolean(meta?.sizeAdjusted ?? false),
+            ratioAdjusted: Boolean(meta?.ratioAdjusted ?? false),
           };
         });
       });
@@ -1515,11 +1526,13 @@ export default function LlmLabTab() {
             if (evt.event === 'image') {
               const key = `${evtModelId}_${obj.itemIndex ?? 0}-${obj.imageIndex ?? 0}`;
               if (obj.type === 'imageStart') {
+                const reqSize = String(obj.requestedSize ?? obj.size ?? '').trim() || imgSize;
                 const item: ImageViewItem = {
                   key,
                   status: 'running',
                   prompt: String(obj.prompt ?? ''),
-                  size: String(obj.size ?? '').trim() || undefined,
+                  size: reqSize,
+                  requestedSize: reqSize,
                   createdAt: Date.now(),
                   itemIndex: Number(obj.itemIndex ?? 0),
                   imageIndex: Number(obj.imageIndex ?? 0),
@@ -1532,6 +1545,8 @@ export default function LlmLabTab() {
               }
               if (obj.type === 'imageDone') {
                 setBatchItems((p) => {
+                  const reqSize = String(obj.requestedSize ?? obj.size ?? '').trim() || imgSize;
+                  const effSize = String(obj.effectiveSize ?? '').trim() || undefined;
                   const cur = p[key] || {
                     key,
                     createdAt: Date.now(),
@@ -1542,7 +1557,9 @@ export default function LlmLabTab() {
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
-                    size: String(obj.size ?? '').trim() || undefined,
+                    size: reqSize,
+                    requestedSize: reqSize,
+                    effectiveSize: effSize,
                   };
                   return {
                     ...p,
@@ -1552,7 +1569,11 @@ export default function LlmLabTab() {
                       base64: obj.base64 ?? null,
                       url: obj.url ?? null,
                       revisedPrompt: obj.revisedPrompt ?? null,
-                      size: String(obj.size ?? '').trim() || cur.size,
+                      size: effSize || reqSize || cur.size,
+                      requestedSize: reqSize || cur.requestedSize,
+                      effectiveSize: effSize || cur.effectiveSize,
+                      sizeAdjusted: Boolean(obj.sizeAdjusted ?? cur.sizeAdjusted ?? false),
+                      ratioAdjusted: Boolean(obj.ratioAdjusted ?? cur.ratioAdjusted ?? false),
                     },
                   };
                 });
@@ -1560,6 +1581,7 @@ export default function LlmLabTab() {
               }
               if (obj.type === 'imageError') {
                 setBatchItems((p) => {
+                  const reqSize = String(obj.requestedSize ?? obj.size ?? '').trim() || imgSize;
                   const cur = p[key] || {
                     key,
                     createdAt: Date.now(),
@@ -1570,7 +1592,8 @@ export default function LlmLabTab() {
                     sourceModelId: m.modelId,
                     sourceModelName: m.modelName,
                     sourceDisplayName: m.displayName,
-                    size: String(obj.size ?? '').trim() || undefined,
+                    size: reqSize,
+                    requestedSize: reqSize,
                   };
                   return {
                     ...p,
@@ -1578,7 +1601,8 @@ export default function LlmLabTab() {
                       ...cur,
                       status: 'error',
                       errorMessage: obj.errorMessage || '失败',
-                      size: String(obj.size ?? '').trim() || cur.size,
+                      size: reqSize || cur.size,
+                      requestedSize: reqSize || cur.requestedSize,
                     },
                   };
                 });
@@ -3505,6 +3529,11 @@ export default function LlmLabTab() {
                                   {(() => {
                                     const sizeText = String(it.size ?? '').trim() || imgSize;
                                     const ratio = ratioFromSizeString(sizeText) ?? parsePromptSizeMeta(it.prompt).ratio ?? null;
+                                    if (it.sizeAdjusted && it.effectiveSize) {
+                                      const req = String(it.requestedSize ?? sizeText).trim() || sizeText;
+                                      const eff = String(it.effectiveSize ?? '').trim() || sizeText;
+                                      return `${it.ratioAdjusted ? '比例已微调' : '尺寸已替换'}：${req} → ${eff}${ratio ? `（${ratio}）` : ''}`;
+                                    }
                                     return `尺寸：${sizeText}${ratio ? `（${ratio}）` : ''}`;
                                   })()}
                                 </span>

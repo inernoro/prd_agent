@@ -698,9 +698,17 @@ export default function PrdPreviewPage(props?: {
       mo = null;
       // 关键：不要在这里先滚一次（scrollToHeading），否则后续 focusCitation 的 smooth scroll 会再滚一次，
       // 两个动画目标不同会表现为“上下弹跳/回弹”。
-      pendingNavFallbackHeadingRef.current = resolved;
-      pendingNavFocusOnceRef.current = true;
-      applyHighlights(navCitations);
+      // 如果没有 citations（例如 LLM 只在正文里写了“章节4.2/4.3”而后端未下发结构化引用），
+      // 则直接滚动到目标章节即可；否则走“标黄 + 聚焦引用”的路径。
+      if (!Array.isArray(navCitations) || navCitations.length === 0) {
+        pendingNavFallbackHeadingRef.current = null;
+        pendingNavFocusOnceRef.current = false;
+        scrollToHeading(resolved);
+      } else {
+        pendingNavFallbackHeadingRef.current = resolved;
+        pendingNavFocusOnceRef.current = true;
+        applyHighlights(navCitations);
+      }
       // 关键：只“消费掉一次性跳转目标”，保留 citations/activeIndex，
       // 从而避免该 effect 之后因为任何重渲染/索引变化再次把滚动拉回，导致“目录点不动/引用无效/乱跳”。
       consumeNavTarget();

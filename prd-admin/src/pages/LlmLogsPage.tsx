@@ -7,10 +7,11 @@ import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
-import { CheckCircle, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 function codeBoxStyle(): React.CSSProperties {
   return {
@@ -141,6 +142,45 @@ function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
   if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
   if (tone === 'gold') return { background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)', color: 'var(--accent-gold-2)' };
   return { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-muted)' };
+}
+
+function extractImageSizeAdjustmentHint(it: LlmRequestLogListItem): { from?: string; to?: string; ratioAdjusted?: boolean } | null {
+  const reqType = normalizeRequestType(it.requestType);
+  if (!(reqType === 'imagegen' || reqType === 'image_gen' || reqType === 'image-generate')) return null;
+
+  const err = String(it.error ?? '');
+  const ans = String(it.answerPreview ?? '');
+  const text = `${err}\n${ans}`;
+
+  // 1) 优先：error 中的 Auto-adjusted
+  const m1 = /Auto-adjusted image size:\s*([^\s]+)\s*->\s*([^\s]+)/i.exec(text);
+  if (m1) return { from: m1[1], to: m1[2] };
+
+  // 2) 其次：answerPreview JSON（OpenAIImageClient summary 会写入 requestedSize/effectiveSize/ratioAdjusted）
+  if (text.includes('"sizeAdjusted":true')) {
+    const mFrom = /"requestedSize"\s*:\s*"([^"]+)"/.exec(text);
+    const mTo = /"effectiveSize"\s*:\s*"([^"]+)"/.exec(text);
+    const mRatio = /"ratioAdjusted"\s*:\s*(true|false)/.exec(text);
+    return { from: mFrom?.[1], to: mTo?.[1], ratioAdjusted: mRatio?.[1] === 'true' };
+  }
+
+  return null;
+}
+
+function extractAllowedSizesFromAnswerText(answerText: string | null | undefined): string[] {
+  const raw = (answerText ?? '').trim();
+  if (!raw) return [];
+  try {
+    const obj = JSON.parse(raw) as any;
+    const arr = obj?.allowedSizes;
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((x: any) => String(x ?? '').trim())
+      .filter(Boolean)
+      .slice(0, 128);
+  } catch {
+    return [];
+  }
 }
 
 // 判断是否为大模型请求（非外部 HTTP 请求）
@@ -661,6 +701,8 @@ export default function LlmLogsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<LlmRequestLog | null>(null);
+  const [allowedSizesByLogId, setAllowedSizesByLogId] = useState<Record<string, string[]>>({});
+  const [allowedSizesLoadingId, setAllowedSizesLoadingId] = useState<string | null>(null);
   const [copiedHint, setCopiedHint] = useState<string>('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -706,6 +748,22 @@ export default function LlmLogsPage() {
       if (res.success) setDetail(res.data);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const ensureAllowedSizes = async (logId: string) => {
+    const existing = allowedSizesByLogId[logId];
+    if (existing && existing.length) return existing;
+    if (allowedSizesLoadingId === logId) return [];
+    setAllowedSizesLoadingId(logId);
+    try {
+      const res = await getLlmLogDetail(logId);
+      if (!res.success) return [];
+      const sizes = extractAllowedSizesFromAnswerText((res.data?.answerText ?? '') as any);
+      setAllowedSizesByLogId((p) => ({ ...p, [logId]: sizes }));
+      return sizes;
+    } finally {
+      setAllowedSizesLoadingId((cur) => (cur === logId ? null : cur));
     }
   };
 
@@ -989,12 +1047,99 @@ export default function LlmLogsPage() {
                           );
                         })()}
                         {(() => {
+                          const hint = extractImageSizeAdjustmentHint(it);
+                          if (!hint) return null;
+                          const title = hint.from && hint.to ? `智能尺寸替换：${hint.from} → ${hint.to}` : '智能尺寸替换';
+                          const text = hint.ratioAdjusted ? '比例已微调' : '尺寸替换';
+                          return (
+                            <label
+                              className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+                              title={title}
+                              style={{ background: 'rgba(168, 85, 247, 0.10)', border: '1px solid rgba(168, 85, 247, 0.22)', color: 'rgba(168, 85, 247, 0.95)' }}
+                            >
+                              <ImagePlus size={12} />
+                              {text}
+                            </label>
+                          );
+                        })()}
+                        {(() => {
                           const p = String(it.requestPurpose ?? '').trim();
                           if (!p) return null;
                           return (
                             <div className="min-w-0 text-[11px] font-semibold truncate" style={{ color: 'var(--text-muted)' }} title={p}>
                               {p}
                             </div>
+                          );
+                        })()}
+                        {(() => {
+                          // 你提到的 DOM Path 对应的就是这个容器：这里用“明文”把本次替换写出来，并提供下拉展开查看全部尺寸
+                          const hint = extractImageSizeAdjustmentHint(it);
+                          if (!hint?.from || !hint?.to) return null;
+                          const txt = `${hint.ratioAdjusted ? '比例已微调' : '本次尺寸替换'}：${hint.from} → ${hint.to}`;
+                          const sizes = allowedSizesByLogId[it.id] ?? [];
+                          return (
+                            <DropdownMenu.Root
+                              onOpenChange={(open) => {
+                                if (!open) return;
+                                void ensureAllowedSizes(it.id);
+                              }}
+                            >
+                              <DropdownMenu.Trigger asChild>
+                                <button
+                                  type="button"
+                                  className="min-w-0 text-[11px] font-semibold truncate inline-flex items-center gap-1"
+                                  style={{ color: 'rgba(168, 85, 247, 0.95)' }}
+                                  title={txt}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  <span className="truncate">{txt}</span>
+                                  <ChevronDown size={12} className="shrink-0 opacity-90" />
+                                </button>
+                              </DropdownMenu.Trigger>
+                              <DropdownMenu.Portal>
+                                <DropdownMenu.Content
+                                  side="bottom"
+                                  align="start"
+                                  sideOffset={8}
+                                  className="rounded-[12px] p-2 min-w-[260px] max-w-[520px]"
+                                  style={{
+                                    zIndex: 120,
+                                    background: 'var(--bg-elevated)',
+                                    border: '1px solid var(--border-subtle)',
+                                    boxShadow: 'var(--shadow-lg)',
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                    允许尺寸（白名单）
+                                  </div>
+                                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    {allowedSizesLoadingId === it.id ? '加载中…' : sizes.length ? `${sizes.length} 个` : '暂无（可能是旧日志或尚未学习）'}
+                                  </div>
+                                  {sizes.length ? (
+                                    <div
+                                      className="mt-2 rounded-[10px] p-2"
+                                      style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)', maxHeight: 220, overflow: 'auto' }}
+                                    >
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {sizes.map((s, idx) => (
+                                          <span
+                                            key={`${s}-${idx}`}
+                                            className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
+                                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.18)' }}
+                                            title={s}
+                                          >
+                                            {s}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  <DropdownMenu.Arrow className="fill-[var(--bg-elevated)]" />
+                                </DropdownMenu.Content>
+                              </DropdownMenu.Portal>
+                            </DropdownMenu.Root>
                           );
                         })()}
                       </div>

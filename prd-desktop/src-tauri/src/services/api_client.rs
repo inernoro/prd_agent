@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crate::models::{ApiError, ApiResponse};
 
-/// 默认 API 地址，可通过环境变量 API_BASE_URL 覆盖
-const DEFAULT_API_URL: &str = "http://localhost:5000";
+/// 默认 API 地址（非开发者），可通过环境变量 API_BASE_URL 覆盖
+const DEFAULT_API_URL: &str = "https://pa.759800.com";
 
 lazy_static::lazy_static! {
     static ref API_BASE_URL: RwLock<String> = RwLock::new(

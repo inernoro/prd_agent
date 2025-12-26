@@ -1,12 +1,13 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { getAiChatHistory, suggestGroupName, uploadAiChatDocument } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
 import { Maximize2, Minimize2, Paperclip, Plus, Send, Square, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
@@ -246,6 +247,24 @@ export default function AiChatPage() {
   // 新建会话（上传 PRD）
   const [createOpen, setCreateOpen] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
+  // 引用抽屉（右侧展开）
+  const [citationDrawerOpen, setCitationDrawerOpen] = useState(false);
+  const [citationDrawerCitations, setCitationDrawerCitations] = useState<
+    Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>
+  >([]);
+  const [citationDrawerActiveIndex, setCitationDrawerActiveIndex] = useState(0);
+  const openCitationDrawer = useCallback(
+    (citations: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>, idx?: number) => {
+      const cs = Array.isArray(citations) ? citations : [];
+      if (cs.length === 0) return;
+      const i = typeof idx === 'number' && Number.isFinite(idx) ? Math.max(0, Math.min(cs.length - 1, idx)) : 0;
+      setCitationDrawerCitations(cs);
+      setCitationDrawerActiveIndex(i);
+      setCitationDrawerOpen(true);
+    },
+    []
+  );
+
   const [prdText, setPrdText] = useState('');
   const [prdFileName, setPrdFileName] = useState('');
   const prdFileRef = useRef<HTMLInputElement | null>(null);
@@ -747,19 +766,32 @@ export default function AiChatPage() {
                     )}
                     {Array.isArray(m.citations) && m.citations.length > 0 ? (
                       <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                        <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
-                          依据（引用）
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            依据（引用）
+                          </div>
+                          <button
+                            type="button"
+                            className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)' }}
+                            onClick={() => openCitationDrawer(m.citations || [], 0)}
+                            title="右侧展开引用内容"
+                          >
+                            查看引用（{Math.min(m.citations.length, 50)}）
+                          </button>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {m.citations.slice(0, 12).map((c, idx) => (
-                            <span
+                            <button
                               key={`${c.headingId || c.headingTitle || 'c'}-${idx}`}
-                              className="inline-flex items-center rounded-full px-2 py-1 text-[11px]"
+                              type="button"
+                              className="inline-flex items-center rounded-full px-2 py-1 text-[11px] hover:bg-white/5"
                               style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)' }}
                               title={c.excerpt || c.headingTitle || c.headingId || ''}
+                              onClick={() => openCitationDrawer(m.citations || [], idx)}
                             >
                               {(c.headingTitle || c.headingId || '引用').slice(0, 40)}
-                            </span>
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -1002,6 +1034,80 @@ export default function AiChatPage() {
           </div>
         }
       />
+
+      {/* 右侧引用抽屉（AiChat 专用，不依赖 PRD 预览页） */}
+      <DialogPrimitive.Root open={citationDrawerOpen} onOpenChange={setCitationDrawerOpen}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay
+            className="fixed inset-0 z-[120] prd-dialog-overlay"
+            style={{ background: 'rgba(0,0,0,0.55)' }}
+          />
+          <DialogPrimitive.Content
+            className="fixed right-0 top-0 z-[130] h-full w-[440px] max-w-[92vw] flex flex-col"
+            style={{
+              background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+              borderLeft: '1px solid var(--border-default)',
+              boxShadow: '-18px 0 60px rgba(0,0,0,0.45)',
+            }}
+          >
+            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border-default)' }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    引用内容
+                  </div>
+                  <div className="mt-1 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                    {citationDrawerCitations.length > 0
+                      ? `引用 ${Math.min(citationDrawerActiveIndex + 1, citationDrawerCitations.length)}/${citationDrawerCitations.length}`
+                      : '暂无引用'}
+                  </div>
+                </div>
+                <DialogPrimitive.Close
+                  className="h-9 w-9 inline-flex items-center justify-center rounded-[12px] hover:bg-white/5 shrink-0"
+                  style={{ color: 'var(--text-secondary)' }}
+                  aria-label="关闭"
+                  title="关闭"
+                >
+                  ×
+                </DialogPrimitive.Close>
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3">
+              {citationDrawerCitations.map((c, idx) => {
+                const active = idx === citationDrawerActiveIndex;
+                const title = (c.headingTitle || c.headingId || `引用 ${idx + 1}` || '').trim();
+                const excerpt = (c.excerpt || '').trim();
+                return (
+                  <button
+                    key={`${c.headingId || c.headingTitle || 'c'}-${idx}`}
+                    type="button"
+                    className="w-full text-left rounded-[14px] px-3 py-2"
+                    style={{
+                      border: '1px solid var(--border-subtle)',
+                      background: active ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)',
+                      color: 'var(--text-primary)',
+                    }}
+                    onClick={() => setCitationDrawerActiveIndex(idx)}
+                    title={title}
+                  >
+                    <div className="text-xs font-semibold truncate">{title}</div>
+                    {excerpt ? (
+                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)', whiteSpace: 'pre-wrap' }}>
+                        {excerpt}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        （无摘录）
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </div>
   );
 }

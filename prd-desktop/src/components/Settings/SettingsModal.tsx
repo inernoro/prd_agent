@@ -9,11 +9,19 @@ interface ApiTestResult {
   serverStatus: string | null;
 }
 
+const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
+const DEFAULT_API_URL_DEV = 'http://localhost:5000';
+
+function getDefaultApiUrl(isDeveloper: boolean) {
+  return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
+}
+
 export default function SettingsModal() {
-  const { config, defaultApiUrl, isLoading, isModalOpen, closeModal, saveConfig, loadConfig } = useSettingsStore();
+  const { config, isLoading, isModalOpen, closeModal, saveConfig, loadConfig } = useSettingsStore();
   const [apiUrl, setApiUrl] = useState('');
   const [error, setError] = useState('');
   const [useDefault, setUseDefault] = useState(true);
+  const [isDeveloper, setIsDeveloper] = useState(false);
   
   // API 测试状态
   const [isTesting, setIsTesting] = useState(false);
@@ -28,15 +36,19 @@ export default function SettingsModal() {
 
   useEffect(() => {
     if (config) {
+      const dev = Boolean(config.isDeveloper);
+      const defaultApiUrl = getDefaultApiUrl(dev);
       const isDefault = config.apiBaseUrl === defaultApiUrl;
       setUseDefault(isDefault);
-      setApiUrl(config.apiBaseUrl);
+      setIsDeveloper(dev);
+      setApiUrl(isDefault ? defaultApiUrl : config.apiBaseUrl);
     }
-  }, [config, defaultApiUrl]);
+  }, [config]);
 
   const handleSave = async () => {
     setError('');
     
+    const defaultApiUrl = getDefaultApiUrl(isDeveloper);
     const urlToSave = useDefault ? defaultApiUrl : apiUrl.trim();
     
     // 验证 URL 格式
@@ -53,7 +65,7 @@ export default function SettingsModal() {
     }
     
     try {
-      await saveConfig({ apiBaseUrl: urlToSave });
+      await saveConfig({ apiBaseUrl: urlToSave, isDeveloper });
       closeModal();
     } catch (err) {
       setError(String(err));
@@ -63,7 +75,15 @@ export default function SettingsModal() {
   const handleUseDefaultChange = (checked: boolean) => {
     setUseDefault(checked);
     if (checked) {
-      setApiUrl(defaultApiUrl);
+      setApiUrl(getDefaultApiUrl(isDeveloper));
+    }
+    setTestResult(null);
+  };
+
+  const handleDeveloperChange = (checked: boolean) => {
+    setIsDeveloper(checked);
+    if (useDefault) {
+      setApiUrl(getDefaultApiUrl(checked));
     }
     setTestResult(null);
   };
@@ -73,6 +93,7 @@ export default function SettingsModal() {
     setTestResult(null);
     setError('');
 
+    const defaultApiUrl = getDefaultApiUrl(isDeveloper);
     const urlToTest = useDefault ? defaultApiUrl : apiUrl.trim();
 
     if (!urlToTest) {
@@ -131,6 +152,28 @@ export default function SettingsModal() {
         
         {/* 内容区域 */}
         <div className="p-6 space-y-5">
+          {/* 开发者选项 */}
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-white/80">
+              开发者选项
+            </label>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={isDeveloper}
+                  onChange={(e) => handleDeveloperChange(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-white/20'}`}>
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
+                </div>
+              </div>
+              <span className="text-sm text-white/70">我是开发者（默认地址切换到本地）</span>
+            </label>
+          </div>
+
           {/* API 地址配置 */}
           <div className="space-y-3">
             <label className="block text-sm font-medium text-white/80">
@@ -145,7 +188,7 @@ export default function SettingsModal() {
                 </svg>
                 <span className="text-xs font-medium text-cyan-400">默认服务器</span>
               </div>
-              <p className="text-sm text-white/80 font-mono break-all">{defaultApiUrl}</p>
+              <p className="text-sm text-white/80 font-mono break-all">{getDefaultApiUrl(isDeveloper)}</p>
             </div>
             
             {/* 使用默认地址开关 */}

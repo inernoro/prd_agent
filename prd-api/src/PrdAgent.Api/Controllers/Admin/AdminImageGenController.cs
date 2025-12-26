@@ -138,6 +138,33 @@ public class AdminImageGenController : ControllerBase
     }
 
     /// <summary>
+    /// 生图尺寸白名单缓存（用于前端展示“智能尺寸替换”状态）
+    /// </summary>
+    [HttpGet("size-caps")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetSizeCaps([FromQuery] bool includeFallback = false, CancellationToken ct = default)
+    {
+        var filter = includeFallback
+            ? Builders<ImageGenSizeCaps>.Filter.Empty
+            : Builders<ImageGenSizeCaps>.Filter.Ne(x => x.ModelId, null);
+
+        var items = await _db.ImageGenSizeCaps
+            .Find(filter)
+            .Project(x => new
+            {
+                x.ModelId,
+                x.PlatformId,
+                x.ModelName,
+                allowedCount = x.AllowedSizes.Count,
+                x.UpdatedAt
+            })
+            .SortByDescending(x => x.UpdatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
     /// 单张生图（将 prompt 一次性丢给生图模型生成）
     /// </summary>
     [HttpPost("generate")]
@@ -447,7 +474,7 @@ public class AdminImageGenController : ControllerBase
                                         itemIndex = currentItemIndex,
                                         imageIndex,
                                         prompt = currentPrompt,
-                                        size = currentSize,
+                                        requestedSize = currentSize,
                                         modelId,
                                         platformId,
                                         modelName,
@@ -458,6 +485,7 @@ public class AdminImageGenController : ControllerBase
                                 }
 
                                 var first = res.Data?.Images?.FirstOrDefault();
+                                var meta = res.Data?.Meta;
                                 Interlocked.Increment(ref done);
                                 await WriteEventAsync("image", new
                                 {
@@ -466,7 +494,10 @@ public class AdminImageGenController : ControllerBase
                                     itemIndex = currentItemIndex,
                                     imageIndex,
                                     prompt = currentPrompt,
-                                    size = currentSize,
+                                    requestedSize = currentSize,
+                                    effectiveSize = meta?.EffectiveSize,
+                                    sizeAdjusted = meta?.SizeAdjusted ?? false,
+                                    ratioAdjusted = meta?.RatioAdjusted ?? false,
                                     modelId,
                                     platformId,
                                     modelName,
@@ -493,7 +524,7 @@ public class AdminImageGenController : ControllerBase
                                     itemIndex = currentItemIndex,
                                     imageIndex,
                                     prompt = currentPrompt,
-                                    size = currentSize,
+                                    requestedSize = currentSize,
                                     modelId,
                                     platformId,
                                     modelName,

@@ -25,9 +25,14 @@ function normalizeHeadingText(raw: string) {
 export type MarkdownRendererProps = {
   content: string;
   className?: string;
+  /**
+   * 仅用于应用内“伪链接”（例如 citations），避免在桌面端触发外部跳转。
+   * 返回 true 表示已消费该点击（不会继续默认行为）。
+   */
+  onInternalLinkClick?: (href: string) => boolean | void;
 };
 
-export default function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+export default function MarkdownRenderer({ content, className, onInternalLinkClick }: MarkdownRendererProps) {
   // slugger 需要在一次渲染周期内保持状态，用于处理重名标题的去重（a、a-1、a-2...）
   const slugger = useMemo(() => new GithubSlugger(), [content]);
 
@@ -60,6 +65,47 @@ export default function MarkdownRenderer({ content, className }: MarkdownRendere
         remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
           ...headingComponents,
+          a({ href, children, ...props }: any) {
+            const h = String(href || '');
+            const isInternal = !!h && (
+              h.startsWith('prd-citation:') ||
+              h.startsWith('prd-citation://') ||
+              h.startsWith('prd-nav:') ||
+              h.startsWith('prd-nav://')
+            );
+            if (isInternal) {
+              return (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 underline underline-offset-2 text-primary-600 dark:text-primary-300 hover:text-primary-700 dark:hover:text-primary-200"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try {
+                      const consumed = onInternalLinkClick?.(h);
+                      if (consumed === true) return;
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  {...props}
+                >
+                  {children}
+                </button>
+              );
+            }
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 text-primary-600 dark:text-primary-300 hover:text-primary-700 dark:hover:text-primary-200"
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          },
           pre({ children }: any) {
             // react-markdown 的 codeBlock 通常是：<pre><code class="language-xxx">...</code></pre>
             // 我们需要：

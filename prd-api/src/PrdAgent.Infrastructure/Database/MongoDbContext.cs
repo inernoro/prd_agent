@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 
@@ -45,6 +46,7 @@ public class MongoDbContext
     public IMongoCollection<ImageMasterSession> ImageMasterSessions => _database.GetCollection<ImageMasterSession>("image_master_sessions");
     public IMongoCollection<ImageMasterMessage> ImageMasterMessages => _database.GetCollection<ImageMasterMessage>("image_master_messages");
     public IMongoCollection<ImageAsset> ImageAssets => _database.GetCollection<ImageAsset>("image_assets");
+    public IMongoCollection<ImageGenSizeCaps> ImageGenSizeCaps => _database.GetCollection<ImageGenSizeCaps>("image_gen_size_caps");
 
     private void CreateIndexes()
     {
@@ -167,5 +169,32 @@ public class MongoDbContext
         ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
             Builders<ImageAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Sha256),
             new CreateIndexOptions { Unique = true }));
+
+        // ImageGenSizeCaps：为兼容更多 Mongo 版本，拆成两个 unique partial index，避免 partial filter 中出现 $not/$ne null
+        // 1) modelId 唯一：仅对存在 ModelId 字段的文档生效（upsert 插入时未设置 ModelId 的字段将不存在）
+        ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
+            Builders<ImageGenSizeCaps>.IndexKeys.Ascending(x => x.ModelId),
+            new CreateIndexOptions<ImageGenSizeCaps>
+            {
+                Name = "uniq_image_gen_size_caps_modelId",
+                Unique = true,
+                PartialFilterExpression = new BsonDocument("ModelId", new BsonDocument("$exists", true))
+            }));
+
+        // 2) platformId + modelName 唯一：仅对存在 PlatformId & ModelName 字段的文档生效
+        ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
+            Builders<ImageGenSizeCaps>.IndexKeys
+                .Ascending(x => x.PlatformId)
+                .Ascending(x => x.ModelName),
+            new CreateIndexOptions<ImageGenSizeCaps>
+            {
+                Name = "uniq_image_gen_size_caps_platformId_modelName",
+                Unique = true,
+                PartialFilterExpression = new BsonDocument
+                {
+                    { "PlatformId", new BsonDocument("$exists", true) },
+                    { "ModelName", new BsonDocument("$exists", true) }
+                }
+            }));
     }
 }

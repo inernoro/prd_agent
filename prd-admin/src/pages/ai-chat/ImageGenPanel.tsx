@@ -11,6 +11,10 @@ type ImageItem = {
   key: string;
   status: 'idle' | 'running' | 'done' | 'error';
   prompt: string;
+  requestedSize?: string;
+  effectiveSize?: string;
+  sizeAdjusted?: boolean;
+  ratioAdjusted?: boolean;
   base64?: string | null;
   url?: string | null;
   revisedPrompt?: string | null;
@@ -159,6 +163,10 @@ export default function ImageGenPanel() {
         key: `${Date.now()}-${idx}`,
         status: 'done' as const,
         prompt: p,
+        requestedSize: String(res.data?.meta?.requestedSize ?? DEFAULT_SIZE),
+        effectiveSize: String(res.data?.meta?.effectiveSize ?? ''),
+        sizeAdjusted: Boolean(res.data?.meta?.sizeAdjusted),
+        ratioAdjusted: Boolean(res.data?.meta?.ratioAdjusted),
         base64: img.base64 ?? null,
         url: img.url ?? null,
         revisedPrompt: img.revisedPrompt ?? null,
@@ -245,12 +253,26 @@ export default function ImageGenPanel() {
           const b64 = (o.base64 as string | null | undefined) ?? null;
           const url = (o.url as string | null | undefined) ?? null;
           const rp = (o.revisedPrompt as string | null | undefined) ?? null;
+          const reqSize = String((o.requestedSize as string | undefined) ?? (o.size as string | undefined) ?? DEFAULT_SIZE);
+          const effSize = String((o.effectiveSize as string | undefined) ?? '');
+          const sizeAdjusted = Boolean((o.sizeAdjusted as boolean | undefined) ?? false);
+          const ratioAdjusted = Boolean((o.ratioAdjusted as boolean | undefined) ?? false);
           const p0 = String((o.prompt as string | undefined) ?? '');
           setImages((prev) => {
             const idx = prev.findIndex((x) => x.status !== 'done' && x.status !== 'error' && x.prompt === p0);
             if (idx < 0) return prev;
             const next = [...prev];
-            next[idx] = { ...next[idx], status: 'done', base64: b64, url, revisedPrompt: rp };
+            next[idx] = {
+              ...next[idx],
+              status: 'done',
+              base64: b64,
+              url,
+              revisedPrompt: rp,
+              requestedSize: reqSize,
+              effectiveSize: effSize,
+              sizeAdjusted,
+              ratioAdjusted,
+            };
             return next;
           });
           return;
@@ -320,6 +342,23 @@ export default function ImageGenPanel() {
                       <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                         {it.status === 'error' ? '失败' : it.status === 'done' ? '完成' : it.status === 'running' ? '生成中' : '等待'}
                       </div>
+                      {it.status === 'done' && it.sizeAdjusted ? (
+                        <div
+                          className="mb-2 text-[11px] font-semibold inline-flex items-center gap-1 rounded-full px-2.5 h-5"
+                          style={{
+                            background: 'rgba(168, 85, 247, 0.12)',
+                            border: '1px solid rgba(168, 85, 247, 0.28)',
+                            color: 'rgba(168, 85, 247, 0.95)',
+                          }}
+                          title={
+                            it.ratioAdjusted
+                              ? `比例已微调：${String(it.requestedSize || DEFAULT_SIZE)} → ${String(it.effectiveSize || '')}`
+                              : `尺寸已替换：${String(it.requestedSize || DEFAULT_SIZE)} → ${String(it.effectiveSize || '')}`
+                          }
+                        >
+                          {it.ratioAdjusted ? '比例已微调' : '尺寸已替换'}
+                        </div>
+                      ) : null}
                       {src ? (
                         <div
                           role={canShow ? 'button' : undefined}

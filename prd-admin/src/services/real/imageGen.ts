@@ -4,6 +4,7 @@ import { fail, ok, type ApiResponse } from '@/types/api';
 import type {
   GenerateImageGenContract,
   ImageGenBatchStreamEvent,
+  GetImageGenSizeCapsContract,
   PlanImageGenContract,
   RunImageGenBatchStreamContract,
 } from '@/services/contracts/imageGen';
@@ -87,5 +88,11 @@ export const runImageGenBatchStreamReal: RunImageGenBatchStreamContract = async 
 
   await readImageGenSseStream(res, onEvent, signal);
   return ok(true);
+};
+
+export const getImageGenSizeCapsReal: GetImageGenSizeCapsContract = async (input) => {
+  const includeFallback = Boolean(input?.includeFallback);
+  const qs = includeFallback ? '?includeFallback=true' : '';
+  return await apiRequest(`/api/v1/admin/image-gen/size-caps${qs}`, { method: 'GET' });
 };
 

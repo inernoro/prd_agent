@@ -155,6 +155,46 @@ public class OpenAIImageClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API URL 无效");
         }
 
+        // 原始请求尺寸（用于缓存命中与 meta/日志展示）
+        var requestedSizeRaw = string.IsNullOrWhiteSpace(size) ? null : size.Trim();
+        var requestedSizeNorm = NormalizeSizeString(requestedSizeRaw);
+        List<string>? allowedSizesForLog = null;
+
+        // 非 Volces：尝试命中“允许尺寸白名单”缓存，避免先 400 再重试
+        var capsKey = BuildCapsKey(requestedModelId, requestedPlatformId, requestedModelName, effectiveModelName);
+        if (!isVolces)
+        {
+            var caps = await TryGetSizeCapsAsync(capsKey, ct);
+            if (caps != null && (caps.AllowedSizes?.Count ?? 0) > 0)
+            {
+                allowedSizesForLog = (caps.AllowedSizes ?? new List<string>())
+                    .Select(NormalizeSizeString)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(64)
+                    .ToList();
+
+                var allowed = new List<Size2D>();
+                foreach (var s in caps.AllowedSizes ?? new List<string>())
+                {
+                    if (TryParseSize(s, out var w, out var h)) allowed.Add(new Size2D(w, h));
+                }
+
+                if (allowed.Count > 0)
+                {
+                    // prefer_medium：若没有可解析的 requested size，则用 1024x1024 作为面积目标
+                    var target = TryParseSize(requestedSizeNorm, out var tw, out var th) ? new Size2D(tw, th) : new Size2D(1024, 1024);
+                    var chosen = ChooseClosestAllowedSize(target, allowed);
+                    var chosenStr = $"{chosen.W}x{chosen.H}";
+                    if (!string.Equals(requestedSizeNorm, NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
+                    {
+                        size = chosenStr;
+                    }
+                }
+            }
+        }
+
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         // 生图请求通常比文本推理慢很多（部分平台可达 60s+），因此单独放大超时。
         // 默认 600s，可通过配置 LLM:ImageGenTimeoutSeconds 覆盖；不影响文本/意图等默认 60s。
@@ -370,6 +410,65 @@ public class OpenAIImageClient
                     };
                 }
             }
+
+            // 非 Volces：某些 OpenAI 兼容网关会对 size 采用“白名单尺寸”校验（例如 1664*928,...），
+            // 若命中该错误则自动从错误文案中提取允许尺寸，按目标比例选最近尺寸并重试一次。
+            if (!isVolces && resp.StatusCode == HttpStatusCode.BadRequest)
+            {
+                var firstBody = await resp.Content.ReadAsStringAsync(ct);
+                if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg2) &&
+                    LooksLikeAllowedSizeWhitelistError(errMsg2) &&
+                    TryParseAllowedSizes(errMsg2, out var allowed) &&
+                    allowed.Count > 0)
+                {
+                    allowedSizesForLog = allowed
+                        .Select(x => $"{x.W}x{x.H}")
+                        .Select(NormalizeSizeString)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x!)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(64)
+                        .ToList();
+
+                    // 学习并写入缓存（旁路，不影响主流程）
+                    _ = TryUpsertSizeCapsAsync(capsKey, allowed.Select(x => $"{x.W}x{x.H}").ToList(), ct);
+
+                    var currentSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
+                    var target = TryParseSize(currentSize, out var tw, out var th) ? new Size2D(tw, th) : (Size2D?)null;
+                    target ??= new Size2D(1024, 1024); // prefer_medium 兜底
+                    var chosen = ChooseClosestAllowedSize(target, allowed);
+                    var chosenStr = $"{chosen.W}x{chosen.H}";
+                    if (!string.Equals(NormalizeSizeString(currentSize), NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 将第一次响应“还回去”给统一处理前，先尝试一次自动修正重试
+                        SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr, isVolces: false);
+                        // 注意：不能用 MarkError 写“尺寸替换”，否则会把日志状态置为 failed 并写入 Error 字段。
+                        // 真实的“本次替换信息”会在 MarkDone 的 AnswerText（summary）与 API meta 中落库/返回。
+                        resp.Dispose();
+                        resp = await SendOnceAsync(ct);
+                    }
+                    else
+                    {
+                        // 兜底：把第一次 body 还回去，下面统一处理
+                        resp.Dispose();
+                        resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                        {
+                            Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
+                            RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
+                        };
+                    }
+                }
+                else
+                {
+                    // 兜底：把第一次 body 还回去，下面统一处理
+                    resp.Dispose();
+                    resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
+                        RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
+                    };
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -525,11 +624,25 @@ public class OpenAIImageClient
                 var sizeForLog = initImageBase64 == null
                     ? (isVolces ? ((VolcesImageRequest)reqObj).Size : ((OpenAIImageRequest)reqObj).Size)
                     : (isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size);
+                var effectiveSizeNormForLog = NormalizeSizeString(sizeForLog);
+                var sizeAdjustedForLog = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
+                                         !string.IsNullOrWhiteSpace(effectiveSizeNormForLog) &&
+                                         !string.Equals(requestedSizeNorm, effectiveSizeNormForLog, StringComparison.OrdinalIgnoreCase);
+                var ratioAdjustedForLog = IsRatioAdjusted(requestedSizeNorm, effectiveSizeNormForLog, threshold: 0.02);
+                var sizeAdjustmentNote = (sizeAdjustedForLog && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(sizeForLog))
+                    ? $"本次尺寸替换：{requestedSizeRaw} -> {sizeForLog}"
+                    : null;
                 var summary = new
                 {
                     images = images.Count,
                     responseFormat = responseFormatForLog,
                     size = sizeForLog,
+                    requestedSize = requestedSizeRaw,
+                    effectiveSize = sizeForLog,
+                    sizeAdjusted = sizeAdjustedForLog,
+                    ratioAdjusted = ratioAdjustedForLog,
+                    sizeAdjustmentNote,
+                    allowedSizes = allowedSizesForLog,
                     // 不记录 base64 内容；仅记录是否返回
                     hasBase64 = images.Any(x => !string.IsNullOrWhiteSpace(x.Base64)),
                     hasUrl = images.Any(x => !string.IsNullOrWhiteSpace(x.Url)),
@@ -559,7 +672,28 @@ public class OpenAIImageClient
                         DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
             }
 
-            return ApiResponse<ImageGenResult>.Ok(new ImageGenResult { Images = images });
+            var finalSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
+            var effectiveSize = string.IsNullOrWhiteSpace(finalSize) ? null : finalSize.Trim();
+            var effectiveSizeNorm = NormalizeSizeString(effectiveSize);
+            var sizeAdjusted = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
+                               !string.IsNullOrWhiteSpace(effectiveSizeNorm) &&
+                               !string.Equals(requestedSizeNorm, effectiveSizeNorm, StringComparison.OrdinalIgnoreCase);
+            var ratioAdjusted = IsRatioAdjusted(requestedSizeNorm, effectiveSizeNorm, threshold: 0.02);
+
+            return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
+            {
+                Images = images,
+                Meta = new ImageGenResultMeta
+                {
+                    RequestedSize = requestedSizeRaw,
+                    EffectiveSize = effectiveSize,
+                    SizeAdjusted = sizeAdjusted,
+                    RatioAdjusted = ratioAdjusted,
+                    SizeAdjustmentNote = sizeAdjusted && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(effectiveSize)
+                        ? $"本次尺寸替换：{requestedSizeRaw} -> {effectiveSize}"
+                        : null
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -979,6 +1113,216 @@ public class OpenAIImageClient
         return false;
     }
 
+    private readonly record struct Size2D(int W, int H)
+    {
+        public double Ratio => H == 0 ? 1.0 : (double)W / H;
+        public long Area => (long)W * H;
+    }
+
+    private static bool LooksLikeAllowedSizeWhitelistError(string message)
+    {
+        var s = (message ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        // 兼容你提供的错误：The size does not match the allowed size 1664*928,...
+        return s.Contains("allowed size", StringComparison.OrdinalIgnoreCase) ||
+               s.Contains("does not match", StringComparison.OrdinalIgnoreCase) && s.Contains("size", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseAllowedSizes(string message, out List<Size2D> sizes)
+    {
+        sizes = new List<Size2D>();
+        var s = (message ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(s)) return false;
+
+        // 支持：1664*928 / 1664x928 / 1664×928 / 1664＊928
+        var matches = Regex.Matches(s, @"(\d{2,5})\s*[*xX×＊]\s*(\d{2,5})");
+        foreach (Match m in matches)
+        {
+            if (!m.Success) continue;
+            if (!int.TryParse(m.Groups[1].Value, out var w)) continue;
+            if (!int.TryParse(m.Groups[2].Value, out var h)) continue;
+            if (w <= 0 || h <= 0) continue;
+            // 过滤异常超大值（避免把 request id 等误匹配进去）
+            if (w > 16384 || h > 16384) continue;
+            sizes.Add(new Size2D(w, h));
+        }
+
+        // 去重
+        sizes = sizes
+            .GroupBy(x => $"{x.W}x{x.H}")
+            .Select(g => g.First())
+            .OrderBy(x => x.W)
+            .ThenBy(x => x.H)
+            .ToList();
+        return sizes.Count > 0;
+    }
+
+    private static string? NormalizeSizeString(string? size)
+    {
+        if (string.IsNullOrWhiteSpace(size)) return null;
+        var s = size.Trim();
+        // 统一分隔符
+        s = Regex.Replace(s, @"\s*[xX×＊*]\s*", "x");
+        return s;
+    }
+
+    private static bool TryParseSize(string? size, out int w, out int h)
+    {
+        w = 0;
+        h = 0;
+        var s = NormalizeSizeString(size);
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        var m = Regex.Match(s, @"^\s*(\d{2,5})\s*[xX]\s*(\d{2,5})\s*$");
+        if (!m.Success) return false;
+        if (!int.TryParse(m.Groups[1].Value, out w)) return false;
+        if (!int.TryParse(m.Groups[2].Value, out h)) return false;
+        return w > 0 && h > 0;
+    }
+
+    private static Size2D ChooseClosestAllowedSize(Size2D? target, List<Size2D> allowed)
+    {
+        if (allowed == null || allowed.Count == 0) return new Size2D(1024, 1024);
+        if (target == null) return allowed[0];
+
+        var tr = target.Value.Ratio;
+        var ta = target.Value.Area;
+
+        // 先按比例最接近，其次按面积最接近，其次按 |w-w0|+|h-h0|
+        return allowed
+            .OrderBy(a => Math.Abs(a.Ratio - tr))
+            .ThenBy(a => Math.Abs(a.Area - ta))
+            .ThenBy(a => Math.Abs(a.W - target.Value.W) + Math.Abs(a.H - target.Value.H))
+            .First();
+    }
+
+    private static bool IsRatioAdjusted(string? requestedSizeNorm, string? effectiveSizeNorm, double threshold)
+    {
+        if (!TryParseSize(requestedSizeNorm, out var rw, out var rh)) return false;
+        if (!TryParseSize(effectiveSizeNorm, out var ew, out var eh)) return false;
+        if (rw <= 0 || rh <= 0 || ew <= 0 || eh <= 0) return false;
+        var r1 = (double)rw / rh;
+        var r2 = (double)ew / eh;
+        if (!double.IsFinite(r1) || !double.IsFinite(r2)) return false;
+        if (r1 <= 0) return false;
+        return Math.Abs(r1 - r2) / r1 > threshold;
+    }
+
+    private readonly record struct SizeCapsKey(string? ModelId, string? PlatformId, string? ModelNameLower);
+
+    private static SizeCapsKey BuildCapsKey(string? modelId, string? platformId, string? modelName, string effectiveModelName)
+    {
+        var mid = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
+        if (!string.IsNullOrWhiteSpace(mid)) return new SizeCapsKey(mid, null, null);
+
+        var pid = string.IsNullOrWhiteSpace(platformId) ? null : platformId.Trim();
+        var name = string.IsNullOrWhiteSpace(modelName) ? null : modelName.Trim();
+        name ??= string.IsNullOrWhiteSpace(effectiveModelName) ? null : effectiveModelName.Trim();
+        var lower = string.IsNullOrWhiteSpace(name) ? null : name.ToLowerInvariant();
+        return new SizeCapsKey(null, pid, lower);
+    }
+
+    private async Task<ImageGenSizeCaps?> TryGetSizeCapsAsync(SizeCapsKey key, CancellationToken ct)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(key.ModelId))
+            {
+                return await _db.ImageGenSizeCaps.Find(x => x.ModelId == key.ModelId).FirstOrDefaultAsync(ct);
+            }
+            if (!string.IsNullOrWhiteSpace(key.PlatformId) && !string.IsNullOrWhiteSpace(key.ModelNameLower))
+            {
+                // 说明：我们在落库时把 ModelName 规范化为 lower，因此这里直接等值匹配
+                return await _db.ImageGenSizeCaps.Find(x => x.PlatformId == key.PlatformId && x.ModelName == key.ModelNameLower).FirstOrDefaultAsync(ct);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
+
+    private async Task TryUpsertSizeCapsAsync(SizeCapsKey key, List<string> allowedSizes, CancellationToken ct)
+    {
+        try
+        {
+            var cleaned = (allowedSizes ?? new List<string>())
+                .Select(NormalizeSizeString)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(64)
+                .ToList();
+            if (cleaned.Count == 0) return;
+
+            var now = DateTime.UtcNow;
+            if (!string.IsNullOrWhiteSpace(key.ModelId))
+            {
+                var filter = Builders<ImageGenSizeCaps>.Filter.Eq(x => x.ModelId, key.ModelId);
+                var update = Builders<ImageGenSizeCaps>.Update
+                    .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+                    .SetOnInsert(x => x.ModelId, key.ModelId)
+                    .SetOnInsert(x => x.CreatedAt, now)
+                    .Set(x => x.AllowedSizes, cleaned)
+                    .Set(x => x.Source, "upstream-error")
+                    .Set(x => x.UpdatedAt, now);
+                await _db.ImageGenSizeCaps.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(key.PlatformId) && !string.IsNullOrWhiteSpace(key.ModelNameLower))
+            {
+                var filter = Builders<ImageGenSizeCaps>.Filter.And(
+                    Builders<ImageGenSizeCaps>.Filter.Eq(x => x.PlatformId, key.PlatformId),
+                    Builders<ImageGenSizeCaps>.Filter.Eq(x => x.ModelName, key.ModelNameLower));
+                var update = Builders<ImageGenSizeCaps>.Update
+                    .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+                    .SetOnInsert(x => x.PlatformId, key.PlatformId)
+                    .SetOnInsert(x => x.ModelName, key.ModelNameLower)
+                    .SetOnInsert(x => x.CreatedAt, now)
+                    .Set(x => x.AllowedSizes, cleaned)
+                    .Set(x => x.Source, "upstream-error")
+                    .Set(x => x.UpdatedAt, now);
+                await _db.ImageGenSizeCaps.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static string? GetCurrentRequestedSizeForRetry(object reqObj, string? initImageBase64)
+    {
+        if (initImageBase64 == null)
+        {
+            return reqObj switch
+            {
+                OpenAIImageRequest r => r.Size,
+                VolcesImageRequest r => r.Size,
+                _ => null
+            };
+        }
+        return reqObj switch
+        {
+            OpenAIImageEditRequest r => r.Size,
+            VolcesImageEditRequest r => r.Size,
+            _ => null
+        };
+    }
+
+    private static void SetRequestedSizeForRetry(object reqObj, string? initImageBase64, string? newSize, bool isVolces)
+    {
+        if (initImageBase64 == null)
+        {
+            if (isVolces && reqObj is VolcesImageRequest vr) vr.Size = newSize;
+            if (!isVolces && reqObj is OpenAIImageRequest orr) orr.Size = newSize;
+            return;
+        }
+        if (isVolces && reqObj is VolcesImageEditRequest ver) ver.Size = newSize;
+        if (!isVolces && reqObj is OpenAIImageEditRequest oer) oer.Size = newSize;
+    }
+
     /// <summary>
     /// Volces 对 size 的要求更严格：根据你当前日志，至少需要 3,686,400 pixels（=1920x1920）。
     /// 为了保持前端不变，这里把常见的 OpenAI 尺寸自动升级到可用的最小值。
@@ -1012,6 +1356,7 @@ public class OpenAIImageClient
 public class ImageGenResult
 {
     public List<ImageGenImage> Images { get; set; } = new();
+    public ImageGenResultMeta? Meta { get; set; }
 }
 
 public class ImageGenImage
@@ -1020,6 +1365,15 @@ public class ImageGenImage
     public string? Base64 { get; set; }
     public string? Url { get; set; }
     public string? RevisedPrompt { get; set; }
+}
+
+public class ImageGenResultMeta
+{
+    public string? RequestedSize { get; set; }
+    public string? EffectiveSize { get; set; }
+    public bool SizeAdjusted { get; set; }
+    public bool RatioAdjusted { get; set; }
+    public string? SizeAdjustmentNote { get; set; }
 }
 
 internal class OpenAIImageRequest
