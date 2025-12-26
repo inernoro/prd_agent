@@ -1,0 +1,33 @@
+---
+alwaysApply: true
+description: 模型标识/命名全局契约（platformId + modelId）
+---
+
+# 模型标识全局契约
+
+## 术语
+
+- **platformId**：平台 ID（对应 `LLMPlatform.Id`）
+- **modelId**：平台侧模型 ID（供应商/网关暴露的模型标识，例如 `deepseek-v3`、`gpt-4.1`）
+- **configModelId**：内部配置模型 ID（对应 `LLMModel.Id`，Guid 字符串），只用于配置管理与兼容历史数据
+
+## 强制语义
+
+- **业务侧唯一键**必须是 `(platformId, modelId)`。
+- UI 默认展示 **只显示 `modelId`**（不要默认展示 displayName/name；必要时可用 tooltip 辅助）。
+- **禁止**把 `modelId` 当作全局唯一；任何去重/查询必须带上 `platformId`。
+- 后端存储中历史字段命名可能仍存在 `modelName`，其语义等价于 **`modelId`**：
+  - 在业务逻辑中统一按 `modelId` 理解/实现；
+  - 当代码里出现 `modelName` 时，必须确认是否缺少 `platformId` 维度。
+
+## 常见错误（必须规避）
+
+- 使用 `ModelName == xxx` 全库查询/去重（未加 `PlatformId`）——会导致跨平台同名冲突。
+- 以 `name/displayName` 作为唯一标识或作为默认展示——会导致用户误选与数据错配。
+
+## 兼容策略（允许但需标注）
+
+- 对历史数据/旧接口仍可能出现 `configModelId`（内部 id）：
+  - 允许在后端做运行时转换：`configModelId -> (platformId, modelId)`；
+  - 新增/新写入数据一律按 `(platformId, modelId)`。
+

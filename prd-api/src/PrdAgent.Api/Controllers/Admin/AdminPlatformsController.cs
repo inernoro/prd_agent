@@ -426,7 +426,7 @@ public class AdminPlatformsController : ControllerBase
             }
         }
 
-        // 3) 写回已配置模型（llmmodels）：按 platformId + modelName 匹配
+        // 3) 写回已配置模型（llmmodels）：按 platformId + modelId 匹配（字段名：ModelName）
         var configured = await _db.LLMModels.Find(m => m.PlatformId == id).ToListAsync(ct);
         var map = results
             .Where(r => !string.IsNullOrWhiteSpace(r.ModelName))

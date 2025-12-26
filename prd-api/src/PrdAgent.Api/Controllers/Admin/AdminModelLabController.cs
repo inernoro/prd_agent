@@ -284,7 +284,7 @@ public class AdminModelLabController : ControllerBase
         var platformId = (selected.PlatformId ?? string.Empty).Trim();
         var modelName = (string.IsNullOrWhiteSpace(selected.ModelName) ? selected.ModelId : selected.ModelName).Trim();
 
-        // 已配置模型（llmmodels）：按 platformId + modelName 精确匹配（避免跨平台同名冲突）
+        // 已配置模型（llmmodels）：按 platformId + modelId 精确匹配（字段名：ModelName；避免跨平台同名冲突）
         var model = string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelName)
             ? null
             : await _db.LLMModels.Find(m => m.PlatformId == platformId && m.ModelName == modelName).FirstOrDefaultAsync(ct);

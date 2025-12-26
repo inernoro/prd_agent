@@ -14,6 +14,7 @@ import {
   planImageGen,
   uploadImageAsset,
 } from '@/services';
+import { systemDialog } from '@/lib/systemDialog';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterMessage, ImageMasterSession } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
@@ -1992,11 +1993,19 @@ export default function AdvancedImageMasterTab() {
               if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKeys.length > 0) {
                 // 避免在输入框中删除字符：这里只在画布获得焦点时触发
                 e.preventDefault();
-                const ok = window.confirm(`确认删除选中的 ${selectedKeys.length} 张图片？`);
-                if (!ok) return;
-                const set = new Set(selectedKeys);
-                setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
-                setSelectedKeys([]);
+                void (async () => {
+                  const ok = await systemDialog.confirm({
+                    title: '确认删除',
+                    message: `确认删除选中的 ${selectedKeys.length} 张图片？`,
+                    tone: 'danger',
+                    confirmText: '删除',
+                    cancelText: '取消',
+                  });
+                  if (!ok) return;
+                  const set = new Set(selectedKeys);
+                  setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+                  setSelectedKeys([]);
+                })();
                 return;
               }
 
@@ -3055,9 +3064,15 @@ export default function AdvancedImageMasterTab() {
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
-                onClick={() => {
+                onClick={async () => {
                   if (selectedKeys.length === 0) return;
-                  const ok = window.confirm(`确认删除选中的 ${selectedKeys.length} 项？`);
+                  const ok = await systemDialog.confirm({
+                    title: '确认删除',
+                    message: `确认删除选中的 ${selectedKeys.length} 项？`,
+                    tone: 'danger',
+                    confirmText: '删除',
+                    cancelText: '取消',
+                  });
                   if (!ok) return;
                   const set = new Set(selectedKeys);
                   setCanvas((prev) => prev.filter((it) => !set.has(it.key)));

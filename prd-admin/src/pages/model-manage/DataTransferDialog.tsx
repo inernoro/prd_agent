@@ -353,7 +353,7 @@ export function DataTransferDialog({
                 </div>
 
                 <div className="rounded-[14px] p-3 text-xs" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-muted)' }}>
-                  导入策略：平台按名称 upsert；模型按 platformId + modelName upsert；导入列表内模型会被设为启用，但不会自动禁用现有其它模型。
+                  导入策略：平台按名称 upsert；模型按 platformId + modelId upsert；导入列表内模型会被设为启用，但不会自动禁用现有其它模型。
                 </div>
               </div>
             ) : null}

@@ -14,6 +14,7 @@ import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import ImageGenPanel from '@/pages/ai-chat/ImageGenPanel';
 import AdvancedImageMasterTab from '@/pages/ai-chat/AdvancedImageMasterTab';
 import { useLayoutStore } from '@/stores/layoutStore';
+import { systemDialog } from '@/lib/systemDialog';
 
 type LocalSession = {
   sessionId: string;
@@ -398,7 +399,7 @@ export default function AiChatPage() {
       return;
     }
     if (!token) {
-      alert('未登录');
+      await systemDialog.alert('未登录');
       return;
     }
     if (isStreaming) return;
@@ -409,13 +410,13 @@ export default function AiChatPage() {
       attachmentText: pendingAttachmentText,
     });
     if (!limited.ok) {
-      alert(limited.reason || `内容过长（上限 ${MAX_MESSAGE_CHARS} 字符）`);
+      await systemDialog.alert(limited.reason || `内容过长（上限 ${MAX_MESSAGE_CHARS} 字符）`);
       return;
     }
     if (limited.truncated) {
       // 轻提示：不阻塞发送，只告知发生截断
       // 禁止 emoji
-      alert('附件内容过长，已自动截断后发送');
+      void systemDialog.alert('附件内容过长，已自动截断后发送');
     }
     const finalText = limited.finalText;
 
@@ -491,7 +492,7 @@ export default function AiChatPage() {
   const onPickPrdFile = async (file: File) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.md')) {
-      alert('仅支持 .md 文件');
+      await systemDialog.alert('仅支持 .md 文件');
       return;
     }
     const content = await file.text();
@@ -501,8 +502,14 @@ export default function AiChatPage() {
 
   const createSession = async () => {
     const content = prdText.trim();
-    if (!content) return alert('请粘贴或选择 PRD 内容');
-    if (!userId) return alert('未登录');
+    if (!content) {
+      await systemDialog.alert('请粘贴或选择 PRD 内容');
+      return;
+    }
+    if (!userId) {
+      await systemDialog.alert('未登录');
+      return;
+    }
 
     setCreateBusy(true);
     let res: ApiResponse<any>;
@@ -512,7 +519,7 @@ export default function AiChatPage() {
       setCreateBusy(false);
     }
     if (!res.success) {
-      alert(res.error?.message || '上传失败');
+      await systemDialog.alert(res.error?.message || '上传失败');
       return;
     }
 
@@ -520,7 +527,7 @@ export default function AiChatPage() {
     const docId = String(res.data.document?.id || '');
     const docTitleRaw = String(res.data.document?.title || '');
     if (!sid) {
-      alert('后端未返回 sessionId');
+      await systemDialog.alert('后端未返回 sessionId');
       return;
     }
 
@@ -576,9 +583,15 @@ export default function AiChatPage() {
     setPrdFileName('');
   };
 
-  const renameSession = (sid: string) => {
+  const renameSession = async (sid: string) => {
     const cur = sessions.find((x) => x.sessionId === sid);
-    const nextName = window.prompt('会话名称', cur?.title || '');
+    const nextName = await systemDialog.prompt({
+      title: '会话名称',
+      message: '请输入会话名称',
+      defaultValue: cur?.title || '',
+      confirmText: '确认',
+      cancelText: '取消',
+    });
     if (nextName == null) return;
     const name = nextName.trim();
     setSessions((prev) => {
@@ -588,8 +601,14 @@ export default function AiChatPage() {
     });
   };
 
-  const deleteSession = (sid: string) => {
-    const ok = window.confirm('确认删除该会话（仅删除本地记录）？');
+  const deleteSession = async (sid: string) => {
+    const ok = await systemDialog.confirm({
+      title: '确认删除',
+      message: '确认删除该会话（仅删除本地记录）？',
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
     if (!ok) return;
     stopStreaming();
     setSessions((prev) => {
@@ -613,7 +632,7 @@ export default function AiChatPage() {
     const fileName = normalizeFileName(file.name || '');
     const ext = getLowerExt(fileName);
     if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
-      alert(`暂仅支持文本附件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+      await systemDialog.alert(`暂仅支持文本附件：${ALLOWED_TEXT_EXTS.join(', ')}`);
       return;
     }
 
@@ -621,7 +640,7 @@ export default function AiChatPage() {
     try {
       text = await file.text();
     } catch {
-      alert('读取文件失败，请重试');
+      await systemDialog.alert('读取文件失败，请重试');
       return;
     }
 
@@ -693,10 +712,10 @@ export default function AiChatPage() {
                       </div>
                     </button>
                     <div className="mt-2 flex gap-2">
-                      <Button size="xs" variant="secondary" onClick={() => renameSession(s.sessionId)}>
+                      <Button size="xs" variant="secondary" onClick={() => void renameSession(s.sessionId)}>
                         重命名
                       </Button>
-                      <Button size="xs" variant="danger" onClick={() => deleteSession(s.sessionId)}>
+                      <Button size="xs" variant="danger" onClick={() => void deleteSession(s.sessionId)}>
                         删除
                       </Button>
                     </div>

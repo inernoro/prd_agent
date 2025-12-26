@@ -7,6 +7,7 @@ import type { ModelLabSelectedModel } from '@/services/contracts/modelLab';
 import { deleteModelLabGroup, listModelLabGroups, upsertModelLabGroup } from '@/services';
 import type { ModelLabGroup } from '@/services/contracts/modelLabGroups';
 import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { systemDialog } from '@/lib/systemDialog';
 
 type TabKey = 'byPlatform' | 'byLabGroup';
 
@@ -299,9 +300,15 @@ export function ModelPickerDialog({
             className="shrink-0"
             onClick={async () => {
               const name = newGroupName.trim();
-              if (!name) return alert('请输入分组名称');
+              if (!name) {
+                await systemDialog.alert('请输入分组名称');
+                return;
+              }
               const created = await upsertModelLabGroup({ name, models: [] });
-              if (!created.success) return alert(created.error?.message || '创建失败');
+              if (!created.success) {
+                await systemDialog.alert(created.error?.message || '创建失败');
+                return;
+              }
               setNewGroupName('');
               await loadLabGroups({ silent: true });
               setActiveGroupId(created.data.id);
@@ -365,10 +372,19 @@ export function ModelPickerDialog({
                         variant="danger"
                         className="shrink-0"
                         onClick={async () => {
-                          const ok = window.confirm(`确认删除分组“${g.name}”？`);
+                          const ok = await systemDialog.confirm({
+                            title: '确认删除',
+                            message: `确认删除分组“${g.name}”？`,
+                            tone: 'danger',
+                            confirmText: '删除',
+                            cancelText: '取消',
+                          });
                           if (!ok) return;
                           const res = await deleteModelLabGroup(g.id);
-                          if (!res.success) return alert(res.error?.message || '删除失败');
+                          if (!res.success) {
+                            await systemDialog.alert(res.error?.message || '删除失败');
+                            return;
+                          }
                           if (activeGroupId === g.id) setActiveGroupId('');
                           await loadLabGroups({ silent: true });
                         }}
@@ -402,9 +418,15 @@ export function ModelPickerDialog({
                 className="shrink-0"
                 onClick={async () => {
                   const name = groupDraftName.trim();
-                  if (!name) return alert('请输入分组名称');
+                  if (!name) {
+                    await systemDialog.alert('请输入分组名称');
+                    return;
+                  }
                   const saved = await upsertModelLabGroup({ id: activeGroupId, name, models: groupDraftModels });
-                  if (!saved.success) return alert(saved.error?.message || '保存失败');
+                  if (!saved.success) {
+                    await systemDialog.alert(saved.error?.message || '保存失败');
+                    return;
+                  }
                   await loadLabGroups({ silent: true });
                 }}
               >
@@ -459,7 +481,7 @@ export function ModelPickerDialog({
                   variant="secondary"
                   className="shrink-0"
                   onClick={() => {
-                    if (!groupAddPlatform) return alert('请先选择平台');
+                    if (!groupAddPlatform) return void systemDialog.alert('请先选择平台');
                     setAvailableTarget('group');
                     setAvailablePlatform(groupAddPlatform);
                     setAvailableOpen(true);

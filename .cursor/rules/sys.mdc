@@ -9,6 +9,7 @@ description: 规则索引（已拆分到子项目与全局契约）
 - 全局流程/协作：`.cursor/rules/workflow.mdc`
 - 安全约束：`.cursor/rules/security.mdc`
 - API 全局契约（响应结构/错误码/角色/性能指标）：`.cursor/rules/api-contract.mdc`
+- 模型标识全局契约（platformId + modelId）：`.cursor/rules/model-identity.mdc`
 
 子项目细则（按路径匹配自动生效）：
 - `prd-api/**`：`.cursor/rules/prd-api.mdc`

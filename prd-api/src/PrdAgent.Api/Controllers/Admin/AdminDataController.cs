@@ -211,7 +211,7 @@ public class AdminDataController : ControllerBase
             }
         }
 
-        // 2) Upsert models（按 platformId + modelName）
+        // 2) Upsert models（按 platformId + modelId；存储字段名仍为 ModelName）
         var maxPriority = await _db.LLMModels.Find(_ => true)
             .SortByDescending(m => m.Priority)
             .Limit(1)
@@ -226,13 +226,13 @@ public class AdminDataController : ControllerBase
         foreach (var p in importedPlatforms)
         {
             if (!nameToPlatformId.TryGetValue(p.Name, out var platformId)) continue;
-            foreach (var modelName in p.EnabledModels ?? new List<string>())
+            foreach (var modelId in p.EnabledModels ?? new List<string>())
             {
-                var mn = (modelName ?? string.Empty).Trim();
-                if (string.IsNullOrWhiteSpace(mn)) continue;
+                var mid = (modelId ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(mid)) continue;
 
                 var existing = await _db.LLMModels
-                    .Find(m => m.PlatformId == platformId && m.ModelName == mn)
+                    .Find(m => m.PlatformId == platformId && m.ModelName == mid)
                     .FirstOrDefaultAsync();
 
                 if (existing != null)
@@ -248,8 +248,8 @@ public class AdminDataController : ControllerBase
                 {
                     var created = new LLMModel
                     {
-                        Name = mn,
-                        ModelName = mn,
+                        Name = mid,
+                        ModelName = mid,
                         PlatformId = platformId,
                         Group = null,
                         Priority = nextPriority++,

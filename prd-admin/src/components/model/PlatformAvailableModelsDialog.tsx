@@ -8,8 +8,10 @@ import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
 import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap } from 'lucide-react';
+import { systemDialog } from '@/lib/systemDialog';
 
 export type AvailableModel = {
+  /** 平台侧模型 ID（业务语义 modelId；后端字段名为 ModelName，前端历史命名为 modelName） */
   modelName: string;
   displayName: string;
   group?: string;
@@ -242,7 +244,12 @@ export function PlatformAvailableModelsDialog({
 
   const reclassifyWithMainModel = async () => {
     if (!platform?.id) return;
-    const ok = window.confirm('将使用“主模型”对该平台可用模型重新分类，并写回已配置模型的分组/标签。是否继续？');
+    const ok = await systemDialog.confirm({
+      title: '确认执行',
+      message: '将使用“主模型”对该平台可用模型重新分类，并写回已配置模型的分组/标签。是否继续？',
+      confirmText: '继续',
+      cancelText: '取消',
+    });
     if (!ok) return;
 
     setAvailableLoading(true);
@@ -263,7 +270,7 @@ export function PlatformAvailableModelsDialog({
         return;
       }
       const d = r.data as { updatedCount?: number; configuredCount?: number; availableCount?: number } | null;
-      alert(`主模型分类完成：更新 ${d?.updatedCount ?? 0} 个（已配置 ${d?.configuredCount ?? 0} / 可用 ${d?.availableCount ?? 0}）`);
+      void systemDialog.alert(`主模型分类完成：更新 ${d?.updatedCount ?? 0} 个（已配置 ${d?.configuredCount ?? 0} / 可用 ${d?.availableCount ?? 0}）`);
       if (onAfterWriteBack) await onAfterWriteBack();
       await fetchAvailableModels({ refresh: true });
     } finally {

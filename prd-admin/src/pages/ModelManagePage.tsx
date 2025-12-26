@@ -39,6 +39,7 @@ import { ModelKpiRail } from '@/components/model/ModelKpiRail';
 import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
 import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import { formatDuration } from '@/lib/formatStats';
+import { systemDialog } from '@/lib/systemDialog';
 
 type PlatformForm = {
   name: string;
@@ -378,7 +379,7 @@ export default function ModelManagePage() {
     const res = await clearVisionModel();
     if (!res.success) {
       await load({ silent: true });
-      alert(res.error?.message || '取消图片识别模型失败');
+      await systemDialog.alert(res.error?.message || '取消图片识别模型失败');
       return;
     }
     await load({ silent: true });
@@ -391,7 +392,7 @@ export default function ModelManagePage() {
     const res = await clearImageGenModel();
     if (!res.success) {
       await load({ silent: true });
-      alert(res.error?.message || '取消图片生成模型失败');
+      await systemDialog.alert(res.error?.message || '取消图片生成模型失败');
       return;
     }
     await load({ silent: true });
@@ -525,7 +526,7 @@ export default function ModelManagePage() {
       const updates = idsInOrder.map((id, idx) => ({ id, priority: idx + 1 }));
       const res = await updateModelPriorities(updates);
       if (!res.success) {
-        alert(res.error?.message || '保存排序失败');
+        await systemDialog.alert(res.error?.message || '保存排序失败');
         return;
       }
       await load({ silent: true });
@@ -570,7 +571,7 @@ export default function ModelManagePage() {
     if (!selectedPlatform) return;
     const toAdd = ms.filter((m) => !existingModelByName.get(m.modelName));
     if (toAdd.length === 0) return;
-    const ok = window.confirm(`确定批量添加 ${toAdd.length} 个模型到平台“${selectedPlatform.name}”？\n分组：${groupName}`);
+    const ok = await systemDialog.confirm(`确定批量添加 ${toAdd.length} 个模型到平台“${selectedPlatform.name}”？\n分组：${groupName}`);
     if (!ok) return;
 
     for (const m of toAdd) {
@@ -583,7 +584,7 @@ export default function ModelManagePage() {
         enablePromptCache: true,
       });
       if (!res.success) {
-        alert(res.error?.message || '批量添加失败');
+        await systemDialog.alert(res.error?.message || '批量添加失败');
         break;
       }
     }

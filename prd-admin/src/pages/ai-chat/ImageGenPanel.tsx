@@ -6,6 +6,7 @@ import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
 import { Copy, Download, Loader2, Maximize2, Square, Wand2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { systemDialog } from '@/lib/systemDialog';
 
 type ImageItem = {
   key: string;
@@ -142,7 +143,10 @@ export default function ImageGenPanel() {
 
   const runSingle = async () => {
     setSingleError('');
-    if (!activeModel) return alert('请先选择生图模型');
+    if (!activeModel) {
+      await systemDialog.alert('请先选择生图模型');
+      return;
+    }
     const p = prompt.trim();
     if (!p) return;
 
@@ -183,7 +187,7 @@ export default function ImageGenPanel() {
     try {
       const res = await planImageGen({ text: prompt.trim(), maxItems: 10 });
       if (!res.success) {
-        alert(res.error?.message || '解析失败');
+        await systemDialog.alert(res.error?.message || '解析失败');
         return;
       }
       setPlanResult(res.data ?? null);
@@ -193,8 +197,14 @@ export default function ImageGenPanel() {
   };
 
   const startBatch = async () => {
-    if (!activeModel) return alert('请先选择生图模型');
-    if (!planResult || !Array.isArray(planResult.items) || planResult.items.length === 0) return alert('请先生成批量计划');
+    if (!activeModel) {
+      await systemDialog.alert('请先选择生图模型');
+      return;
+    }
+    if (!planResult || !Array.isArray(planResult.items) || planResult.items.length === 0) {
+      await systemDialog.alert('请先生成批量计划');
+      return;
+    }
     if (batchRunning) return;
 
     stopBatch();

@@ -15,6 +15,7 @@ import {
   updateAdminGapStatus,
 } from '@/services';
 import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle } from 'lucide-react';
+import { systemDialog } from '@/lib/systemDialog';
 
 type GroupRow = {
   groupId: string;
@@ -382,7 +383,13 @@ export default function GroupsPage() {
                     disabled={actionBusy}
                     onClick={async () => {
                       if (!selected) return;
-                      const okConfirm = window.confirm(`确认删除群组「${selected.groupName}」？此操作会级联删除成员/缺失/消息。`);
+                      const okConfirm = await systemDialog.confirm({
+                        title: '确认删除',
+                        message: `确认删除群组「${selected.groupName}」？此操作会级联删除成员/缺失/消息。`,
+                        tone: 'danger',
+                        confirmText: '删除',
+                        cancelText: '取消',
+                      });
                       if (!okConfirm) return;
                       setActionBusy(true);
                       try {
@@ -436,7 +443,13 @@ export default function GroupsPage() {
                               onClick={async () => {
                                 if (!selected) return;
                                 if (m.isOwner) return;
-                                const okConfirm = window.confirm(`确认将成员「${m.displayName}」移出群组？`);
+                                const okConfirm = await systemDialog.confirm({
+                                  title: '确认移除成员',
+                                  message: `确认将成员「${m.displayName}」移出群组？`,
+                                  tone: 'danger',
+                                  confirmText: '移除',
+                                  cancelText: '取消',
+                                });
                                 if (!okConfirm) return;
                                 setActionBusy(true);
                                 try {

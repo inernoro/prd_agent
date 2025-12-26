@@ -11,9 +11,11 @@ export type ModelLabParams = {
 };
 
 export type ModelLabSelectedModel = {
+  /** 平台侧模型 ID（业务语义 modelId） */
   modelId: string;
   platformId: string;
   name: string;
+  /** 兼容字段：历史版本/旧接口使用；语义等同于 modelId */
   modelName: string;
   group?: string | null;
 };

@@ -41,6 +41,7 @@ import { ModelPickerDialog } from '@/pages/lab-llm/components/ModelPickerDialog'
 import { useAuthStore } from '@/stores/authStore';
 import { clearLlmLabImagesForUser, getLlmLabImageBlob, putLlmLabImageBlob } from '@/lib/llmLabImageDb';
 import { emitBackdropBusyEnd, emitBackdropBusyStart, waitForBackdropBusyStopped } from '@/lib/backdropBusy';
+import { systemDialog } from '@/lib/systemDialog';
 
 type ViewRunItem = {
   itemId: string;
@@ -516,7 +517,7 @@ async function downloadAllAsZip(items: { src: string; filename: string }[], zipN
   }
 
   if (okCount === 0) {
-    alert('没有可下载的图片（可能被跨域限制）');
+    await systemDialog.alert('没有可下载的图片（可能被跨域限制）');
     return;
   }
 
@@ -1057,7 +1058,10 @@ export default function LlmLabTab() {
     const name = createExperimentName.trim();
     if (!name) return;
     const created = await createModelLabExperiment({ name, suite: 'speed', params: defaultParams, selectedModels: [] });
-    if (!created.success) return alert(created.error?.message || '创建失败');
+    if (!created.success) {
+      await systemDialog.alert(created.error?.message || '创建失败');
+      return;
+    }
     setExperiments((p) => [created.data, ...p]);
     setActiveExperimentId(created.data.id);
     setCreateExperimentOpen(false);
@@ -1080,7 +1084,10 @@ export default function LlmLabTab() {
 
   const deleteExperiment = async (id: string) => {
     const res = await deleteModelLabExperiment(id);
-    if (!res.success) return alert(res.error?.message || '删除失败');
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '删除失败');
+      return;
+    }
 
     setExperiments((prev) => {
       const remaining = prev.filter((x) => x.id !== id);
@@ -1233,7 +1240,7 @@ export default function LlmLabTab() {
         params,
       });
       if (!res.success) {
-        if (!opts?.silent) alert(res.error?.message || '保存失败');
+        if (!opts?.silent) void systemDialog.alert(res.error?.message || '保存失败');
         return;
       }
       // 刷新本地列表
@@ -1351,13 +1358,21 @@ export default function LlmLabTab() {
 
   const startGenerateImage = async () => {
     const prompt = (promptText ?? '').trim();
-    if (!prompt) return alert('请输入要生图的描述');
-    if (imageGenModels.length === 0) return alert('请先在左侧选择至少 1 个模型');
+    if (!prompt) {
+      await systemDialog.alert('请输入要生图的描述');
+      return;
+    }
+    if (imageGenModels.length === 0) {
+      await systemDialog.alert('请先在左侧选择至少 1 个模型');
+      return;
+    }
 
     const perModelN = Math.max(1, Math.min(20, Number(singleN || 1)));
     const total = perModelN * imageGenModels.length;
     if (total > 3) {
-      const ok = window.confirm(`你将使用 ${imageGenModels.length} 个模型生成 ${perModelN} × ${imageGenModels.length} = ${total} 张图片，是否继续？`);
+      const ok = await systemDialog.confirm(
+        `你将使用 ${imageGenModels.length} 个模型生成 ${perModelN} × ${imageGenModels.length} = ${total} 张图片，是否继续？`
+      );
       if (!ok) return;
     }
 
@@ -1447,8 +1462,14 @@ export default function LlmLabTab() {
 
   const parseBatchPlan = async () => {
     const text = (promptText ?? '').trim();
-    if (!text) return alert('请输入要批量生图的描述');
-    if (imageGenModels.length === 0) return alert('请先在左侧选择至少 1 个模型');
+    if (!text) {
+      await systemDialog.alert('请输入要批量生图的描述');
+      return;
+    }
+    if (imageGenModels.length === 0) {
+      await systemDialog.alert('请先在左侧选择至少 1 个模型');
+      return;
+    }
 
     setBatchError(null);
     setPlanLoading(true);
@@ -1488,12 +1509,17 @@ export default function LlmLabTab() {
 
   const startBatchFromPlan = async () => {
     if (!planResult) return;
-    if (imageGenModels.length === 0) return alert('请先在左侧选择至少 1 个模型');
+    if (imageGenModels.length === 0) {
+      await systemDialog.alert('请先在左侧选择至少 1 个模型');
+      return;
+    }
 
     const planTotal = Math.max(0, Number(planResult.total || 0));
     const total = planTotal * imageGenModels.length;
     if (total > 3) {
-      const ok = window.confirm(`你将使用 ${imageGenModels.length} 个模型生成 ${planTotal} × ${imageGenModels.length} = ${total} 张图片，是否继续？`);
+      const ok = await systemDialog.confirm(
+        `你将使用 ${imageGenModels.length} 个模型生成 ${planTotal} × ${imageGenModels.length} = ${total} 张图片，是否继续？`
+      );
       if (!ok) return;
     }
 
@@ -1667,8 +1693,14 @@ export default function LlmLabTab() {
   };
 
   const startRun = async () => {
-    if (!activeExperimentId) return alert('请先选择实验');
-    if (selectedModels.length === 0) return alert('请先加入至少 1 个模型');
+    if (!activeExperimentId) {
+      await systemDialog.alert('请先选择实验');
+      return;
+    }
+    if (selectedModels.length === 0) {
+      await systemDialog.alert('请先加入至少 1 个模型');
+      return;
+    }
 
     // 安全提示：如果选中列表里包含“生图模型”，一键实验可能造成较高费用/更长耗时（尤其在生图相关套件）
     const imageGenModelIds = new Set(allModelsRef.current.filter((m) => (m as any).isImageGen).map((m) => m.id));
@@ -1682,13 +1714,16 @@ export default function LlmLabTab() {
       (sm) => imageGenModelIds.has(sm.modelId) || (sm.modelName ? imageGenModelNames.has(String(sm.modelName).trim().toLowerCase()) : false)
     );
     if (hasImageGenSelected) {
-      const ok = window.confirm('检测到已选择模型中包含“生图模型”。一键开始实验可能导致更长耗时/更高费用，是否继续？');
+      const ok = await systemDialog.confirm('检测到已选择模型中包含“生图模型”。一键开始实验可能导致更长耗时/更高费用，是否继续？');
       if (!ok) return;
     }
 
     // 临时禁用：本次运行只跑“未禁用模型”，不改实验配置
     const enabledModels = (selectedModels ?? []).filter((m) => !disabledModelKeys[modelKeyOfSelected(m)]);
-    if (enabledModels.length === 0) return alert('当前已将所有模型临时禁用，请先点击模型恢复至少 1 个再运行');
+    if (enabledModels.length === 0) {
+      await systemDialog.alert('当前已将所有模型临时禁用，请先点击模型恢复至少 1 个再运行');
+      return;
+    }
 
     setRunError(null);
     setRunItems({});
@@ -1918,7 +1953,7 @@ export default function LlmLabTab() {
     const res = await clearVisionModel();
     if (!res.success) {
       await refreshModelsSilent();
-      alert(res.error?.message || '取消视觉模型失败');
+      await systemDialog.alert(res.error?.message || '取消视觉模型失败');
       return;
     }
     await refreshModelsSilent();
@@ -1929,7 +1964,7 @@ export default function LlmLabTab() {
     const res = await clearImageGenModel();
     if (!res.success) {
       await refreshModelsSilent();
-      alert(res.error?.message || '取消生图模型失败');
+      await systemDialog.alert(res.error?.message || '取消生图模型失败');
       return;
     }
     await refreshModelsSilent();
@@ -2081,14 +2116,23 @@ export default function LlmLabTab() {
   };
 
   const saveModelSet = async () => {
-    if (selectedModels.length === 0) return alert('当前没有已选择的模型');
+    if (selectedModels.length === 0) {
+      await systemDialog.alert('当前没有已选择的模型');
+      return;
+    }
     const pad2 = (n: number) => String(n).padStart(2, '0');
     const now = new Date();
     const suggested = `标签组-${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
-    const name = (window.prompt('标签组名称', suggested) ?? '').trim();
+    const name = (
+      (await systemDialog.prompt({ title: '标签组名称', message: '请输入标签组名称', defaultValue: suggested })) ??
+      ''
+    ).trim();
     if (!name) return;
     const res = await upsertModelLabModelSet({ name, models: selectedModels });
-    if (!res.success) return alert(res.error?.message || '保存失败');
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '保存失败');
+      return;
+    }
     await loadModelSets();
   };
 
@@ -2706,7 +2750,7 @@ export default function LlmLabTab() {
                   variant="secondary"
                   onClick={async () => {
                     if (!activeExperimentId) return;
-                    const ok = window.confirm(`检测到 ${failedRunCount} 个失败模型，是否一键从“已选择模型”中剔除并保存？`);
+                    const ok = await systemDialog.confirm(`检测到 ${failedRunCount} 个失败模型，是否一键从“已选择模型”中剔除并保存？`);
                     if (!ok) return;
 
                     // 失败模型定位策略：
@@ -2737,7 +2781,7 @@ export default function LlmLabTab() {
                     });
 
                     if (nextSelected.length === selectedModels.length) {
-                      alert('未能匹配到需要剔除的模型（可能缺少平台信息或已被移除）');
+                      await systemDialog.alert('未能匹配到需要剔除的模型（可能缺少平台信息或已被移除）');
                       return;
                     }
 
@@ -2750,7 +2794,7 @@ export default function LlmLabTab() {
                       params,
                     });
                     if (!res.success) {
-                      alert(res.error?.message || '保存失败');
+                      await systemDialog.alert(res.error?.message || '保存失败');
                       return;
                     }
                     setExperiments((prev) => prev.map((e) => (e.id === res.data.id ? res.data : e)));
@@ -2759,7 +2803,7 @@ export default function LlmLabTab() {
                     const sig = [String(suite ?? ''), JSON.stringify(params ?? {}), String(promptText ?? ''), signatureOfSelectedModels(nextSelected)].join('||');
                     lastSavedSigRef.current = sig;
                     lastSavedExperimentIdRef.current = res.data.id;
-                    alert(`已剔除 ${selectedModels.length - nextSelected.length} 个失败模型并保存`);
+                    void systemDialog.alert(`已剔除 ${selectedModels.length - nextSelected.length} 个失败模型并保存`);
                   }}
                   title="将本次运行失败（status=error）的模型从已选择列表中移除，并保存到实验配置"
                 >
@@ -4027,7 +4071,14 @@ export default function LlmLabTab() {
                         style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.12)' }}
                         onClick={async (evt) => {
                           evt.stopPropagation();
-                          if (!window.confirm(`确定删除实验“${e.name}”？（不可恢复）`)) return;
+                          const ok = await systemDialog.confirm({
+                            title: '确认删除',
+                            message: `确定删除实验“${e.name}”？（不可恢复）`,
+                            tone: 'danger',
+                            confirmText: '删除',
+                            cancelText: '取消',
+                          });
+                          if (!ok) return;
                           await deleteExperiment(e.id);
                         }}
                         title="删除实验"

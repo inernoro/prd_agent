@@ -181,7 +181,7 @@ public class MongoDbContext
                 PartialFilterExpression = new BsonDocument("ModelId", new BsonDocument("$exists", true))
             }));
 
-        // 2) platformId + modelName 唯一：仅对存在 PlatformId & ModelName 字段的文档生效
+        // 2) platformId + modelId 唯一（字段名：ModelName）：仅对存在 PlatformId & ModelName 字段的文档生效
         ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
             Builders<ImageGenSizeCaps>.IndexKeys
                 .Ascending(x => x.PlatformId)

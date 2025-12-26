@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
+import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode };
 
@@ -44,6 +45,7 @@ export default function AppShell() {
 
   return (
     <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+      <SystemDialogHost />
       {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
       <RecursiveGridBackdrop
         className="absolute inset-0"
