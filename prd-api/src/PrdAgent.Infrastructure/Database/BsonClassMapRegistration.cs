@@ -31,6 +31,7 @@ public static class BsonClassMapRegistration
             RegisterLLMConfig();
             RegisterAppSettings();
             RegisterLlmRequestLog();
+            RegisterApiRequestLog();
             RegisterInviteCode();
             RegisterParsedPrd();
             RegisterPrdComment();
@@ -238,6 +239,20 @@ public static class BsonClassMapRegistration
         if (BsonClassMap.IsClassMapRegistered(typeof(LlmRequestLog))) return;
 
         BsonClassMap.RegisterClassMap<LlmRequestLog>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(l => l.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterApiRequestLog()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ApiRequestLog))) return;
+
+        BsonClassMap.RegisterClassMap<ApiRequestLog>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(l => l.Id)

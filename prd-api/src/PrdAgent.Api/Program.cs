@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -137,6 +138,9 @@ var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "prdagent";
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // 关闭默认的 Inbound Claim 映射（否则标准 claim 如 sub 可能被映射为 nameidentifier，导致业务取不到 sub）
+        options.MapInboundClaims = false;
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -145,7 +149,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            // 我们的 JwtService 写入的角色 claim 为 "role"（非 ClaimTypes.Role）
+            // 且 MapInboundClaims=false，因此需要显式指定 RoleClaimType，否则 [Authorize(Roles="ADMIN")] 会全部 403
+            RoleClaimType = "role"
         };
 
         // 统一未授权/无权限响应格式，避免默认 401/403 返回空 body（桌面端会报 "Empty response from server"）
@@ -166,7 +173,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             {
                 try
                 {
-                    var sub = context.Principal?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+                    var principal = context.Principal;
+                    var sub = principal?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                              ?? principal?.FindFirst("sub")?.Value
+                              ?? principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                              ?? principal?.FindFirst("nameid")?.Value;
                     var clientType = context.Principal?.FindFirst("clientType")?.Value;
                     var tvStr = context.Principal?.FindFirst("tv")?.Value;
 

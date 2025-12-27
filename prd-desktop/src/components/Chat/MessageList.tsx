@@ -3,7 +3,7 @@ import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
-import type { DocCitation, MessageBlock } from '../../types';
+import type { MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 
 const phaseText: Record<string, string> = {
@@ -31,46 +31,6 @@ function unwrapMarkdownFences(text: string) {
   // 兼容：LLM 常用 ```markdown / ```md 包裹“本来就想渲染的 Markdown”，会被当作代码块显示
   // 这里仅解包 markdown/md 语言标记，其它代码块保持不动
   return text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
-}
-
-function escRegExp(input: string) {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * 将 LLM 输出中的「(标题) / （标题）」替换为可点击的 markdown 链接，
- * 以便点击后打开右侧“引用预览抽屉”。
- */
-function injectCitationLinks(raw: string, citations: DocCitation[]) {
-  const list = Array.isArray(citations) ? citations.slice(0, 30) : [];
-  if (!raw || list.length === 0) return raw;
-  // 避免重复注入（例如 message 复渲染）
-  if (raw.includes('](prd-citation:') || raw.includes('](prd-citation://')) return raw;
-
-  let next = raw;
-  // 先按标题长度降序，避免短标题先替换导致长标题匹配失败
-  const items = list
-    .map((c, idx) => ({ idx, title: String(c?.headingTitle || '').trim(), hid: String(c?.headingId || '').trim() }))
-    .filter((x) => x.title || x.hid)
-    .sort((a, b) => (b.title.length + b.hid.length) - (a.title.length + a.hid.length));
-
-  for (const it of items) {
-    const variants = Array.from(
-      new Set(
-        [it.title, it.hid]
-          .map((s) => String(s || '').trim())
-          .filter(Boolean)
-          .flatMap((s) => [`（${s}）`, `(${s})`])
-      )
-    );
-    for (const v of variants) {
-      // 仅替换“完整括号项”，减少误伤
-      const re = new RegExp(escRegExp(v), 'g');
-      // 链接文本保留原括号形式，href 只带索引
-      next = next.replace(re, `[${v}](prd-citation:${it.idx})`);
-    }
-  }
-  return next;
 }
 
 function injectSectionNumberLinks(raw: string) {
@@ -255,10 +215,7 @@ export default function MessageList() {
           message.role === 'Assistant' && Array.isArray(message.citations) ? message.citations : [];
 
         const renderedAssistantContent = message.role === 'Assistant'
-          ? injectCitationLinks(
-            injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(message.content))),
-            assistantCitations ?? []
-          )
+          ? injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(message.content)))
           : message.content;
 
         const navNumbers = message.role === 'Assistant' ? extractNavNumbers(renderedAssistantContent) : [];
@@ -297,6 +254,30 @@ export default function MessageList() {
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
                       content={renderedAssistantContent}
+                      citations={assistantCitations ?? []}
+                      onOpenCitation={(idx) => {
+                        if (!activeGroupId || !prdDocument?.id) return;
+                        const citations = assistantCitations ?? [];
+                        if (!citations.length) return;
+                        const safeIdx = Math.max(0, Math.min(citations.length - 1, idx));
+                        const c = citations[safeIdx];
+                        const targetHeadingId = (c?.headingId || '').trim();
+                        const targetHeadingTitle = (c?.headingTitle || '').trim();
+                        openWithCitations({
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                        openCitationDrawer({
+                          documentId: prdDocument.id,
+                          groupId: activeGroupId,
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                      }}
                       onInternalLinkClick={(href) => {
                         const idx = parseCitationIndexFromHref(href);
                         const navTitle = parseNavTitleFromHref(href);
@@ -377,6 +358,30 @@ export default function MessageList() {
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
                       content={renderedAssistantContent}
+                      citations={assistantCitations ?? []}
+                      onOpenCitation={(idx) => {
+                        if (!activeGroupId || !prdDocument?.id) return;
+                        const citations = assistantCitations ?? [];
+                        if (!citations.length) return;
+                        const safeIdx = Math.max(0, Math.min(citations.length - 1, idx));
+                        const c = citations[safeIdx];
+                        const targetHeadingId = (c?.headingId || '').trim();
+                        const targetHeadingTitle = (c?.headingTitle || '').trim();
+                        openWithCitations({
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                        openCitationDrawer({
+                          documentId: prdDocument.id,
+                          groupId: activeGroupId,
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                      }}
                       onInternalLinkClick={(href) => {
                         const idx = parseCitationIndexFromHref(href);
                         const navTitle = parseNavTitleFromHref(href);

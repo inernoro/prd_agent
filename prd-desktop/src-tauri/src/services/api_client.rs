@@ -2,6 +2,7 @@ use reqwest::{Client, StatusCode, Url};
 use serde::{de::DeserializeOwned, Serialize};
 use std::sync::RwLock;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use crate::models::{ApiError, ApiResponse, LoginResponse};
 
@@ -17,12 +18,23 @@ lazy_static::lazy_static! {
     static ref AUTH_REFRESH_TOKEN: RwLock<Option<String>> = RwLock::new(None);
     static ref AUTH_SESSION_KEY: RwLock<Option<String>> = RwLock::new(None);
     static ref AUTH_CLIENT_TYPE: RwLock<Option<String>> = RwLock::new(Some("desktop".to_string()));
+    static ref CLIENT_ID: RwLock<Option<String>> = RwLock::new(None);
+    static ref HEARTBEAT_TOKEN: std::sync::Mutex<Option<CancellationToken>> = std::sync::Mutex::new(None);
 }
 
 /// 设置 API 基础 URL
 pub fn set_api_base_url(url: String) {
     let mut base_url = API_BASE_URL.write().unwrap();
     *base_url = url;
+}
+
+/// 设置 desktop 客户端实例 id（用于 X-Client-Id）
+pub fn set_client_id(id: String) {
+    let trimmed = id.trim().to_string();
+    if trimmed.is_empty() {
+        return;
+    }
+    *CLIENT_ID.write().unwrap() = Some(trimmed);
 }
 
 /// 获取当前 auth token（用于 SSE 等需要手动拼 header 的场景）
@@ -45,6 +57,59 @@ pub struct ApiClient {
     client: Client,
 }
 
+#[derive(Serialize)]
+struct EmptyJson {}
+
+fn start_desktop_presence_heartbeat() {
+    let mut guard = HEARTBEAT_TOKEN.lock().unwrap();
+    if guard.is_some() {
+        return;
+    }
+
+    let token = CancellationToken::new();
+    *guard = Some(token.clone());
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        // 立即执行一次，避免等 30s 才上线
+        loop {
+            if token.is_cancelled() {
+                break;
+            }
+
+            // 仅在有 token 时发送心跳
+            if AUTH_TOKEN.read().unwrap().is_some() {
+                let base_url = API_BASE_URL.read().unwrap().clone();
+                let url = format!("{}/api/v1/desktop/presence/heartbeat", base_url.trim_end_matches('/'));
+                let client = build_http_client(&base_url);
+
+                let mut req = client.post(&url).json(&EmptyJson {});
+                req = req.header("X-Client", "desktop");
+                if let Some(cid) = CLIENT_ID.read().unwrap().clone() {
+                    if !cid.trim().is_empty() {
+                        req = req.header("X-Client-Id", cid);
+                    }
+                }
+                if let Some(t) = AUTH_TOKEN.read().unwrap().clone() {
+                    req = req.header("Authorization", format!("Bearer {}", t));
+                }
+
+                // 忽略失败：网络波动/服务端重启时不影响 UI
+                let _ = req.send().await;
+            }
+
+            ticker.tick().await;
+        }
+    });
+}
+
+fn stop_desktop_presence_heartbeat() {
+    let mut guard = HEARTBEAT_TOKEN.lock().unwrap();
+    if let Some(t) = guard.take() {
+        t.cancel();
+    }
+}
+
 impl ApiClient {
     pub fn new() -> Self {
         let base_url = Self::get_base_url();
@@ -56,6 +121,7 @@ impl ApiClient {
     pub fn set_token(token: String) {
         let mut auth = AUTH_TOKEN.write().unwrap();
         *auth = Some(token);
+        start_desktop_presence_heartbeat();
     }
 
     pub fn set_auth_session(
@@ -77,6 +143,7 @@ impl ApiClient {
     pub fn clear_token() {
         let mut auth = AUTH_TOKEN.write().unwrap();
         *auth = None;
+        stop_desktop_presence_heartbeat();
     }
 
     fn get_base_url() -> String {
@@ -85,6 +152,23 @@ impl ApiClient {
 
     fn get_token() -> Option<String> {
         AUTH_TOKEN.read().unwrap().clone()
+    }
+
+    fn get_client_id() -> Option<String> {
+        CLIENT_ID.read().unwrap().clone()
+    }
+
+    fn apply_common_headers(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request = request.header("X-Client", "desktop");
+        if let Some(cid) = Self::get_client_id() {
+            if !cid.trim().is_empty() {
+                request = request.header("X-Client-Id", cid);
+            }
+        }
+        if let Some(token) = Self::get_token() {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+        request
     }
 
     fn get_refresh_ctx() -> Option<(String, String, String, String)> {
@@ -124,10 +208,8 @@ impl ApiClient {
             session_key,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&req)
+        let request = self.apply_common_headers(self.client.post(&url).json(&req));
+        let response = request
             .send()
             .await
             .map_err(|e| format!("Refresh request failed: {}", e))?;
@@ -181,10 +263,7 @@ impl ApiClient {
         eprintln!("[api] GET {}", url);
 
         for attempt in 0..2 {
-            let mut request = self.client.get(&url);
-            if let Some(token) = Self::get_token() {
-                request = request.header("Authorization", format!("Bearer {}", token));
-            }
+            let request = self.apply_common_headers(self.client.get(&url));
 
             let response = request
                 .send()
@@ -268,10 +347,7 @@ impl ApiClient {
         eprintln!("[api] POST {}", url);
 
         for attempt in 0..2 {
-            let mut request = self.client.post(&url).json(body);
-            if let Some(token) = Self::get_token() {
-                request = request.header("Authorization", format!("Bearer {}", token));
-            }
+            let request = self.apply_common_headers(self.client.post(&url).json(body));
 
             let response = request
                 .send()
@@ -352,10 +428,7 @@ impl ApiClient {
         eprintln!("[api] PUT {}", url);
 
         for attempt in 0..2 {
-            let mut request = self.client.put(&url).json(body);
-            if let Some(token) = Self::get_token() {
-                request = request.header("Authorization", format!("Bearer {}", token));
-            }
+            let request = self.apply_common_headers(self.client.put(&url).json(body));
 
             let response = request
                 .send()
@@ -430,11 +503,7 @@ impl ApiClient {
         #[cfg(debug_assertions)]
         eprintln!("[api] DELETE {}", url);
 
-        let mut request = self.client.delete(&url);
-
-        if let Some(token) = Self::get_token() {
-            request = request.header("Authorization", format!("Bearer {}", token));
-        }
+        let request = self.apply_common_headers(self.client.delete(&url));
 
         let response = request
             .send()

@@ -37,6 +37,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
     public IMongoCollection<ModelLabRun> ModelLabRuns => _database.GetCollection<ModelLabRun>("model_lab_runs");
@@ -121,6 +122,25 @@ public class MongoDbContext
         // TTL（默认保留 7 天）：基于 EndedAt
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt),
+            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
+
+        // ApiRequestLogs 索引（系统请求日志）
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Descending(x => x.StartedAt)));
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.RequestId)));
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.UserId)));
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.Path)));
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.StatusCode)));
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.ClientType).Ascending(x => x.ClientId)));
+
+        // TTL（默认保留 7 天）：基于 EndedAt
+        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
             new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
 
         // ModelLabExperiments 索引

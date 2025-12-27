@@ -12,6 +12,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { useSearchParams } from 'react-router-dom';
+import SystemLogsTab from '@/pages/system-logs/SystemLogsTab';
 
 function codeBoxStyle(): React.CSSProperties {
   return {
@@ -676,6 +678,15 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
 }
 
 export default function LlmLogsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
+
+  const setTab = (next: 'llm' | 'system') => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('tab', next);
+    setSearchParams(sp, { replace: true });
+  };
+
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<LlmRequestLogListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -823,6 +834,26 @@ export default function LlmLogsPage() {
     color: 'var(--text-primary)',
   };
 
+  if (tab === 'system') {
+    return (
+      <div className="h-full min-h-0 flex flex-col gap-4">
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
+            <Sparkles size={16} />
+            大模型日志
+          </Button>
+          <Button variant={tab === 'system' ? 'primary' : 'secondary'} onClick={() => setTab('system')}>
+            <Server size={16} />
+            系统日志
+          </Button>
+        </div>
+        <div className="flex-1 min-h-0">
+          <SystemLogsTab />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <style>{`
@@ -834,6 +865,16 @@ export default function LlmLogsPage() {
         @keyframes prd-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--prd-marquee-shift)))}}
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
+          <Sparkles size={16} />
+          大模型日志
+        </Button>
+        <Button variant={tab === 'system' ? 'primary' : 'secondary'} onClick={() => setTab('system')}>
+          <Server size={16} />
+          系统日志
+        </Button>
+      </div>
       <div className="flex items-end justify-between gap-4">
         <div>
           <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>LLM 请求日志</div>

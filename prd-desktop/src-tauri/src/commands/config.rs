@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 use tauri::Manager;
+use uuid::Uuid;
 
 use crate::services::api_client;
 
@@ -14,6 +15,8 @@ pub struct AppConfig {
     pub api_base_url: String,
     #[serde(default)]
     pub is_developer: bool,
+    #[serde(default)]
+    pub client_id: String,
 }
 
 impl Default for AppConfig {
@@ -21,6 +24,7 @@ impl Default for AppConfig {
         Self {
             api_base_url: api_client::get_default_api_url(),
             is_developer: false,
+            client_id: Uuid::new_v4().to_string(),
         }
     }
 }
@@ -48,7 +52,16 @@ fn load_config_from_file(app: &tauri::AppHandle) -> Result<AppConfig, String> {
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config file: {}", e))
+        let mut parsed = serde_json::from_str::<AppConfig>(&content)
+            .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+        // 兼容旧配置：缺少 clientId 时自动补齐并落盘
+        if parsed.client_id.trim().is_empty() {
+            parsed.client_id = Uuid::new_v4().to_string();
+            let _ = save_config_to_file(app, &parsed);
+        }
+
+        Ok(parsed)
     } else {
         Ok(AppConfig::default())
     }
@@ -73,8 +86,18 @@ pub async fn get_config(app: tauri::AppHandle) -> Result<AppConfig, String> {
 pub async fn save_config(app: tauri::AppHandle, config: AppConfig) -> Result<(), String> {
     // 更新内存中的 API URL
     api_client::set_api_base_url(config.api_base_url.clone());
+    // clientId：若前端未传（兼容旧版），则保留旧值或生成新值，避免写入空串导致 clientId 丢失
+    let mut to_save = config.clone();
+    if to_save.client_id.trim().is_empty() {
+        let existing = load_config_from_file(&app).ok();
+        to_save.client_id = existing
+            .and_then(|x| if x.client_id.trim().is_empty() { None } else { Some(x.client_id) })
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+    }
+    api_client::set_client_id(to_save.client_id.clone());
+
     // 持久化到文件
-    save_config_to_file(&app, &config)
+    save_config_to_file(&app, &to_save)
 }
 
 /// 获取默认 API 地址
@@ -186,6 +209,10 @@ pub fn init_config(app: &tauri::AppHandle) {
         let trimmed = config.api_base_url.trim().to_string();
         if !trimmed.is_empty() {
             api_client::set_api_base_url(trimmed);
+        }
+
+        if !config.client_id.trim().is_empty() {
+            api_client::set_client_id(config.client_id);
         }
     }
 }

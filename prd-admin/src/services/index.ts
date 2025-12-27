@@ -30,6 +30,7 @@ import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertMod
 import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
 import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
+import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
 import type {
   AddImageMasterMessageContract,
   CreateImageMasterSessionContract,
@@ -82,6 +83,7 @@ import {
   uploadImageAssetReal,
 } from '@/services/real/imageMaster';
 import { exportConfigReal, getDataSummaryReal, importConfigReal, purgeDataReal } from '@/services/real/data';
+import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -163,6 +165,10 @@ export const getLlmLogs: GetLlmLogsContract = withAuth(getLlmLogsReal);
 export const getLlmLogDetail: GetLlmLogDetailContract = withAuth(getLlmLogDetailReal);
 export const getLlmLogsMeta: GetLlmLogsMetaContract = withAuth(getLlmLogsMetaReal);
 export const getLlmModelStats: GetLlmModelStatsContract = withAuth(getLlmModelStatsReal);
+
+export const getApiLogs: GetApiLogsContract = withAuth(getApiLogsReal);
+export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetailReal);
+export const getApiLogsMeta: GetApiLogsMetaContract = withAuth(getApiLogsMetaReal);
 
 export const adminImpersonate: AdminImpersonateContract = withAuth(adminImpersonateReal);
 

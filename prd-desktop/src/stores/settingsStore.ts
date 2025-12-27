@@ -4,6 +4,7 @@ import { invoke } from '../lib/tauri';
 interface AppConfig {
   apiBaseUrl: string;
   isDeveloper: boolean;
+  clientId?: string;
 }
 
 interface SettingsState {
@@ -41,8 +42,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   saveConfig: async (config: AppConfig) => {
     set({ isLoading: true });
     try {
-      await invoke('save_config', { config });
-      set({ config });
+      // 兼容旧版：clientId 由后端兜底生成，但前端保存时尽量保留已有值，避免重复生成
+      const prev = useSettingsStore.getState().config;
+      const toSave: AppConfig = { ...prev, ...config };
+      await invoke('save_config', { config: toSave });
+      set({ config: toSave });
     } catch (err) {
       console.error('Failed to save config:', err);
       throw err;
