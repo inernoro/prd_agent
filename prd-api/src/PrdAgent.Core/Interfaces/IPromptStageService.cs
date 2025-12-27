@@ -5,10 +5,8 @@ namespace PrdAgent.Core.Interfaces;
 public record PromptStageClientItem(
     string StageKey,
     int Order,
-    int Step,
-    string PmTitle,
-    string DevTitle,
-    string QaTitle);
+    UserRole Role,
+    string Title);
 
 public record PromptStagesClientResponse(
     DateTime UpdatedAt,
@@ -28,8 +26,8 @@ public interface IPromptStageService
     /// <summary>按 stageKey 获取阶段提示词（推荐）</summary>
     Task<RoleStagePrompt?> GetStagePromptByKeyAsync(UserRole role, string stageKey, CancellationToken ct = default);
 
-    /// <summary>将 order(step) 映射到 stageKey（用于旧接口兼容）</summary>
-    Task<string?> MapOrderToStageKeyAsync(int order, CancellationToken ct = default);
+    /// <summary>将 order 映射到 stageKey（order 在 role 内排序；用于旧接口兼容）</summary>
+    Task<string?> MapOrderToStageKeyAsync(UserRole role, int order, CancellationToken ct = default);
 
     Task RefreshAsync(CancellationToken ct = default);
 }

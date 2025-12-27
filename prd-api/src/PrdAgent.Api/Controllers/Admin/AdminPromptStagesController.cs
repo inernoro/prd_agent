@@ -38,12 +38,16 @@ public class AdminPromptStagesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
-        var overridden = await _db.PromptStages.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
+        // 用 raw 判断是否有覆盖（避免旧结构 POCO 映射丢字段导致误判）
+        var overriddenRaw = await _db.PromptStagesRaw.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", "global")).FirstOrDefaultAsync(ct);
         var effective = await _promptStageService.GetEffectiveSettingsAsync(ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            isOverridden = overridden != null && overridden.Stages.Count > 0,
+            isOverridden = overriddenRaw != null
+                           && overriddenRaw.TryGetValue("stages", out var s)
+                           && s.IsBsonArray
+                           && s.AsBsonArray.Count > 0,
             settings = effective
         }));
     }
@@ -68,33 +72,34 @@ public class AdminPromptStagesController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "stages 不能为空"));
 
         var keys = new HashSet<string>(StringComparer.Ordinal);
-        var orders = new HashSet<int>();
+        var ordersByRole = new Dictionary<UserRole, HashSet<int>>();
         foreach (var s in stages)
         {
-            var order = s.Order;
-            var step = s.Step;
-            if (order <= 0 && step.HasValue && step.Value > 0) order = step.Value;
-            if (order <= 0)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "order 必须为正整数（或提供 step 兼容字段）"));
-            if (!orders.Add(order))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "order 不能重复"));
-
             var stageKey = (s.StageKey ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(stageKey))
-            {
-                // 兼容旧请求：未传 stageKey 时，按 step/order 生成稳定 key
-                stageKey = $"legacy-step-{(step ?? order)}";
-            }
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "stageKey 不能为空"));
             if (!keys.Add(stageKey))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "stageKey 不能重复"));
 
-            static bool ValidRole(RoleStagePrompt r)
-                => r != null
-                   && !string.IsNullOrWhiteSpace(r.Title)
-                   && !string.IsNullOrWhiteSpace(r.PromptTemplate);
+            if (s.Order <= 0)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "order 必须为正整数"));
 
-            if (!ValidRole(s.Pm) || !ValidRole(s.Dev) || !ValidRole(s.Qa))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "每个阶段的 pm/dev/qa 的 title 与 promptTemplate 均不能为空"));
+            if (string.IsNullOrWhiteSpace(s.Role))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "role 不能为空"));
+            if (!Enum.TryParse<UserRole>(s.Role.Trim(), ignoreCase: true, out var role) || role is UserRole.ADMIN)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "role 仅支持 PM/DEV/QA"));
+
+            if (!ordersByRole.TryGetValue(role, out var set))
+            {
+                set = new HashSet<int>();
+                ordersByRole[role] = set;
+            }
+            if (!set.Add(s.Order))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "同一 role 下 order 不能重复"));
+
+            // title 建议必填（否则 UI 无法展示）；promptTemplate 允许为空（代表该阶段不注入提示词）
+            if (string.IsNullOrWhiteSpace(s.Title))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "title 不能为空"));
         }
 
         // 统一保存：全量覆盖
@@ -105,23 +110,18 @@ public class AdminPromptStagesController : ControllerBase
             Stages = stages
                 .Select(x =>
                 {
-                    var order = x.Order;
-                    var step = x.Step;
-                    if (order <= 0 && step.HasValue && step.Value > 0) order = step.Value;
-                    var stageKey = (x.StageKey ?? string.Empty).Trim();
-                    if (string.IsNullOrWhiteSpace(stageKey))
-                        stageKey = $"legacy-step-{(step ?? order)}";
-                    return new PromptStage
+                    Enum.TryParse<UserRole>(x.Role.Trim(), ignoreCase: true, out var role);
+                    return new PromptStageEntry
                     {
-                        StageKey = stageKey,
-                        Order = order,
-                        Step = step ?? order,
-                        Pm = new RoleStagePrompt { Title = x.Pm.Title.Trim(), PromptTemplate = x.Pm.PromptTemplate.Trim() },
-                        Dev = new RoleStagePrompt { Title = x.Dev.Title.Trim(), PromptTemplate = x.Dev.PromptTemplate.Trim() },
-                        Qa = new RoleStagePrompt { Title = x.Qa.Title.Trim(), PromptTemplate = x.Qa.PromptTemplate.Trim() },
+                        StageKey = x.StageKey.Trim(),
+                        Role = role,
+                        Order = x.Order,
+                        Title = x.Title.Trim(),
+                        PromptTemplate = (x.PromptTemplate ?? string.Empty).Trim()
                     };
                 })
-                .OrderBy(x => x.Order)
+                .OrderBy(x => x.Role)
+                .ThenBy(x => x.Order)
                 .ToList()
         };
 

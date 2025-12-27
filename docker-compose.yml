@@ -47,7 +47,8 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
-      - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
+      # 生产环境：必须显式设置 JWT_SECRET（禁止使用仓库内默认值）
+      - Jwt__Secret=${JWT_SECRET}
       - Jwt__Issuer=prdagent
       - Session__TimeoutMinutes=30
     depends_on:

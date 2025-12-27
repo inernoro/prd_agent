@@ -119,8 +119,20 @@ public class GuideService : IGuideService
         int step,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // 兼容旧接口：step(order) -> stageKey
-        var stageKey = await _promptStageService.MapOrderToStageKeyAsync(step, cancellationToken);
+        // 兼容旧接口：step(order) -> stageKey（order 在 role 内排序）
+        var session = await _sessionService.GetByIdAsync(sessionId);
+        if (session == null)
+        {
+            yield return new GuideStreamEvent
+            {
+                Type = "error",
+                ErrorCode = ErrorCodes.SESSION_NOT_FOUND,
+                ErrorMessage = "会话不存在或已过期"
+            };
+            yield break;
+        }
+
+        var stageKey = await _promptStageService.MapOrderToStageKeyAsync(session.CurrentRole, step, cancellationToken);
         if (string.IsNullOrWhiteSpace(stageKey))
         {
             yield return new GuideStreamEvent
@@ -168,7 +180,9 @@ public class GuideService : IGuideService
         }
 
         var settings = await _promptStageService.GetEffectiveSettingsAsync(cancellationToken);
-        var stage = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, stageKey?.Trim(), StringComparison.Ordinal));
+        var key = (stageKey ?? string.Empty).Trim();
+        var stage = settings.Stages.FirstOrDefault(x =>
+            string.Equals(x.StageKey, key, StringComparison.Ordinal) && x.Role == session.CurrentRole);
         if (stage == null)
         {
             yield return new GuideStreamEvent
@@ -180,17 +194,9 @@ public class GuideService : IGuideService
             yield break;
         }
 
-        var totalSteps = Math.Max(1, settings.Stages.Count);
-        var order = stage.Order > 0 ? stage.Order : (stage.Step ?? 1);
-
-        RoleStagePrompt GetRolePrompt(PromptStage s) => session.CurrentRole switch
-        {
-            UserRole.DEV => s.Dev,
-            UserRole.QA => s.Qa,
-            _ => s.Pm
-        };
-
-        var rp = GetRolePrompt(stage);
+        var totalSteps = Math.Max(1, settings.Stages.Count(x => x.Role == session.CurrentRole));
+        var order = stage.Order;
+        var rp = new RoleStagePrompt { Title = stage.Title, PromptTemplate = stage.PromptTemplate };
 
         yield return new GuideStreamEvent
         {

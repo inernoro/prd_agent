@@ -57,7 +57,8 @@ public class GuideController : ControllerBase
             var session = await _sessionService.GetByIdAsync(sessionId);
             if (session != null)
             {
-                var total = (await _promptStageService.GetEffectiveSettingsAsync(cancellationToken)).Stages.Count;
+                var settings = await _promptStageService.GetEffectiveSettingsAsync(cancellationToken);
+                var total = settings.Stages.Count(x => x.Role == request.Role);
                 total = Math.Max(1, total);
                 var progress = new GuideProgress
                 {
@@ -320,21 +321,17 @@ public class GuideController : ControllerBase
     public async Task<IActionResult> GetOutline([FromQuery] UserRole role = UserRole.PM, CancellationToken ct = default)
     {
         var settings = await _promptStageService.GetEffectiveSettingsAsync(ct);
-        var stages = settings.Stages.OrderBy(x => x.Order).ToList();
-
-        string TitleByRole(PromptStage s) => role switch
-        {
-            UserRole.DEV => s.Dev.Title,
-            UserRole.QA => s.Qa.Title,
-            _ => s.Pm.Title
-        };
+        var stages = settings.Stages
+            .Where(x => x.Role == role)
+            .OrderBy(x => x.Order)
+            .ToList();
 
         var response = stages.Select(s => new OutlineItemResponse
         {
-            Step = s.Step ?? s.Order,
+            Step = s.Order,
             Order = s.Order,
             StageKey = s.StageKey,
-            Title = TitleByRole(s)
+            Title = s.Title
         }).ToList();
 
         return Ok(ApiResponse<List<OutlineItemResponse>>.Ok(response));

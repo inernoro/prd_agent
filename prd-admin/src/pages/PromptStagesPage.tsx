@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
+import { Dialog } from '@/components/ui/Dialog';
 import { getAdminPromptStages, putAdminPromptStages, resetAdminPromptStages } from '@/services';
-import type { PromptStageItem, PromptStageSettings } from '@/services/contracts/promptStages';
-import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, ArrowUp, ArrowDown, Copy } from 'lucide-react';
+import type { PromptStageEntry, PromptStageSettings } from '@/services/contracts/promptStages';
+import { readSseStream } from '@/lib/sse';
+import { useAuthStore } from '@/stores/authStore';
+import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, GripVertical, KeyRound } from 'lucide-react';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -14,6 +17,23 @@ function safeIdempotencyKey() {
 }
 
 type RoleKey = 'pm' | 'dev' | 'qa';
+type RoleEnum = 'PM' | 'DEV' | 'QA';
+
+function roleKeyToEnum(r: RoleKey): RoleEnum {
+  if (r === 'dev') return 'DEV';
+  if (r === 'qa') return 'QA';
+  return 'PM';
+}
+
+function roleEnumToKey(r: RoleEnum): RoleKey {
+  if (r === 'DEV') return 'dev';
+  if (r === 'QA') return 'qa';
+  return 'pm';
+}
+
+function roleKeyToSuffix(r: RoleKey) {
+  return r === 'dev' ? 'dev' : r === 'qa' ? 'qa' : 'pm';
+}
 
 function normalizeText(v: unknown): string {
   return typeof v === 'string' ? v : '';
@@ -34,58 +54,47 @@ function fmtDateTime(v?: string | null) {
   }).format(d);
 }
 
-function normalizeStages(stages: PromptStageItem[] | null | undefined): PromptStageItem[] {
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
+
+type PromptOptimizeStreamEvent = {
+  type: 'start' | 'delta' | 'done' | 'error';
+  content?: string;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+function normalizeStages(stages: PromptStageEntry[] | null | undefined): PromptStageEntry[] {
   const src = Array.isArray(stages) ? stages : [];
-  const out: PromptStageItem[] = [];
+  const out: PromptStageEntry[] = [];
 
   for (let i = 0; i < src.length; i += 1) {
-    const raw = (src[i] ?? {}) as Partial<PromptStageItem>;
-    const order = typeof raw.order === 'number' && Number.isFinite(raw.order) && raw.order > 0
-      ? raw.order
-      : typeof raw.step === 'number' && Number.isFinite(raw.step) && raw.step > 0
-        ? raw.step
-        : i + 1;
-
-    const stageKeyRaw = normalizeText(raw.stageKey).trim();
-    const stageKey = stageKeyRaw || `legacy-step-${order}`;
-
+    const raw = (src[i] ?? {}) as Partial<PromptStageEntry>;
+    const role = (normalizeText((raw as { role?: unknown }).role).toUpperCase() as RoleEnum) || 'PM';
+    if (role !== 'PM' && role !== 'DEV' && role !== 'QA') continue;
+    const order = typeof raw.order === 'number' && Number.isFinite(raw.order) && raw.order > 0 ? raw.order : 1;
+    const stageKey = normalizeText(raw.stageKey).trim();
+    if (!stageKey) continue;
     out.push({
       stageKey,
+      role,
       order,
-      step: typeof raw.step === 'number' && Number.isFinite(raw.step) && raw.step > 0 ? raw.step : order,
-      pm: {
-        title: normalizeText(raw.pm?.title),
-        promptTemplate: normalizeText(raw.pm?.promptTemplate),
-      },
-      dev: {
-        title: normalizeText(raw.dev?.title),
-        promptTemplate: normalizeText(raw.dev?.promptTemplate),
-      },
-      qa: {
-        title: normalizeText(raw.qa?.title),
-        promptTemplate: normalizeText(raw.qa?.promptTemplate),
-      },
+      title: normalizeText(raw.title),
+      promptTemplate: normalizeText(raw.promptTemplate),
     });
   }
 
-  // 排序 + 去重（去重只用于容错展示；正常应由后端校验保证）
-  out.sort((a, b) => a.order - b.order);
-  const seen = new Map<string, number>();
-  for (const s of out) {
-    const c = seen.get(s.stageKey) ?? 0;
-    if (c > 0) {
-      s.stageKey = `${s.stageKey}-dup-${c}`;
-    }
-    seen.set(s.stageKey, c + 1);
-  }
-
-  // order 兜底：确保正整数
-  for (let i = 0; i < out.length; i += 1) {
-    if (!Number.isFinite(out[i].order) || out[i].order <= 0) out[i].order = i + 1;
-    out[i].step = out[i].order;
-  }
-
-  return out;
+  // 排序：role 内 order
+  return out.sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
 }
 
 function stableKey(v: unknown): string {
@@ -102,33 +111,42 @@ function stableKey(v: unknown): string {
   return JSON.stringify(String(v));
 }
 
-function validateStages(stages: PromptStageItem[]) {
+function validateStages(stages: PromptStageEntry[]) {
   if (!Array.isArray(stages) || stages.length === 0) return { ok: false, message: '至少需要 1 个阶段' };
 
   const keySet = new Set<string>();
-  const orderSet = new Set<number>();
+  const ordersByRole = new Map<RoleEnum, Set<number>>();
   for (const s of stages) {
     const key = normalizeText(s.stageKey).trim();
     if (!key) return { ok: false, message: 'stageKey 不能为空' };
     if (keySet.has(key)) return { ok: false, message: `stageKey 重复：${key}` };
     keySet.add(key);
 
+    const role = (normalizeText((s as { role?: unknown }).role).toUpperCase() as RoleEnum) || 'PM';
+    if (role !== 'PM' && role !== 'DEV' && role !== 'QA') return { ok: false, message: `role 非法（stageKey=${key}）` };
+
     const order = Number(s.order);
     if (!Number.isFinite(order) || order <= 0) return { ok: false, message: `order 必须为正整数（stageKey=${key}）` };
-    if (orderSet.has(order)) return { ok: false, message: `order 重复：${order}` };
-    orderSet.add(order);
+    const set = ordersByRole.get(role) ?? new Set<number>();
+    if (set.has(order)) return { ok: false, message: `同一 role 下 order 重复：${role} / ${order}` };
+    set.add(order);
+    ordersByRole.set(role, set);
 
-    const pm = s.pm;
-    const dev = s.dev;
-    const qa = s.qa;
-    if (!normalizeText(pm?.title).trim() || !normalizeText(pm?.promptTemplate).trim()) return { ok: false, message: `order=${order}：PM 的 title/promptTemplate 不能为空` };
-    if (!normalizeText(dev?.title).trim() || !normalizeText(dev?.promptTemplate).trim()) return { ok: false, message: `order=${order}：DEV 的 title/promptTemplate 不能为空` };
-    if (!normalizeText(qa?.title).trim() || !normalizeText(qa?.promptTemplate).trim()) return { ok: false, message: `order=${order}：QA 的 title/promptTemplate 不能为空` };
+    if (!normalizeText(s.title).trim()) return { ok: false, message: `title 不能为空（stageKey=${key}）` };
+    // promptTemplate 可为空（代表该阶段不注入提示词）
   }
+
   return { ok: true, message: '' };
 }
 
+function shortKey(k: string) {
+  const s = (k ?? '').trim();
+  if (s.length <= 14) return s;
+  return `${s.slice(0, 6)}…${s.slice(-6)}`;
+}
+
 export default function PromptStagesPage() {
+  const token = useAuthStore((s) => s.token);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -140,6 +158,14 @@ export default function PromptStagesPage() {
 
   const [activeStageKey, setActiveStageKey] = useState<string>('');
   const [activeRole, setActiveRole] = useState<RoleKey>('pm');
+
+  // 提示词优化（魔法棒）
+  const [optOpen, setOptOpen] = useState(false);
+  const [optBusy, setOptBusy] = useState(false);
+  const [optError, setOptError] = useState<string | null>(null);
+  const [optText, setOptText] = useState<string>('');
+  const [optOriginal, setOptOriginal] = useState<string>('');
+  const optAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -167,7 +193,15 @@ export default function PromptStagesPage() {
   }, [load]);
 
   const stages = useMemo(() => normalizeStages(settings?.stages), [settings?.stages]);
-  const stage = useMemo(() => stages.find((s) => s.stageKey === activeStageKey) ?? stages[0], [stages, activeStageKey]);
+  const roleEnum = useMemo(() => roleKeyToEnum(activeRole), [activeRole]);
+  const roleStages = useMemo(
+    () => stages.filter((s) => s.role === roleEnum).sort((a, b) => a.order - b.order),
+    [stages, roleEnum]
+  );
+  const stage = useMemo(
+    () => roleStages.find((s) => s.stageKey === activeStageKey) ?? roleStages[0] ?? null,
+    [roleStages, activeStageKey]
+  );
 
   const roleLabel = useMemo(() => {
     if (activeRole === 'pm') return '产品经理（PM）';
@@ -175,49 +209,53 @@ export default function PromptStagesPage() {
     return '测试（QA）';
   }, [activeRole]);
 
-  const roleData = useMemo(() => {
-    if (!stage) return { title: '', promptTemplate: '' };
-    return activeRole === 'dev' ? stage.dev : activeRole === 'qa' ? stage.qa : stage.pm;
-  }, [stage, activeRole]);
+  // 角色切换时：若当前 stageKey 不属于该角色，自动切到该角色第一项
+  useEffect(() => {
+    if (!roleStages.length) {
+      setActiveStageKey('');
+      return;
+    }
+    if (activeStageKey && roleStages.some((x) => x.stageKey === activeStageKey)) return;
+    setActiveStageKey(roleStages[0].stageKey);
+  }, [roleStages, activeStageKey]);
 
   const currentSig = useMemo(() => stableKey({ stages }), [stages]);
   const isDirty = useMemo(() => !!baselineSig && baselineSig !== currentSig, [baselineSig, currentSig]);
   const validation = useMemo(() => validateStages(stages), [stages]);
 
-  const setRoleField = (field: 'title' | 'promptTemplate', value: string) => {
+  const setStageField = (field: 'title' | 'promptTemplate', value: string) => {
     setSettings((prev) => {
       if (!prev) return prev;
       const nextStages = normalizeStages(prev.stages).map((s) => {
         if (s.stageKey !== activeStageKey) return s;
-        const next = { ...s, pm: { ...s.pm }, dev: { ...s.dev }, qa: { ...s.qa } };
-        const target = activeRole === 'dev' ? next.dev : activeRole === 'qa' ? next.qa : next.pm;
-        if (field === 'title') target.title = value;
-        else target.promptTemplate = value;
+        const next = { ...s };
+        if (field === 'title') next.title = value;
+        else next.promptTemplate = value;
         return next;
       });
       return { ...prev, stages: nextStages };
     });
   };
 
-  const compactOrders = (xs: PromptStageItem[]) => {
-    const sorted = [...xs].sort((a, b) => a.order - b.order);
-    return sorted.map((s, idx) => ({ ...s, order: idx + 1, step: idx + 1 }));
-  };
-
   const addStage = () => {
     const key = safeIdempotencyKey();
     setSettings((prev) => {
       const base = normalizeStages(prev?.stages);
-      const maxOrder = base.reduce((m, x) => Math.max(m, x.order), 0);
-      const next: PromptStageItem = {
-        stageKey: `stage-${key}`,
+      const role = roleEnum;
+      const inRole = base.filter((x) => x.role === role).sort((a, b) => a.order - b.order);
+      const maxOrder = inRole.reduce((m, x) => Math.max(m, x.order), 0);
+      const next: PromptStageEntry = {
+        stageKey: `stage-${roleKeyToSuffix(roleEnumToKey(role))}-${key}`,
+        role,
         order: maxOrder + 1,
-        step: maxOrder + 1,
-        pm: { title: '新阶段', promptTemplate: '请用 Markdown 输出：' },
-        dev: { title: '新阶段', promptTemplate: '请用 Markdown 输出：' },
-        qa: { title: '新阶段', promptTemplate: '请用 Markdown 输出：' },
+        title: '新阶段',
+        promptTemplate: '',
       };
-      const merged = compactOrders([...base, next]);
+      const mergedRole = [...inRole, next].map((x, idx) => ({ ...x, order: idx + 1 }));
+      const merged = base
+        .filter((x) => x.role !== role)
+        .concat(mergedRole)
+        .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
       // 保持 UpdatedAt/id 不变（保存后由后端回填）
       if (prev) return { ...prev, stages: merged };
       const created: PromptStageSettings = {
@@ -228,40 +266,26 @@ export default function PromptStagesPage() {
       return created;
     });
     // 等 state 更新后再切换 active
-    setActiveStageKey((_) => `stage-${key}`);
+    setActiveStageKey((_) => `stage-${roleKeyToSuffix(roleEnumToKey(roleEnum))}-${key}`);
   };
 
   const removeStage = (stageKey: string) => {
     setSettings((prev) => {
       if (!prev) return prev;
-      const base = normalizeStages(prev.stages).filter((x) => x.stageKey !== stageKey);
-      const merged = compactOrders(base);
+      const base = normalizeStages(prev.stages);
+      const removed = base.find((x) => x.stageKey === stageKey) ?? null;
+      const nextAll = base.filter((x) => x.stageKey !== stageKey);
+      if (!removed) return { ...prev, stages: nextAll };
+      // 仅在该 role 内重排 order
+      const role = removed.role;
+      const roleList = nextAll.filter((x) => x.role === role).sort((a, b) => a.order - b.order).map((x, idx) => ({ ...x, order: idx + 1 }));
+      const merged = nextAll.filter((x) => x.role !== role).concat(roleList).sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
       return { ...prev, stages: merged };
     });
     setActiveStageKey((prev) => {
       if (prev !== stageKey) return prev;
-      const rest = stages.filter((x) => x.stageKey !== stageKey).sort((a, b) => a.order - b.order);
+      const rest = roleStages.filter((x) => x.stageKey !== stageKey).sort((a, b) => a.order - b.order);
       return rest[0]?.stageKey ?? '';
-    });
-  };
-
-  const moveStage = (stageKey: string, dir: 'up' | 'down') => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      const base = normalizeStages(prev.stages).sort((a, b) => a.order - b.order);
-      const idx = base.findIndex((x) => x.stageKey === stageKey);
-      if (idx < 0) return prev;
-      const j = dir === 'up' ? idx - 1 : idx + 1;
-      if (j < 0 || j >= base.length) return prev;
-      const a = base[idx];
-      const b = base[j];
-      // swap order
-      const next = base.map((x) => {
-        if (x.stageKey === a.stageKey) return { ...x, order: b.order, step: b.order };
-        if (x.stageKey === b.stageKey) return { ...x, order: a.order, step: a.order };
-        return x;
-      });
-      return { ...prev, stages: next.sort((x, y) => x.order - y.order) };
     });
   };
 
@@ -273,6 +297,119 @@ export default function PromptStagesPage() {
     } catch {
       // ignore
     }
+  };
+
+  const openOptimize = () => {
+    const raw = (stage?.promptTemplate ?? '').trim();
+    setOptOriginal(raw);
+    setOptText('');
+    setOptError(null);
+    setOptOpen(true);
+  };
+
+  const cancelOptimize = () => {
+    try {
+      optAbortRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    optAbortRef.current = null;
+    setOptBusy(false);
+  };
+
+  const startOptimize = async () => {
+    if (!token) {
+      setOptError('未登录或 Token 缺失');
+      return;
+    }
+    const promptTemplate = (stage?.promptTemplate ?? '').trim();
+    if (!promptTemplate) {
+      setOptError('当前提示词为空，无法优化');
+      return;
+    }
+
+    cancelOptimize();
+    const ac = new AbortController();
+    optAbortRef.current = ac;
+    setOptBusy(true);
+    setOptError(null);
+    setOptText('');
+    setOptOriginal(promptTemplate);
+
+    let res: Response;
+    try {
+      const url = joinUrl(getApiBaseUrl(), '/api/v1/admin/prompt-stages/optimize/stream');
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          stageKey: stage?.stageKey ?? null,
+          order: stage?.order ?? null,
+          role: roleEnum,
+          title: stage?.title ?? null,
+          promptTemplate,
+          mode: 'strict',
+        }),
+        signal: ac.signal,
+      });
+    } catch (e) {
+      setOptBusy(false);
+      optAbortRef.current = null;
+      const m = e instanceof Error ? e.message : '网络错误';
+      setOptError(`请求失败：${m}`);
+      return;
+    }
+
+    if (!res.ok) {
+      setOptBusy(false);
+      optAbortRef.current = null;
+      const t = await res.text().catch(() => '');
+      setOptError(t || `HTTP ${res.status} ${res.statusText}`);
+      return;
+    }
+
+    try {
+      await readSseStream(
+        res,
+        (evt) => {
+          if (!evt.data) return;
+          try {
+            const obj = JSON.parse(evt.data) as PromptOptimizeStreamEvent;
+            if (obj.type === 'delta' && obj.content) {
+              setOptText((prev) => prev + obj.content);
+            } else if (obj.type === 'error') {
+              setOptError(obj.errorMessage || '优化失败');
+              setOptBusy(false);
+              optAbortRef.current = null;
+            } else if (obj.type === 'done') {
+              setOptBusy(false);
+              optAbortRef.current = null;
+            }
+          } catch {
+            // ignore
+          }
+        },
+        ac.signal
+      );
+    } finally {
+      // 若中途被 abort，readSseStream 会退出；这里兜底结束状态
+      if (ac.signal.aborted) {
+        setOptBusy(false);
+        optAbortRef.current = null;
+      }
+    }
+  };
+
+  const applyOptimized = () => {
+    const next = (optText || '').trim();
+    if (!next) return;
+    setStageField('promptTemplate', next);
+    setOptOpen(false);
+    setMsg('已替换为优化后的提示词（别忘了点保存）');
   };
 
   const save = async () => {
@@ -287,15 +424,13 @@ export default function PromptStagesPage() {
     try {
       const idem = safeIdempotencyKey();
       const trimmedStages = [...stages]
-        .sort((a, b) => a.order - b.order)
+        .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)))
         .map((s) => ({
-          ...s,
           stageKey: s.stageKey.trim(),
+          role: s.role,
           order: Number(s.order),
-          step: Number(s.order),
-          pm: { title: s.pm.title.trim(), promptTemplate: s.pm.promptTemplate.trim() },
-          dev: { title: s.dev.title.trim(), promptTemplate: s.dev.promptTemplate.trim() },
-          qa: { title: s.qa.title.trim(), promptTemplate: s.qa.promptTemplate.trim() },
+          title: (s.title ?? '').trim(),
+          promptTemplate: (s.promptTemplate ?? '').trim(),
         }));
       const res = await putAdminPromptStages({ stages: trimmedStages }, idem);
       if (!res.success) {
@@ -406,7 +541,7 @@ export default function PromptStagesPage() {
             <div className="min-w-0">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>阶段总览</div>
               <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                共 {stages.length} 个阶段（点击切换；支持新增/删除/排序）
+                共 {roleStages.length} 个阶段（{roleEnum}；支持新增/删除/排序/切换）
               </div>
             </div>
             <Button variant="secondary" size="xs" onClick={addStage} disabled={loading || saving}>
@@ -415,88 +550,129 @@ export default function PromptStagesPage() {
             </Button>
           </div>
           <div className="mt-3 flex-1 min-h-0 overflow-auto grid gap-2">
-            {[...stages].sort((a, b) => a.order - b.order).map((s, idx, arr) => {
+            {roleStages.map((s, idx, arr) => {
               const active = s.stageKey === (activeStageKey || arr[0]?.stageKey || '');
-              const pmTitle = normalizeText(s.pm?.title).trim() || `阶段 ${s.order}`;
-              const devTitle = normalizeText(s.dev?.title).trim() || `阶段 ${s.order}`;
-              const qaTitle = normalizeText(s.qa?.title).trim() || `阶段 ${s.order}`;
               return (
-                <button
+                <div
                   key={s.stageKey}
-                  type="button"
-                  onClick={() => setActiveStageKey(s.stageKey)}
-                  className="w-full text-left rounded-[14px] px-3 py-3 transition-colors"
+                  className="rounded-[14px] transition-colors"
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
                     border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
                   }}
                 >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className="shrink-0 inline-flex items-center justify-center font-extrabold"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: 10,
-                        color: active ? '#1a1206' : 'var(--text-secondary)',
-                        background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
-                        border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
-                        boxShadow: active ? 'var(--shadow-gold)' : 'none',
-                      }}
-                    >
-                      {s.order}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                        {activeRole === 'dev' ? devTitle : activeRole === 'qa' ? qaTitle : pmTitle}
-                      </div>
-                      <div className="mt-1 flex items-center justify-between gap-2">
-                        <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                          stageKey：{s.stageKey}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setActiveStageKey(s.stageKey)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setActiveStageKey(s.stageKey);
+                      }
+                    }}
+                    className="w-full text-left px-3 py-3 outline-none"
+                    title={`stageKey: ${s.stageKey}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span
+                        className="shrink-0 inline-flex items-center justify-center font-extrabold"
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 10,
+                          color: active ? '#1a1206' : 'var(--text-secondary)',
+                          background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
+                          border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
+                          boxShadow: active ? 'var(--shadow-gold)' : 'none',
+                        }}
+                      >
+                        {s.order}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {normalizeText(s.title).trim() || `阶段 ${s.order}`}
                         </div>
-                        <div className="shrink-0 flex items-center gap-1">
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void copyStageKey(s.stageKey);
+                              }}
+                              className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
+                              style={{
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                color: 'var(--text-secondary)',
+                                background: 'rgba(255,255,255,0.04)',
+                              }}
+                              aria-label="复制 key"
+                              title="复制 key"
+                            >
+                              <KeyRound size={14} />
+                            </button>
+                            <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }} title={s.stageKey}>
+                              {shortKey(s.stageKey)}
+                            </div>
+                          </div>
+
+                          {/* 拖拽手柄（原生拖拽排序） */}
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); void copyStageKey(s.stageKey); }}
+                            draggable
+                            onDragStart={(e) => {
+                              try {
+                                e.dataTransfer.setData('text/plain', s.stageKey);
+                                e.dataTransfer.effectAllowed = 'move';
+                              } catch {
+                                // ignore
+                              }
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = e.dataTransfer.getData('text/plain');
+                              const to = s.stageKey;
+                              if (!from || from === to) return;
+                              setSettings((prev) => {
+                                if (!prev) return prev;
+                                const all = normalizeStages(prev.stages);
+                                const list = all.filter((x) => x.role === roleEnum).sort((a, b) => a.order - b.order);
+                                const fromIdx = list.findIndex((x) => x.stageKey === from);
+                                const toIdx = list.findIndex((x) => x.stageKey === to);
+                                if (fromIdx < 0 || toIdx < 0) return prev;
+                                const moved = [...list];
+                                const [item] = moved.splice(fromIdx, 1);
+                                moved.splice(toIdx, 0, item);
+                                const renumbered = moved.map((x, i) => ({ ...x, order: i + 1 }));
+                                const merged = all
+                                  .filter((x) => x.role !== roleEnum)
+                                  .concat(renumbered)
+                                  .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
+                                return { ...prev, stages: merged };
+                              });
+                            }}
                             className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.04)' }}
-                            aria-label="复制 stageKey"
-                            title="复制 stageKey"
+                            style={{
+                              border: '1px solid rgba(255,255,255,0.10)',
+                              color: 'var(--text-secondary)',
+                              background: 'rgba(255,255,255,0.04)',
+                              cursor: 'grab',
+                            }}
+                            aria-label="拖拽排序"
+                            title={idx === 0 && arr.length === 1 ? '只有一个阶段无需排序' : '拖拽排序'}
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Copy size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); moveStage(s.stageKey, 'up'); }}
-                            disabled={idx === 0}
-                            className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.04)' }}
-                            aria-label="上移"
-                            title="上移"
-                          >
-                            <ArrowUp size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); moveStage(s.stageKey, 'down'); }}
-                            disabled={idx === arr.length - 1}
-                            className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.04)' }}
-                            aria-label="下移"
-                            title="下移"
-                          >
-                            <ArrowDown size={14} />
+                            <GripVertical size={14} />
                           </button>
                         </div>
-                      </div>
-                      <div className="mt-2 grid gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        <div className="truncate"><span style={{ color: 'rgba(242,213,155,0.92)' }}>PM</span> · {pmTitle}</div>
-                        <div className="truncate"><span style={{ color: 'rgba(124,252,0,0.72)' }}>DEV</span> · {devTitle}</div>
-                        <div className="truncate"><span style={{ color: 'rgba(255,255,255,0.70)' }}>QA</span> · {qaTitle}</div>
                       </div>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -536,11 +712,11 @@ export default function PromptStagesPage() {
                 onConfirm={() => {
                   if (stage?.stageKey) removeStage(stage.stageKey);
                 }}
-                disabled={loading || saving || !stage?.stageKey || stages.length <= 1}
+                disabled={loading || saving || !stage?.stageKey || roleStages.length <= 1}
                 side="top"
                 align="end"
               >
-                <Button variant="danger" size="xs" disabled={loading || saving || !stage?.stageKey || stages.length <= 1}>
+                <Button variant="danger" size="xs" disabled={loading || saving || !stage?.stageKey || roleStages.length <= 1}>
                   <Trash2 size={14} />
                   删除
                 </Button>
@@ -564,8 +740,8 @@ export default function PromptStagesPage() {
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>用于 Desktop 阶段按钮展示</div>
               </div>
               <input
-                value={roleData.title ?? ''}
-                onChange={(e) => setRoleField('title', e.target.value)}
+                value={stage?.title ?? ''}
+                onChange={(e) => setStageField('title', e.target.value)}
                 placeholder="例如：项目背景与问题定义"
                 className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none"
                 style={{
@@ -580,23 +756,46 @@ export default function PromptStagesPage() {
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>阶段提示词（promptTemplate）</div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  字符：{(roleData.promptTemplate ?? '').length.toLocaleString()}
+                  字符：{(stage?.promptTemplate ?? '').length.toLocaleString()}
                 </div>
               </div>
-              <textarea
-                value={roleData.promptTemplate ?? ''}
-                onChange={(e) => setRoleField('promptTemplate', e.target.value)}
-                placeholder="建议包含：关注点、输出结构、边界约束等（支持 Markdown 指令/结构要求）"
-                className="mt-2 flex-1 min-h-[340px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
-                style={{
-                  border: '1px solid var(--border-subtle)',
-                  background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
-                  color: 'var(--text-primary)',
-                  lineHeight: 1.6,
-                  fontFamily:
-                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                }}
-              />
+              <div className="mt-2 flex-1 min-h-[340px] relative">
+                <textarea
+                  value={stage?.promptTemplate ?? ''}
+                  onChange={(e) => setStageField('promptTemplate', e.target.value)}
+                  placeholder="建议包含：关注点、输出结构、边界约束等（支持 Markdown 指令/结构要求）"
+                  className="h-full w-full rounded-[14px] px-3 py-3 pr-12 text-sm outline-none resize-none"
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    color: 'var(--text-primary)',
+                    lineHeight: 1.6,
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (optBusy) {
+                      cancelOptimize();
+                      return;
+                    }
+                    openOptimize();
+                    void startOptimize();
+                  }}
+                  className="absolute bottom-2 right-2 h-9 w-9 inline-flex items-center justify-center rounded-[12px] transition-colors"
+                  style={{
+                    background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
+                    border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.12)',
+                    color: optBusy ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)',
+                  }}
+                  title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
+                  aria-label={optBusy ? '停止优化' : '优化提示词'}
+                >
+                  {optBusy ? <Square size={16} /> : <Sparkles size={16} />}
+                </button>
+              </div>
             </div>
 
             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -605,6 +804,112 @@ export default function PromptStagesPage() {
           </div>
         </Card>
       </div>
+
+      <Dialog
+        open={optOpen}
+        onOpenChange={(o) => {
+          if (!o) cancelOptimize();
+          setOptOpen(o);
+        }}
+        title="提示词优化（魔法棒）"
+        description="大模型会在不改变意图的前提下，让提示词更清晰、更可执行，并尽量保留占位符/约束。先预览再替换。"
+        maxWidth={1040}
+        content={
+          <div className="min-h-0 flex flex-col gap-4">
+            {optError && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  background: 'rgba(0,0,0,0.20)',
+                  color: 'rgba(255,120,120,0.95)',
+                }}
+              >
+                {optError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                当前：role={roleEnum} · order={stage?.order ?? '—'} · stageKey={stage?.stageKey ?? '—'}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={() => void startOptimize()} disabled={optBusy}>
+                  <Sparkles size={16} />
+                  重新优化
+                </Button>
+                <Button variant="danger" size="sm" onClick={cancelOptimize} disabled={!optBusy}>
+                  <Square size={16} />
+                  停止
+                </Button>
+                <Button variant="primary" size="sm" onClick={applyOptimized} disabled={optBusy || !(optText || '').trim()}>
+                  <Save size={16} />
+                  替换到编辑器
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    const t = (optText || '').trim();
+                    if (!t) return;
+                    try {
+                      await navigator.clipboard.writeText(t);
+                      setMsg('已复制优化结果');
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  disabled={optBusy || !(optText || '').trim()}
+                >
+                  <Copy size={16} />
+                  复制
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <Card className="p-4 min-h-0 flex flex-col">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>原文</div>
+                <textarea
+                  value={optOriginal}
+                  readOnly
+                  className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    background: 'rgba(255,255,255,0.03)',
+                    color: 'var(--text-primary)',
+                    lineHeight: 1.6,
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                  }}
+                />
+              </Card>
+
+              <Card className="p-4 min-h-0 flex flex-col" variant="gold">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>优化结果（流式）</div>
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    字符：{(optText || '').length.toLocaleString()}
+                  </div>
+                </div>
+                <textarea
+                  value={optText}
+                  readOnly
+                  className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    color: 'var(--text-primary)',
+                    lineHeight: 1.6,
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                  }}
+                />
+              </Card>
+            </div>
+          </div>
+        }
+      />
     </div>
   );
 }

@@ -78,15 +78,8 @@ export default function Sidebar() {
   const canSubmit = useMemo(() => !busy && !isDemoMode, [busy, isDemoMode]);
 
   const openKnowledge = useCallback(async () => {
-    // 与顶栏 ModeToggle 行为保持一致：离开讲解时停止后端讲解状态
-    if (mode === 'Guided' && sessionId) {
-      try {
-        await invoke('control_guide', { sessionId, action: 'stop' });
-      } catch {
-        // ignore
-      }
-    }
     setMode('Knowledge');
+    void sessionId;
   }, [mode, sessionId, setMode]);
 
   const openPrdPreview = useCallback(() => {

@@ -1,5 +1,4 @@
 import { useSessionStore } from '../../stores/sessionStore';
-import { invoke } from '../../lib/tauri';
 
 // 问答图标
 const ChatIcon = ({ className }: { className?: string }) => (
@@ -20,29 +19,13 @@ export default function ModeToggle() {
   const modeForUi = mode === 'PrdPreview' ? (previousMode ?? 'QA') : mode;
 
   const switchToQa = async () => {
-    // 从“讲解”离开时需要清理后端状态；若当前在 PRD 预览页，也要按 previousMode 判断
-    if ((mode === 'Guided' || (mode === 'PrdPreview' && previousMode === 'Guided')) && sessionId) {
-      try {
-        await invoke('control_guide', { sessionId, action: 'stop' });
-      } catch (err) {
-        console.error('Failed to stop guide:', err);
-      }
-    }
     setMode('QA');
+    void sessionId;
   };
 
   const switchToGuided = async () => {
-    // 离开讲解时清理后端状态
-    if (mode === 'Guided' && sessionId) {
-      try {
-        await invoke('control_guide', { sessionId, action: 'stop' });
-      } catch {
-        // ignore
-      }
-    }
     setMode('Guided');
     // 不自动触发任何讲解请求；由输入框上方悬浮栏的“讲解/简介”按钮显式触发
-    // 如需退出时清理后端状态，可在 switchToQa 中 stop。
     void sessionId;
   };
 

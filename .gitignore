@@ -59,3 +59,6 @@ coverage/
 
 # Tauri icons (generated from prd-desktop/icon.png)
 prd-desktop/src-tauri/icons/
+
+# Tauri updater signing key (private key - never commit)
+prd-desktop/src-tauri/tauri-updater.key

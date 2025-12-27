@@ -156,10 +156,8 @@ pub struct MessageHistoryItem {
 pub struct PromptStageClientItem {
     pub stage_key: String,
     pub order: i32,
-    pub step: i32,
-    pub pm_title: String,
-    pub dev_title: String,
-    pub qa_title: String,
+    pub role: String,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

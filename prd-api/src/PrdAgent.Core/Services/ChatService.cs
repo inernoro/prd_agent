@@ -115,7 +115,7 @@ public class ChatService : IChatService
         var effectiveStageKey = (stageKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(effectiveStageKey) && stageStep.HasValue && stageStep.Value > 0)
         {
-            effectiveStageKey = (await _promptStageService.MapOrderToStageKeyAsync(stageStep.Value, cancellationToken)) ?? string.Empty;
+            effectiveStageKey = (await _promptStageService.MapOrderToStageKeyAsync(session.CurrentRole, stageStep.Value, cancellationToken)) ?? string.Empty;
         }
 
         if (!string.IsNullOrWhiteSpace(effectiveStageKey))
@@ -133,7 +133,7 @@ public class ChatService : IChatService
                     {
                         var settings = await _promptStageService.GetEffectiveSettingsAsync(cancellationToken);
                         var s = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, effectiveStageKey, StringComparison.Ordinal));
-                        if (s != null) order = s.Order > 0 ? s.Order : s.Step;
+                        if (s != null) order = s.Order;
                     }
                     catch
                     {

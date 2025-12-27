@@ -14,7 +14,7 @@ public class JwtServiceTests
             secret: "YourSuperSecretKeyForJwtTokenGeneration2024!",
             issuer: "prdagent-test",
             audience: "prdagent-test",
-            expirationHours: 24);
+            accessTokenMinutes: 60);
     }
 
     [Fact]
@@ -30,7 +30,11 @@ public class JwtServiceTests
         };
 
         // Act
-        var token = _jwtService.GenerateAccessToken(user);
+        var token = _jwtService.GenerateAccessToken(
+            user,
+            clientType: "desktop",
+            sessionKey: "test-session-key",
+            tokenVersion: 1);
 
         // Assert
         Assert.NotNull(token);
@@ -48,7 +52,11 @@ public class JwtServiceTests
             DisplayName = "Test User",
             Role = UserRole.DEV
         };
-        var token = _jwtService.GenerateAccessToken(user);
+        var token = _jwtService.GenerateAccessToken(
+            user,
+            clientType: "desktop",
+            sessionKey: "test-session-key",
+            tokenVersion: 1);
 
         // Act
         var result = _jwtService.ValidateToken(token);
@@ -95,7 +103,11 @@ public class JwtServiceTests
             Username = "testuser",
             Role = UserRole.QA
         };
-        var token = _jwtService.GenerateAccessToken(user);
+        var token = _jwtService.GenerateAccessToken(
+            user,
+            clientType: "desktop",
+            sessionKey: "test-session-key",
+            tokenVersion: 1);
 
         // Act
         var userId = _jwtService.GetUserIdFromToken(token);

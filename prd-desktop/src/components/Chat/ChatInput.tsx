@@ -3,16 +3,31 @@ import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
-import { Message, PromptStageEnumItem } from '../../types';
+import { Message, PromptStageEnumItem, UserRole } from '../../types';
 
-const fallbackSteps = [
-  { stageKey: 'legacy-step-1', order: 1, step: 1, pmTitle: '项目背景', devTitle: '技术方案概述', qaTitle: '功能模块清单' },
-  { stageKey: 'legacy-step-2', order: 2, step: 2, pmTitle: '用户与场景', devTitle: '核心数据模型', qaTitle: '核心业务流程' },
-  { stageKey: 'legacy-step-3', order: 3, step: 3, pmTitle: '解决方案', devTitle: '流程与状态', qaTitle: '边界条件' },
-  { stageKey: 'legacy-step-4', order: 4, step: 4, pmTitle: '功能清单', devTitle: '接口规格', qaTitle: '异常场景' },
-  { stageKey: 'legacy-step-5', order: 5, step: 5, pmTitle: '迭代规划', devTitle: '技术约束', qaTitle: '验收标准' },
-  { stageKey: 'legacy-step-6', order: 6, step: 6, pmTitle: '成功指标', devTitle: '工作量要点', qaTitle: '测试风险' },
-];
+function roleSuffix(role: UserRole) {
+  if (role === 'DEV') return 'dev';
+  if (role === 'QA') return 'qa';
+  return 'pm';
+}
+
+function fallbackStages(role: UserRole): PromptStageEnumItem[] {
+  const suf = roleSuffix(role);
+  const base = [
+    { order: 1, title: '项目背景' },
+    { order: 2, title: '用户与场景' },
+    { order: 3, title: '解决方案' },
+    { order: 4, title: '功能清单' },
+    { order: 5, title: '迭代规划' },
+    { order: 6, title: '成功指标' },
+  ];
+  return base.map((x) => ({
+    stageKey: `legacy-step-${x.order}-${suf}`,
+    order: x.order,
+    role,
+    title: x.title,
+  }));
+}
 
 // 演示模式的模拟回复
 const DEMO_RESPONSES = [
@@ -35,12 +50,12 @@ export default function ChatInput() {
   const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
 
-  type StageItem = PromptStageEnumItem | typeof fallbackSteps[number];
+  type StageItem = PromptStageEnumItem;
 
   // 阶段选择
   const selectStep = useCallback((step: StageItem) => {
     if (isStreaming) return;
-    setGuideStep(step.order ?? step.step);
+    setGuideStep(step.order);
     setActiveStageKey(step.stageKey);
   }, [isStreaming, setGuideStep, setActiveStageKey]);
 
@@ -76,18 +91,18 @@ export default function ChatInput() {
     stopStreaming();
   };
 
-  const getStepTitle = useMemo(() => {
-    const steps = (Array.isArray(promptStages) && promptStages.length > 0)
-      ? [...promptStages].sort((a, b) => (a.order ?? a.step) - (b.order ?? b.step))
-      : fallbackSteps;
-    const step = (activeStageKey
-      ? steps.find((s) => s.stageKey === activeStageKey)
-      : steps.find((s) => (s.order ?? s.step) === guideStep)
-    ) ?? steps[0];
-    if (currentRole === 'DEV') return step.devTitle;
-    if (currentRole === 'QA') return step.qaTitle;
-    return step.pmTitle;
-  }, [currentRole, guideStep, promptStages, activeStageKey]);
+  const stepsForRole = useMemo(() => {
+    const list = Array.isArray(promptStages) ? promptStages : [];
+    const filtered = list.filter((s) => s.role === currentRole).sort((a, b) => a.order - b.order);
+    return filtered.length ? filtered : fallbackStages(currentRole);
+  }, [promptStages, currentRole]);
+
+  const selectedStage = useMemo(() => {
+    const found = activeStageKey
+      ? stepsForRole.find((s) => s.stageKey === activeStageKey)
+      : stepsForRole.find((s) => s.order === guideStep);
+    return found ?? stepsForRole[0] ?? null;
+  }, [stepsForRole, activeStageKey, guideStep]);
 
   const pushSimulatedUserMessage = (text: string) => {
     const userMessage: Message = {
@@ -106,7 +121,7 @@ export default function ChatInput() {
     // 任何发送都视为“已开始使用该 PRD”，关闭一次性提示
     if (showExplainGlow) markExplainHintSeen();
     // “简介”按钮只是替用户发送一句话
-    const text = `简介：请用 5 个要点简要概括阶段 ${guideStep}「${getStepTitle}」，并列出该阶段最重要的验收/风险（如有）。`;
+    const text = '请简单简介一下这个阶段。';
     const userMessage = pushSimulatedUserMessage(text);
 
     // 演示模式：走本地模拟
@@ -120,8 +135,8 @@ export default function ChatInput() {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        stageKey: activeStageKey ?? undefined,
-        stageStep: guideStep, // 兼容字段（后端优先 stageKey）
+        stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined,
+        stageStep: guideStep,
       });
     } catch (err) {
       console.error('Failed to send intro:', err);
@@ -132,18 +147,16 @@ export default function ChatInput() {
     if (!sessionId || isStreaming) return;
     // 任何发送都视为“已开始使用该 PRD”，关闭一次性提示
     if (showExplainGlow) markExplainHintSeen();
-    // “讲解”按钮：用户显式触发（不自动）
-    pushSimulatedUserMessage(`讲解：请开始讲解阶段 ${guideStep}「${getStepTitle}」。`);
-
     try {
-      // 先将后端当前阶段对齐（不直接拉内容）
-      await invoke('control_guide', { sessionId, action: 'goto', step: guideStep });
-      // 再拉取该阶段的讲解内容（SSE -> guide-chunk）
-      if (activeStageKey) {
-        await invoke('get_guide_stage_content', { sessionId, stageKey: activeStageKey });
-      } else {
-        await invoke('get_guide_step_content', { sessionId, step: guideStep });
-      }
+      const text = '请开始讲解这个阶段，并按要点输出。';
+      const userMessage = pushSimulatedUserMessage(text);
+      await invoke('send_message', {
+        sessionId,
+        content: userMessage.content,
+        role: currentRole.toLowerCase(),
+        stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined,
+        stageStep: guideStep,
+      });
     } catch (err) {
       console.error('Failed to start explain:', err);
     }
@@ -176,8 +189,8 @@ export default function ChatInput() {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        stageKey: activeStageKey ?? undefined,
-        stageStep: guideStep, // 兼容字段（后端优先 stageKey）
+        stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined,
+        stageStep: guideStep,
       });
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -217,22 +230,19 @@ export default function ChatInput() {
         <div className="px-3 py-2 flex items-center gap-2">
           {/* 阶段选择按钮 */}
           <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none">
-            {((Array.isArray(promptStages) && promptStages.length > 0)
-              ? [...promptStages].sort((a, b) => (a.order ?? a.step) - (b.order ?? b.step))
-              : fallbackSteps
-            ).map((step) => (
+            {stepsForRole.map((step) => (
               <button
                 key={step.stageKey}
                 onClick={() => selectStep(step)}
                 disabled={isStreaming}
                 className={`flex-shrink-0 px-2.5 py-1.5 text-xs rounded-md transition-all ${
-                  (activeStageKey ? activeStageKey === step.stageKey : guideStep === (step.order ?? step.step))
+                  (activeStageKey ? activeStageKey === step.stageKey : guideStep === step.order)
                     ? 'bg-primary-500 text-white shadow-sm'
                     : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
                 } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
               >
-                <span className="font-medium">{step.order ?? step.step}</span>
-                <span className="ml-1 hidden sm:inline">{currentRole === 'DEV' ? step.devTitle : currentRole === 'QA' ? step.qaTitle : step.pmTitle}</span>
+                <span className="font-medium">{step.order}</span>
+                <span className="ml-1 hidden sm:inline">{step.title}</span>
               </button>
             ))}
           </div>

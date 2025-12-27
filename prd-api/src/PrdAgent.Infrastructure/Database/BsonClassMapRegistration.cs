@@ -247,6 +247,24 @@ public static class BsonClassMapRegistration
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
+
+        // nested types：PromptStageEntry/RoleStagePrompt 需要忽略旧结构字段（pm/dev/qa/step 等）
+        if (!BsonClassMap.IsClassMapRegistered(typeof(PromptStageEntry)))
+        {
+            BsonClassMap.RegisterClassMap<PromptStageEntry>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+        if (!BsonClassMap.IsClassMapRegistered(typeof(RoleStagePrompt)))
+        {
+            BsonClassMap.RegisterClassMap<RoleStagePrompt>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
     }
 
     private static void RegisterLlmRequestLog()

@@ -1,5 +1,3 @@
-using PrdAgent.Core.Models;
-
 namespace PrdAgent.Api.Models.Requests;
 
 public class UpsertPromptStagesRequest
@@ -9,18 +7,18 @@ public class UpsertPromptStagesRequest
 
 public class UpsertPromptStageItem
 {
-    /// <summary>稳定阶段标识（推荐）；旧版未传时可由 Step 推导</summary>
+    /// <summary>稳定标识（全局唯一）</summary>
     public string StageKey { get; set; } = string.Empty;
 
-    /// <summary>排序号（从 1 开始）；旧版未传时可由 Step 推导</summary>
+    /// <summary>仅允许 PM/DEV/QA</summary>
+    public string Role { get; set; } = "PM";
+
+    /// <summary>该角色下的排序号（从 1 开始）</summary>
     public int Order { get; set; }
 
-    /// <summary>兼容字段（旧版使用 Step=1..N）</summary>
-    public int? Step { get; set; }
+    public string Title { get; set; } = string.Empty;
 
-    public RoleStagePrompt Pm { get; set; } = new();
-    public RoleStagePrompt Dev { get; set; } = new();
-    public RoleStagePrompt Qa { get; set; } = new();
+    public string PromptTemplate { get; set; } = string.Empty;
 }
 
 

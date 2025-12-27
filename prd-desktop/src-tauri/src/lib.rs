@@ -11,6 +11,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.manage(StreamCancelState::default());
             // 初始化配置（从文件加载 API URL）

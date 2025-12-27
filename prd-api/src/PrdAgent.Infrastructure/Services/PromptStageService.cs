@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Caching.Memory;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -42,14 +43,14 @@ public class PromptStageService : IPromptStageService
         var settings = await GetEffectiveSettingsAsync(ct);
 
         var items = settings.Stages
-            .OrderBy(x => x.Order)
+            .Where(x => x.Role is UserRole.PM or UserRole.DEV or UserRole.QA)
+            .OrderBy(x => x.Role)
+            .ThenBy(x => x.Order)
             .Select(s => new PromptStageClientItem(
                 StageKey: s.StageKey,
                 Order: s.Order,
-                Step: s.Step ?? s.Order,
-                PmTitle: s.Pm.Title,
-                DevTitle: s.Dev.Title,
-                QaTitle: s.Qa.Title))
+                Role: s.Role,
+                Title: s.Title))
             .ToList();
 
         return new PromptStagesClientResponse(settings.UpdatedAt, items);
@@ -58,62 +59,59 @@ public class PromptStageService : IPromptStageService
     public async Task<List<GuideOutlineItem>> GetGuideOutlineAsync(UserRole role, CancellationToken ct = default)
     {
         var settings = await GetEffectiveSettingsAsync(ct);
-        var stages = settings.Stages.OrderBy(x => x.Order).ToList();
-
-        RoleStagePrompt GetRolePrompt(PromptStage s) => role switch
-        {
-            UserRole.DEV => s.Dev,
-            UserRole.QA => s.Qa,
-            _ => s.Pm
-        };
-
-        return stages.Select(s =>
-        {
-            var rp = GetRolePrompt(s);
-            return new GuideOutlineItem
+        return settings.Stages
+            .Where(x => x.Role == role)
+            .OrderBy(x => x.Order)
+            .Select(x => new GuideOutlineItem
             {
-                Step = s.Step ?? s.Order,
-                Title = rp.Title,
-                PromptTemplate = rp.PromptTemplate
-            };
-        }).ToList();
+                Step = x.Order,
+                Title = x.Title,
+                PromptTemplate = x.PromptTemplate
+            })
+            .ToList();
     }
 
     public async Task<RoleStagePrompt?> GetStagePromptAsync(UserRole role, int step, CancellationToken ct = default)
     {
         if (step < 1) return null;
-
         var settings = await GetEffectiveSettingsAsync(ct);
-        var s = settings.Stages.FirstOrDefault(x => x.Order == step || x.Step == step);
+        var s = settings.Stages.FirstOrDefault(x => x.Role == role && x.Order == step);
         if (s == null) return null;
-
-        return role switch
-        {
-            UserRole.DEV => s.Dev,
-            UserRole.QA => s.Qa,
-            _ => s.Pm
-        };
+        return new RoleStagePrompt { Title = s.Title, PromptTemplate = s.PromptTemplate };
     }
 
     public async Task<RoleStagePrompt?> GetStagePromptByKeyAsync(UserRole role, string stageKey, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(stageKey)) return null;
+        var key = stageKey.Trim();
         var settings = await GetEffectiveSettingsAsync(ct);
-        var s = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, stageKey.Trim(), StringComparison.Ordinal));
-        if (s == null) return null;
-        return role switch
+
+        // 新语义：stageKey 全局唯一，且对某一角色有效
+        var s = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, key, StringComparison.Ordinal));
+        if (s != null)
         {
-            UserRole.DEV => s.Dev,
-            UserRole.QA => s.Qa,
-            _ => s.Pm
-        };
+            if (s.Role != role) return null;
+            return new RoleStagePrompt { Title = s.Title, PromptTemplate = s.PromptTemplate };
+        }
+
+        // 兼容：旧语义可能传“共享 key”（如 legacy-step-1），按 role 补后缀再查
+        var roleSuffix = RoleSuffix(role);
+        if (roleSuffix != null && !key.EndsWith("-" + roleSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            var mapped = $"{key}-{roleSuffix}";
+            var s2 = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, mapped, StringComparison.Ordinal));
+            if (s2 != null && s2.Role == role)
+                return new RoleStagePrompt { Title = s2.Title, PromptTemplate = s2.PromptTemplate };
+        }
+
+        return null;
     }
 
-    public async Task<string?> MapOrderToStageKeyAsync(int order, CancellationToken ct = default)
+    public async Task<string?> MapOrderToStageKeyAsync(UserRole role, int order, CancellationToken ct = default)
     {
         if (order < 1) return null;
         var settings = await GetEffectiveSettingsAsync(ct);
-        var s = settings.Stages.FirstOrDefault(x => x.Order == order || x.Step == order);
+        var s = settings.Stages.FirstOrDefault(x => x.Role == role && x.Order == order);
         return string.IsNullOrWhiteSpace(s?.StageKey) ? null : s!.StageKey;
     }
 
@@ -127,172 +125,220 @@ public class PromptStageService : IPromptStageService
     {
         var defaults = BuildDefaultSettings();
 
-        var overridden = await _db.PromptStages.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
-        if (overridden == null || overridden.Stages.Count == 0)
+        // 用 raw 读取，便于兼容旧结构迁移（旧结构含 pm/dev/qa 子对象）
+        var raw = await _db.PromptStagesRaw.Find(Builders<BsonDocument>.Filter.Eq("_id", "global")).FirstOrDefaultAsync(ct);
+        if (raw == null)
         {
             return defaults;
         }
 
-        // 迁移/归一化：兼容旧数据（Step=1..N 且无 StageKey/Order）
-        var normalized = NormalizeOverridden(overridden);
+        var parsed = ParsePromptStages(raw);
+        if (parsed.Entries.Count == 0)
+        {
+            return defaults;
+        }
 
-        // 一次性写回迁移：避免每次运行都做兼容推导（保持 updatedAt 不变）
-        if (normalized.NeedsWriteBack)
+        var effective = new PromptStageSettings
+        {
+            Id = "global",
+            UpdatedAt = parsed.UpdatedAt ?? DateTime.UtcNow,
+            Stages = parsed.Entries
+        };
+
+        // 一次性写回迁移：将旧结构/混合结构统一写回新结构（保持 updatedAt 不变）
+        if (parsed.NeedsWriteBack)
         {
             await _db.PromptStages.ReplaceOneAsync(
                 s => s.Id == "global",
-                normalized.Settings,
+                effective,
                 new ReplaceOptions { IsUpsert = true },
                 ct);
         }
 
-        // 合并策略：以管理员配置为主（允许增删/排序）；字段为空则回退默认（仅对 order=1..6 有默认）
-        var defaultByKey = defaults.Stages
-            .Where(x => !string.IsNullOrWhiteSpace(x.StageKey))
-            .ToDictionary(x => x.StageKey, StringComparer.Ordinal);
-        var defaultByOrder = defaults.Stages
-            .Where(x => x.Order > 0)
-            .ToDictionary(x => x.Order);
-
-        foreach (var s in normalized.Settings.Stages)
-        {
-            PromptStage? fallback = null;
-            if (!string.IsNullOrWhiteSpace(s.StageKey) && defaultByKey.TryGetValue(s.StageKey, out var byKey))
-                fallback = byKey;
-            else if (s.Order > 0 && defaultByOrder.TryGetValue(s.Order, out var byOrder))
-                fallback = byOrder;
-
-            // 字段空则回退默认/兜底
-            FillRoleIfEmpty(s.Pm, fallback?.Pm, s.Order);
-            FillRoleIfEmpty(s.Dev, fallback?.Dev, s.Order);
-            FillRoleIfEmpty(s.Qa, fallback?.Qa, s.Order);
-
-            // 旧字段保持一致，便于旧客户端/旧接口读取
-            s.Step ??= s.Order > 0 ? s.Order : null;
-        }
-
-        normalized.Settings.UpdatedAt = overridden.UpdatedAt;
-        return normalized.Settings;
-    }
-
-    private static void MergeRole(RoleStagePrompt target, RoleStagePrompt? incoming)
-    {
-        if (incoming == null) return;
-        if (!string.IsNullOrWhiteSpace(incoming.Title)) target.Title = incoming.Title;
-        if (!string.IsNullOrWhiteSpace(incoming.PromptTemplate)) target.PromptTemplate = incoming.PromptTemplate;
+        return effective;
     }
 
     private PromptStageSettings BuildDefaultSettings()
     {
-        static Dictionary<int, GuideOutlineItem> ToMap(List<GuideOutlineItem> items)
-            => items.ToDictionary(x => x.Step, x => x);
-
-        var pm = ToMap(_promptManager.GetGuideOutline(UserRole.PM));
-        var dev = ToMap(_promptManager.GetGuideOutline(UserRole.DEV));
-        var qa = ToMap(_promptManager.GetGuideOutline(UserRole.QA));
-
-        var stages = new List<PromptStage>();
-        for (var step = 1; step <= 6; step++)
+        var stages = new List<PromptStageEntry>();
+        foreach (var r in new[] { UserRole.PM, UserRole.DEV, UserRole.QA })
         {
-            pm.TryGetValue(step, out var pmi);
-            dev.TryGetValue(step, out var devi);
-            qa.TryGetValue(step, out var qai);
-
-            stages.Add(new PromptStage
+            var outline = _promptManager.GetGuideOutline(r) ?? new List<GuideOutlineItem>();
+            foreach (var item in outline.OrderBy(x => x.Step))
             {
-                StageKey = $"legacy-step-{step}",
-                Order = step,
-                Step = step,
-                Pm = new RoleStagePrompt
+                var suffix = RoleSuffix(r) ?? "pm";
+                stages.Add(new PromptStageEntry
                 {
-                    Title = pmi?.Title ?? $"阶段 {step}",
-                    PromptTemplate = pmi?.PromptTemplate ?? string.Empty
-                },
-                Dev = new RoleStagePrompt
-                {
-                    Title = devi?.Title ?? $"阶段 {step}",
-                    PromptTemplate = devi?.PromptTemplate ?? string.Empty
-                },
-                Qa = new RoleStagePrompt
-                {
-                    Title = qai?.Title ?? $"阶段 {step}",
-                    PromptTemplate = qai?.PromptTemplate ?? string.Empty
-                }
-            });
+                    Role = r,
+                    Order = item.Step,
+                    StageKey = $"legacy-step-{item.Step}-{suffix}",
+                    Title = item.Title ?? $"阶段 {item.Step}",
+                    PromptTemplate = item.PromptTemplate ?? string.Empty
+                });
+            }
         }
 
         return new PromptStageSettings
         {
             Id = "global",
-            Stages = stages,
+            Stages = stages
+                .OrderBy(x => x.Role)
+                .ThenBy(x => x.Order)
+                .ToList(),
             // 默认值不落库，这里的 UpdatedAt 仅用于客户端显示；若有覆盖会替换为覆盖 UpdatedAt
             UpdatedAt = DateTime.UtcNow
         };
     }
 
-    private static void FillRoleIfEmpty(RoleStagePrompt target, RoleStagePrompt? fallback, int order)
-    {
-        if (string.IsNullOrWhiteSpace(target.Title))
-            target.Title = !string.IsNullOrWhiteSpace(fallback?.Title) ? fallback!.Title : $"阶段 {order}";
-        if (string.IsNullOrWhiteSpace(target.PromptTemplate))
-            target.PromptTemplate = !string.IsNullOrWhiteSpace(fallback?.PromptTemplate) ? fallback!.PromptTemplate : string.Empty;
-    }
-
-    private static (PromptStageSettings Settings, bool NeedsWriteBack) NormalizeOverridden(PromptStageSettings overridden)
-    {
-        var needs = false;
-        var settings = new PromptStageSettings
+    private static string? RoleSuffix(UserRole role)
+        => role switch
         {
-            Id = overridden.Id,
-            UpdatedAt = overridden.UpdatedAt,
-            Stages = overridden.Stages ?? new List<PromptStage>()
+            UserRole.PM => "pm",
+            UserRole.DEV => "dev",
+            UserRole.QA => "qa",
+            _ => null
         };
 
-        // 确保 list 非空
-        settings.Stages ??= new List<PromptStage>();
-
-        // 先补齐 order/stageKey，再按 order 排序
-        var nextOrder = 1;
-        foreach (var s in settings.Stages)
+    private static UserRole? ParseRole(BsonValue v)
+    {
+        try
         {
-            if (s == null) continue;
-
-            if (s.Order <= 0)
+            if (v == null || v.IsBsonNull) return null;
+            if (v.IsInt32) return (UserRole)v.AsInt32;
+            if (v.IsString)
             {
-                if (s.Step.HasValue && s.Step.Value > 0)
+                var s = v.AsString.Trim();
+                if (Enum.TryParse<UserRole>(s, ignoreCase: true, out var r)) return r;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
+
+    private static string ReadString(BsonDocument doc, string name)
+        => doc.TryGetValue(name, out var v) && v.IsString ? v.AsString : string.Empty;
+
+    private static int? ReadInt(BsonDocument doc, string name)
+        => doc.TryGetValue(name, out var v) && v.IsInt32 ? v.AsInt32 : (v.IsInt64 ? (int)v.AsInt64 : null);
+
+    private static DateTime? ReadDateTime(BsonDocument doc, string name)
+    {
+        if (!doc.TryGetValue(name, out var v) || v.IsBsonNull) return null;
+        try
+        {
+            if (v.IsValidDateTime) return v.ToUniversalTime();
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
+
+    private static (List<PromptStageEntry> Entries, DateTime? UpdatedAt, bool NeedsWriteBack) ParsePromptStages(BsonDocument raw)
+    {
+        var updatedAt = ReadDateTime(raw, "updatedAt");
+        if (!raw.TryGetValue("stages", out var stagesVal) || !stagesVal.IsBsonArray)
+            return (new List<PromptStageEntry>(), updatedAt, false);
+
+        var arr = stagesVal.AsBsonArray;
+        var entries = new List<PromptStageEntry>();
+        var needsWriteBack = false;
+
+        foreach (var it in arr)
+        {
+            if (!it.IsBsonDocument) continue;
+            var d = it.AsBsonDocument;
+
+            // 新结构：包含 role/title/promptTemplate
+            if (d.Contains("role"))
+            {
+                var role = ParseRole(d["role"]);
+                if (role is not (UserRole.PM or UserRole.DEV or UserRole.QA)) continue;
+                var stageKey = ReadString(d, "stageKey").Trim();
+                if (string.IsNullOrWhiteSpace(stageKey)) continue;
+                var order = ReadInt(d, "order") ?? 0;
+                if (order <= 0) continue;
+                entries.Add(new PromptStageEntry
                 {
-                    s.Order = s.Step.Value;
-                }
-                else
+                    StageKey = stageKey,
+                    Role = role.Value,
+                    Order = order,
+                    Title = ReadString(d, "title"),
+                    PromptTemplate = ReadString(d, "promptTemplate")
+                });
+                continue;
+            }
+
+            // 旧结构：包含 pm/dev/qa 子对象（每个阶段一条）
+            if (d.Contains("pm") || d.Contains("dev") || d.Contains("qa"))
+            {
+                needsWriteBack = true;
+                var baseKey = ReadString(d, "stageKey").Trim();
+                var order = ReadInt(d, "order") ?? ReadInt(d, "step") ?? 0;
+                if (order <= 0) continue;
+                if (string.IsNullOrWhiteSpace(baseKey)) baseKey = $"legacy-step-{order}";
+
+                foreach (var (role, suffix, field) in new[]
+                         {
+                             (UserRole.PM, "pm", "pm"),
+                             (UserRole.DEV, "dev", "dev"),
+                             (UserRole.QA, "qa", "qa"),
+                         })
                 {
-                    s.Order = nextOrder;
+                    if (!d.TryGetValue(field, out var rv) || !rv.IsBsonDocument) continue;
+                    var rd = rv.AsBsonDocument;
+                    var title = ReadString(rd, "title");
+                    var prompt = ReadString(rd, "promptTemplate");
+                    entries.Add(new PromptStageEntry
+                    {
+                        Role = role,
+                        Order = order,
+                        StageKey = $"{baseKey}-{suffix}",
+                        Title = title,
+                        PromptTemplate = prompt
+                    });
                 }
-                needs = true;
+                continue;
             }
 
-            if (!s.Step.HasValue || s.Step.Value <= 0)
+            // 更早的旧结构：{ step, role, title, promptTemplate }
+            if (d.Contains("step") && d.Contains("title") && d.Contains("promptTemplate"))
             {
-                s.Step = s.Order > 0 ? s.Order : null;
-                needs = true;
+                needsWriteBack = true;
+                var role = d.Contains("role") ? ParseRole(d["role"]) : null;
+                if (role is not (UserRole.PM or UserRole.DEV or UserRole.QA)) role = UserRole.PM;
+                var order = ReadInt(d, "order") ?? ReadInt(d, "step") ?? 0;
+                if (order <= 0) continue;
+                var stageKey = ReadString(d, "stageKey").Trim();
+                if (string.IsNullOrWhiteSpace(stageKey)) stageKey = $"legacy-step-{order}-{RoleSuffix(role.Value) ?? "pm"}";
+                entries.Add(new PromptStageEntry
+                {
+                    Role = role.Value,
+                    Order = order,
+                    StageKey = stageKey,
+                    Title = ReadString(d, "title"),
+                    PromptTemplate = ReadString(d, "promptTemplate")
+                });
             }
-
-            if (string.IsNullOrWhiteSpace(s.StageKey))
-            {
-                // 兼容旧结构：按 step 生成稳定 key；避免随机 key 导致每次启动变化
-                var k = s.Step.HasValue && s.Step.Value > 0 ? $"legacy-step-{s.Step.Value}" : $"legacy-order-{s.Order}";
-                s.StageKey = k;
-                needs = true;
-            }
-
-            nextOrder = Math.Max(nextOrder, s.Order + 1);
         }
 
-        settings.Stages = settings.Stages
-            .Where(x => x != null)
-            .OrderBy(x => x.Order)
+        // 归一化：只保留 PM/DEV/QA，stageKey 唯一；order 在 role 内排序
+        entries = entries
+            .Where(e => e.Role is UserRole.PM or UserRole.DEV or UserRole.QA)
+            .Where(e => !string.IsNullOrWhiteSpace(e.StageKey))
+            .Where(e => e.Order > 0)
+            .GroupBy(e => e.StageKey, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .OrderBy(e => e.Role)
+            .ThenBy(e => e.Order)
             .ToList();
 
-        return (settings, needs);
+        // 如果存在 role 内 order 重复，仍写回时由后端/前端再修正；这里保持原样
+        return (entries, updatedAt, needsWriteBack);
     }
 }
 

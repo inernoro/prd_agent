@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
+import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { invoke } from '../../lib/tauri';
+import { isTauri } from '../../lib/tauri';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 interface ApiTestResult {
@@ -22,6 +25,14 @@ export default function SettingsModal() {
   const [error, setError] = useState('');
   const [useDefault, setUseDefault] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
+
+  // 版本/更新
+  const [appVersion, setAppVersion] = useState<string>('');
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'no-update' | 'installing' | 'error'>(
+    'idle'
+  );
+  const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string } | null>(null);
+  const [updateError, setUpdateError] = useState<string>('');
   
   // API 测试状态
   const [isTesting, setIsTesting] = useState(false);
@@ -31,6 +42,17 @@ export default function SettingsModal() {
     if (isModalOpen) {
       loadConfig();
       setTestResult(null);
+      setUpdateStatus('idle');
+      setUpdateInfo(null);
+      setUpdateError('');
+
+      if (!isTauri()) {
+        setAppVersion('');
+      } else {
+        getVersion()
+          .then((v) => setAppVersion(v))
+          .catch(() => setAppVersion(''));
+      }
     }
   }, [isModalOpen, loadConfig]);
 
@@ -125,6 +147,74 @@ export default function SettingsModal() {
     }
   };
 
+  const handleCheckUpdate = async () => {
+    setUpdateError('');
+    setUpdateInfo(null);
+
+    if (!isTauri()) {
+      setUpdateStatus('error');
+      setUpdateError('当前运行在非桌面(Tauri)环境，无法检查更新。');
+      return;
+    }
+
+    setUpdateStatus('checking');
+    try {
+      const res: any = await checkUpdate();
+      const available = Boolean(res?.available);
+      if (!available) {
+        setUpdateStatus('no-update');
+        return;
+      }
+      setUpdateInfo({
+        version: typeof res?.version === 'string' ? res.version : undefined,
+        notes: typeof res?.body === 'string' ? res.body : typeof res?.notes === 'string' ? res.notes : undefined,
+      });
+      setUpdateStatus('available');
+    } catch (e) {
+      setUpdateStatus('error');
+      setUpdateError(String(e));
+    }
+  };
+
+  const handleDownloadAndInstall = async () => {
+    setUpdateError('');
+    if (!isTauri()) return;
+    setUpdateStatus('installing');
+
+    try {
+      const res: any = await checkUpdate();
+      const available = Boolean(res?.available);
+      if (!available) {
+        setUpdateStatus('no-update');
+        return;
+      }
+
+      if (typeof res?.downloadAndInstall === 'function') {
+        await res.downloadAndInstall();
+      } else {
+        throw new Error('Updater API 不支持 downloadAndInstall');
+      }
+
+      // 大多数情况下 updater 会自动重启；这里提供兜底提示
+      setUpdateStatus('idle');
+      setUpdateInfo(null);
+      alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
+    } catch (e) {
+      setUpdateStatus('error');
+      setUpdateError(String(e));
+    }
+  };
+
+  const handleOpenGithub = () => {
+    const url = 'https://github.com/inernoro/prd_agent';
+    // 在 Tauri 中最优是调用系统默认浏览器；此处先用 window.open 兜底（若受限则提示用户复制链接）。
+    try {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      alert(`请在浏览器中打开：${url}`);
+    }
+  };
+
   if (!isModalOpen) return null;
 
   return (
@@ -152,6 +242,66 @@ export default function SettingsModal() {
         
         {/* 内容区域 */}
         <div className="p-6 space-y-5">
+          {/* 版本与更新 */}
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-white/80">版本与更新</label>
+
+            <div className="p-3 bg-white/5 border border-white/10 rounded-lg">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs text-white/50">当前版本</div>
+                  <div className="text-sm text-white/80 font-mono break-all">
+                    {appVersion ? appVersion : '-'}
+                  </div>
+                </div>
+                <button
+                  onClick={handleCheckUpdate}
+                  disabled={updateStatus === 'checking' || updateStatus === 'installing'}
+                  className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {updateStatus === 'checking' ? '检查中...' : '检查更新'}
+                </button>
+              </div>
+
+              {updateStatus === 'no-update' && (
+                <p className="mt-2 text-xs text-white/50">已是最新版本</p>
+              )}
+
+              {(updateStatus === 'available' || updateStatus === 'installing') && (
+                <div className="mt-3 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs text-cyan-400">
+                        {updateStatus === 'installing' ? '正在安装更新' : '发现新版本'}
+                      </div>
+                      <div className="text-sm text-white/80 font-mono break-all">
+                        {updateInfo?.version || '新版本'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleDownloadAndInstall}
+                      disabled={updateStatus === 'installing'}
+                      className="px-3 py-1.5 text-xs font-medium bg-cyan-500/30 hover:bg-cyan-500/40 text-white rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {updateStatus === 'installing' ? '安装中...' : '下载并安装'}
+                    </button>
+                  </div>
+                  {updateInfo?.notes && (
+                    <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap break-words">
+                      {updateInfo.notes}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              {updateStatus === 'error' && updateError && (
+                <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-200 text-xs whitespace-pre-wrap break-words">
+                  {updateError}
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* 开发者选项 */}
           <div className="space-y-3">
             <label className="block text-sm font-medium text-white/80">
@@ -307,6 +457,28 @@ export default function SettingsModal() {
               {error}
             </div>
           )}
+
+          {/* 关于我们 */}
+          <div className="space-y-3 pt-2">
+            <label className="block text-sm font-medium text-white/80">关于我们</label>
+            <div className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2">
+              <div className="text-xs text-white/50">项目主页</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm text-white/80 font-mono break-all">
+                  https://github.com/inernoro/prd_agent
+                </div>
+                <button
+                  onClick={handleOpenGithub}
+                  className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors"
+                >
+                  打开
+                </button>
+              </div>
+              <p className="text-xs text-white/40">
+                若系统限制无法自动打开，请复制链接到浏览器访问。
+              </p>
+            </div>
+          </div>
         </div>
         
         {/* 操作按钮 */}

@@ -4,7 +4,7 @@ import type {
   PutAdminPromptStagesContract,
   ResetAdminPromptStagesContract,
   PromptStageSettings,
-  PromptStageItem,
+  PromptStageEntry,
 } from '@/services/contracts/promptStages';
 import { apiRequest } from '@/services/real/apiClient';
 
@@ -13,7 +13,7 @@ export const getAdminPromptStagesReal: GetAdminPromptStagesContract = async () =
 };
 
 export const putAdminPromptStagesReal: PutAdminPromptStagesContract = async (input, idempotencyKey) => {
-  const stages = Array.isArray(input?.stages) ? (input.stages as PromptStageItem[]) : [];
+  const stages = Array.isArray(input?.stages) ? (input.stages as PromptStageEntry[]) : [];
   const headers: Record<string, string> = {};
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   return await apiRequest<{ settings: PromptStageSettings }>('/api/v1/admin/prompt-stages', {

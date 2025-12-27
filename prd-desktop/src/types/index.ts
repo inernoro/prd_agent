@@ -29,10 +29,8 @@ export interface Session {
 export interface PromptStageEnumItem {
   stageKey: string;
   order: number;
-  step: number;
-  pmTitle: string;
-  devTitle: string;
-  qaTitle: string;
+  role: UserRole; // PM/DEV/QA
+  title: string;
 }
 
 export interface PromptStagesClientResponse {

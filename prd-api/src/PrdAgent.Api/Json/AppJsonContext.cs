@@ -56,6 +56,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(GuideStreamEvent))]
 [JsonSerializable(typeof(StreamErrorEvent))]
 [JsonSerializable(typeof(PreviewAskStreamEvent))]
+[JsonSerializable(typeof(PromptStageOptimizeStreamEvent))]
 // 请求类型
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(RegisterRequest))]
@@ -63,6 +64,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(SwitchRoleRequest))]
 [JsonSerializable(typeof(SendMessageRequest))]
 [JsonSerializable(typeof(UpsertPromptStagesRequest))]
+[JsonSerializable(typeof(PromptStageOptimizeStreamRequest))]
 [JsonSerializable(typeof(StartGuideRequest))]
 [JsonSerializable(typeof(GuideControlRequest))]
 [JsonSerializable(typeof(CreateGroupRequest))]

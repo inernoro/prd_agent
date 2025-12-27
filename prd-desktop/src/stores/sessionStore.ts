@@ -68,7 +68,15 @@ export const useSessionStore = create<SessionState>()(
         activeStageKey: null,
       })),
 
-      setRole: (role) => set({ currentRole: role }),
+      setRole: (role) => set((state) => {
+        const list = Array.isArray(state.promptStages) ? state.promptStages : [];
+        const byRole = list.filter((s) => s.role === role).sort((a, b) => a.order - b.order);
+        const currentKey = state.activeStageKey;
+        const keep = currentKey && byRole.some((s) => s.stageKey === currentKey);
+        const nextKey = keep ? currentKey : (byRole[0]?.stageKey ?? null);
+        const nextStep = byRole.find((s) => s.stageKey === nextKey)?.order ?? state.guideStep;
+        return { currentRole: role, activeStageKey: nextKey, guideStep: nextStep };
+      }),
 
       setMode: (mode) => set((state) => ({
         mode,
@@ -88,7 +96,7 @@ export const useSessionStore = create<SessionState>()(
 
       setGuideStep: (step) => set((state) => {
         const list = Array.isArray(state.promptStages) ? state.promptStages : [];
-        const found = list.find((s) => s.order === step || s.step === step);
+        const found = list.find((s) => s.role === state.currentRole && s.order === step);
         return {
           guideStep: step,
           activeStageKey: found?.stageKey ?? state.activeStageKey,
@@ -102,7 +110,7 @@ export const useSessionStore = create<SessionState>()(
         const found = list.find((s) => s.stageKey === k);
         return {
           activeStageKey: k,
-          guideStep: found ? (found.order || found.step || state.guideStep) : state.guideStep,
+          guideStep: found ? (found.order || state.guideStep) : state.guideStep,
         };
       }),
 
@@ -113,13 +121,17 @@ export const useSessionStore = create<SessionState>()(
         if (currentKey && stages?.some((s) => s.stageKey === currentKey)) {
           return { promptStages: stages, promptStagesUpdatedAt: updatedAt };
         }
-        // 尝试用 guideStep 映射 stageKey
+        // 尝试用 currentRole + guideStep 映射 stageKey；否则取该角色第一项
         const step = state.guideStep ?? 1;
-        const found = stages?.find((s) => s.order === step || s.step === step);
+        const found = stages?.find((s) => s.role === state.currentRole && s.order === step);
+        const byRole = stages?.filter((s) => s.role === state.currentRole).sort((a, b) => a.order - b.order) ?? [];
+        const nextKey = found?.stageKey ?? byRole[0]?.stageKey ?? state.activeStageKey;
+        const nextStep = stages?.find((s) => s.stageKey === nextKey)?.order ?? state.guideStep;
         return {
           promptStages: stages,
           promptStagesUpdatedAt: updatedAt,
-          activeStageKey: found?.stageKey ?? state.activeStageKey,
+          activeStageKey: nextKey ?? state.activeStageKey,
+          guideStep: nextStep,
         };
       }),
 
