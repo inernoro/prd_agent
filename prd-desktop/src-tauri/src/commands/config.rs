@@ -91,7 +91,13 @@ pub async fn save_config(app: tauri::AppHandle, config: AppConfig) -> Result<(),
     if to_save.client_id.trim().is_empty() {
         let existing = load_config_from_file(&app).ok();
         to_save.client_id = existing
-            .and_then(|x| if x.client_id.trim().is_empty() { None } else { Some(x.client_id) })
+            .and_then(|x| {
+                if x.client_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(x.client_id)
+                }
+            })
             .unwrap_or_else(|| Uuid::new_v4().to_string());
     }
     api_client::set_client_id(to_save.client_id.clone());

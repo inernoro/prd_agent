@@ -80,7 +80,10 @@ fn start_desktop_presence_heartbeat() {
             // 仅在有 token 时发送心跳
             if AUTH_TOKEN.read().unwrap().is_some() {
                 let base_url = API_BASE_URL.read().unwrap().clone();
-                let url = format!("{}/api/v1/desktop/presence/heartbeat", base_url.trim_end_matches('/'));
+                let url = format!(
+                    "{}/api/v1/desktop/presence/heartbeat",
+                    base_url.trim_end_matches('/')
+                );
                 let client = build_http_client(&base_url);
 
                 let mut req = client.post(&url).json(&EmptyJson {});
@@ -158,7 +161,10 @@ impl ApiClient {
         CLIENT_ID.read().unwrap().clone()
     }
 
-    fn apply_common_headers(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    fn apply_common_headers(
+        &self,
+        mut request: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
         request = request.header("X-Client", "desktop");
         if let Some(cid) = Self::get_client_id() {
             if !cid.trim().is_empty() {
@@ -184,7 +190,8 @@ impl ApiClient {
     }
 
     async fn try_refresh(&self) -> Result<bool, String> {
-        let Some((user_id, refresh_token, session_key, client_type)) = Self::get_refresh_ctx() else {
+        let Some((user_id, refresh_token, session_key, client_type)) = Self::get_refresh_ctx()
+        else {
             return Ok(false);
         };
 
@@ -273,10 +280,11 @@ impl ApiClient {
             let status = response.status();
 
             // access 过期：尝试 refresh 后重试一次（避免递归 async）
-            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
-                if self.try_refresh().await.unwrap_or(false) {
-                    continue;
-                }
+            if status == StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && self.try_refresh().await.unwrap_or(false)
+            {
+                continue;
             }
 
             #[cfg(debug_assertions)]
@@ -356,10 +364,11 @@ impl ApiClient {
 
             let status = response.status();
 
-            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
-                if self.try_refresh().await.unwrap_or(false) {
-                    continue;
-                }
+            if status == StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && self.try_refresh().await.unwrap_or(false)
+            {
+                continue;
             }
 
             let headers = format!("{:?}", response.headers());
@@ -436,10 +445,11 @@ impl ApiClient {
                 .map_err(|e| format!("Request failed: {}", e))?;
 
             let status = response.status();
-            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
-                if self.try_refresh().await.unwrap_or(false) {
-                    continue;
-                }
+            if status == StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && self.try_refresh().await.unwrap_or(false)
+            {
+                continue;
             }
 
             #[cfg(debug_assertions)]

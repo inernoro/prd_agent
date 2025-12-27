@@ -1,12 +1,13 @@
 use futures::StreamExt;
+use reqwest::StatusCode;
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
-use reqwest::StatusCode;
 
 use crate::models::{
-    ApiResponse, GuideControlResponse, MessageHistoryItem, PromptStagesClientResponse, SessionInfo, SwitchRoleResponse,
+    ApiResponse, GuideControlResponse, MessageHistoryItem, PromptStagesClientResponse, SessionInfo,
+    SwitchRoleResponse,
 };
 use crate::services::{api_client, ApiClient};
 
@@ -69,7 +70,10 @@ fn emit_stream_error(app: &AppHandle, channel: &str, message: String) {
 
 fn emit_auth_expired(app: &AppHandle) {
     // 统一事件：前端收到后跳转登录（但保留本地上下文/消息）
-    let _ = app.emit("auth-expired", serde_json::json!({ "code": "UNAUTHORIZED" }));
+    let _ = app.emit(
+        "auth-expired",
+        serde_json::json!({ "code": "UNAUTHORIZED" }),
+    );
 }
 
 fn emit_stream_phase(app: &AppHandle, channel: &str, phase: &str) {
