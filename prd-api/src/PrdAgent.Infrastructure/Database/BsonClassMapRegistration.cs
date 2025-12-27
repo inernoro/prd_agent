@@ -30,6 +30,7 @@ public static class BsonClassMapRegistration
             RegisterAttachment();
             RegisterLLMConfig();
             RegisterAppSettings();
+            RegisterPromptStageSettings();
             RegisterLlmRequestLog();
             RegisterApiRequestLog();
             RegisterInviteCode();
@@ -231,6 +232,20 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterPromptStageSettings()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(PromptStageSettings))) return;
+
+        BsonClassMap.RegisterClassMap<PromptStageSettings>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(s => s.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 

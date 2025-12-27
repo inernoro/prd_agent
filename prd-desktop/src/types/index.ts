@@ -26,6 +26,20 @@ export interface Session {
   guideStep?: number;
 }
 
+export interface PromptStageEnumItem {
+  stageKey: string;
+  order: number;
+  step: number;
+  pmTitle: string;
+  devTitle: string;
+  qaTitle: string;
+}
+
+export interface PromptStagesClientResponse {
+  updatedAt: string;
+  stages: PromptStageEnumItem[];
+}
+
 export interface Document {
   id: string;
   title: string;

@@ -108,6 +108,7 @@ builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 // 应用设置服务（带缓存）
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPromptStageService, PrdAgent.Infrastructure.Services.PromptStageService>();
 
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
@@ -589,10 +590,11 @@ builder.Services.AddScoped<IChatService>(sp =>
     var documentService = sp.GetRequiredService<IDocumentService>();
     var cache = sp.GetRequiredService<ICacheManager>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
+    var promptStageService = sp.GetRequiredService<IPromptStageService>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, userService, messageRepo, llmCtx);
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptStageService, userService, messageRepo, llmCtx);
 });
 
 builder.Services.AddScoped<IGuideService>(sp =>
@@ -601,8 +603,9 @@ builder.Services.AddScoped<IGuideService>(sp =>
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
+    var promptStageService = sp.GetRequiredService<IPromptStageService>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new GuideService(llmClient, sessionService, documentService, promptManager, llmCtx);
+    return new GuideService(llmClient, sessionService, documentService, promptManager, promptStageService, llmCtx);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>

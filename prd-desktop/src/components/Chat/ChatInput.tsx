@@ -3,15 +3,15 @@ import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
-import { Message } from '../../types';
+import { Message, PromptStageEnumItem } from '../../types';
 
-const steps = [
-  { step: 1, pmTitle: '项目背景', devTitle: '技术方案概述', qaTitle: '功能模块清单' },
-  { step: 2, pmTitle: '用户与场景', devTitle: '核心数据模型', qaTitle: '核心业务流程' },
-  { step: 3, pmTitle: '解决方案', devTitle: '流程与状态', qaTitle: '边界条件' },
-  { step: 4, pmTitle: '功能清单', devTitle: '接口规格', qaTitle: '异常场景' },
-  { step: 5, pmTitle: '迭代规划', devTitle: '技术约束', qaTitle: '验收标准' },
-  { step: 6, pmTitle: '成功指标', devTitle: '工作量要点', qaTitle: '测试风险' },
+const fallbackSteps = [
+  { stageKey: 'legacy-step-1', order: 1, step: 1, pmTitle: '项目背景', devTitle: '技术方案概述', qaTitle: '功能模块清单' },
+  { stageKey: 'legacy-step-2', order: 2, step: 2, pmTitle: '用户与场景', devTitle: '核心数据模型', qaTitle: '核心业务流程' },
+  { stageKey: 'legacy-step-3', order: 3, step: 3, pmTitle: '解决方案', devTitle: '流程与状态', qaTitle: '边界条件' },
+  { stageKey: 'legacy-step-4', order: 4, step: 4, pmTitle: '功能清单', devTitle: '接口规格', qaTitle: '异常场景' },
+  { stageKey: 'legacy-step-5', order: 5, step: 5, pmTitle: '迭代规划', devTitle: '技术约束', qaTitle: '验收标准' },
+  { stageKey: 'legacy-step-6', order: 6, step: 6, pmTitle: '成功指标', devTitle: '工作量要点', qaTitle: '测试风险' },
 ];
 
 // 演示模式的模拟回复
@@ -24,7 +24,7 @@ const DEMO_RESPONSES = [
 ];
 
 export default function ChatInput() {
-  const { sessionId, currentRole, mode, guideStep, setGuideStep, document } = useSessionStore();
+  const { sessionId, currentRole, mode, guideStep, setGuideStep, document, promptStages, activeStageKey, setActiveStageKey } = useSessionStore();
   const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
@@ -35,11 +35,14 @@ export default function ChatInput() {
   const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
 
+  type StageItem = PromptStageEnumItem | typeof fallbackSteps[number];
+
   // 阶段选择
-  const selectStep = useCallback((step: number) => {
+  const selectStep = useCallback((step: StageItem) => {
     if (isStreaming) return;
-    setGuideStep(step);
-  }, [isStreaming, setGuideStep]);
+    setGuideStep(step.order ?? step.step);
+    setActiveStageKey(step.stageKey);
+  }, [isStreaming, setGuideStep, setActiveStageKey]);
 
   // 旋转发光提示：强制常驻（便于调效果）
   useEffect(() => {
@@ -74,11 +77,17 @@ export default function ChatInput() {
   };
 
   const getStepTitle = useMemo(() => {
-    const step = steps.find((s) => s.step === guideStep) ?? steps[0];
+    const steps = (Array.isArray(promptStages) && promptStages.length > 0)
+      ? [...promptStages].sort((a, b) => (a.order ?? a.step) - (b.order ?? b.step))
+      : fallbackSteps;
+    const step = (activeStageKey
+      ? steps.find((s) => s.stageKey === activeStageKey)
+      : steps.find((s) => (s.order ?? s.step) === guideStep)
+    ) ?? steps[0];
     if (currentRole === 'DEV') return step.devTitle;
     if (currentRole === 'QA') return step.qaTitle;
     return step.pmTitle;
-  }, [currentRole, guideStep]);
+  }, [currentRole, guideStep, promptStages, activeStageKey]);
 
   const pushSimulatedUserMessage = (text: string) => {
     const userMessage: Message = {
@@ -111,6 +120,8 @@ export default function ChatInput() {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
+        stageKey: activeStageKey ?? undefined,
+        stageStep: guideStep, // 兼容字段（后端优先 stageKey）
       });
     } catch (err) {
       console.error('Failed to send intro:', err);
@@ -128,7 +139,11 @@ export default function ChatInput() {
       // 先将后端当前阶段对齐（不直接拉内容）
       await invoke('control_guide', { sessionId, action: 'goto', step: guideStep });
       // 再拉取该阶段的讲解内容（SSE -> guide-chunk）
-      await invoke('get_guide_step_content', { sessionId, step: guideStep });
+      if (activeStageKey) {
+        await invoke('get_guide_stage_content', { sessionId, stageKey: activeStageKey });
+      } else {
+        await invoke('get_guide_step_content', { sessionId, step: guideStep });
+      }
     } catch (err) {
       console.error('Failed to start explain:', err);
     }
@@ -161,6 +176,8 @@ export default function ChatInput() {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
+        stageKey: activeStageKey ?? undefined,
+        stageStep: guideStep, // 兼容字段（后端优先 stageKey）
       });
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -200,18 +217,21 @@ export default function ChatInput() {
         <div className="px-3 py-2 flex items-center gap-2">
           {/* 阶段选择按钮 */}
           <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none">
-            {steps.map((step) => (
+            {((Array.isArray(promptStages) && promptStages.length > 0)
+              ? [...promptStages].sort((a, b) => (a.order ?? a.step) - (b.order ?? b.step))
+              : fallbackSteps
+            ).map((step) => (
               <button
-                key={step.step}
-                onClick={() => selectStep(step.step)}
+                key={step.stageKey}
+                onClick={() => selectStep(step)}
                 disabled={isStreaming}
                 className={`flex-shrink-0 px-2.5 py-1.5 text-xs rounded-md transition-all ${
-                  guideStep === step.step
+                  (activeStageKey ? activeStageKey === step.stageKey : guideStep === (step.order ?? step.step))
                     ? 'bg-primary-500 text-white shadow-sm'
                     : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
                 } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
               >
-                <span className="font-medium">{step.step}</span>
+                <span className="font-medium">{step.order ?? step.step}</span>
                 <span className="ml-1 hidden sm:inline">{currentRole === 'DEV' ? step.devTitle : currentRole === 'QA' ? step.qaTitle : step.pmTitle}</span>
               </button>
             ))}

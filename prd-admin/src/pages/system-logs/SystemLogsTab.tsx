@@ -298,9 +298,9 @@ export default function SystemLogsTab() {
         open={detailOpen}
         onOpenChange={(open) => setDetailOpen(open)}
         title="API 请求日志详情"
-        className="max-w-[980px]"
-      >
-        <div className="space-y-3">
+        maxWidth={980}
+        content={
+          <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -368,8 +368,9 @@ export default function SystemLogsTab() {
               )}
             </>
           )}
-        </div>
-      </Dialog>
+          </div>
+        }
+      />
     </div>
   );
 }

@@ -20,7 +20,7 @@ export default function PrdPreviewPage(props?: {
   const compactMode = Boolean(props?.compactMode);
   const overrideDocumentId = (props?.overrideDocumentId || '').trim() || null;
   const overrideGroupId = (props?.overrideGroupId || '').trim() || null;
-  const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
+  const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole, guideStep, activeStageKey } = useSessionStore();
   const { addMessage } = useMessageStore();
 
   const [prdPreviewLoading, setPrdPreviewLoading] = useState(false);
@@ -482,7 +482,7 @@ export default function PrdPreviewPage(props?: {
     });
 
     try {
-      await invoke('send_message', { sessionId, content: q, role: 'pm' });
+      await invoke('send_message', { sessionId, content: q, role: 'pm', stageKey: activeStageKey ?? undefined, stageStep: guideStep });
     } catch (e: any) {
       setAskError(e?.message || '请求失败');
     } finally {

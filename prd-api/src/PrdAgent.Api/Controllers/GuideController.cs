@@ -18,17 +18,20 @@ public class GuideController : ControllerBase
     private readonly IGuideService _guideService;
     private readonly IGuideProgressRepository _progressRepository;
     private readonly ISessionService _sessionService;
+    private readonly IPromptStageService _promptStageService;
     private readonly ILogger<GuideController> _logger;
 
     public GuideController(
         IGuideService guideService,
         IGuideProgressRepository progressRepository,
         ISessionService sessionService,
+        IPromptStageService promptStageService,
         ILogger<GuideController> logger)
     {
         _guideService = guideService;
         _progressRepository = progressRepository;
         _sessionService = sessionService;
+        _promptStageService = promptStageService;
         _logger = logger;
     }
 
@@ -54,6 +57,8 @@ public class GuideController : ControllerBase
             var session = await _sessionService.GetByIdAsync(sessionId);
             if (session != null)
             {
+                var total = (await _promptStageService.GetEffectiveSettingsAsync(cancellationToken)).Stages.Count;
+                total = Math.Max(1, total);
                 var progress = new GuideProgress
                 {
                     SessionId = sessionId,
@@ -61,7 +66,7 @@ public class GuideController : ControllerBase
                     DocumentId = session.DocumentId,
                     Role = request.Role,
                     CurrentStep = 1,
-                    TotalSteps = 6,
+                    TotalSteps = total,
                     StartedAt = DateTime.UtcNow
                 };
                 await _progressRepository.SaveProgressAsync(progress);
@@ -276,18 +281,60 @@ public class GuideController : ControllerBase
     }
 
     /// <summary>
+    /// 获取指定阶段内容（SSE流式响应，按 stageKey）
+    /// </summary>
+    [HttpGet("stage/{stageKey}")]
+    [Produces("text/event-stream")]
+    public async Task GetStageContent(
+        string sessionId,
+        string stageKey,
+        CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        await foreach (var streamEvent in _guideService.GetStageContentAsync(
+            sessionId,
+            stageKey,
+            cancellationToken))
+        {
+            var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.GuideStreamEvent);
+
+            await Response.WriteAsync($"event: guide\n", cancellationToken);
+            await Response.WriteAsync($"data: {eventData}\n\n", cancellationToken);
+            await Response.Body.FlushAsync(cancellationToken);
+
+            if (streamEvent.Type is "error" or "stepDone")
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
     /// 获取引导大纲
     /// </summary>
     [HttpGet("outline")]
     [ProducesResponseType(typeof(ApiResponse<List<OutlineItemResponse>>), StatusCodes.Status200OK)]
-    public IActionResult GetOutline([FromQuery] UserRole role = UserRole.PM)
+    public async Task<IActionResult> GetOutline([FromQuery] UserRole role = UserRole.PM, CancellationToken ct = default)
     {
-        var outline = _guideService.GetOutline(role);
-        
-        var response = outline.Select(o => new OutlineItemResponse
+        var settings = await _promptStageService.GetEffectiveSettingsAsync(ct);
+        var stages = settings.Stages.OrderBy(x => x.Order).ToList();
+
+        string TitleByRole(PromptStage s) => role switch
         {
-            Step = o.Step,
-            Title = o.Title
+            UserRole.DEV => s.Dev.Title,
+            UserRole.QA => s.Qa.Title,
+            _ => s.Pm.Title
+        };
+
+        var response = stages.Select(s => new OutlineItemResponse
+        {
+            Step = s.Step ?? s.Order,
+            Order = s.Order,
+            StageKey = s.StageKey,
+            Title = TitleByRole(s)
         }).ToList();
 
         return Ok(ApiResponse<List<OutlineItemResponse>>.Ok(response));
@@ -300,6 +347,8 @@ public class GuideController : ControllerBase
 public class OutlineItemResponse
 {
     public int Step { get; set; }
+    public int Order { get; set; }
+    public string StageKey { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
 }
 

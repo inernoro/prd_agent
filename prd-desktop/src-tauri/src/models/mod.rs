@@ -151,6 +151,24 @@ pub struct MessageHistoryItem {
     pub token_usage: Option<TokenUsage>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptStageClientItem {
+    pub stage_key: String,
+    pub order: i32,
+    pub step: i32,
+    pub pm_title: String,
+    pub dev_title: String,
+    pub qa_title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptStagesClientResponse {
+    pub updated_at: String,
+    pub stages: Vec<PromptStageClientItem>,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamEvent {

@@ -1,3 +1,5 @@
+import type { ApiResponse } from '@/types/api';
+
 export type ApiLogsListParams = {
   page?: number;
   pageSize?: number;
@@ -83,22 +85,10 @@ export type ApiRequestLog = {
   isEventStream: boolean;
 };
 
-export type GetApiLogsContract = (params?: ApiLogsListParams) => Promise<{
-  success: boolean;
-  data: ApiLogsListData;
-  error: { code: string; message: string } | null;
-}>;
+export type GetApiLogsContract = (params?: ApiLogsListParams) => Promise<ApiResponse<ApiLogsListData>>;
 
-export type GetApiLogDetailContract = (id: string) => Promise<{
-  success: boolean;
-  data: ApiRequestLog;
-  error: { code: string; message: string } | null;
-}>;
+export type GetApiLogDetailContract = (id: string) => Promise<ApiResponse<ApiRequestLog>>;
 
-export type GetApiLogsMetaContract = () => Promise<{
-  success: boolean;
-  data: ApiLogsMetaData;
-  error: { code: string; message: string } | null;
-}>;
+export type GetApiLogsMetaContract = () => Promise<ApiResponse<ApiLogsMetaData>>;
 
 

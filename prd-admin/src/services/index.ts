@@ -31,6 +31,7 @@ import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/s
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
 import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
+import type { GetAdminPromptStagesContract, PutAdminPromptStagesContract, ResetAdminPromptStagesContract } from '@/services/contracts/promptStages';
 import type {
   AddImageMasterMessageContract,
   CreateImageMasterSessionContract,
@@ -84,6 +85,7 @@ import {
 } from '@/services/real/imageMaster';
 import { exportConfigReal, getDataSummaryReal, importConfigReal, purgeDataReal } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
+import { getAdminPromptStagesReal, putAdminPromptStagesReal, resetAdminPromptStagesReal } from '@/services/real/promptStages';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -168,6 +170,10 @@ export const getLlmModelStats: GetLlmModelStatsContract = withAuth(getLlmModelSt
 
 export const getApiLogs: GetApiLogsContract = withAuth(getApiLogsReal);
 export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetailReal);
+
+export const getAdminPromptStages: GetAdminPromptStagesContract = withAuth(getAdminPromptStagesReal);
+export const putAdminPromptStages: PutAdminPromptStagesContract = withAuth(putAdminPromptStagesReal);
+export const resetAdminPromptStages: ResetAdminPromptStagesContract = withAuth(resetAdminPromptStagesReal);
 export const getApiLogsMeta: GetApiLogsMetaContract = withAuth(getApiLogsMetaReal);
 
 export const adminImpersonate: AdminImpersonateContract = withAuth(adminImpersonateReal);

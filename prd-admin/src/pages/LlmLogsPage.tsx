@@ -838,11 +838,11 @@ export default function LlmLogsPage() {
     return (
       <div className="h-full min-h-0 flex flex-col gap-4">
         <div className="flex items-center gap-2 shrink-0">
-          <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
+          <Button variant="secondary" onClick={() => setTab('llm')}>
             <Sparkles size={16} />
             大模型日志
           </Button>
-          <Button variant={tab === 'system' ? 'primary' : 'secondary'} onClick={() => setTab('system')}>
+          <Button variant="primary" onClick={() => setTab('system')}>
             <Server size={16} />
             系统日志
           </Button>
@@ -866,11 +866,11 @@ export default function LlmLogsPage() {
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
       <div className="flex items-center gap-2 shrink-0">
-        <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
+        <Button variant="primary" onClick={() => setTab('llm')}>
           <Sparkles size={16} />
           大模型日志
         </Button>
-        <Button variant={tab === 'system' ? 'primary' : 'secondary'} onClick={() => setTab('system')}>
+        <Button variant="secondary" onClick={() => setTab('system')}>
           <Server size={16} />
           系统日志
         </Button>

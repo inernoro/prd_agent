@@ -36,6 +36,7 @@ public class MongoDbContext
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
+    public IMongoCollection<PromptStageSettings> PromptStages => _database.GetCollection<PromptStageSettings>("promptstages");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");

@@ -11,6 +11,8 @@ public interface IChatService
     IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
         string sessionId, 
         string content, 
+        string? stageKey = null,
+        int? stageStep = null,
         string? userId = null,
         List<string>? attachmentIds = null,
         CancellationToken cancellationToken = default);

@@ -13,11 +13,11 @@ import LoginPage from './components/Auth/LoginPage';
 import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
 import { isSystemErrorCode } from './lib/systemError';
-import type { ApiResponse, Document, Session, UserRole } from './types';
+import type { ApiResponse, Document, PromptStagesClientResponse, Session, UserRole } from './types';
 
 function App() {
   const { isAuthenticated, accessToken, refreshToken, sessionKey, user } = useAuthStore();
-  const { setSession, mode, sessionId, clearSession } = useSessionStore();
+  const { setSession, mode, sessionId, clearSession, setPromptStages } = useSessionStore();
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const [isDark, setIsDark] = useState(false);
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
@@ -110,6 +110,22 @@ function App() {
     if (user?.userId === 'demo-user-001') return;
     loadGroups().catch(() => {});
   }, [isAuthenticated, loadGroups, user?.userId]);
+
+  // 登录后拉取阶段枚举（用于阶段讲解 UI 与 send_message 的阶段上下文）
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (user?.userId === 'demo-user-001') return;
+
+    invoke<ApiResponse<PromptStagesClientResponse>>('get_prompt_stages')
+      .then((res) => {
+        if (res?.success && res.data) {
+          setPromptStages(res.data);
+        }
+      })
+      .catch(() => {
+        // 网络波动不打扰用户；UI 会回落到本地硬编码
+      });
+  }, [isAuthenticated, user?.userId, setPromptStages]);
 
   // 监听 deep link：prdagent://join/{inviteCode}
   useEffect(() => {

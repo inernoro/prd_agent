@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Document, InteractionMode, Session, UserRole } from '../types';
+import { Document, InteractionMode, PromptStageEnumItem, PromptStagesClientResponse, Session, UserRole } from '../types';
 
 interface SessionState {
   sessionId: string | null;
@@ -11,6 +11,9 @@ interface SessionState {
   mode: InteractionMode;
   previousMode: InteractionMode | null;
   guideStep: number;
+  activeStageKey: string | null;
+  promptStages: PromptStageEnumItem[] | null;
+  promptStagesUpdatedAt: string | null;
   
   setSession: (session: Session, doc: Document) => void;
   setActiveGroupId: (groupId: string | null) => void;
@@ -20,6 +23,8 @@ interface SessionState {
   openPrdPreviewPage: () => void;
   backFromPrdPreview: () => void;
   setGuideStep: (step: number) => void;
+  setActiveStageKey: (stageKey: string | null) => void;
+  setPromptStages: (resp: PromptStagesClientResponse) => void;
   clearSession: () => void;
 }
 
@@ -34,6 +39,9 @@ export const useSessionStore = create<SessionState>()(
       mode: 'QA',
       previousMode: null,
       guideStep: 1,
+      activeStageKey: null,
+      promptStages: null,
+      promptStagesUpdatedAt: null,
 
       setSession: (session, doc) => set({
         sessionId: session.sessionId,
@@ -57,6 +65,7 @@ export const useSessionStore = create<SessionState>()(
         mode: 'QA',
         previousMode: null,
         guideStep: 1,
+        activeStageKey: null,
       })),
 
       setRole: (role) => set({ currentRole: role }),
@@ -77,7 +86,42 @@ export const useSessionStore = create<SessionState>()(
         previousMode: null,
       })),
 
-      setGuideStep: (step) => set({ guideStep: step }),
+      setGuideStep: (step) => set((state) => {
+        const list = Array.isArray(state.promptStages) ? state.promptStages : [];
+        const found = list.find((s) => s.order === step || s.step === step);
+        return {
+          guideStep: step,
+          activeStageKey: found?.stageKey ?? state.activeStageKey,
+        };
+      }),
+
+      setActiveStageKey: (stageKey) => set((state) => {
+        const k = (stageKey ?? '').trim();
+        if (!k) return { activeStageKey: null };
+        const list = Array.isArray(state.promptStages) ? state.promptStages : [];
+        const found = list.find((s) => s.stageKey === k);
+        return {
+          activeStageKey: k,
+          guideStep: found ? (found.order || found.step || state.guideStep) : state.guideStep,
+        };
+      }),
+
+      setPromptStages: (resp) => set((state) => {
+        const stages = Array.isArray(resp?.stages) ? resp.stages : null;
+        const updatedAt = typeof resp?.updatedAt === 'string' ? resp.updatedAt : null;
+        const currentKey = state.activeStageKey;
+        if (currentKey && stages?.some((s) => s.stageKey === currentKey)) {
+          return { promptStages: stages, promptStagesUpdatedAt: updatedAt };
+        }
+        // 尝试用 guideStep 映射 stageKey
+        const step = state.guideStep ?? 1;
+        const found = stages?.find((s) => s.order === step || s.step === step);
+        return {
+          promptStages: stages,
+          promptStagesUpdatedAt: updatedAt,
+          activeStageKey: found?.stageKey ?? state.activeStageKey,
+        };
+      }),
 
       clearSession: () => set({
         sessionId: null,
@@ -88,6 +132,10 @@ export const useSessionStore = create<SessionState>()(
         mode: 'QA',
         previousMode: null,
         guideStep: 1,
+        activeStageKey: null,
+        // promptStages 属于全局枚举，保留；若用户退出登录，App 会重新拉取/覆盖
+        promptStages: null,
+        promptStagesUpdatedAt: null,
       }),
     }),
     {
@@ -102,6 +150,9 @@ export const useSessionStore = create<SessionState>()(
         mode: s.mode,
         previousMode: s.previousMode,
         guideStep: s.guideStep,
+        activeStageKey: s.activeStageKey,
+        promptStages: s.promptStages,
+        promptStagesUpdatedAt: s.promptStagesUpdatedAt,
       }),
       onRehydrateStorage: () => (state, err) => {
         // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为“聊天丢失”，且会影响消息线程切换。

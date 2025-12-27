@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use reqwest::StatusCode;
 
 use crate::models::{
-    ApiResponse, GuideControlResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse,
+    ApiResponse, GuideControlResponse, MessageHistoryItem, PromptStagesClientResponse, SessionInfo, SwitchRoleResponse,
 };
 use crate::services::{api_client, ApiClient};
 
@@ -149,9 +149,14 @@ struct SwitchRoleRequest {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SendMessageRequest {
     content: String,
     role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_step: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -214,12 +219,19 @@ pub async fn send_message(
     session_id: String,
     content: String,
     role: Option<String>,
+    stage_key: Option<String>,
+    stage_step: Option<i32>,
 ) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
     let url = format!("{}/api/v1/sessions/{}/messages", base_url, session_id);
 
     let client = api_client::build_streaming_client(&base_url);
-    let request = SendMessageRequest { content, role };
+    let request = SendMessageRequest {
+        content,
+        role,
+        stage_key,
+        stage_step,
+    };
 
     let token = cancel.new_message_token();
     emit_stream_phase(&app, "message-chunk", "requesting");
@@ -294,6 +306,12 @@ pub async fn send_message(
     }
 
     Ok(())
+}
+
+#[command]
+pub async fn get_prompt_stages() -> Result<ApiResponse<PromptStagesClientResponse>, String> {
+    let client = ApiClient::new();
+    client.get("/prompt-stages").await
 }
 
 #[command]
@@ -388,6 +406,81 @@ pub async fn get_guide_step_content(
     let url = format!(
         "{}/api/v1/sessions/{}/guide/step/{}",
         base_url, session_id, step
+    );
+
+    let client = api_client::build_streaming_client(&base_url);
+
+    let token = cancel.new_guide_token();
+    emit_stream_phase(&app, "guide-chunk", "requesting");
+    let mut req = client.get(&url).header("Accept", "text/event-stream");
+
+    if let Some(token) = api_client::get_auth_token() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let mut response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+        if ok {
+            let mut retry = client.get(&url).header("Accept", "text/event-stream");
+            if let Some(token) = api_client::get_auth_token() {
+                retry = retry.header("Authorization", format!("Bearer {}", token));
+            }
+            response = retry
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+        } else {
+            emit_auth_expired(&app);
+        }
+    }
+    emit_stream_phase(&app, "guide-chunk", "connected");
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        emit_stream_error(&app, "guide-chunk", format!("HTTP {}: {}", status, body));
+        return Ok(());
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut sse_buf = String::new();
+    let mut saw_any_data = false;
+
+    while let Some(chunk) = stream.next().await {
+        if token.is_cancelled() {
+            let _ = app.emit("guide-chunk", serde_json::json!({ "type": "done" }));
+            break;
+        }
+        match chunk {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                handle_sse_text(&app, "guide-chunk", &mut sse_buf, &text, &mut saw_any_data);
+            }
+            Err(e) => {
+                emit_stream_error(&app, "guide-chunk", format!("Stream error: {}", e));
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[command]
+pub async fn get_guide_stage_content(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    session_id: String,
+    stage_key: String,
+) -> Result<(), String> {
+    let base_url = api_client::get_api_base_url();
+    let url = format!(
+        "{}/api/v1/sessions/{}/guide/stage/{}",
+        base_url, session_id, stage_key
     );
 
     let client = api_client::build_streaming_client(&base_url);

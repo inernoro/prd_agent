@@ -21,9 +21,15 @@ public interface IGuideService
         string sessionId, 
         int step,
         CancellationToken cancellationToken = default);
+
+    /// <summary>获取指定阶段内容（按 stageKey，推荐）</summary>
+    IAsyncEnumerable<GuideStreamEvent> GetStageContentAsync(
+        string sessionId,
+        string stageKey,
+        CancellationToken cancellationToken = default);
     
     /// <summary>获取角色对应的讲解大纲</summary>
-    List<GuideOutlineItem> GetOutline(UserRole role);
+    Task<List<GuideOutlineItem>> GetOutlineAsync(UserRole role, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

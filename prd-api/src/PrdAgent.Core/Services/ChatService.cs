@@ -16,6 +16,7 @@ public class ChatService : IChatService
     private readonly IDocumentService _documentService;
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
+    private readonly IPromptStageService _promptStageService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
@@ -27,6 +28,7 @@ public class ChatService : IChatService
         IDocumentService documentService,
         ICacheManager cache,
         IPromptManager promptManager,
+        IPromptStageService promptStageService,
         IUserService userService,
         IMessageRepository messageRepository,
         ILLMRequestContextAccessor llmRequestContext)
@@ -36,6 +38,7 @@ public class ChatService : IChatService
         _documentService = documentService;
         _cache = cache;
         _promptManager = promptManager;
+        _promptStageService = promptStageService;
         _userService = userService;
         _messageRepository = messageRepository;
         _llmRequestContext = llmRequestContext;
@@ -44,6 +47,8 @@ public class ChatService : IChatService
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
         string sessionId,
         string content,
+        string? stageKey = null,
+        int? stageStep = null,
         string? userId = null,
         List<string>? attachmentIds = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -101,9 +106,55 @@ public class ChatService : IChatService
         };
 
         // 构建系统Prompt
-        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, document.RawContent);
+        var baseSystemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, document.RawContent);
         var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_CONTENT_REDACTED]");
         var docHash = Sha256Hex(document.RawContent);
+
+        // 阶段上下文（可选）：将阶段提示词作为“聚焦指令”注入 system prompt
+        string systemPrompt = baseSystemPrompt;
+        var effectiveStageKey = (stageKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(effectiveStageKey) && stageStep.HasValue && stageStep.Value > 0)
+        {
+            effectiveStageKey = (await _promptStageService.MapOrderToStageKeyAsync(stageStep.Value, cancellationToken)) ?? string.Empty;
+        }
+
+        if (!string.IsNullOrWhiteSpace(effectiveStageKey))
+        {
+            var stage = await _promptStageService.GetStagePromptByKeyAsync(session.CurrentRole, effectiveStageKey, cancellationToken);
+            if (stage != null &&
+                (!string.IsNullOrWhiteSpace(stage.Title) || !string.IsNullOrWhiteSpace(stage.PromptTemplate)))
+            {
+                // 尝试补充 order（可选，仅用于展示）
+                int? order = null;
+                if (stageStep.HasValue && stageStep.Value > 0) order = stageStep.Value;
+                else
+                {
+                    try
+                    {
+                        var settings = await _promptStageService.GetEffectiveSettingsAsync(cancellationToken);
+                        var s = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, effectiveStageKey, StringComparison.Ordinal));
+                        if (s != null) order = s.Order > 0 ? s.Order : s.Step;
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+
+                var orderText = order.HasValue ? $"阶段 {order.Value} " : "阶段 ";
+                systemPrompt += @"
+
+---
+
+# 当前阶段上下文
+你当前正在解读/讨论 PRD 的 " + orderText + @"（stageKey=" + effectiveStageKey + @"）「" + (stage.Title ?? string.Empty) + @"」。
+
+## 阶段提示词（作为聚焦指令）
+说明：以下内容用于帮助你理解该阶段的关注点；当用户显式要求“讲解/简介”该阶段时需严格遵守；否则把它当作背景约束，不要生硬照抄。
+
+" + (stage.PromptTemplate ?? string.Empty);
+            }
+        }
 
         // 获取对话历史
         var history = await GetHistoryAsync(sessionId, 20);

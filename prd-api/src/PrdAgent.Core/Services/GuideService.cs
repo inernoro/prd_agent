@@ -15,20 +15,22 @@ public class GuideService : IGuideService
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
     private readonly IPromptManager _promptManager;
+    private readonly IPromptStageService _promptStageService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
-    private const int TotalSteps = 6;
 
     public GuideService(
         ILLMClient llmClient,
         ISessionService sessionService,
         IDocumentService documentService,
         IPromptManager promptManager,
+        IPromptStageService promptStageService,
         ILLMRequestContextAccessor llmRequestContext)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
         _documentService = documentService;
         _promptManager = promptManager;
+        _promptStageService = promptStageService;
         _llmRequestContext = llmRequestContext;
     }
 
@@ -59,12 +61,14 @@ public class GuideService : IGuideService
         }
 
         var currentStep = session.GuideStep ?? 1;
+        var totalSteps = (await _promptStageService.GetEffectiveSettingsAsync()).Stages.Count;
+        totalSteps = Math.Max(1, totalSteps);
         GuideStatus status = GuideStatus.InProgress;
 
         switch (action)
         {
             case GuideAction.Next:
-                if (currentStep < TotalSteps)
+                if (currentStep < totalSteps)
                 {
                     currentStep++;
                 }
@@ -82,7 +86,7 @@ public class GuideService : IGuideService
                 break;
 
             case GuideAction.GoTo:
-                if (targetStep.HasValue && targetStep.Value >= 1 && targetStep.Value <= TotalSteps)
+                if (targetStep.HasValue && targetStep.Value >= 1 && targetStep.Value <= totalSteps)
                 {
                     currentStep = targetStep.Value;
                 }
@@ -93,7 +97,7 @@ public class GuideService : IGuideService
                 return new GuideControlResult
                 {
                     CurrentStep = currentStep,
-                    TotalSteps = TotalSteps,
+                    TotalSteps = totalSteps,
                     Status = GuideStatus.Stopped
                 };
         }
@@ -105,7 +109,7 @@ public class GuideService : IGuideService
         return new GuideControlResult
         {
             CurrentStep = currentStep,
-            TotalSteps = TotalSteps,
+            TotalSteps = totalSteps,
             Status = status
         };
     }
@@ -113,6 +117,30 @@ public class GuideService : IGuideService
     public async IAsyncEnumerable<GuideStreamEvent> GetStepContentAsync(
         string sessionId,
         int step,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // 兼容旧接口：step(order) -> stageKey
+        var stageKey = await _promptStageService.MapOrderToStageKeyAsync(step, cancellationToken);
+        if (string.IsNullOrWhiteSpace(stageKey))
+        {
+            yield return new GuideStreamEvent
+            {
+                Type = "error",
+                ErrorCode = "INVALID_STEP",
+                ErrorMessage = "无效的步骤"
+            };
+            yield break;
+        }
+
+        await foreach (var evt in GetStageContentAsync(sessionId, stageKey, cancellationToken))
+        {
+            yield return evt;
+        }
+    }
+
+    public async IAsyncEnumerable<GuideStreamEvent> GetStageContentAsync(
+        string sessionId,
+        string stageKey,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var session = await _sessionService.GetByIdAsync(sessionId);
@@ -139,26 +167,37 @@ public class GuideService : IGuideService
             yield break;
         }
 
-        var outline = GetOutline(session.CurrentRole);
-        var outlineItem = outline.FirstOrDefault(o => o.Step == step);
-        
-        if (outlineItem == null)
+        var settings = await _promptStageService.GetEffectiveSettingsAsync(cancellationToken);
+        var stage = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, stageKey?.Trim(), StringComparison.Ordinal));
+        if (stage == null)
         {
             yield return new GuideStreamEvent
             {
                 Type = "error",
-                ErrorCode = "INVALID_STEP",
-                ErrorMessage = "无效的步骤"
+                ErrorCode = "INVALID_STAGE",
+                ErrorMessage = "无效的阶段"
             };
             yield break;
         }
 
+        var totalSteps = Math.Max(1, settings.Stages.Count);
+        var order = stage.Order > 0 ? stage.Order : (stage.Step ?? 1);
+
+        RoleStagePrompt GetRolePrompt(PromptStage s) => session.CurrentRole switch
+        {
+            UserRole.DEV => s.Dev,
+            UserRole.QA => s.Qa,
+            _ => s.Pm
+        };
+
+        var rp = GetRolePrompt(stage);
+
         yield return new GuideStreamEvent
         {
             Type = "step",
-            Step = step,
-            TotalSteps = TotalSteps,
-            Title = outlineItem.Title
+            Step = order,
+            TotalSteps = totalSteps,
+            Title = rp.Title
         };
 
         // 构建系统Prompt
@@ -169,7 +208,7 @@ public class GuideService : IGuideService
         // 构建讲解请求
         var messages = new List<LLMMessage>
         {
-            new() { Role = "user", Content = outlineItem.PromptTemplate }
+            new() { Role = "user", Content = rp.PromptTemplate }
         };
 
         // 调用LLM
@@ -198,7 +237,7 @@ public class GuideService : IGuideService
                     yield return new GuideStreamEvent
                     {
                         Type = bt.Type,
-                        Step = step,
+                        Step = order,
                         Content = bt.Content,
                         BlockId = bt.BlockId,
                         BlockKind = bt.BlockKind,
@@ -223,7 +262,7 @@ public class GuideService : IGuideService
             yield return new GuideStreamEvent
             {
                 Type = bt.Type,
-                Step = step,
+                Step = order,
                 Content = bt.Content,
                 BlockId = bt.BlockId,
                 BlockKind = bt.BlockKind,
@@ -232,7 +271,7 @@ public class GuideService : IGuideService
         }
 
         // 更新会话步骤
-        session.GuideStep = step;
+        session.GuideStep = order;
         await _sessionService.UpdateAsync(session);
 
         // 引用依据（SSE 事件，仅会话内下发；不落库）
@@ -242,7 +281,7 @@ public class GuideService : IGuideService
             yield return new GuideStreamEvent
             {
                 Type = "citations",
-                Step = step,
+                Step = order,
                 Citations = citations
             };
         }
@@ -250,13 +289,13 @@ public class GuideService : IGuideService
         yield return new GuideStreamEvent
         {
             Type = "stepDone",
-            Step = step
+            Step = order
         };
     }
 
-    public List<GuideOutlineItem> GetOutline(UserRole role)
+    public async Task<List<GuideOutlineItem>> GetOutlineAsync(UserRole role, CancellationToken cancellationToken = default)
     {
-        return _promptManager.GetGuideOutline(role);
+        return await _promptStageService.GetGuideOutlineAsync(role, cancellationToken);
     }
 
     private static string Sha256Hex(string input)

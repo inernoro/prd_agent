@@ -27,6 +27,17 @@ public class SendMessageRequest
     /// <summary>附件ID列表</summary>
     public List<string>? AttachmentIds { get; set; }
 
+    /// <summary>
+    /// 阶段（可选，推荐）：稳定阶段标识
+    /// </summary>
+    public string? StageKey { get; set; }
+
+    /// <summary>
+    /// 阶段（可选，兼容）：与引导讲解 step(order) 对齐（1..N）
+    /// - 旧客户端仍可能发送 stageStep
+    /// </summary>
+    public int? StageStep { get; set; }
+
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
     {
