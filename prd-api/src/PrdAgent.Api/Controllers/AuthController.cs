@@ -17,17 +17,20 @@ public class AuthController : ControllerBase
     private readonly IUserService _userService;
     private readonly IJwtService _jwtService;
     private readonly ILoginAttemptService _loginAttemptService;
+    private readonly IAuthSessionService _authSessionService;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         IUserService userService, 
         IJwtService jwtService,
         ILoginAttemptService loginAttemptService,
+        IAuthSessionService authSessionService,
         ILogger<AuthController> logger)
     {
         _userService = userService;
         _jwtService = jwtService;
         _loginAttemptService = loginAttemptService;
+        _authSessionService = authSessionService;
         _logger = logger;
     }
 
@@ -146,14 +149,18 @@ public class AuthController : ControllerBase
         // 更新最后登录时间
         await _userService.UpdateLastLoginAsync(user.UserId);
 
-        var accessToken = _jwtService.GenerateAccessToken(user);
-        var refreshToken = _jwtService.GenerateRefreshToken();
+        var ct = (request.ClientType ?? string.Empty).Trim().ToLowerInvariant();
+        var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
+        var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, ct);
+        var accessToken = _jwtService.GenerateAccessToken(user, ct, sessionKey, tokenVersion);
 
         var response = new LoginResponse
         {
             AccessToken = accessToken,
             RefreshToken = refreshToken,
-            ExpiresIn = 86400, // 24小时
+            SessionKey = sessionKey,
+            ClientType = ct,
+            ExpiresIn = 3600, // access token 默认 60 分钟（由 Jwt:AccessTokenMinutes 控制）
             User = new UserInfo
             {
                 UserId = user.UserId,
@@ -210,10 +217,45 @@ public class AuthController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
         }
 
-        // TODO: 实现刷新令牌逻辑
-        // 需要存储刷新令牌并验证
-        await Task.CompletedTask;
-        return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "刷新令牌无效"));
+        var ct = (request.ClientType ?? string.Empty).Trim().ToLowerInvariant();
+        var ok = await _authSessionService.ValidateRefreshTokenAsync(
+            request.UserId,
+            ct,
+            request.SessionKey,
+            request.RefreshToken);
+
+        if (!ok)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "刷新令牌无效或已过期"));
+        }
+
+        // refresh 成功：签发新的 access token（tokenVersion 不变；踢下线通过 bump tokenVersion 实现）
+        var user = await _userService.GetByIdAsync(request.UserId);
+        if (user == null || user.Status == UserStatus.Disabled)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "账号无效"));
+        }
+
+        var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
+        var accessToken = _jwtService.GenerateAccessToken(user, ct, request.SessionKey, tokenVersion);
+
+        var response = new LoginResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = request.RefreshToken, // 本实现不旋转 refresh token（滑动续期已在 ValidateRefreshTokenAsync 中完成）
+            SessionKey = request.SessionKey,
+            ClientType = ct,
+            ExpiresIn = 3600,
+            User = new UserInfo
+            {
+                UserId = user.UserId,
+                Username = user.Username,
+                DisplayName = user.DisplayName,
+                Role = user.Role
+            }
+        };
+
+        return Ok(ApiResponse<LoginResponse>.Ok(response));
     }
 }
 

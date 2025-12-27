@@ -262,6 +262,9 @@ public class ChatService : IChatService
             return new List<Message>();
         }
 
+        // 读取历史也视为“活跃”：用户可能长时间阅读/回看聊天记录，首次再提问不应因为纯阅读而过期。
+        await _sessionService.RefreshActivityAsync(sessionId);
+
         var key = !string.IsNullOrEmpty(session.GroupId)
             ? CacheKeys.ForGroupChatHistory(session.GroupId)
             : CacheKeys.ForChatHistory(sessionId);

@@ -67,6 +67,8 @@ pub struct SessionInfo {
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
+    pub session_key: String,
+    pub client_type: String,
     pub expires_in: i32,
     pub user: UserInfo,
 }

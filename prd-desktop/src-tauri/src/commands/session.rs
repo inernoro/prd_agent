@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
+use reqwest::StatusCode;
 
 use crate::models::{
     ApiResponse, GuideControlResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse,
@@ -64,6 +65,11 @@ fn emit_stream_error(app: &AppHandle, channel: &str, message: String) {
             "errorMessage": message
         }),
     );
+}
+
+fn emit_auth_expired(app: &AppHandle) {
+    // 统一事件：前端收到后跳转登录（但保留本地上下文/消息）
+    let _ = app.emit("auth-expired", serde_json::json!({ "code": "UNAUTHORIZED" }));
 }
 
 fn emit_stream_phase(app: &AppHandle, channel: &str, phase: &str) {
@@ -227,10 +233,31 @@ pub async fn send_message(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req
+    let mut response = req
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    // access 过期：尝试 refresh 后重试一次
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+        if ok {
+            let mut retry = client
+                .post(&url)
+                .header("Accept", "text/event-stream")
+                .header("Content-Type", "application/json")
+                .json(&request);
+            if let Some(token) = api_client::get_auth_token() {
+                retry = retry.header("Authorization", format!("Bearer {}", token));
+            }
+            response = retry
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+        } else {
+            emit_auth_expired(&app);
+        }
+    }
     emit_stream_phase(&app, "message-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
@@ -294,10 +321,30 @@ pub async fn start_guide(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req
+    let mut response = req
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+        if ok {
+            let mut retry = client
+                .post(&url)
+                .header("Accept", "text/event-stream")
+                .header("Content-Type", "application/json")
+                .json(&request);
+            if let Some(token) = api_client::get_auth_token() {
+                retry = retry.header("Authorization", format!("Bearer {}", token));
+            }
+            response = retry
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+        } else {
+            emit_auth_expired(&app);
+        }
+    }
     emit_stream_phase(&app, "guide-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
@@ -353,10 +400,26 @@ pub async fn get_guide_step_content(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req
+    let mut response = req
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+        if ok {
+            let mut retry = client.get(&url).header("Accept", "text/event-stream");
+            if let Some(token) = api_client::get_auth_token() {
+                retry = retry.header("Authorization", format!("Bearer {}", token));
+            }
+            response = retry
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+        } else {
+            emit_auth_expired(&app);
+        }
+    }
     emit_stream_phase(&app, "guide-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();
@@ -434,10 +497,30 @@ pub async fn preview_ask_in_section(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req
+    let mut response = req
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+        if ok {
+            let mut retry = client
+                .post(&url)
+                .header("Accept", "text/event-stream")
+                .header("Content-Type", "application/json")
+                .json(&request);
+            if let Some(token) = api_client::get_auth_token() {
+                retry = retry.header("Authorization", format!("Bearer {}", token));
+            }
+            response = retry
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+        } else {
+            emit_auth_expired(&app);
+        }
+    }
     emit_stream_phase(&app, "preview-ask-chunk", "connected");
     if !response.status().is_success() {
         let status = response.status();

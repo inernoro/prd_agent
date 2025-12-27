@@ -17,7 +17,7 @@ interface SettingsState {
   closeModal: () => void;
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
+export const useSettingsStore = create<SettingsState>((set) => ({
   config: null,
   isLoading: false,
   isModalOpen: false,

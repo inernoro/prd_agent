@@ -45,6 +45,7 @@ pub fn run() {
             commands::auth::login,
             commands::auth::register,
             commands::auth::set_auth_token,
+            commands::auth::set_auth_session,
             commands::group::create_group,
             commands::group::join_group,
             commands::group::get_groups,
@@ -62,6 +63,7 @@ pub fn run() {
             commands::preview_ask_history::get_preview_ask_history,
             commands::preview_ask_history::append_preview_ask_history,
             commands::preview_ask_history::clear_preview_ask_history,
+            commands::preview_ask_history::clear_all_preview_ask_history,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

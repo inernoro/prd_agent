@@ -62,6 +62,9 @@ public class LoginRequest
     /// <summary>密码</summary>
     public string Password { get; set; } = string.Empty;
 
+    /// <summary>客户端类型：admin/desktop（用于多端独立登录态）</summary>
+    public string ClientType { get; set; } = string.Empty;
+
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
     {
@@ -69,6 +72,11 @@ public class LoginRequest
             return (false, "用户名不能为空");
         if (string.IsNullOrWhiteSpace(Password))
             return (false, "密码不能为空");
+        if (string.IsNullOrWhiteSpace(ClientType))
+            return (false, "clientType 不能为空");
+        var ct = ClientType.Trim().ToLowerInvariant();
+        if (ct is not "admin" and not "desktop")
+            return (false, "clientType 必须是 admin 或 desktop");
         return (true, null);
     }
 }
@@ -81,11 +89,29 @@ public class RefreshTokenRequest
     /// <summary>刷新令牌</summary>
     public string RefreshToken { get; set; } = string.Empty;
 
+    /// <summary>用户ID（用于定位 refresh 会话；最终仍以 refreshToken 校验为准）</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>客户端类型：admin/desktop（用于多端独立登录态）</summary>
+    public string ClientType { get; set; } = string.Empty;
+
+    /// <summary>会话键（登录时下发，用于定位 refresh 会话）</summary>
+    public string SessionKey { get; set; } = string.Empty;
+
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
     {
         if (string.IsNullOrWhiteSpace(RefreshToken))
             return (false, "刷新令牌不能为空");
+        if (string.IsNullOrWhiteSpace(UserId))
+            return (false, "userId 不能为空");
+        if (string.IsNullOrWhiteSpace(ClientType))
+            return (false, "clientType 不能为空");
+        var ct = ClientType.Trim().ToLowerInvariant();
+        if (ct is not "admin" and not "desktop")
+            return (false, "clientType 必须是 admin 或 desktop");
+        if (string.IsNullOrWhiteSpace(SessionKey))
+            return (false, "sessionKey 不能为空");
         return (true, null);
     }
 }

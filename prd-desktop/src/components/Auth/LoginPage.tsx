@@ -8,6 +8,8 @@ import SettingsModal from '../Settings/SettingsModal';
 interface LoginResponse {
   accessToken: string;
   refreshToken: string;
+  sessionKey: string;
+  clientType: string;
   expiresIn: number;
   user: User;
 }
@@ -44,7 +46,11 @@ export default function LoginPage() {
         });
 
         if (response.success && response.data) {
-          login(response.data.user, response.data.accessToken);
+          login(response.data.user, {
+            accessToken: response.data.accessToken,
+            refreshToken: response.data.refreshToken,
+            sessionKey: response.data.sessionKey,
+          });
         } else {
           setError(response.error?.message || '登录失败');
         }
@@ -80,7 +86,7 @@ export default function LoginPage() {
       displayName: '演示用户',
       role: 'PM',
     };
-    login(demoUser, 'demo-token');
+    login(demoUser, { accessToken: 'demo-token', refreshToken: 'demo-refresh', sessionKey: 'demo-session' });
   };
 
   return (

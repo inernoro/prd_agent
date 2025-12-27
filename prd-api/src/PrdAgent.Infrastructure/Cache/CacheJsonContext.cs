@@ -13,6 +13,7 @@ namespace PrdAgent.Infrastructure.Cache;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 // 会话和文档
 [JsonSerializable(typeof(Session))]
+[JsonSerializable(typeof(AuthRefreshSession))]
 [JsonSerializable(typeof(ParsedPrd))]
 // 引导进度
 [JsonSerializable(typeof(GuideProgress))]

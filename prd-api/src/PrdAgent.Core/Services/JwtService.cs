@@ -16,20 +16,32 @@ public class JwtService : IJwtService
     private readonly string _secret;
     private readonly string _issuer;
     private readonly string _audience;
-    private readonly int _expirationHours;
+    private readonly int _accessTokenMinutes;
 
-    public JwtService(string secret, string issuer, string audience, int expirationHours = 24)
+    public JwtService(string secret, string issuer, string audience, int accessTokenMinutes = 60)
     {
         _secret = secret;
         _issuer = issuer;
         _audience = audience;
-        _expirationHours = expirationHours;
+        _accessTokenMinutes = accessTokenMinutes;
     }
 
-    public string GenerateAccessToken(User user)
+    public string GenerateAccessToken(User user, string clientType, string sessionKey, int tokenVersion)
     {
         var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secret));
         var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        var ct = (clientType ?? string.Empty).Trim().ToLowerInvariant();
+        if (ct is not "admin" and not "desktop")
+        {
+            // 兜底：避免写入非法 clientType，影响后续滑动续期/版本校验
+            ct = "desktop";
+        }
+        var sk = (sessionKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sk))
+        {
+            sk = Guid.NewGuid().ToString("N");
+        }
 
         var claims = new[]
         {
@@ -37,14 +49,17 @@ public class JwtService : IJwtService
             new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
             new Claim("displayName", user.DisplayName),
             new Claim("role", user.Role.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
+            new Claim("clientType", ct),
+            new Claim("sessionKey", sk),
+            new Claim("tv", tokenVersion.ToString())
         };
 
         var token = new JwtSecurityToken(
             issuer: _issuer,
             audience: _audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(_expirationHours),
+            expires: DateTime.UtcNow.AddMinutes(_accessTokenMinutes),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

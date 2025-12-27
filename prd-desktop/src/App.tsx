@@ -16,12 +16,27 @@ import { isSystemErrorCode } from './lib/systemError';
 import type { ApiResponse, Document, Session, UserRole } from './types';
 
 function App() {
-  const { isAuthenticated, accessToken } = useAuthStore();
-  const { user } = useAuthStore();
-  const { setSession, mode } = useSessionStore();
+  const { isAuthenticated, accessToken, refreshToken, sessionKey, user } = useAuthStore();
+  const { setSession, mode, sessionId, clearSession } = useSessionStore();
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const [isDark, setIsDark] = useState(false);
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
+
+  // SSE 场景下 Rust 侧可能通过事件通知登录已过期（401且 refresh 失败）
+  useEffect(() => {
+    const unlistenPromise = listen<any>('auth-expired', () => {
+      try {
+        useAuthStore.getState().logout();
+      } catch {
+        // ignore
+      }
+    }).catch(() => {
+      return () => {};
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
 
   const effectiveRole: UserRole = useMemo(() => {
     if (user?.role === 'DEV' || user?.role === 'QA' || user?.role === 'PM') return user.role;
@@ -43,7 +58,51 @@ function App() {
     invoke('set_auth_token', { token: accessToken }).catch((err) => {
       console.error('Failed to sync auth token:', err);
     });
-  }, [accessToken]);
+    // 同步 refresh 会话信息（用于 Rust 侧自动 refresh）
+    invoke('set_auth_session', {
+      userId: user?.userId ?? null,
+      refreshToken: refreshToken ?? null,
+      sessionKey: sessionKey ?? null,
+      clientType: 'desktop',
+    }).catch((err) => {
+      console.error('Failed to sync auth session:', err);
+    });
+  }, [accessToken, refreshToken, sessionKey, user?.userId]);
+
+  // 会话 keep-alive：用户可能长时间阅读 PRD/回看历史而不发消息，但仍希望“首次提问”不因为 30min 无写操作而直接过期。
+  // 依赖后端 GET /sessions/{id} 会刷新 LastActiveAt + TTL（滑动过期）。
+  useEffect(() => {
+    if (!isAuthenticated || !sessionId) return;
+
+    let stopped = false;
+    const intervalMs = 5 * 60 * 1000; // 5分钟一次，足够轻量
+
+    const tick = async () => {
+      try {
+        const resp = await invoke<ApiResponse<any>>('get_session', { sessionId });
+        if (!resp?.success) {
+          const code = resp?.error?.code;
+          if (code === 'SESSION_NOT_FOUND' || code === 'SESSION_EXPIRED') {
+            // 会话在服务端已失效：清理本地绑定，避免继续用旧 sessionId 触发一堆“已过期”报错。
+            if (!stopped) clearSession();
+          }
+        }
+      } catch {
+        // 网络抖动/服务暂不可用：不打扰用户
+      }
+    };
+
+    // 立刻 touch 一次，避免刚回到前台就处于过期边缘
+    void tick();
+    const timer = window.setInterval(() => {
+      void tick();
+    }, intervalMs);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [isAuthenticated, sessionId, clearSession]);
 
   // 登录后预加载群组列表，避免 UI 先闪“上传PRD”
   useEffect(() => {

@@ -7,6 +7,7 @@ import type {
   UpdateUserPasswordContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
+  ForceExpireUserContract,
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
@@ -52,7 +53,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import { loginReal } from '@/services/real/auth';
-import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal } from '@/services/real/adminUsers';
+import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal, forceExpireUserReal } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal } from '@/services/real/models';
@@ -111,6 +112,7 @@ export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleRea
 export const updateUserStatus: UpdateUserStatusContract = withAuth(updateUserStatusReal);
 export const updateUserPassword: UpdateUserPasswordContract = withAuth(updateUserPasswordReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
+export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);
 
 export const getOverviewStats: GetOverviewStatsContract = withAuth(getOverviewStatsReal);
 export const getTokenUsage: GetTokenUsageContract = withAuth(getTokenUsageReal);

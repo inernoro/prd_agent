@@ -15,3 +15,6 @@ export type UpdateUserStatusContract = (userId: string, status: UserStatus) => P
 export type UpdateUserPasswordContract = (userId: string, password: string) => Promise<ApiResponse<true>>;
 
 export type GenerateInviteCodesContract = (count: number) => Promise<ApiResponse<{ codes: string[] }>>;
+
+export type ForceExpireTargets = Array<'admin' | 'desktop'>;
+export type ForceExpireUserContract = (userId: string, targets: ForceExpireTargets) => Promise<ApiResponse<{ userId: string; targets: string[] }>>;

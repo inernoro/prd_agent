@@ -41,6 +41,10 @@ public class SessionsController : ControllerBase
                 "会话不存在或已过期"));
         }
 
+        // 读操作也视为“活跃”：用于桌面端/管理端做轻量 keep-alive，避免用户长时间阅读后首次提问直接过期。
+        // 这会同时刷新 LastActiveAt 与 Redis TTL（滑动过期）。
+        await _sessionService.RefreshActivityAsync(sessionId);
+
         var response = MapToResponse(session);
         return Ok(ApiResponse<SessionResponse>.Ok(response));
     }

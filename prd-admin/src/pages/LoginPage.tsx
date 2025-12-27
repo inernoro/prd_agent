@@ -9,6 +9,7 @@ import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backd
 export default function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.login);
+  const setTokens = useAuthStore((s) => s.setTokens);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
@@ -36,6 +37,7 @@ export default function LoginPage() {
         return;
       }
       setAuth(res.data.user, res.data.accessToken);
+      setTokens(res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
       // 让主页面承接登录页背景：动 2 秒后冻结
       try {
         sessionStorage.setItem('prd-postlogin-fx', '1');

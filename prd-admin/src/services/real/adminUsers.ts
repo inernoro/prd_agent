@@ -6,6 +6,8 @@ import type {
   UpdateUserPasswordContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
+  ForceExpireUserContract,
+  ForceExpireTargets,
   GetUsersParams,
 } from '@/services/contracts/adminUsers';
 import type { AdminUser, PagedResult, UserRole, UserStatus } from '@/types/admin';
@@ -64,6 +66,21 @@ export const generateInviteCodesReal: GenerateInviteCodesContract = async (count
   });
   if (!res.success) return res;
   return ok({ codes: res.data.codes ?? [] });
+};
+
+export const forceExpireUserReal: ForceExpireUserContract = async (
+  userId: string,
+  targets: ForceExpireTargets
+): Promise<ApiResponse<{ userId: string; targets: string[] }>> => {
+  const ts = Array.isArray(targets) ? targets : [];
+  const res = await apiRequest<{ userId: string; targets: string[] }>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/force-expire`,
+    {
+      method: 'POST',
+      body: { targets: ts },
+    }
+  );
+  return res;
 };
 
 

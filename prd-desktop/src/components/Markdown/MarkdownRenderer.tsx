@@ -74,10 +74,11 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
               h.startsWith('prd-nav://')
             );
             if (isInternal) {
+              const t = String((props as any)?.title || '').trim();
               return (
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 underline underline-offset-2 text-primary-600 dark:text-primary-300 hover:text-primary-700 dark:hover:text-primary-200"
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -88,6 +89,7 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
                       // ignore
                     }
                   }}
+                  title={t || undefined}
                   {...props}
                 >
                   {children}

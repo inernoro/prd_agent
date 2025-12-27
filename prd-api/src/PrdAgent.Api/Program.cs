@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -161,6 +162,37 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }
                 return Task.CompletedTask;
             },
+            OnTokenValidated = async context =>
+            {
+                try
+                {
+                    var sub = context.Principal?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+                    var clientType = context.Principal?.FindFirst("clientType")?.Value;
+                    var tvStr = context.Principal?.FindFirst("tv")?.Value;
+
+                    if (string.IsNullOrWhiteSpace(sub) ||
+                        string.IsNullOrWhiteSpace(clientType) ||
+                        string.IsNullOrWhiteSpace(tvStr) ||
+                        !int.TryParse(tvStr, out var tv) ||
+                        tv < 1)
+                    {
+                        context.Fail("Invalid auth session claims");
+                        return;
+                    }
+
+                    var authSessionService = context.HttpContext.RequestServices.GetRequiredService<IAuthSessionService>();
+                    var currentTv = await authSessionService.GetTokenVersionAsync(sub, clientType);
+                    if (currentTv != tv)
+                    {
+                        context.Fail("Token revoked");
+                    }
+                }
+                catch
+                {
+                    // 安全兜底：依赖服务异常时不直接放行
+                    context.Fail("Token validation failed");
+                }
+            },
             OnChallenge = async context =>
             {
                 // 跳过默认 challenge 响应（会覆盖 body）
@@ -253,9 +285,18 @@ builder.Services.AddSingleton<IMarkdownParser, MarkdownParser>();
 builder.Services.AddSingleton<IPromptManager, PromptManager>();
 
 // 注册 JWT 服务
-var jwtExpirationHours = builder.Configuration.GetValue<int>("Jwt:ExpirationHours", 24);
+var jwtAccessTokenMinutes = builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", 60);
 builder.Services.AddSingleton<IJwtService>(sp => 
-    new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtExpirationHours));
+    new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtAccessTokenMinutes));
+
+// 注册 AuthSessionService（refresh session + tokenVersion）
+builder.Services.AddSingleton<IAuthSessionService>(sp =>
+{
+    var cache = sp.GetRequiredService<ICacheManager>();
+    var config = sp.GetRequiredService<IConfiguration>();
+    var secret = config["Jwt:Secret"] ?? "default-secret";
+    return new AuthSessionService(cache, secret);
+});
 
 // 注册 HTTP 日志处理程序
 builder.Services.AddTransient<HttpLoggingHandler>();
@@ -618,6 +659,8 @@ app.UseExceptionMiddleware();
 app.UseRateLimiting();
 app.UseCors();
 app.UseAuthentication();
+// 认证通过后做 3 天滑动续期（now+72h，按端独立）
+app.UseMiddleware<AuthSlidingExpirationMiddleware>();
 app.UseAuthorization();
 app.MapControllers();
 

@@ -8,6 +8,9 @@ build/
 bin/
 obj/
 target/
+**/bin-buildcheck/
+**/obj-buildcheck/
+**/target-buildcheck/
 
 # IDE
 .vs/

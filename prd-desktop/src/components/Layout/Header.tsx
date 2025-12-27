@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
+import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
+import { useMessageStore } from '../../stores/messageStore';
 import RoleSelector from '../Role/RoleSelector';
 import ModeToggle from '../Role/ModeToggle';
 
@@ -14,10 +16,45 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const { user, logout } = useAuthStore();
   const { groups } = useGroupListStore();
   const { sessionId } = useSessionStore();
+  const clearSession = useSessionStore((s) => s.clearSession);
+  const clearGroups = useGroupListStore((s) => s.clear);
+  const clearMessages = useMessageStore((s) => s.clearMessages);
 
   const canPreview = useMemo(() => {
     return groups.length > 0;
   }, [groups.length]);
+
+  const clearLocalData = async () => {
+    const ok = window.confirm('确认清理本地数据？这会退出登录，并清空本机缓存与对话记录（不影响服务器端数据）。');
+    if (!ok) return;
+    const ok2 = window.confirm('再次确认：清理后不可恢复。是否继续？');
+    if (!ok2) return;
+
+    try {
+      // 清空本机“本章提问”历史落盘文件
+      await invoke('clear_all_preview_ask_history');
+    } catch {
+      // ignore
+    }
+
+    try {
+      localStorage.removeItem('auth-storage');
+      localStorage.removeItem('session-storage');
+      localStorage.removeItem('message-storage');
+    } catch {
+      // ignore
+    }
+
+    try {
+      clearMessages();
+      clearSession();
+      clearGroups();
+    } catch {
+      // ignore
+    }
+
+    logout();
+  };
 
   return (
     <>
@@ -55,6 +92,13 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
 
           <div className="flex items-center gap-2">
             <span className="text-sm text-text-secondary">{user?.displayName}</span>
+            <button
+              onClick={clearLocalData}
+              className="text-sm text-text-secondary hover:text-text-primary"
+              title="清理本地数据"
+            >
+              清理
+            </button>
             <button
               onClick={logout}
               className="text-sm text-primary-500 hover:text-primary-600"

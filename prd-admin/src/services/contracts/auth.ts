@@ -9,6 +9,8 @@ export type LoginResponse = {
     role: UserRole;
   };
   accessToken: string;
+  refreshToken: string;
+  sessionKey: string;
 };
 
 export type LoginContract = (username: string, password: string) => Promise<ApiResponse<LoginResponse>>;

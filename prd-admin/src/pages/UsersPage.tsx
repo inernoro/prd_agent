@@ -3,7 +3,7 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus } from '@/services';
+import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, forceExpireUser } from '@/services';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 
 type UserRow = {
@@ -80,6 +80,12 @@ export default function UsersPage() {
   const [pwdSubmitError, setPwdSubmitError] = useState<string | null>(null);
   const [pwdSubmitting, setPwdSubmitting] = useState(false);
 
+  const [forceExpireOpen, setForceExpireOpen] = useState(false);
+  const [forceExpireTargetUser, setForceExpireTargetUser] = useState<UserRow | null>(null);
+  const [forceExpireSubmitting, setForceExpireSubmitting] = useState(false);
+  const [forceExpireError, setForceExpireError] = useState<string | null>(null);
+  const [forceTargets, setForceTargets] = useState<{ admin: boolean; desktop: boolean }>({ admin: true, desktop: true });
+
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
     const touched = v.length > 0;
@@ -155,6 +161,38 @@ export default function UsersPage() {
     }
   };
 
+  const openForceExpire = (u: UserRow) => {
+    setForceExpireTargetUser(u);
+    setForceExpireError(null);
+    setForceExpireSubmitting(false);
+    setForceTargets({ admin: true, desktop: true });
+    setForceExpireOpen(true);
+  };
+
+  const submitForceExpire = async () => {
+    if (!forceExpireTargetUser) return;
+    const targets: Array<'admin' | 'desktop'> = [];
+    if (forceTargets.admin) targets.push('admin');
+    if (forceTargets.desktop) targets.push('desktop');
+    if (targets.length === 0) {
+      setForceExpireError('请至少选择一个端（admin/desktop）');
+      return;
+    }
+
+    setForceExpireSubmitting(true);
+    setForceExpireError(null);
+    try {
+      const res = await forceExpireUser(forceExpireTargetUser.userId, targets);
+      if (!res.success) {
+        setForceExpireError(res.error?.message || '踢下线失败');
+        return;
+      }
+      setForceExpireOpen(false);
+    } finally {
+      setForceExpireSubmitting(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col gap-6">
       <div className="flex items-end justify-between">
@@ -192,7 +230,7 @@ export default function UsersPage() {
           <select
             value={role}
             onChange={(e) => {
-              setRole(e.target.value as any);
+              setRole((e.target.value as UserRow['role'] | '') ?? '');
               setPage(1);
             }}
             className="h-10 rounded-[14px] px-3 text-sm"
@@ -208,7 +246,7 @@ export default function UsersPage() {
           <select
             value={status}
             onChange={(e) => {
-              setStatus(e.target.value as any);
+              setStatus((e.target.value as UserRow['status'] | '') ?? '');
               setPage(1);
             }}
             className="h-10 rounded-[14px] px-3 text-sm"
@@ -253,7 +291,7 @@ export default function UsersPage() {
                       <select
                         value={u.role}
                         onChange={async (e) => {
-                          await updateUserRole(u.userId, e.target.value as any);
+                          await updateUserRole(u.userId, e.target.value as UserRow['role']);
                           await load();
                         }}
                         className="h-9 rounded-[12px] px-3 text-sm"
@@ -269,7 +307,7 @@ export default function UsersPage() {
                       <select
                         value={u.status}
                         onChange={async (e) => {
-                          await updateUserStatus(u.userId, e.target.value as any);
+                          await updateUserStatus(u.userId, e.target.value as UserRow['status']);
                           await load();
                         }}
                         className="h-9 rounded-[12px] px-3 text-sm"
@@ -294,9 +332,14 @@ export default function UsersPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Button variant="secondary" size="sm" onClick={() => openChangePassword(u)}>
-                        修改密码
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button variant="secondary" size="sm" onClick={() => openForceExpire(u)}>
+                          一键过期
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => openChangePassword(u)}>
+                          修改密码
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -521,6 +564,65 @@ export default function UsersPage() {
                 disabled={pwdSubmitting || !pwdAllOk || !pwdMatchOk}
               >
                 {pwdSubmitting ? '保存中...' : '保存'}
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={forceExpireOpen}
+        onOpenChange={(v) => {
+          setForceExpireOpen(v);
+          if (!v) {
+            setForceExpireTargetUser(null);
+            setForceExpireError(null);
+            setForceExpireSubmitting(false);
+            setForceTargets({ admin: true, desktop: true });
+          }
+        }}
+        title={forceExpireTargetUser ? `一键过期：${forceExpireTargetUser.username}` : '一键过期'}
+        description={forceExpireTargetUser ? `${forceExpireTargetUser.displayName} · ${forceExpireTargetUser.userId}` : undefined}
+        content={
+          <div className="space-y-4">
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              说明：此操作会让所选端的登录态立刻失效（可用于测试过期/踢下线）。
+            </div>
+
+            <div className="grid gap-2">
+              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                <input
+                  type="checkbox"
+                  checked={forceTargets.admin}
+                  onChange={(e) => setForceTargets((s) => ({ ...s, admin: e.target.checked }))}
+                />
+                踢 Admin（Web 管理端）
+              </label>
+              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                <input
+                  type="checkbox"
+                  checked={forceTargets.desktop}
+                  onChange={(e) => setForceTargets((s) => ({ ...s, desktop: e.target.checked }))}
+                />
+                踢 Desktop（桌面端）
+              </label>
+            </div>
+
+            {forceExpireError && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}
+              >
+                {forceExpireError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" size="sm" disabled={forceExpireSubmitting} onClick={() => setForceExpireOpen(false)}>
+                取消
+              </Button>
+              <Button variant="primary" size="sm" disabled={forceExpireSubmitting} onClick={submitForceExpire}>
+                {forceExpireSubmitting ? '处理中...' : '确认踢下线'}
               </Button>
             </div>
           </div>

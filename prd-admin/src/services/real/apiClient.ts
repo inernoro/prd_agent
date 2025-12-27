@@ -26,8 +26,62 @@ async function tryParseJson(text: string): Promise<unknown> {
 
 function isApiResponseLike(x: unknown): x is { success: boolean; data: unknown; error: unknown } {
   if (!x || typeof x !== 'object') return false;
-  const obj = x as any;
+  const obj = x as Record<string, unknown>;
   return typeof obj.success === 'boolean' && 'data' in obj && 'error' in obj;
+}
+
+type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
+
+function isRefreshOkData(x: unknown): x is RefreshOkData {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  return typeof o.accessToken === 'string' && typeof o.refreshToken === 'string' && typeof o.sessionKey === 'string';
+}
+
+type ApiErrorLike = { code?: unknown; message?: unknown };
+
+function getApiErrorLike(x: unknown): { code?: string; message?: string } | null {
+  if (!x || typeof x !== 'object') return null;
+  const o = x as ApiErrorLike;
+  const code = typeof o.code === 'string' ? o.code : undefined;
+  const message = typeof o.message === 'string' ? o.message : undefined;
+  return code || message ? { code, message } : null;
+}
+
+async function tryRefreshAdminToken(): Promise<boolean> {
+  const authStore = useAuthStore.getState();
+  const token = authStore.token;
+  const refreshToken = authStore.refreshToken;
+  const sessionKey = authStore.sessionKey;
+  const userId = authStore.user?.userId;
+
+  if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
+
+  const url = joinUrl(getApiBaseUrl(), '/api/v1/auth/refresh');
+  const body = JSON.stringify({
+    refreshToken,
+    userId,
+    clientType: 'admin',
+    sessionKey,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body,
+    });
+    const text = await res.text();
+    const json = await tryParseJson(text);
+    if (!res.ok || !isApiResponseLike(json) || json.success !== true) return false;
+    const data = (json as { data: unknown }).data;
+    if (!isRefreshOkData(data)) return false;
+
+    authStore.setTokens(data.accessToken, data.refreshToken, data.sessionKey);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function apiRequest<T>(
@@ -39,6 +93,20 @@ export async function apiRequest<T>(
     emptyResponseData?: T;
     headers?: Record<string, string>;
   }
+): Promise<ApiResponse<T>> {
+  return await apiRequestInner<T>(path, options, false);
+}
+
+async function apiRequestInner<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    body?: unknown;
+    auth?: boolean;
+    emptyResponseData?: T;
+    headers?: Record<string, string>;
+  } | undefined,
+  didRefresh: boolean
 ): Promise<ApiResponse<T>> {
   const method = options?.method ?? 'GET';
   const url = joinUrl(getApiBaseUrl(), path);
@@ -72,7 +140,8 @@ export async function apiRequest<T>(
   }
 
   if (res.status === 204) {
-    return ok((options?.emptyResponseData ?? (true as any)) as T);
+    const data = (options?.emptyResponseData ?? (true as unknown)) as T;
+    return ok(data);
   }
 
   const text = await res.text();
@@ -80,6 +149,14 @@ export async function apiRequest<T>(
 
   // 处理 401 未授权：清除认证状态并跳转登录页
   if (res.status === 401) {
+    // 先尝试 refresh 一次（仅 admin 端），成功则重试本次请求
+    if (!didRefresh && (options?.auth ?? true)) {
+      const okRefresh = await tryRefreshAdminToken();
+      if (okRefresh) {
+        return await apiRequestInner<T>(path, options, true);
+      }
+    }
+
     const authStore = useAuthStore.getState();
     if (authStore.isAuthenticated) {
       authStore.logout();
@@ -89,7 +166,15 @@ export async function apiRequest<T>(
 
   if (isApiResponseLike(json)) {
     // 处理业务层面的 UNAUTHORIZED 错误（如 token 过期）
-    if (!json.success && (json.error as any)?.code === 'UNAUTHORIZED') {
+    const err = getApiErrorLike((json as { error: unknown }).error);
+    if (!json.success && err?.code === 'UNAUTHORIZED') {
+      if (!didRefresh && (options?.auth ?? true)) {
+        const okRefresh = await tryRefreshAdminToken();
+        if (okRefresh) {
+          return await apiRequestInner<T>(path, options, true);
+        }
+      }
+
       const authStore = useAuthStore.getState();
       if (authStore.isAuthenticated) {
         authStore.logout();
@@ -100,12 +185,14 @@ export async function apiRequest<T>(
   }
 
   if (!res.ok) {
+    const jsonObj = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+    const err = getApiErrorLike(jsonObj?.error);
     const message =
-      (json as any)?.error?.message ||
-      (json as any)?.message ||
+      err?.message ||
+      (typeof jsonObj?.message === 'string' ? jsonObj.message : null) ||
       text ||
       `HTTP ${res.status} ${res.statusText}`;
-    const code = (json as any)?.error?.code || (res.status === 401 ? 'UNAUTHORIZED' : 'UNKNOWN');
+    const code = err?.code || (res.status === 401 ? 'UNAUTHORIZED' : 'UNKNOWN');
     return fail(code, message) as unknown as ApiResponse<T>;
   }
 

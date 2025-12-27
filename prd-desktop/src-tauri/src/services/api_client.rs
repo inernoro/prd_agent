@@ -3,7 +3,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::sync::RwLock;
 use std::time::Duration;
 
-use crate::models::{ApiError, ApiResponse};
+use crate::models::{ApiError, ApiResponse, LoginResponse};
 
 /// 默认 API 地址（非开发者），可通过环境变量 API_BASE_URL 覆盖
 const DEFAULT_API_URL: &str = "https://pa.759800.com";
@@ -13,6 +13,10 @@ lazy_static::lazy_static! {
         std::env::var("API_BASE_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string())
     );
     static ref AUTH_TOKEN: RwLock<Option<String>> = RwLock::new(None);
+    static ref AUTH_USER_ID: RwLock<Option<String>> = RwLock::new(None);
+    static ref AUTH_REFRESH_TOKEN: RwLock<Option<String>> = RwLock::new(None);
+    static ref AUTH_SESSION_KEY: RwLock<Option<String>> = RwLock::new(None);
+    static ref AUTH_CLIENT_TYPE: RwLock<Option<String>> = RwLock::new(Some("desktop".to_string()));
 }
 
 /// 设置 API 基础 URL
@@ -54,6 +58,21 @@ impl ApiClient {
         *auth = Some(token);
     }
 
+    pub fn set_auth_session(
+        user_id: Option<String>,
+        refresh_token: Option<String>,
+        session_key: Option<String>,
+        client_type: Option<String>,
+    ) {
+        *AUTH_USER_ID.write().unwrap() = user_id.filter(|s| !s.trim().is_empty());
+        *AUTH_REFRESH_TOKEN.write().unwrap() = refresh_token.filter(|s| !s.trim().is_empty());
+        *AUTH_SESSION_KEY.write().unwrap() = session_key.filter(|s| !s.trim().is_empty());
+        *AUTH_CLIENT_TYPE.write().unwrap() = client_type
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| s == "admin" || s == "desktop")
+            .or_else(|| Some("desktop".to_string()));
+    }
+
     #[allow(dead_code)]
     pub fn clear_token() {
         let mut auth = AUTH_TOKEN.write().unwrap();
@@ -68,67 +87,173 @@ impl ApiClient {
         AUTH_TOKEN.read().unwrap().clone()
     }
 
+    fn get_refresh_ctx() -> Option<(String, String, String, String)> {
+        let uid = AUTH_USER_ID.read().unwrap().clone()?;
+        let rt = AUTH_REFRESH_TOKEN.read().unwrap().clone()?;
+        let sk = AUTH_SESSION_KEY.read().unwrap().clone()?;
+        let ct = AUTH_CLIENT_TYPE
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "desktop".to_string());
+        Some((uid, rt, sk, ct))
+    }
+
+    async fn try_refresh(&self) -> Result<bool, String> {
+        let Some((user_id, refresh_token, session_key, client_type)) = Self::get_refresh_ctx() else {
+            return Ok(false);
+        };
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RefreshRequest {
+            refresh_token: String,
+            user_id: String,
+            client_type: String,
+            session_key: String,
+        }
+
+        let url = format!("{}/api/v1/auth/refresh", Self::get_base_url());
+        #[cfg(debug_assertions)]
+        eprintln!("[api] POST {} (refresh)", url);
+
+        let req = RefreshRequest {
+            refresh_token,
+            user_id,
+            client_type,
+            session_key,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| format!("Refresh request failed: {}", e))?;
+
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read refresh response: {}", e))?;
+
+        if text.is_empty() || status != StatusCode::OK {
+            return Ok(false);
+        }
+
+        let parsed = serde_json::from_str::<ApiResponse<LoginResponse>>(&text).map_err(|e| {
+            format!(
+                "Failed to parse refresh response: {}. Status: {}. Body: {}",
+                e,
+                status,
+                &text[..text.len().min(500)]
+            )
+        })?;
+
+        if !parsed.success {
+            return Ok(false);
+        }
+
+        if let Some(data) = parsed.data {
+            ApiClient::set_token(data.access_token.clone());
+            ApiClient::set_auth_session(
+                Some(data.user.user_id),
+                Some(data.refresh_token),
+                Some(data.session_key),
+                Some(data.client_type),
+            );
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// 尝试刷新 access token（用于 SSE 场景手动处理 401）
+    pub async fn refresh_auth(&self) -> Result<bool, String> {
+        self.try_refresh().await
+    }
+
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>, String> {
         let url = format!("{}/api/v1{}", Self::get_base_url(), path);
 
         #[cfg(debug_assertions)]
         eprintln!("[api] GET {}", url);
 
-        let mut request = self.client.get(&url);
+        for attempt in 0..2 {
+            let mut request = self.client.get(&url);
+            if let Some(token) = Self::get_token() {
+                request = request.header("Authorization", format!("Bearer {}", token));
+            }
 
-        if let Some(token) = Self::get_token() {
-            request = request.header("Authorization", format!("Bearer {}", token));
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+
+            let status = response.status();
+
+            // access 过期：尝试 refresh 后重试一次（避免递归 async）
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
+                if self.try_refresh().await.unwrap_or(false) {
+                    continue;
+                }
+            }
+
+            #[cfg(debug_assertions)]
+            eprintln!("[api] <- {} {}", status.as_u16(), url);
+
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            if text.is_empty() {
+                // 某些中间件/默认认证挑战会返回空 body（401/403），这里做兼容，避免前端看到 "Empty response..."
+                if status == StatusCode::UNAUTHORIZED {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "UNAUTHORIZED".to_string(),
+                            message: "未授权".to_string(),
+                        }),
+                    });
+                }
+                if status == StatusCode::FORBIDDEN {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "PERMISSION_DENIED".to_string(),
+                            message: "无权限".to_string(),
+                        }),
+                    });
+                }
+                return Err(format!(
+                    "Empty response from server. Status: {}, URL: {}",
+                    status, url
+                ));
+            }
+
+            return serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+                format!(
+                    "Failed to parse response: {}. Status: {}. Response body: {}",
+                    e,
+                    status,
+                    &text[..text.len().min(500)]
+                )
+            });
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        let status = response.status();
-        #[cfg(debug_assertions)]
-        eprintln!("[api] <- {} {}", status.as_u16(), url);
-
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-
-        if text.is_empty() {
-            // 某些中间件/默认认证挑战会返回空 body（401/403），这里做兼容，避免前端看到 "Empty response..."
-            if status == StatusCode::UNAUTHORIZED {
-                return Ok(ApiResponse::<T> {
-                    success: false,
-                    data: None,
-                    error: Some(ApiError {
-                        code: "UNAUTHORIZED".to_string(),
-                        message: "未授权".to_string(),
-                    }),
-                });
-            }
-            if status == StatusCode::FORBIDDEN {
-                return Ok(ApiResponse::<T> {
-                    success: false,
-                    data: None,
-                    error: Some(ApiError {
-                        code: "PERMISSION_DENIED".to_string(),
-                        message: "无权限".to_string(),
-                    }),
-                });
-            }
-            return Err(format!(
-                "Empty response from server. Status: {}, URL: {}",
-                status, url
-            ));
-        }
-
-        serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
-            format!(
-                "Failed to parse response: {}. Status: {}. Response body: {}",
-                e,
-                status,
-                &text[..text.len().min(500)]
-            )
+        // 理论不会到达
+        Ok(ApiResponse::<T> {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: "UNAUTHORIZED".to_string(),
+                message: "未授权".to_string(),
+            }),
         })
     }
 
@@ -142,60 +267,77 @@ impl ApiClient {
         #[cfg(debug_assertions)]
         eprintln!("[api] POST {}", url);
 
-        let mut request = self.client.post(&url).json(body);
+        for attempt in 0..2 {
+            let mut request = self.client.post(&url).json(body);
+            if let Some(token) = Self::get_token() {
+                request = request.header("Authorization", format!("Bearer {}", token));
+            }
 
-        if let Some(token) = Self::get_token() {
-            request = request.header("Authorization", format!("Bearer {}", token));
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+
+            let status = response.status();
+
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
+                if self.try_refresh().await.unwrap_or(false) {
+                    continue;
+                }
+            }
+
+            let headers = format!("{:?}", response.headers());
+            #[cfg(debug_assertions)]
+            eprintln!("[api] <- {} {}", status.as_u16(), url);
+
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            if text.is_empty() {
+                if status == StatusCode::UNAUTHORIZED {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "UNAUTHORIZED".to_string(),
+                            message: "未授权".to_string(),
+                        }),
+                    });
+                }
+                if status == StatusCode::FORBIDDEN {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "PERMISSION_DENIED".to_string(),
+                            message: "无权限".to_string(),
+                        }),
+                    });
+                }
+                return Err(format!(
+                    "Empty response from server. Status: {}, Headers: {}",
+                    status, headers
+                ));
+            }
+
+            return serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+                format!(
+                    "Failed to parse response: {}. Response: {}",
+                    e,
+                    &text[..text.len().min(500)]
+                )
+            });
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        let status = response.status();
-        let headers = format!("{:?}", response.headers());
-        #[cfg(debug_assertions)]
-        eprintln!("[api] <- {} {}", status.as_u16(), url);
-
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-
-        if text.is_empty() {
-            if status == StatusCode::UNAUTHORIZED {
-                return Ok(ApiResponse::<T> {
-                    success: false,
-                    data: None,
-                    error: Some(ApiError {
-                        code: "UNAUTHORIZED".to_string(),
-                        message: "未授权".to_string(),
-                    }),
-                });
-            }
-            if status == StatusCode::FORBIDDEN {
-                return Ok(ApiResponse::<T> {
-                    success: false,
-                    data: None,
-                    error: Some(ApiError {
-                        code: "PERMISSION_DENIED".to_string(),
-                        message: "无权限".to_string(),
-                    }),
-                });
-            }
-            return Err(format!(
-                "Empty response from server. Status: {}, Headers: {}",
-                status, headers
-            ));
-        }
-
-        serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
-            format!(
-                "Failed to parse response: {}. Response: {}",
-                e,
-                &text[..text.len().min(500)]
-            )
+        Ok(ApiResponse::<T> {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: "UNAUTHORIZED".to_string(),
+                message: "未授权".to_string(),
+            }),
         })
     }
 
@@ -209,60 +351,76 @@ impl ApiClient {
         #[cfg(debug_assertions)]
         eprintln!("[api] PUT {}", url);
 
-        let mut request = self.client.put(&url).json(body);
+        for attempt in 0..2 {
+            let mut request = self.client.put(&url).json(body);
+            if let Some(token) = Self::get_token() {
+                request = request.header("Authorization", format!("Bearer {}", token));
+            }
 
-        if let Some(token) = Self::get_token() {
-            request = request.header("Authorization", format!("Bearer {}", token));
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
+                if self.try_refresh().await.unwrap_or(false) {
+                    continue;
+                }
+            }
+
+            #[cfg(debug_assertions)]
+            eprintln!("[api] <- {} {}", status.as_u16(), url);
+
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            if text.is_empty() {
+                if status == StatusCode::UNAUTHORIZED {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "UNAUTHORIZED".to_string(),
+                            message: "未授权".to_string(),
+                        }),
+                    });
+                }
+                if status == StatusCode::FORBIDDEN {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "PERMISSION_DENIED".to_string(),
+                            message: "无权限".to_string(),
+                        }),
+                    });
+                }
+                return Err(format!(
+                    "Empty response from server. Status: {}, URL: {}",
+                    status, url
+                ));
+            }
+
+            return serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+                format!(
+                    "Failed to parse response: {}. Status: {}. Response body: {}",
+                    e,
+                    status,
+                    &text[..text.len().min(500)]
+                )
+            });
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        let status = response.status();
-        #[cfg(debug_assertions)]
-        eprintln!("[api] <- {} {}", status.as_u16(), url);
-
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-
-        if text.is_empty() {
-            if status == StatusCode::UNAUTHORIZED {
-                return Ok(ApiResponse::<T> {
-                    success: false,
-                    data: None,
-                    error: Some(ApiError {
-                        code: "UNAUTHORIZED".to_string(),
-                        message: "未授权".to_string(),
-                    }),
-                });
-            }
-            if status == StatusCode::FORBIDDEN {
-                return Ok(ApiResponse::<T> {
-                    success: false,
-                    data: None,
-                    error: Some(ApiError {
-                        code: "PERMISSION_DENIED".to_string(),
-                        message: "无权限".to_string(),
-                    }),
-                });
-            }
-            return Err(format!(
-                "Empty response from server. Status: {}, URL: {}",
-                status, url
-            ));
-        }
-
-        serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
-            format!(
-                "Failed to parse response: {}. Status: {}. Response body: {}",
-                e,
-                status,
-                &text[..text.len().min(500)]
-            )
+        Ok(ApiResponse::<T> {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: "UNAUTHORIZED".to_string(),
+                message: "未授权".to_string(),
+            }),
         })
     }
 

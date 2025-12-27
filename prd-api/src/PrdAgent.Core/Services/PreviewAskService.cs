@@ -79,6 +79,9 @@ public class PreviewAskService : IPreviewAskService
             yield break;
         }
 
+        // “本章提问”也视为会话活跃：刷新 LastActiveAt 与 TTL，避免用户在预览页连续使用但会话仍自然过期。
+        await _sessionService.RefreshActivityAsync(sessionId);
+
         var document = await _documentService.GetByIdAsync(session.DocumentId);
         if (document == null)
         {

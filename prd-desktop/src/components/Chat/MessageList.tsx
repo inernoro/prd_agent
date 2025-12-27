@@ -103,6 +103,65 @@ function injectSectionNumberLinks(raw: string) {
   });
 }
 
+/**
+ * 将回答中的“来源：...”行改造成可点击的章节来源标记（chip）。
+ * 目标形态（示例）：
+ *   来源： [1.2.3](prd-nav:1.2.3) 文本理解的天然效率上限。
+ *   来源： [7.3](prd-nav:7.3) LLM支持、[4.1](prd-nav:4.1) 文档上传与解析…
+ *
+ * 说明：不依赖后端 citations；若 citations 存在，仍可通过点击底部“来源”或引用抽屉导航查看摘录。
+ */
+function injectSourceLines(raw: string) {
+  if (!raw) return raw;
+  // 避免重复注入
+  if (raw.includes('prd-source-line:1')) return raw;
+
+  const toChip = (numRaw: string, titleRaw?: string) => {
+    const num = String(numRaw || '').trim().replace(/\.$/, ''); // 兼容 "11."
+    if (!num) return numRaw;
+    const title = String(titleRaw || '').trim();
+    // markdown link title：ReactMarkdown 会传到 a renderer 的 title
+    const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : '';
+    return `[${num}](prd-nav:${num}${titlePart})`;
+  };
+
+  const lines = String(raw).split('\n');
+  const out: string[] = [];
+  for (const line of lines) {
+    // 允许缩进/列表项前缀：- 来源： / • 来源： / * 来源：
+    const m = /^(\s*(?:[-*•]\s*)?)来源\s*[:：]\s*(.+)$/.exec(line);
+    if (!m) {
+      out.push(line);
+      continue;
+    }
+    const prefix = m[1] || '';
+    const rest = (m[2] || '').trim();
+    if (!rest) {
+      out.push(line);
+      continue;
+    }
+
+    // 策略：优先匹配 “编号 + 空格 + 标题片段”
+    // - 编号形态：11 / 7.3 / 1.2.3 / 11.
+    // - 标题片段：直到遇到分隔符（，、,；;）或行尾
+    const re = /(\d+(?:\.\d+){0,3}\.?)\s*([^\s，、,；;]+[^\n，、,；;]*)?/g;
+    let next = rest;
+    // 仅对来源行做替换：把每个编号替换成 chip；如果紧跟着标题，则把标题放到 chip 的 title 里
+    next = next.replace(re, (all, n, t) => {
+      // 防止误把年份/数量当来源：来源行里一般不会出现 2025 这种，但仍限制长度
+      const num = String(n || '').trim();
+      if (!num) return all;
+      // 如果标题看起来是“纯连接词”，忽略
+      const title = String(t || '').trim();
+      return toChip(num, title);
+    });
+
+    // 用 data 行标记避免重复注入
+    out.push(`${prefix}来源： ${next} <!-- prd-source-line:1 -->`);
+  }
+  return out.join('\n');
+}
+
 function parseCitationIndexFromHref(href: string) {
   const h = String(href || '');
   if (!h.startsWith('prd-citation:') && !h.startsWith('prd-citation://')) return null;
@@ -126,6 +185,19 @@ export default function MessageList() {
   const openWithCitations = usePrdPreviewNavStore((s) => s.openWithCitations);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const extractNavNumbers = (content: string) => {
+    const s = String(content || '');
+    const re = /prd-nav:(\d+(?:\.\d+){0,3})/g;
+    const set = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s))) {
+      const n = String(m[1] || '').trim();
+      if (n) set.add(n);
+      if (set.size >= 30) break;
+    }
+    return Array.from(set);
+  };
 
   // 记录用户是否“锁定在底部”：用于从预览页返回时恢复到最新对话
   useEffect(() => {
@@ -178,18 +250,34 @@ export default function MessageList() {
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
-      {messages.map((message) => (
-        <div
-          key={message.id}
-          className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'}`}
-        >
+      {messages.map((message) => {
+        const assistantCitations =
+          message.role === 'Assistant' && Array.isArray(message.citations) ? message.citations : [];
+
+        const renderedAssistantContent = message.role === 'Assistant'
+          ? injectCitationLinks(
+            injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(message.content))),
+            assistantCitations ?? []
+          )
+          : message.content;
+
+        const navNumbers = message.role === 'Assistant' ? extractNavNumbers(renderedAssistantContent) : [];
+        const citationsCount = Math.min(assistantCitations.length, 30);
+        const sourcesCount = citationsCount > 0 ? citationsCount : navNumbers.length;
+        const hasSources = message.role === 'Assistant' && sourcesCount > 0;
+
+        return (
           <div
-            className={`max-w-[80%] p-4 rounded-2xl ${
-              message.role === 'User'
-                ? 'bg-primary-500 text-white rounded-br-md'
-                : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
-            }`}
+            key={message.id}
+            className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'}`}
           >
+            <div
+              className={`max-w-[80%] p-4 rounded-2xl ${
+                message.role === 'User'
+                  ? 'bg-primary-500 text-white rounded-br-md'
+                  : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
+              }`}
+            >
             {message.role === 'User' ? (
               <p className="whitespace-pre-wrap">{message.content}</p>
             ) : (
@@ -208,15 +296,12 @@ export default function MessageList() {
                   !(isStreaming && streamingMessageId === message.id) ? (
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
-                      content={injectCitationLinks(
-                        injectSectionNumberLinks(unwrapMarkdownFences(message.content)),
-                        message.role === 'Assistant' ? (message.citations ?? []) : []
-                      )}
+                      content={renderedAssistantContent}
                       onInternalLinkClick={(href) => {
                         const idx = parseCitationIndexFromHref(href);
                         const navTitle = parseNavTitleFromHref(href);
                         if (idx == null && !navTitle) return;
-                        const citations = Array.isArray(message.citations) ? message.citations : [];
+                        const citations = assistantCitations ?? [];
                         if (!activeGroupId || !prdDocument?.id) return true;
                         if (idx != null && citations.length > 0) {
                           const c = citations[Math.max(0, Math.min(citations.length - 1, idx))];
@@ -291,15 +376,12 @@ export default function MessageList() {
                   ) : (
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
-                      content={injectCitationLinks(
-                        injectSectionNumberLinks(unwrapMarkdownFences(message.content)),
-                        message.role === 'Assistant' ? (message.citations ?? []) : []
-                      )}
+                      content={renderedAssistantContent}
                       onInternalLinkClick={(href) => {
                         const idx = parseCitationIndexFromHref(href);
                         const navTitle = parseNavTitleFromHref(href);
                         if (idx == null && !navTitle) return;
-                        const citations = Array.isArray(message.citations) ? message.citations : [];
+                        const citations = assistantCitations ?? [];
                         if (!activeGroupId || !prdDocument?.id) return true;
                         if (idx != null && citations.length > 0) {
                           const c = citations[Math.max(0, Math.min(citations.length - 1, idx))];
@@ -344,36 +426,54 @@ export default function MessageList() {
               </div>
             )}
 
-            {message.role === 'Assistant' && Array.isArray(message.citations) && message.citations.length > 0 ? (
+            {hasSources ? (
               <div className="mt-3 pt-2">
                 <button
                   type="button"
-                  className="text-[11px] text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 underline underline-offset-2"
-                  title="查看本条回复引用内容（右侧展开）"
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                  title="查看本条回复的来源（右侧展开）"
                   onClick={() => {
-                    const citations = Array.isArray(message.citations) ? message.citations : [];
-                    if (citations.length === 0) return;
-                    const c0 = citations[0];
-                    const targetHeadingId = (c0?.headingId || '').trim();
-                    const targetHeadingTitle = (c0?.headingTitle || '').trim();
                     if (!activeGroupId || !prdDocument?.id) return;
+                    const citations = assistantCitations ?? [];
+                    if (citations.length > 0) {
+                      const c0 = citations[0];
+                      const targetHeadingId = (c0?.headingId || '').trim();
+                      const targetHeadingTitle = (c0?.headingTitle || '').trim();
+                      openWithCitations({
+                        targetHeadingId: targetHeadingId || null,
+                        targetHeadingTitle: targetHeadingTitle || null,
+                        citations,
+                        activeCitationIndex: 0,
+                      });
+                      openCitationDrawer({
+                        documentId: prdDocument.id,
+                        groupId: activeGroupId,
+                        targetHeadingId: targetHeadingId || null,
+                        targetHeadingTitle: targetHeadingTitle || null,
+                        citations,
+                        activeCitationIndex: 0,
+                      });
+                      return;
+                    }
+                    const first = (navNumbers[0] || '').trim();
+                    if (!first) return;
                     openWithCitations({
-                      targetHeadingId: targetHeadingId || null,
-                      targetHeadingTitle: targetHeadingTitle || null,
-                      citations,
+                      targetHeadingId: null,
+                      targetHeadingTitle: first,
+                      citations: [],
                       activeCitationIndex: 0,
                     });
                     openCitationDrawer({
                       documentId: prdDocument.id,
                       groupId: activeGroupId,
-                      targetHeadingId: targetHeadingId || null,
-                      targetHeadingTitle: targetHeadingTitle || null,
-                      citations,
+                      targetHeadingId: null,
+                      targetHeadingTitle: first,
+                      citations: [],
                       activeCitationIndex: 0,
                     });
                   }}
                 >
-                  查看引用（{Math.min(message.citations.length, 30)}）
+                  来源（{sourcesCount}）
                 </button>
               </div>
             ) : null}
@@ -387,9 +487,10 @@ export default function MessageList() {
                 {message.senderName} · {message.viewRole}
               </p>
             )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       {messages.length === 0 && !isStreaming && (
         <div className="h-full flex items-center justify-center text-text-secondary">

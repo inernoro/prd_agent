@@ -8,7 +8,7 @@ namespace PrdAgent.Core.Interfaces;
 public interface IJwtService
 {
     /// <summary>生成访问令牌</summary>
-    string GenerateAccessToken(User user);
+    string GenerateAccessToken(User user, string clientType, string sessionKey, int tokenVersion);
     
     /// <summary>生成刷新令牌</summary>
     string GenerateRefreshToken();

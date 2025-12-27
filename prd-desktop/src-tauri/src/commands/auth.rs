@@ -9,6 +9,7 @@ use crate::services::ApiClient;
 struct LoginRequest {
     username: String,
     password: String,
+    client_type: String,
 }
 
 #[derive(Serialize)]
@@ -35,7 +36,11 @@ pub async fn login(
     password: String,
 ) -> Result<ApiResponse<LoginResponse>, String> {
     let client = ApiClient::new();
-    let request = LoginRequest { username, password };
+    let request = LoginRequest {
+        username,
+        password,
+        client_type: "desktop".to_string(),
+    };
 
     let response: ApiResponse<LoginResponse> = client.post("/auth/login", &request).await?;
 
@@ -43,6 +48,12 @@ pub async fn login(
     if response.success {
         if let Some(ref data) = response.data {
             ApiClient::set_token(data.access_token.clone());
+            ApiClient::set_auth_session(
+                Some(data.user.user_id.clone()),
+                Some(data.refresh_token.clone()),
+                Some(data.session_key.clone()),
+                Some(data.client_type.clone()),
+            );
         }
     }
 
@@ -76,5 +87,17 @@ pub async fn set_auth_token(token: Option<String>) -> Result<(), String> {
         Some(t) if !t.trim().is_empty() => ApiClient::set_token(t),
         _ => ApiClient::clear_token(),
     }
+    Ok(())
+}
+
+/// 前端持久化登录态恢复时，同步 refresh 会话信息到 Rust（用于后续自动 refresh）
+#[command]
+pub async fn set_auth_session(
+    user_id: Option<String>,
+    refresh_token: Option<String>,
+    session_key: Option<String>,
+    client_type: Option<String>,
+) -> Result<(), String> {
+    ApiClient::set_auth_session(user_id, refresh_token, session_key, client_type);
     Ok(())
 }

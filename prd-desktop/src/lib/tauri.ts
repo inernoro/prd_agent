@@ -27,13 +27,16 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
 
     // 系统级错误拦截：若返回体符合 ApiResponse 且 success=false 且 code 属于系统性错误，则弹窗接管
     if (isApiResponseLike(result) && result.success === false) {
-      const code = result.error?.code ?? null;
-      const message = result.error?.message ?? '请求失败';
-      if (isSystemErrorCode(code)) {
+      const code = typeof result.error?.code === 'string' ? result.error.code : null;
+      const message = typeof result.error?.message === 'string' ? result.error.message : '请求失败';
+      // UNAUTHORIZED 常见于启动/登录阶段的并发竞态或 token 同步窗口期：
+      // - 不要在 invoke 层弹“系统错误”打扰用户
+      // - 真正登录过期会由 Rust 侧 emit `auth-expired` 事件触发 logout（见 App.tsx）
+      if (isSystemErrorCode(code) && code !== 'UNAUTHORIZED') {
         useSystemErrorStore.getState().open({
           title: systemErrorTitle(code),
           code,
-          message: code === 'UNAUTHORIZED' ? '登录已过期或无效，请重新登录' : message,
+          message,
           details: `command: ${cmd}`,
         });
       }

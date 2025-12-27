@@ -13,6 +13,12 @@ public class LoginResponse
     /// <summary>刷新令牌</summary>
     public string RefreshToken { get; set; } = string.Empty;
 
+    /// <summary>会话键（用于 refresh 与多端独立计时）</summary>
+    public string SessionKey { get; set; } = string.Empty;
+
+    /// <summary>客户端类型：admin/desktop</summary>
+    public string ClientType { get; set; } = string.Empty;
+
     /// <summary>过期时间（秒）</summary>
     public int ExpiresIn { get; set; }
 

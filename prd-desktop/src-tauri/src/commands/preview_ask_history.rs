@@ -142,3 +142,14 @@ pub async fn clear_preview_ask_history(
     }
     save_history(&app, &store)
 }
+
+/// 清空全部“本章提问”历史（仅本机落盘文件）
+#[tauri::command]
+pub async fn clear_all_preview_ask_history(app: tauri::AppHandle) -> Result<(), String> {
+    let path = get_history_path(&app)?;
+    if path.exists() {
+        // 直接删除文件更简单（也可写空结构，但删除更彻底）
+        let _ = fs::remove_file(&path);
+    }
+    Ok(())
+}

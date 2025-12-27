@@ -40,9 +40,22 @@ public static class CacheKeys
     public const string ChatHistory = "chat:history:";
     public const string GroupChatHistory = "chat:history:group:";
     public const string UserSession = "user:session:";
+
+    // Auth: refresh session 与 tokenVersion
+    public const string AuthRefresh = "auth:refresh:";
+    public const string AuthTokenVersion = "auth:tv:";
     
     public static string ForSession(string sessionId) => $"{Session}{sessionId}";
     public static string ForDocument(string documentId) => $"{Document}{documentId}";
     public static string ForChatHistory(string sessionId) => $"{ChatHistory}{sessionId}";
     public static string ForGroupChatHistory(string groupId) => $"{GroupChatHistory}{groupId}";
+
+    public static string ForAuthRefresh(string userId, string clientType, string sessionKey)
+        => $"{AuthRefresh}{userId}:{clientType}:{sessionKey}";
+
+    public static string ForAuthRefreshPattern(string userId, string clientType)
+        => $"{AuthRefresh}{userId}:{clientType}:*";
+
+    public static string ForAuthTokenVersion(string userId, string clientType)
+        => $"{AuthTokenVersion}{userId}:{clientType}";
 }
