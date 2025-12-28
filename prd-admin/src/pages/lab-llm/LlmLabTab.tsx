@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Code, Copy, Download, Expand, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, Zap } from 'lucide-react';
+import { Check, ChevronDown, Clock3, Copy, Download, Expand, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, XCircle, Zap } from 'lucide-react';
 import JSZip from 'jszip';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -320,6 +321,38 @@ function parseAnyJson(raw: string): { ok: true; value: unknown } | { ok: false; 
   return { ok: false, reason: '发现疑似 JSON，但 JSON.parse 均失败' };
 }
 
+function normalizeStrictJsonCandidate(raw: string): { ok: true; json: string } | { ok: false; reason: string } {
+  const t0 = (raw ?? '').trim();
+  if (!t0) return { ok: false, reason: '空内容' };
+
+  // 允许 ```json ... ``` 这种“整体代码块包裹”的返回
+  if (t0.startsWith('```')) {
+    const m = t0.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/);
+    if (!m) return { ok: false, reason: '代码块格式不完整（缺少闭合 ```）' };
+    const inner = (m[1] ?? '').trim();
+    if (!inner) return { ok: false, reason: '代码块为空' };
+    if (!inner.startsWith('{') && !inner.startsWith('[')) return { ok: false, reason: '代码块内容不是 JSON（未以 { 或 [ 开头）' };
+    if (!(inner.endsWith('}') || inner.endsWith(']'))) return { ok: false, reason: '代码块内容不是 JSON（未以 } 或 ] 结尾）' };
+    return { ok: true, json: inner };
+  }
+
+  if (!t0.startsWith('{') && !t0.startsWith('[')) return { ok: false, reason: '不是 JSON（未以 { 或 [ 开头）' };
+  if (!(t0.endsWith('}') || t0.endsWith(']'))) return { ok: false, reason: '不是 JSON（未以 } 或 ] 结尾）' };
+  return { ok: true, json: t0 };
+}
+
+function validateStrictJson(raw: string): { ok: true } | { ok: false; reason: string } {
+  const c = normalizeStrictJsonCandidate(raw);
+  if (!c.ok) return c;
+  try {
+    JSON.parse(c.json);
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: `JSON.parse 失败：${msg}` };
+  }
+}
+
 function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 }
@@ -415,34 +448,27 @@ function validateByFormatTest(expectedFormat: ExpectedFormat | null | undefined,
 
   if (expectedFormat === 'functionCall') {
     const fc = isFunctionCallShape(parsed.value);
-    return { label: 'FunctionCall', ok: fc.ok, reason: fc.ok ? '通过（识别到 function call 结构）' : fc.reason };
+    return { label: 'FunctionCall', ok: fc.ok, reason: fc.ok ? '通过（识别到 FunctionCall 结构）' : fc.reason };
   }
 
   // formatTest === 'mcp'
   const mcp = isMcpJsonShape(parsed.value);
-  return { label: 'MCP', ok: mcp.ok, reason: mcp.ok ? '通过（识别到 MCP JSON 结构）' : mcp.reason };
+  return { label: 'MCP', ok: mcp.ok, reason: mcp.ok ? '通过（识别到 MCP 结构）' : mcp.reason };
 }
 
 function tryParseImageGenPlan(raw: string): { ok: true; itemsLen: number } | { ok: false; reason: string } {
   const text0 = (raw ?? '').trim();
   if (!text0) return { ok: false, reason: '空输出' };
 
-  // 容错：截取最外层 JSON 对象（与后端 plan 逻辑一致）
-  let text = text0;
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
-  if (first >= 0 && last > first) {
-    text = text.slice(first, last + 1);
-  }
+  // 容错：允许整体 code block / 前后说明；优先解析为 JSON（object/array）
+  const parsed = parseAnyJson(text0);
+  if (!parsed.ok) return { ok: false, reason: parsed.reason };
 
-  try {
-    const obj = JSON.parse(text) as any;
-    const items = obj?.items;
-    if (!Array.isArray(items)) return { ok: false, reason: 'items 不是数组' };
-    return { ok: true, itemsLen: items.length };
-  } catch {
-    return { ok: false, reason: '返回不是合法 JSON' };
-  }
+  const v = parsed.value as any;
+  if (Array.isArray(v)) return { ok: true, itemsLen: v.length };
+  const items = v?.items;
+  if (!Array.isArray(items)) return { ok: false, reason: '未找到 items 数组' };
+  return { ok: true, itemsLen: items.length };
 }
 
 function getImagePlanItemsInfoFromRaw(raw: string): { ok: true; itemsLen: number } | { ok: false; reason: string } | null {
@@ -554,10 +580,25 @@ async function downloadAllAsZip(items: { src: string; filename: string }[], zipN
 const defaultParams: ModelLabParams = {
   temperature: 0.2,
   maxTokens: null,
-  timeoutMs: 60000,
+  timeoutMs: 600000,
   maxConcurrency: 10,
   repeatN: 1,
 };
+
+function normalizeSavedSuite(s: unknown): ModelLabSuite {
+  // 速度/自定义 与 意图语义合并：历史数据也统一映射到 intent
+  if (s === 'intent') return 'intent';
+  if (s === 'speed' || s === 'custom') return 'intent';
+  return 'intent';
+}
+
+function normalizeSavedMode(m: unknown): LabMode {
+  // 速度/自定义 与 意图语义合并：历史数据也统一映射到 intent
+  if (m === 'intent') return 'intent';
+  if (m === 'speed' || m === 'custom') return 'intent';
+  if (m === 'json' || m === 'mcp' || m === 'functionCall' || m === 'imageGenPlan') return m;
+  return 'intent';
+}
 
 const HMARQUEE_GAP_PX = 28;
 const HMARQUEE_SPEED_PX_PER_SEC = 64;
@@ -680,13 +721,24 @@ const builtInPrompts: Record<LabMode, { label: string; promptText: string }[]> =
   ],
   custom: [{ label: '自定义', promptText: '' }],
   json: [
-    { label: 'JSON', promptText: '请把下面内容转换为结构化 JSON，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n\n输入：我想申请退款，订单号 12345。' },
+    {
+      label: 'JSON',
+      promptText: '请把下面内容转换为结构化 JSON，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n\n输入：我想申请退款，订单号 12345。',
+    },
   ],
   mcp: [
-    { label: 'MCP', promptText: '用户输入：请在知识库里搜索“退款流程”，并给出下一步建议。\n\n请严格只输出 MCP JSON（不要 Markdown/解释）。\n推荐：{"server":"kb","tool":"search","arguments":{"query":"退款流程"}}' },
+    {
+      label: 'MCP',
+      promptText:
+        '用户输入：请在知识库里搜索“退款流程”，并给出下一步建议。\n\n请严格只输出 MCP JSON（不要 Markdown/解释）。\n推荐：{"server":"kb","tool":"search","arguments":{"query":"退款流程"}}',
+    },
   ],
   functionCall: [
-    { label: 'FunctionCall', promptText: '用户输入：查询订单 12345 的状态。\n\n请严格只输出 FunctionCall JSON（不要 Markdown/解释）。\n推荐：{"name":"order.getStatus","arguments":{"orderId":"12345"}}' },
+    {
+      label: 'FunctionCall',
+      promptText:
+        '用户输入：查询订单 12345 的状态。\n\n请严格只输出 FunctionCall JSON（不要 Markdown/解释）。\n推荐：{"name":"order.getStatus","arguments":{"orderId":"12345"}}',
+    },
   ],
   imageGenPlan: [
     {
@@ -720,10 +772,10 @@ export default function LlmLabTab() {
   const [loadExperimentOpen, setLoadExperimentOpen] = useState(false);
   const [loadExperimentId, setLoadExperimentId] = useState<string>('');
 
-  // suite：会被保存进实验（仅 speed/intent/custom）
-  const [suite, setSuite] = useState<ModelLabSuite>('speed');
+  // suite：会被保存进实验（历史 speed/custom 已合并到 intent）
+  const [suite, setSuite] = useState<ModelLabSuite>('intent');
   // mode：纯 UI 选择（6 个互斥类型），不写入实验，避免被 suite 回填覆盖
-  const [mode, setMode] = useState<LabMode>('speed');
+  const [mode, setMode] = useState<LabMode>('intent');
   const expectedFormat: ExpectedFormat | undefined =
     mode === 'json' || mode === 'mcp' || mode === 'functionCall' || mode === 'imageGenPlan' ? mode : undefined;
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
@@ -847,6 +899,9 @@ export default function LlmLabTab() {
   }, [makeIdempotencyKey]);
 
   const [imgSize, setImgSize] = useState<string>('1024x1024');
+  const currentAspectOpt = useMemo(() => {
+    return ASPECT_OPTIONS.find((x) => x.size === imgSize) ?? ASPECT_OPTIONS[0];
+  }, [imgSize]);
   const [singleN, setSingleN] = useState<number>(1);
   const [singleGroupId, setSingleGroupId] = useState<string>('');
   const [singleSelected, setSingleSelected] = useState<Record<string, boolean>>({});
@@ -889,6 +944,22 @@ export default function LlmLabTab() {
     title: '输出预览',
     text: '',
   });
+
+  const [previewJsonCheckPhase, setPreviewJsonCheckPhase] = useState<'idle' | 'scanning' | 'passed' | 'failed'>('idle');
+  const previewJsonCheckLastRef = useRef<{ ok: boolean; reason?: string } | null>(null);
+  const [previewJsonHint, setPreviewJsonHint] = useState<string>('');
+
+  const resetPreviewJsonCheck = useCallback(() => {
+    previewJsonCheckLastRef.current = null;
+    setPreviewJsonCheckPhase('idle');
+    setPreviewJsonHint('');
+  }, []);
+
+  useEffect(() => {
+    // 每次打开“新内容”时重置（避免上一次通过/失败残留）
+    if (!previewDialog.open) return;
+    resetPreviewJsonCheck();
+  }, [previewDialog.open, previewDialog.text, resetPreviewJsonCheck]);
 
   const [imagePreviewDialog, setImagePreviewDialog] = useState<{ open: boolean; title: string; src: string }>({
     open: false,
@@ -988,8 +1059,8 @@ export default function LlmLabTab() {
 
       if (typeof data.activeExperimentId === 'string') setActiveExperimentId(data.activeExperimentId);
       if (data.mainMode === 'infer' || data.mainMode === 'image') setMainMode(data.mainMode);
-      if (typeof data.mode === 'string') setMode(data.mode as any);
-      if (data.suite === 'speed' || data.suite === 'intent' || data.suite === 'custom') setSuite(data.suite);
+      if (typeof data.mode === 'string') setMode(normalizeSavedMode(data.mode));
+      setSuite(normalizeSavedSuite((data as any).suite));
       if (data.sortBy === 'ttft' || data.sortBy === 'total' || data.sortBy === 'imagePlanItemsDesc') setSortBy(data.sortBy);
       if (data.disabledModelKeys && typeof data.disabledModelKeys === 'object') setDisabledModelKeys(data.disabledModelKeys as any);
       if (data.imageSubMode === 'single' || data.imageSubMode === 'batch') setImageSubMode(data.imageSubMode);
@@ -1204,7 +1275,7 @@ export default function LlmLabTab() {
   const confirmCreateExperiment = async () => {
     const name = createExperimentName.trim();
     if (!name) return;
-    const created = await createModelLabExperiment({ name, suite: 'speed', params: defaultParams, selectedModels: [] });
+    const created = await createModelLabExperiment({ name, suite: 'intent', params: defaultParams, selectedModels: [] });
     if (!created.success) {
       await systemDialog.alert(created.error?.message || '创建失败');
       return;
@@ -1263,7 +1334,7 @@ export default function LlmLabTab() {
       if (exps.success && exps.data.items.length === 0) {
         const created = await createModelLabExperiment({
           name: '默认实验',
-          suite: 'speed',
+          suite: 'intent',
           selectedModels: [],
           params: defaultParams,
         });
@@ -1334,8 +1405,9 @@ export default function LlmLabTab() {
 
     appliedExperimentIdRef.current = activeExperiment.id;
 
-    setSuite(activeExperiment.suite);
-    setMode(activeExperiment.suite);
+    const normalizedSuite = normalizeSavedSuite(activeExperiment.suite);
+    setSuite(normalizedSuite);
+    setMode(normalizedSuite);
     setParams(activeExperiment.params ?? defaultParams);
     setPromptText(activeExperiment.promptText ?? '');
     setSelectedModels(activeExperiment.selectedModels ?? []);
@@ -1484,8 +1556,8 @@ export default function LlmLabTab() {
     // 重置部分按钮/排序（避免刷新后“默认值覆盖”与用户期待不一致）
     setMainMode('infer');
     setImageSubMode('single');
-    setMode('speed');
-    setSuite('speed');
+    setMode('intent');
+    setSuite('intent');
     setSortBy('ttft');
   }, [cacheUserId, labCacheKey, revokeAllObjectUrls]);
 
@@ -1907,7 +1979,9 @@ export default function LlmLabTab() {
           const obj = JSON.parse(evt.data);
           if (evt.event === 'run') {
             if (obj.type === 'error') {
-              setRunError(obj.errorMessage || '运行失败');
+              const code = String(obj.errorCode ?? '').trim();
+              const msg = String(obj.errorMessage ?? '').trim() || '运行失败';
+              setRunError(code ? `[${code}] ${msg}` : msg);
               setRunning(false);
             }
             if (obj.type === 'runDone') {
@@ -1983,7 +2057,10 @@ export default function LlmLabTab() {
               setRunItems((p) => {
                 const cur = p[obj.itemId];
                 if (!cur) return p;
-                return { ...p, [obj.itemId]: { ...cur, status: 'error', errorMessage: obj.errorMessage || '失败' } };
+                const code = String(obj.errorCode ?? '').trim();
+                const msg = String(obj.errorMessage ?? '').trim() || '失败';
+                const em = code ? `[${code}] ${msg}` : msg;
+                return { ...p, [obj.itemId]: { ...cur, status: 'error', errorMessage: em } };
               });
               return;
             }
@@ -2236,37 +2313,38 @@ export default function LlmLabTab() {
   };
 
   const onModeClick = (next: LabMode) => {
-    if (mode !== next) {
-      // 切换 speed/intent/custom 时，同步 suite（会写入实验）
-      if (next === 'speed' || next === 'intent' || next === 'custom') {
-        setSuite(next);
+    const normalizedNext = normalizeSavedMode(next);
+    if (mode !== normalizedNext) {
+      // 切换“意图”时，同步 suite（会写入实验）
+      if (normalizedNext === 'intent') {
+        setSuite('intent');
         isModeSwitchingRef.current = false; // 这些模式会保存，所以允许自动保存
       } else {
         // json/mcp/functionCall/imageGenPlan 只是模板切换，不触发保存
         isModeSwitchingRef.current = true;
       }
       // 生图意图：默认按“识别条目数倒序”排序；其他模式回到 TTFT/总耗时
-      if (next === 'imageGenPlan') setSortBy('imagePlanItemsDesc');
+      if (normalizedNext === 'imageGenPlan') setSortBy('imagePlanItemsDesc');
       else if (sortBy === 'imagePlanItemsDesc') setSortBy('ttft');
-      setMode(next);
+      setMode(normalizedNext);
       // 关键：切换模式时不自动塞模板内容，避免用户还没粘贴就要先删一堆字；
       // 如果用户想用内置模板，重复点击当前 mode 会循环填充（见下面分支）。
       // 下一次再点时，从第一条开始循环
-      suiteCycleRef.current[next] = 0;
+      suiteCycleRef.current[normalizedNext] = 0;
       return;
     }
 
     // 重复点击当前 mode：循环填充内置提示词
-    const list = builtInPrompts[next] ?? [];
+    const list = builtInPrompts[normalizedNext] ?? [];
     if (list.length === 0) return;
-    const cur = suiteCycleRef.current[next] ?? 0;
+    const cur = suiteCycleRef.current[normalizedNext] ?? 0;
     const idx = ((cur % list.length) + list.length) % list.length;
     // 重复点击时，如果是 json/mcp/functionCall/imageGenPlan，也不触发保存
-    if (next === 'json' || next === 'mcp' || next === 'functionCall' || next === 'imageGenPlan') {
+    if (normalizedNext === 'json' || normalizedNext === 'mcp' || normalizedNext === 'functionCall' || normalizedNext === 'imageGenPlan') {
       isModeSwitchingRef.current = true;
     }
     applyBuiltInPrompt(list[idx].promptText);
-    suiteCycleRef.current[next] = (idx + 1) % list.length;
+    suiteCycleRef.current[normalizedNext] = (idx + 1) % list.length;
   };
 
   const saveModelSet = async () => {
@@ -2295,19 +2373,15 @@ export default function LlmLabTab() {
   const formatParamChips = useMemo(() => {
     const chips: { key: string; label: string }[] = [];
     const modeLabel =
-      mode === 'speed'
-        ? '速度'
-        : mode === 'intent'
-          ? '意图'
-          : mode === 'custom'
-            ? '自定义'
-            : mode === 'json'
-              ? 'JSON'
-              : mode === 'mcp'
-                ? 'MCP'
-                : mode === 'imageGenPlan'
-                  ? '生图意图'
-                  : 'FunctionCall';
+      mode === 'json'
+        ? 'JSON'
+        : mode === 'mcp'
+          ? 'MCP'
+          : mode === 'functionCall'
+            ? 'FunctionCall'
+            : mode === 'imageGenPlan'
+              ? '生图意图'
+              : '意图';
     chips.push({ key: 'mode', label: `类型：${modeLabel}` });
     chips.push({ key: 'temperature', label: `温度：${Number.isFinite(params.temperature as any) ? params.temperature : '-'}` });
     if (params.maxTokens != null) chips.push({ key: 'maxTokens', label: `MaxTokens：${params.maxTokens}` });
@@ -2617,35 +2691,219 @@ export default function LlmLabTab() {
         {/* 右上：提示词 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
           <Card className="p-4 lg:h-full">
-          <div className="flex items-center justify-between gap-3 min-w-0">
-            <div
-              className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-              title="模式切换"
-            >
-              {([
-                { key: 'infer' as const, label: '推理' },
-                { key: 'image' as const, label: '生图' },
-              ] as const).map((x) => {
-                const active = mainMode === x.key;
-                return (
-                  <button
-                    key={x.key}
-                    type="button"
-                    className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
-                    style={{
-                      color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                      background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                      border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                    }}
-                    aria-pressed={active}
-                    onClick={() => onMainModeChange(x.key)}
+          {/* Row 1: 一行放所有“切换/动作”按钮（避免堆叠） */}
+          <div className="flex items-start justify-between gap-3 min-w-0">
+            <div className="min-w-0 flex-1 overflow-x-auto pr-1">
+              <div className="inline-flex items-center gap-2 w-max">
+                <div
+                  className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+                >
+                  {([
+                    { key: 'infer' as const, label: '推理' },
+                    { key: 'image' as const, label: '生图' },
+                  ] as const).map((x) => {
+                    const active = mainMode === x.key;
+                    return (
+                      <button
+                        key={x.key}
+                        type="button"
+                        className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                        style={{
+                          color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                          background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                          border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                        }}
+                        aria-pressed={active}
+                        onClick={() => onMainModeChange(x.key)}
+                      >
+                        {x.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {mainMode === 'infer' ? (
+                  <div
+                    className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
                   >
-                    {x.label}
-                  </button>
-                );
-              })}
+                    {(
+                      [
+                        { key: 'intent' as const, label: '意图' },
+                        { key: 'json' as const, label: 'JSON' },
+                        { key: 'mcp' as const, label: 'MCP' },
+                        { key: 'functionCall' as const, label: 'FunctionCall' },
+                        { key: 'imageGenPlan' as const, label: '生图意图' },
+                      ] as const
+                    ).map((x) => {
+                      const active = mode === x.key;
+                      return (
+                        <button
+                          key={x.key}
+                          type="button"
+                          className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                          style={{
+                            color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                            background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                            border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                          }}
+                          aria-pressed={active}
+                          onClick={() => onModeClick(x.key)}
+                        >
+                          {x.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-2 w-max">
+                    <div className="flex gap-2 shrink-0">
+                      <Button
+                        size="xs"
+                        variant={imageSubMode === 'single' ? 'primary' : 'secondary'}
+                        className="shrink-0"
+                        onClick={() => setImageSubMode('single')}
+                      >
+                        单张
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={imageSubMode === 'batch' ? 'primary' : 'secondary'}
+                        className="shrink-0"
+                        onClick={() => setImageSubMode('batch')}
+                      >
+                        批量
+                      </Button>
+                    </div>
+                    {imageSubMode === 'single' ? (
+                      <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        数量
+                        <input
+                          type="number"
+                          value={singleN}
+                          min={1}
+                          max={20}
+                          onChange={(e) => setSingleN(Math.max(1, Math.min(20, Number(e.target.value || 1))))}
+                          className="ml-2 h-[28px] w-[64px] rounded-[10px] px-2 text-[12px] outline-none"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        />
+                      </label>
+                    ) : null}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-xs font-semibold leading-[28px]" style={{ color: 'var(--text-muted)' }}>
+                        图片比例
+                      </div>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className="shrink-0 h-[28px] rounded-[10px] px-2 transition-colors inline-flex items-center gap-2 hover:bg-white/6"
+                            style={{
+                              background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(255,255,255,0.10)',
+                              color: 'var(--text-primary)',
+                            }}
+                            aria-label="选择图片比例"
+                            title="选择图片比例"
+                          >
+                            <span
+                              className="rounded-[6px] flex items-center justify-center shrink-0"
+                              style={{
+                                width: 16,
+                                height: 16,
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                background: 'rgba(255,255,255,0.02)',
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: Math.max(6, Math.round(currentAspectOpt.iconW * 0.55)),
+                                  height: Math.max(6, Math.round(currentAspectOpt.iconH * 0.55)),
+                                  borderRadius: 4,
+                                  border: '2px solid rgba(255,255,255,0.22)',
+                                  background: 'rgba(255,255,255,0.02)',
+                                }}
+                              />
+                            </span>
+                            <span className="text-[11px] font-semibold whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
+                              {currentAspectOpt.label}
+                            </span>
+                            <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            side="bottom"
+                            align="start"
+                            sideOffset={8}
+                            className="rounded-[12px] p-1 min-w-[200px]"
+                            style={{
+                              zIndex: 90,
+                              background: 'var(--bg-elevated)',
+                              border: '1px solid var(--border-subtle)',
+                              boxShadow: 'var(--shadow-lg)',
+                            }}
+                          >
+                            {ASPECT_OPTIONS.map((opt) => {
+                              const active = imgSize === opt.size;
+                              const scale = 0.6;
+                              return (
+                                <DropdownMenu.Item
+                                  key={opt.id}
+                                  className="flex items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={() => setImgSize(opt.size)}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span
+                                      className="rounded-[8px] flex items-center justify-center shrink-0"
+                                      style={{
+                                        width: 22,
+                                        height: 22,
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        background: 'rgba(255,255,255,0.02)',
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          width: Math.max(6, Math.round(opt.iconW * scale)),
+                                          height: Math.max(6, Math.round(opt.iconH * scale)),
+                                          borderRadius: 5,
+                                          border: '2px solid rgba(255,255,255,0.22)',
+                                          background: 'rgba(255,255,255,0.02)',
+                                        }}
+                                      />
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="text-[12px] font-semibold leading-tight">{opt.label}</div>
+                                      <div className="text-[11px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                                        {opt.size}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {active ? <Check size={14} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
+                                </DropdownMenu.Item>
+                              );
+                            })}
+                            <DropdownMenu.Arrow
+                              className="fill-[color:var(--bg-elevated)]"
+                              style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }}
+                            />
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                    </div>
+                    {imageSubMode === 'batch' && planResult ? (
+                      <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        已解析：{planResult.total} 张
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </div>
+
             <div className="flex gap-2 shrink-0">
               {mainMode === 'infer' ? (
                 <SuccessConfettiButton
@@ -2677,224 +2935,147 @@ export default function LlmLabTab() {
                   </Button>
                 </>
               ) : (
-                <>
-                  <Button
-                    variant={batchRunning ? 'danger' : 'primary'}
-                    size="md"
-                    onClick={() => (batchRunning ? stopBatchRun() : void parseBatchPlan())}
-                    disabled={planLoading}
-                  >
-                    <Sparkles size={16} />
-                    {batchRunning ? '停止' : planLoading ? '解析中' : '解析并预览'}
-                  </Button>
-                </>
+                <Button
+                  variant={batchRunning ? 'danger' : 'primary'}
+                  size="md"
+                  onClick={() => (batchRunning ? stopBatchRun() : void parseBatchPlan())}
+                  disabled={planLoading}
+                >
+                  <Sparkles size={16} />
+                  {batchRunning ? '停止' : planLoading ? '解析中' : '解析并预览'}
+                </Button>
               )}
             </div>
           </div>
 
-          {mainMode === 'infer' ? (
-            <div className="mt-2 flex gap-2 overflow-x-auto pr-1">
-              <Button size="xs" variant={mode === 'speed' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('speed')}>
-              <Sparkles size={14} />
-              速度
-            </Button>
-            <Button size="xs" variant={mode === 'intent' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('intent')}>
-              <Sparkles size={14} />
-              意图
-            </Button>
-            <Button size="xs" variant={mode === 'custom' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('custom')}>
-              <Sparkles size={14} />
-              自定义
-            </Button>
-            <Button size="xs" variant={mode === 'json' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('json')}>
-              <Code size={14} />
-              JSON
-            </Button>
-            <Button size="xs" variant={mode === 'mcp' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('mcp')}>
-              <Code size={14} />
-              MCP
-            </Button>
-            <Button size="xs" variant={mode === 'functionCall' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('functionCall')}>
-              <Code size={14} />
-              FunctionCall
-            </Button>
-            <Button size="xs" variant={mode === 'imageGenPlan' ? 'primary' : 'secondary'} className="shrink-0" onClick={() => onModeClick('imageGenPlan')}>
-              <Sparkles size={14} />
-              生图意图
-            </Button>
+          {/* Row 2: 一行文本（状态/输出要求） */}
+          <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+            {mainMode === 'infer'
+              ? `当前：推理 · 类型：${mode === 'intent' ? '意图' : mode === 'imageGenPlan' ? '生图意图' : mode}`
+              : `当前：生图 · ${imageSubMode === 'single' ? '单张' : '批量'}${imageSubMode === 'single' ? ` · 比例：${imgSize}` : ''}`}
           </div>
-          ) : (
-            <div className="mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto pr-1">
-              <div className="flex gap-2 shrink-0">
-                <Button
-                  size="xs"
-                  variant={imageSubMode === 'single' ? 'primary' : 'secondary'}
-                  className="shrink-0"
-                  onClick={() => setImageSubMode('single')}
-                >
-                  单张
-                </Button>
-                <Button
-                  size="xs"
-                  variant={imageSubMode === 'batch' ? 'primary' : 'secondary'}
-                  className="shrink-0"
-                  onClick={() => setImageSubMode('batch')}
-                >
-                  批量
-                </Button>
-              </div>
-              {imageSubMode === 'single' ? (
-                <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                  数量
-                  <input
-                    type="number"
-                    value={singleN}
-                    min={1}
-                    max={20}
-                    onChange={(e) => setSingleN(Math.max(1, Math.min(20, Number(e.target.value || 1))))}
-                    className="ml-2 h-[28px] w-[64px] rounded-[10px] px-2 text-[12px] outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  />
-                </label>
-              ) : null}
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-xs font-semibold leading-[28px]" style={{ color: 'var(--text-muted)' }}>
-                  图片比例
-                </div>
-                <div className="flex items-center gap-2">
-                  {ASPECT_OPTIONS.map((opt) => {
-                    const active = imgSize === opt.size;
-                    const scale = 0.55;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        className="shrink-0 h-[28px] rounded-[10px] px-2 transition-colors inline-flex items-center justify-center gap-1.5"
-                        style={{
-                          width: 64,
-                          background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)',
-                          border: active ? '1px solid rgba(255,255,255,0.18)' : '1px solid rgba(255,255,255,0.10)',
-                          color: 'var(--text-primary)',
-                        }}
-                        onClick={() => setImgSize(opt.size)}
-                        title={opt.label}
-                        aria-pressed={active}
-                      >
-                        <span
-                          className="rounded-[6px] flex items-center justify-center shrink-0"
-                          style={{
-                            width: 16,
-                            height: 16,
-                            border: '1px solid rgba(255,255,255,0.12)',
-                            background: 'rgba(255,255,255,0.02)',
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: Math.max(6, Math.round(opt.iconW * scale)),
-                              height: Math.max(6, Math.round(opt.iconH * scale)),
-                              borderRadius: 4,
-                              border: '2px solid rgba(255,255,255,0.22)',
-                              background: 'rgba(255,255,255,0.02)',
-                            }}
-                          />
-                        </span>
-                        <span className="text-[11px] font-semibold" style={{ color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                          {opt.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {imageSubMode === 'batch' && planResult ? (
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  已解析：{planResult.total} 张
-                </span>
-              ) : null}
-            </div>
-          )}
 
-          {shouldShowImageGenPlanPromptSplit ? (
-            <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center justify-between gap-2">
+          {/* Row 3: 按钮一排 -> 标题一排 -> 文本框一排 */}
+          <div className="mt-3">
+            {/* 3.1 按钮一排（系统提示词操作） */}
+            {shouldShowImageGenPlanPromptSplit ? (
+              <div className="flex items-center gap-2 flex-nowrap overflow-x-auto pr-1">
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="shrink-0"
+                  disabled={imageGenPlanSystemPromptLoading}
+                  onClick={async () => {
+                    if (imageGenPlanSystemPromptDirty) {
+                      const ok = await systemDialog.confirm('将丢弃未保存的系统提示词修改并从后端重新加载，是否继续？');
+                      if (!ok) return;
+                    }
+                    await loadImageGenPlanSystemPrompt({ force: true });
+                  }}
+                >
+                  <ScanEye size={14} />
+                  刷新
+                </Button>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="shrink-0"
+                  disabled={imageGenPlanSystemPromptLoading || !String(imageGenPlanSystemPromptDefaultText ?? '').trim()}
+                  onClick={() => {
+                    setImageGenPlanSystemPromptText(String(imageGenPlanSystemPromptDefaultText ?? ''));
+                  }}
+                >
+                  <Copy size={14} />
+                  复制默认
+                </Button>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="shrink-0"
+                  disabled={imageGenPlanSystemPromptLoading}
+                  onClick={async () => {
+                    const ok = await systemDialog.confirm('将恢复为默认系统提示词（并清除已保存覆盖），是否继续？');
+                    if (!ok) return;
+                    await resetImageGenPlanSystemPrompt();
+                  }}
+                >
+                  <Trash2 size={14} />
+                  恢复默认
+                </Button>
+                <Button
+                  size="xs"
+                  variant="primary"
+                  className="shrink-0"
+                  disabled={imageGenPlanSystemPromptLoading || !imageGenPlanSystemPromptDirty}
+                  onClick={async () => {
+                    await saveImageGenPlanSystemPrompt();
+                  }}
+                >
+                  <Save size={14} />
+                  保存
+                </Button>
+              </div>
+            ) : null}
+
+            {shouldShowImageGenPlanPromptSplit ? (
+              <>
+                {/* 3.2 标题一排（分别位于各自文本框上方；不要把文字堆在一起） */}
+                <div className={cn('grid grid-cols-1 lg:grid-cols-2 gap-3', 'mt-3')}>
                   <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
                     系统提示词
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      disabled={imageGenPlanSystemPromptLoading}
-                      onClick={async () => {
-                        if (imageGenPlanSystemPromptDirty) {
-                          const ok = await systemDialog.confirm('将丢弃未保存的系统提示词修改并从后端重新加载，是否继续？');
-                          if (!ok) return;
-                        }
-                        await loadImageGenPlanSystemPrompt({ force: true });
-                      }}
-                      title="从后端加载（若你未保存的修改会被覆盖）"
-                    >
-                      <ScanEye size={14} />
-                      刷新
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      disabled={imageGenPlanSystemPromptLoading || !String(imageGenPlanSystemPromptDefaultText ?? '').trim()}
-                      onClick={() => {
-                        setImageGenPlanSystemPromptText(String(imageGenPlanSystemPromptDefaultText ?? ''));
-                      }}
-                      title="将默认模板复制到编辑框（不写入后端）"
-                    >
-                      <Copy size={14} />
-                      复制默认
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      disabled={imageGenPlanSystemPromptLoading}
-                      onClick={async () => {
-                        const ok = await systemDialog.confirm('将恢复为默认系统提示词（并清除已保存覆盖），是否继续？');
-                        if (!ok) return;
-                        await resetImageGenPlanSystemPrompt();
-                      }}
-                      title="删除后端保存的覆盖提示词，恢复默认模板"
-                    >
-                      <Trash2 size={14} />
-                      恢复默认
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="primary"
-                      disabled={imageGenPlanSystemPromptLoading || !imageGenPlanSystemPromptDirty}
-                      onClick={async () => {
-                        await saveImageGenPlanSystemPrompt();
-                      }}
-                      title={imageGenPlanSystemPromptDirty ? '保存到后端（按管理员账号）' : '无改动'}
-                    >
-                      <Save size={14} />
-                      保存
-                    </Button>
+                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    用户输入
                   </div>
                 </div>
-                <textarea
-                  value={imageGenPlanSystemPromptText}
-                  onChange={(e) => setImageGenPlanSystemPromptText(e.target.value)}
-                  className="mt-2 h-36 w-full rounded-[14px] px-3 py-2 text-[12px] outline-none resize-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="用于“生图意图解析”的系统提示词（要求严格只输出 JSON）"
-                />
-                <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  状态：{imageGenPlanSystemPromptIsOverridden ? '已覆盖' : '默认'}
-                  {imageGenPlanSystemPromptUpdatedAt ? ` · updatedAt=${imageGenPlanSystemPromptUpdatedAt}` : ''}
-                  {typeof imageGenPlanSystemPromptText === 'string' ? ` · ${imageGenPlanSystemPromptText.length} chars` : ''}
-                </div>
-              </div>
 
-              <div className="min-w-0">
-                <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {/* 3.3 文本框一排 */}
+                <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="min-w-0">
+                    <textarea
+                      value={imageGenPlanSystemPromptText}
+                      onChange={(e) => setImageGenPlanSystemPromptText(e.target.value)}
+                      className="h-36 w-full rounded-[14px] px-3 py-2 text-[12px] outline-none resize-none disabled:opacity-60"
+                      style={{
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder="系统提示词"
+                    />
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      状态：{imageGenPlanSystemPromptIsOverridden ? '已覆盖' : '默认'}
+                      {imageGenPlanSystemPromptUpdatedAt ? ` · updatedAt=${imageGenPlanSystemPromptUpdatedAt}` : ''}
+                      {typeof imageGenPlanSystemPromptText === 'string' ? ` · ${imageGenPlanSystemPromptText.length} chars` : ''}
+                    </div>
+                  </div>
+
+                  <div className="min-w-0">
+                    <textarea
+                      value={promptText}
+                      onChange={(e) => setPromptText(e.target.value)}
+                      onKeyDown={(e) => {
+                        // 部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 可能失效，这里兜底强制全选
+                        if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                          e.preventDefault();
+                          (e.currentTarget as HTMLTextAreaElement).select();
+                        }
+                      }}
+                      className="h-36 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
+                      style={{
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder={mainMode === 'infer' ? '输入或粘贴内容' : imageSubMode === 'single' ? '输入图片描述' : '输入需求描述'}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* 单张（以及不需要解析时）：隐藏系统提示词，仅保留用户输入 */}
+                <div className="mt-3 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
                   用户输入
                 </div>
                 <textarea
@@ -2908,43 +3089,16 @@ export default function LlmLabTab() {
                     }
                   }}
                   className="mt-2 h-36 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder={
-                    mainMode === 'infer'
-                      ? mode === 'imageGenPlan'
-                        ? '粘贴文章/PRD/需求（将用左侧“系统提示词”生成 JSON：{total, items:[{prompt,count,size?}] }）'
-                        : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
-                      : imageSubMode === 'single'
-                        ? '输入要生成的图片描述（将直接交给生图模型）'
-                        : '输入需求描述（将用左侧“系统提示词”解析出图片清单并提示数量）'
-                  }
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: 'var(--text-primary)',
+                  }}
+                  placeholder={mainMode === 'infer' ? '输入或粘贴内容' : imageSubMode === 'single' ? '输入图片描述' : '输入需求描述'}
                 />
-              </div>
-            </div>
-          ) : (
-            <textarea
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-              onKeyDown={(e) => {
-                // 部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 可能失效，这里兜底强制全选
-                if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
-                  e.preventDefault();
-                  (e.currentTarget as HTMLTextAreaElement).select();
-                }
-              }}
-              className="mt-2 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              placeholder={
-                mainMode === 'infer'
-                  ? mode === 'imageGenPlan'
-                    ? '粘贴文章/PRD/需求（将解析并生成 JSON：{total, items:[{prompt,count,size?}] }）'
-                    : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
-                  : imageSubMode === 'single'
-                    ? '输入要生成的图片描述（将直接交给生图模型）'
-                    : '输入需求描述（将先用意图模型解析出图片清单并提示数量）'
-              }
-            />
-          )}
+              </>
+            )}
+          </div>
           </Card>
         </div>
 
@@ -3076,6 +3230,22 @@ export default function LlmLabTab() {
             </div>
           </div>
 
+          {runError ? (
+            <div
+              className="mt-2 rounded-[12px] px-3 py-2 text-xs flex items-start gap-2 min-w-0"
+              style={{
+                background: 'rgba(239,68,68,0.06)',
+                border: '1px solid rgba(239,68,68,0.18)',
+                color: 'rgba(239,68,68,0.95)',
+              }}
+            >
+              <XCircle size={14} className="shrink-0 mt-[1px]" />
+              <div className="min-w-0 break-words" style={{ wordBreak: 'break-word' }}>
+                {runError}
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
             {sortedItems.length === 0 ? (
               <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
@@ -3147,13 +3317,41 @@ export default function LlmLabTab() {
                     {(() => {
                       const raw = pickRunText(it.rawText, it.preview);
                       const v = raw ? validateByFormatTest(expectedFormat, raw) : null;
+                      const planInfo = mode === 'imageGenPlan' && raw ? getImagePlanItemsInfoFromRaw(raw) : null;
                       const chipStyle = (ok: boolean): React.CSSProperties => ({
                         background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',
                         border: ok ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(239,68,68,0.22)',
                         color: ok ? 'rgba(34,197,94,0.95)' : 'rgba(239,68,68,0.92)',
                       });
+                      const planChipStyle = (st: 'ok' | 'bad' | 'empty'): React.CSSProperties => {
+                        if (st === 'ok') {
+                          return {
+                            background: 'rgba(250, 204, 21, 0.06)',
+                            border: '1px solid rgba(250, 204, 21, 0.22)',
+                            color: 'rgba(250, 204, 21, 0.92)',
+                          };
+                        }
+                        if (st === 'bad') return chipStyle(false);
+                        return {
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          color: 'var(--text-secondary)',
+                        };
+                      };
+                      const planLabel = planInfo ? (planInfo.ok ? `识别条目 ${planInfo.itemsLen}` : '识别条目 无法解析') : '识别条目 -';
+                      const planTitle = planInfo ? (planInfo.ok ? '识别条目数（items.length）' : planInfo.reason) : '未解析到可用 JSON';
+                      const planTone = planInfo ? (planInfo.ok ? 'ok' : 'bad') : 'empty';
                       return (
                         <div className="mb-2 flex flex-wrap items-center gap-2">
+                          {mode === 'imageGenPlan' ? (
+                            <span
+                              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+                              style={planChipStyle(planTone)}
+                              title={planTitle}
+                            >
+                              {planLabel}
+                            </span>
+                          ) : null}
                           {v ? (
                             <span
                               className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
@@ -4152,7 +4350,10 @@ export default function LlmLabTab() {
 
       <Dialog
         open={previewDialog.open}
-        onOpenChange={(open) => setPreviewDialog((p) => ({ ...p, open }))}
+        onOpenChange={(open) => {
+          setPreviewDialog((p) => ({ ...p, open }));
+          if (!open) resetPreviewJsonCheck();
+        }}
         title={previewDialog.title || '输出预览'}
         description="查看完整输出内容"
         maxWidth={900}
@@ -4160,6 +4361,62 @@ export default function LlmLabTab() {
         content={
           <div className="h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-end gap-2 pb-2">
+              {previewJsonHint ? (
+                <div className="text-[11px] mr-auto" style={{ color: 'var(--text-muted)' }}>
+                  {previewJsonHint}
+                </div>
+              ) : null}
+              <SuccessConfettiButton
+                title="对输出做严格 JSON 校验"
+                size="sm"
+                style={
+                  {
+                    // 对齐本区域其它 secondary sm 按钮（35px 高度）
+                    '--sa-h': '35px',
+                    '--sa-radius': '10px',
+                    '--sa-font': '13px',
+                    '--sa-px': '14px',
+                    '--sa-minw': '86px',
+                  } as unknown as React.CSSProperties
+                }
+                readyText={previewJsonCheckPhase === 'failed' ? '不通过' : 'JSON检查'}
+                loadingText="检查中"
+                successText="通过"
+                showLoadingText
+                loadingMinMs={680}
+                completeMode="hold"
+                disabled={!((previewDialog.text ?? '').trim()) || previewJsonCheckPhase === 'passed'}
+                className={previewJsonCheckPhase === 'failed' ? 'llm-json-sa-failed' : previewJsonCheckPhase === 'passed' ? 'llm-json-sa-passed' : ''}
+                onAction={() => {
+                  const raw = (previewDialog.text ?? '').trim();
+                  const res = validateStrictJson(raw);
+                  previewJsonCheckLastRef.current = res.ok ? { ok: true } : { ok: false, reason: res.reason };
+                  return res.ok;
+                }}
+                onPhaseChange={(p) => {
+                  if (p === 'loading') {
+                    setPreviewJsonCheckPhase('scanning');
+                    return;
+                  }
+                  if (p === 'complete') {
+                    setPreviewJsonCheckPhase('passed');
+                    setPreviewJsonHint('扫描通过');
+                    window.setTimeout(() => setPreviewJsonHint(''), 1200);
+                    return;
+                  }
+                  // 回到 ready（失败路径）：保持红色状态到弹窗关闭/切换
+                  if (p === 'ready') {
+                    const last = previewJsonCheckLastRef.current;
+                    if (last && last.ok === false) {
+                      setPreviewJsonCheckPhase('failed');
+                      setPreviewJsonHint(`JSON 不合法：${last.reason || '未知原因'}`);
+                      window.setTimeout(() => setPreviewJsonHint(''), 2800);
+                    } else {
+                      setPreviewJsonCheckPhase('idle');
+                    }
+                  }
+                }}
+              />
               <Button
                 variant="secondary"
                 size="sm"
@@ -4169,7 +4426,15 @@ export default function LlmLabTab() {
                 复制
               </Button>
             </div>
-            <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
+            <div
+              className={[
+                'flex-1 min-h-0 overflow-auto rounded-[14px] p-3 llm-json-scanBox',
+                previewJsonCheckPhase === 'scanning' ? 'llm-json-scanBox--scanning' : '',
+                previewJsonCheckPhase === 'failed' ? 'llm-json-scanBox--failed' : '',
+                previewJsonCheckPhase === 'passed' ? 'llm-json-scanBox--passed' : '',
+              ].join(' ')}
+              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(0,0,0,0.22)' }}
+            >
               <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                 {previewDialog.text || '（无输出）'}
               </pre>
