@@ -41,23 +41,26 @@ export default function CitationChip({ citations, matchedIndices, onOpen }: Cita
         {more > 0 ? <span className="opacity-80">+{more}</span> : null}
       </button>
 
-      <div className="pointer-events-none absolute z-30 left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block group-focus-within:block">
-        <div className="w-[360px] max-w-[70vw] rounded-lg border border-border bg-surface-light/95 dark:bg-surface-dark/95 shadow-xl px-3 py-2 text-xs text-text-primary">
-          <div className="space-y-2">
+      <span
+        className="pointer-events-none absolute z-30 left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block group-focus-within:block"
+        aria-hidden="true"
+      >
+        <span className="block w-[360px] max-w-[70vw] rounded-lg border border-border bg-surface-light/95 dark:bg-surface-dark/95 shadow-xl px-3 py-2 text-xs text-text-primary">
+          <span className="block space-y-2">
             {items.map((idx) => {
               const c = citations[idx];
               const ht = oneLine(c?.headingTitle || '');
               const ex = oneLine(c?.excerpt || '');
               return (
-                <div key={idx} className="min-w-0">
-                  <div className="font-medium truncate">{ht || `引用 ${idx + 1}`}</div>
-                  {ex ? <div className="opacity-85 line-clamp-3 whitespace-pre-wrap break-words">{ex}</div> : null}
-                </div>
+                <span key={idx} className="block min-w-0">
+                  <span className="block font-medium truncate">{ht || `引用 ${idx + 1}`}</span>
+                  {ex ? <span className="block opacity-85 line-clamp-3 whitespace-pre-wrap break-words">{ex}</span> : null}
+                </span>
               );
             })}
-          </div>
-        </div>
-      </div>
+          </span>
+        </span>
+      </span>
     </span>
   );
 }

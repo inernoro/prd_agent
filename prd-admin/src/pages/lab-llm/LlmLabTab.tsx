@@ -2961,7 +2961,7 @@ export default function LlmLabTab() {
           {/* Row 3: 按钮一排 -> 标题一排 -> 文本框一排 */}
           <div className="mt-3">
             {/* 3.1 按钮一排（系统提示词操作） */}
-            {shouldShowImageGenPlanPromptSplit ? (
+            {shouldShowImageGenPlanPromptSplit && imageGenPlanSystemPromptUnlocked ? (
               <div className="flex items-center gap-2 flex-nowrap overflow-x-auto pr-1">
                 <Button
                   size="xs"

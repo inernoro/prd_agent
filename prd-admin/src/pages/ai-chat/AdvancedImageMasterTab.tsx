@@ -1321,7 +1321,7 @@ export default function AdvancedImageMasterTab() {
       const parsedSize = tryParseWxH(resolvedSizeForGen);
       const genW = parsedSize?.w ?? 1024;
       const genH = parsedSize?.h ?? 1024;
-      // 如果存在智能面板：把生成结果写回面板（不再新建一张图）
+      // 如果命中生成器区域：把生成结果写回同一个 key（不再新建一张图）
       if (generatorExistingKey) {
         const found = prev.find((x) => x.key === generatorExistingKey) ?? null;
         const gx = found?.x ?? near.x - genW / 2;
@@ -1333,7 +1333,9 @@ export default function AdvancedImageMasterTab() {
           x.key === generatorExistingKey
             ? {
                 ...x,
-                kind: 'generator',
+                // 需求：一旦开始生成，生成器立即转换为“普通图片”（running）
+                // 这样底部白色快捷输入框会消失，同时仍保持加载动画与可选中行为
+                kind: 'image',
                 createdAt: Date.now(),
                 prompt: firstPrompt,
                 status: 'running',
@@ -1341,7 +1343,7 @@ export default function AdvancedImageMasterTab() {
                 // 保持面板位置与尺寸
                 w: gw,
                 h: gh,
-                // 清空旧图，让“智能面板”保持不被普通图片替代
+                // 清空旧图，进入加载态（running）
                 src: '',
               }
             : x
@@ -1417,17 +1419,17 @@ export default function AdvancedImageMasterTab() {
           x.key === key
             ? {
                 ...x,
-                // 若 key 指向智能面板：强制保持 kind=generator，不降级为普通图片
-                kind: generatorExistingKey ? 'generator' : (x.kind ?? 'image'),
+                // 需求：生成结束仍保持为“普通图片”
+                kind: 'image',
                 status: 'done',
                 src,
                 requestedSize: req,
                 effectiveSize: eff,
                 sizeAdjusted: Boolean(meta?.sizeAdjusted ?? false),
                 ratioAdjusted: Boolean(meta?.ratioAdjusted ?? false),
-                // 普通图片：跟随 effective size 更新占位；生成器面板：保持用户面板尺寸不动
-                w: generatorExistingKey ? x.w : (effParsed?.w ?? x.w),
-                h: generatorExistingKey ? x.h : (effParsed?.h ?? x.h),
+                // 统一按图片逻辑更新占位尺寸（若解析失败则保留原尺寸）
+                w: effParsed?.w ?? x.w,
+                h: effParsed?.h ?? x.h,
               }
             : x
         )

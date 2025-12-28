@@ -130,9 +130,9 @@ public class PreviewAskService : IPreviewAskService
             fullForPrompt = fullForPrompt[..maxFullPrdChars] + "\n\n（已截断：PRD 全文过长，仅提供前半部分作为参考）\n";
         }
 
-        // 构建 system prompt：注入“全文参考”（可能截断）
-        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, fullForPrompt);
-        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_FULL_REDACTED]");
+        // 构建 system prompt（PRD 不再注入 system；改为 user/context message 传入）
+        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
+        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
         var docHash = Sha256Hex(raw);
 
         var requestId = Guid.NewGuid().ToString();
@@ -152,17 +152,30 @@ public class PreviewAskService : IPreviewAskService
 
         var ht = (headingTitle ?? string.Empty).Trim();
         var displayTitle = string.IsNullOrWhiteSpace(ht) ? hId : ht;
+        // 资料（可包含全文参考 + 当前章节原文），日志侧会按标记脱敏，不落库 PRD 原文
+        var context =
+            "[[CONTEXT:PRD]]\n" +
+            "<PRD_FULL_REFERENCE>\n" +
+            fullForPrompt + "\n" +
+            "</PRD_FULL_REFERENCE>\n\n" +
+            $"<PRD_SECTION headingId=\"{hId}\" title=\"{displayTitle}\">\n" +
+            sectionForPrompt + "\n" +
+            "</PRD_SECTION>\n" +
+            "[[/CONTEXT:PRD]]";
+
         var userPrompt =
             $"你正在查看 PRD 的当前章节：{displayTitle}（headingId={hId}）。\n" +
-            "我会同时提供“PRD 全文参考（可能截断）”与“当前章节原文”。\n" +
+            "我已在上一条资料中提供“PRD 全文参考（可能截断）”与“当前章节原文”。\n" +
             "回答时请优先依据“当前章节原文”，并明确引用章节要点；若必须引用其他章节才能回答，可引用全文参考中的相关段落并说明来自其他章节。\n" +
             "如果本章缺少信息且全文参考也未覆盖，必须明确写“PRD 未覆盖/未找到”，并说明需要补充什么信息（不要编造）。\n\n" +
-            "# 当前章节原文（优先依据）\n" +
-            sectionForPrompt + "\n\n" +
             "# 问题\n" +
             q + "\n";
 
-        var messages = new List<LLMMessage> { new() { Role = "user", Content = userPrompt } };
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = "user", Content = context },
+            new() { Role = "user", Content = userPrompt }
+        };
 
         await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
         {

@@ -38,16 +38,51 @@ public class AdminPromptStagesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
-        // 用 raw 判断是否有覆盖（避免旧结构 POCO 映射丢字段导致误判）
-        var overriddenRaw = await _db.PromptStagesRaw.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", "global")).FirstOrDefaultAsync(ct);
         var effective = await _promptStageService.GetEffectiveSettingsAsync(ct);
+        var defaults = await _promptStageService.GetDefaultSettingsAsync(ct);
+
+        static string Normalize(string? s) => (s ?? string.Empty).Trim();
+
+        static List<PromptStageEntry> NormalizeStages(PromptStageSettings? settings)
+        {
+            var list = settings?.Stages ?? new List<PromptStageEntry>();
+            return list
+                .Where(x => x.Role is UserRole.PM or UserRole.DEV or UserRole.QA)
+                .Select(x => new PromptStageEntry
+                {
+                    Role = x.Role,
+                    Order = x.Order,
+                    StageKey = Normalize(x.StageKey),
+                    Title = Normalize(x.Title),
+                    PromptTemplate = Normalize(x.PromptTemplate)
+                })
+                .OrderBy(x => x.Role)
+                .ThenBy(x => x.Order)
+                .ToList();
+        }
+
+        static bool StagesEqual(PromptStageSettings? a, PromptStageSettings? b)
+        {
+            var aa = NormalizeStages(a);
+            var bb = NormalizeStages(b);
+            if (aa.Count != bb.Count) return false;
+            for (var i = 0; i < aa.Count; i++)
+            {
+                var x = aa[i];
+                var y = bb[i];
+                if (x.Role != y.Role) return false;
+                if (x.Order != y.Order) return false;
+                if (!string.Equals(x.StageKey, y.StageKey, StringComparison.Ordinal)) return false;
+                if (!string.Equals(x.Title, y.Title, StringComparison.Ordinal)) return false;
+                if (!string.Equals(x.PromptTemplate, y.PromptTemplate, StringComparison.Ordinal)) return false;
+            }
+            return true;
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            isOverridden = overriddenRaw != null
-                           && overriddenRaw.TryGetValue("stages", out var s)
-                           && s.IsBsonArray
-                           && s.AsBsonArray.Count > 0,
+            // 新语义：只要与“系统内置默认阶段配置”不同，才算覆盖（即便 DB 中已被初始化为默认，也应视为“使用默认”）
+            isOverridden = !StagesEqual(effective, defaults),
             settings = effective
         }));
     }

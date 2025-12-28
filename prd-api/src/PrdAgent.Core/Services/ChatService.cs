@@ -106,8 +106,8 @@ public class ChatService : IChatService
         };
 
         // 构建系统Prompt
-        var baseSystemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, document.RawContent);
-        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_CONTENT_REDACTED]");
+        var baseSystemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
+        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
         var docHash = Sha256Hex(document.RawContent);
 
         // 阶段上下文（可选）：将阶段提示词作为“聚焦指令”注入 system prompt
@@ -158,11 +158,16 @@ public class ChatService : IChatService
 
         // 获取对话历史
         var history = await GetHistoryAsync(sessionId, 20);
-        var messages = history.Select(m => new LLMMessage
+        var messages = new List<LLMMessage>
+        {
+            // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
+            new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
+        };
+        messages.AddRange(history.Select(m => new LLMMessage
         {
             Role = m.Role == MessageRole.User ? "user" : "assistant",
             Content = m.Content
-        }).ToList();
+        }));
 
         // 添加当前消息
         messages.Add(new LLMMessage

@@ -10,6 +10,12 @@ public interface IPromptManager
     /// <summary>构建系统Prompt</summary>
     string BuildSystemPrompt(UserRole role, string prdContent);
 
+    /// <summary>
+    /// 构建 PRD 上下文消息（作为“资料”提供给模型，不是指令）。\n
+    /// 注意：该消息内容可能很长；日志侧会按标记做脱敏。\n
+    /// </summary>
+    string BuildPrdContextMessage(string prdContent);
+
     /// <summary>获取引导大纲</summary>
     List<GuideOutlineItem> GetGuideOutline(UserRole role);
 

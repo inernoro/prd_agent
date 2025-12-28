@@ -79,6 +79,19 @@ public class OpenAIClient : ILLMClient
         bool enablePromptCache,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        static bool IsPrdContextMessage(string? content)
+            => !string.IsNullOrEmpty(content) &&
+               content.Contains("[[CONTEXT:PRD]]", StringComparison.Ordinal);
+
+        static string RedactPrdContextForLog(string? content, string? requestPurpose)
+        {
+            if (!IsPrdContextMessage(content)) return content ?? string.Empty;
+            // previewAsk.section: 可能包含“全文参考 + 章节原文”，统一更强脱敏标记
+            return string.Equals(requestPurpose, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
+                ? "[PRD_FULL_REDACTED]"
+                : "[PRD_CONTENT_REDACTED]";
+        }
+
         // OpenAI/兼容平台通常不暴露类似 Claude 的 cache_control 开关：
         // - enablePromptCache=true：允许平台自行进行 prompt caching（如果平台支持）
         // - enablePromptCache=false：注入最小 cache-bust 标记，尽量避免命中平台缓存
@@ -123,9 +136,13 @@ public class OpenAIClient : ILLMClient
         if (_logWriter != null)
         {
             var systemRedacted = ctx?.SystemPromptRedacted ?? "[SYSTEM_PROMPT_REDACTED]";
-            var questionText = messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content;
+            var questionText = messages.LastOrDefault(m =>
+                    string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase) &&
+                    !IsPrdContextMessage(m.Content))
+                ?.Content;
             var userPromptChars = messages
                 .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                .Where(m => !IsPrdContextMessage(m.Content))
                 .Sum(m => (m.Content ?? string.Empty).Length);
 
             var reqForLog = new
@@ -141,7 +158,7 @@ public class OpenAIClient : ILLMClient
                 }.Concat(messages.Select(m => new
                 {
                     role = m.Role,
-                    content = m.Content
+                    content = RedactPrdContextForLog(m.Content, ctx?.RequestPurpose)
                 })).ToArray()
             };
 

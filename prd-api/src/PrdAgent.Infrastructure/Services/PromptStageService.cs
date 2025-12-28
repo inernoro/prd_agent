@@ -38,6 +38,12 @@ public class PromptStageService : IPromptStageService
         return effective;
     }
 
+    public Task<PromptStageSettings> GetDefaultSettingsAsync(CancellationToken ct = default)
+    {
+        _ = ct; // sync：默认值来自内置 PromptManager
+        return Task.FromResult(BuildDefaultSettings());
+    }
+
     public async Task<PromptStagesClientResponse> GetStagesForClientAsync(CancellationToken ct = default)
     {
         var settings = await GetEffectiveSettingsAsync(ct);
@@ -129,12 +135,24 @@ public class PromptStageService : IPromptStageService
         var raw = await _db.PromptStagesRaw.Find(Builders<BsonDocument>.Filter.Eq("_id", "global")).FirstOrDefaultAsync(ct);
         if (raw == null)
         {
+            // DB 缺失：自动初始化为系统内置默认（写入 DB，保证后续“所有交互都走数据库”）
+            await _db.PromptStages.ReplaceOneAsync(
+                s => s.Id == "global",
+                defaults,
+                new ReplaceOptions { IsUpsert = true },
+                ct);
             return defaults;
         }
 
         var parsed = ParsePromptStages(raw);
         if (parsed.Entries.Count == 0)
         {
+            // DB 存在但无有效 stages：视为缺失，重置为默认并写回
+            await _db.PromptStages.ReplaceOneAsync(
+                s => s.Id == "global",
+                defaults,
+                new ReplaceOptions { IsUpsert = true },
+                ct);
             return defaults;
         }
 
@@ -185,7 +203,7 @@ public class PromptStageService : IPromptStageService
                 .OrderBy(x => x.Role)
                 .ThenBy(x => x.Order)
                 .ToList(),
-            // 默认值不落库，这里的 UpdatedAt 仅用于客户端显示；若有覆盖会替换为覆盖 UpdatedAt
+            // 默认值会在 DB 缺失时自动写入；UpdatedAt 用于 UI 显示与客户端缓存刷新
             UpdatedAt = DateTime.UtcNow
         };
     }

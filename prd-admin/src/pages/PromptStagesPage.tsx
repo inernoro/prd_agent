@@ -8,7 +8,7 @@ import { getAdminPromptStages, putAdminPromptStages, resetAdminPromptStages } fr
 import type { PromptStageEntry, PromptStageSettings } from '@/services/contracts/promptStages';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
-import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, GripVertical, KeyRound } from 'lucide-react';
+import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square } from 'lucide-react';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -137,12 +137,6 @@ function validateStages(stages: PromptStageEntry[]) {
   }
 
   return { ok: true, message: '' };
-}
-
-function shortKey(k: string) {
-  const s = (k ?? '').trim();
-  if (s.length <= 14) return s;
-  return `${s.slice(0, 6)}…${s.slice(-6)}`;
 }
 
 export default function PromptStagesPage() {
@@ -538,20 +532,20 @@ export default function PromptStagesPage() {
       <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}>
         <Card className="p-4 min-h-0 flex flex-col">
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>阶段总览</div>
-              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                共 {roleStages.length} 个阶段（{roleEnum}；支持新增/删除/排序/切换）
-              </div>
+            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>阶段总览</div>
+            <div className="shrink-0">
+              <Button variant="secondary" size="xs" onClick={addStage} disabled={loading || saving}>
+                <Plus size={14} />
+                新增
+              </Button>
             </div>
-            <Button variant="secondary" size="xs" onClick={addStage} disabled={loading || saving}>
-              <Plus size={14} />
-              新增
-            </Button>
+          </div>
+          <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            共 {roleStages.length} 个阶段（{roleEnum}；支持新增/删除/排序/切换）
           </div>
           <div className="mt-3 flex-1 min-h-0 overflow-auto grid gap-2">
-            {roleStages.map((s, idx, arr) => {
-              const active = s.stageKey === (activeStageKey || arr[0]?.stageKey || '');
+            {roleStages.map((s) => {
+              const active = s.stageKey === (activeStageKey || roleStages[0]?.stageKey || '');
               return (
                 <div
                   key={s.stageKey}
@@ -571,11 +565,48 @@ export default function PromptStagesPage() {
                         setActiveStageKey(s.stageKey);
                       }
                     }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const from = e.dataTransfer.getData('text/plain');
+                      const to = s.stageKey;
+                      if (!from || from === to) return;
+                      setSettings((prev) => {
+                        if (!prev) return prev;
+                        const all = normalizeStages(prev.stages);
+                        const list = all.filter((x) => x.role === roleEnum).sort((a, b) => a.order - b.order);
+                        const fromIdx = list.findIndex((x) => x.stageKey === from);
+                        const toIdx = list.findIndex((x) => x.stageKey === to);
+                        if (fromIdx < 0 || toIdx < 0) return prev;
+                        const moved = [...list];
+                        const [item] = moved.splice(fromIdx, 1);
+                        moved.splice(toIdx, 0, item);
+                        const renumbered = moved.map((x, i) => ({ ...x, order: i + 1 }));
+                        const merged = all
+                          .filter((x) => x.role !== roleEnum)
+                          .concat(renumbered)
+                          .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
+                        return { ...prev, stages: merged };
+                      });
+                    }}
                     className="w-full text-left px-3 py-3 outline-none"
-                    title={`stageKey: ${s.stageKey}`}
+                    title={normalizeText(s.title).trim() || `阶段 ${s.order}`}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
                       <span
+                        draggable
+                        onDragStart={(e) => {
+                          e.stopPropagation();
+                          try {
+                            e.dataTransfer.setData('text/plain', s.stageKey);
+                            e.dataTransfer.effectAllowed = 'move';
+                          } catch {
+                            // ignore
+                          }
+                        }}
                         className="shrink-0 inline-flex items-center justify-center font-extrabold"
                         style={{
                           width: 28,
@@ -585,90 +616,14 @@ export default function PromptStagesPage() {
                           background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
                           border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
                           boxShadow: active ? 'var(--shadow-gold)' : 'none',
+                          cursor: 'grab',
                         }}
+                        title="拖拽排序"
                       >
                         {s.order}
                       </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {normalizeText(s.title).trim() || `阶段 ${s.order}`}
-                        </div>
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1 min-w-0">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void copyStageKey(s.stageKey);
-                              }}
-                              className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'var(--text-secondary)',
-                                background: 'rgba(255,255,255,0.04)',
-                              }}
-                              aria-label="复制 key"
-                              title="复制 key"
-                            >
-                              <KeyRound size={14} />
-                            </button>
-                            <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }} title={s.stageKey}>
-                              {shortKey(s.stageKey)}
-                            </div>
-                          </div>
-
-                          {/* 拖拽手柄（原生拖拽排序） */}
-                          <button
-                            type="button"
-                            draggable
-                            onDragStart={(e) => {
-                              try {
-                                e.dataTransfer.setData('text/plain', s.stageKey);
-                                e.dataTransfer.effectAllowed = 'move';
-                              } catch {
-                                // ignore
-                              }
-                            }}
-                            onDragOver={(e) => {
-                              e.preventDefault();
-                            }}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              const from = e.dataTransfer.getData('text/plain');
-                              const to = s.stageKey;
-                              if (!from || from === to) return;
-                              setSettings((prev) => {
-                                if (!prev) return prev;
-                                const all = normalizeStages(prev.stages);
-                                const list = all.filter((x) => x.role === roleEnum).sort((a, b) => a.order - b.order);
-                                const fromIdx = list.findIndex((x) => x.stageKey === from);
-                                const toIdx = list.findIndex((x) => x.stageKey === to);
-                                if (fromIdx < 0 || toIdx < 0) return prev;
-                                const moved = [...list];
-                                const [item] = moved.splice(fromIdx, 1);
-                                moved.splice(toIdx, 0, item);
-                                const renumbered = moved.map((x, i) => ({ ...x, order: i + 1 }));
-                                const merged = all
-                                  .filter((x) => x.role !== roleEnum)
-                                  .concat(renumbered)
-                                  .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
-                                return { ...prev, stages: merged };
-                              });
-                            }}
-                            className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                            style={{
-                              border: '1px solid rgba(255,255,255,0.10)',
-                              color: 'var(--text-secondary)',
-                              background: 'rgba(255,255,255,0.04)',
-                              cursor: 'grab',
-                            }}
-                            aria-label="拖拽排序"
-                            title={idx === 0 && arr.length === 1 ? '只有一个阶段无需排序' : '拖拽排序'}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <GripVertical size={14} />
-                          </button>
-                        </div>
+                      <div className="text-sm font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
+                        {normalizeText(s.title).trim() || `阶段 ${s.order}`}
                       </div>
                     </div>
                   </div>

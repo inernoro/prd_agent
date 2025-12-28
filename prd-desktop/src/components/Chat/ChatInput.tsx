@@ -13,14 +13,33 @@ function roleSuffix(role: UserRole) {
 
 function fallbackStages(role: UserRole): PromptStageEnumItem[] {
   const suf = roleSuffix(role);
-  const base = [
-    { order: 1, title: '项目背景' },
-    { order: 2, title: '用户与场景' },
-    { order: 3, title: '解决方案' },
-    { order: 4, title: '功能清单' },
-    { order: 5, title: '迭代规划' },
-    { order: 6, title: '成功指标' },
-  ];
+  const base =
+    role === 'DEV'
+      ? [
+          { order: 1, title: '技术方案概述' },
+          { order: 2, title: '核心数据模型' },
+          { order: 3, title: '主流程与状态流转' },
+          { order: 4, title: '接口清单与规格' },
+          { order: 5, title: '技术约束与依赖' },
+          { order: 6, title: '开发工作量要点' },
+        ]
+      : role === 'QA'
+        ? [
+            { order: 1, title: '功能模块清单' },
+            { order: 2, title: '核心业务流程' },
+            { order: 3, title: '边界条件与约束' },
+            { order: 4, title: '异常场景汇总' },
+            { order: 5, title: '验收标准明细' },
+            { order: 6, title: '测试重点与风险' },
+          ]
+        : [
+            { order: 1, title: '项目背景与问题定义' },
+            { order: 2, title: '核心用户与使用场景' },
+            { order: 3, title: '解决方案概述' },
+            { order: 4, title: '核心功能清单' },
+            { order: 5, title: '优先级与迭代规划' },
+            { order: 6, title: '成功指标与验收标准' },
+          ];
   return base.map((x) => ({
     stageKey: `legacy-step-${x.order}-${suf}`,
     order: x.order,
@@ -131,12 +150,14 @@ export default function ChatInput() {
     }
 
     try {
+      const stagePayload = mode === 'Guided'
+        ? { stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined, stageStep: guideStep }
+        : {};
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined,
-        stageStep: guideStep,
+        ...stagePayload,
       });
     } catch (err) {
       console.error('Failed to send intro:', err);
@@ -150,12 +171,14 @@ export default function ChatInput() {
     try {
       const text = '请开始讲解这个阶段，并按要点输出。';
       const userMessage = pushSimulatedUserMessage(text);
+      const stagePayload = mode === 'Guided'
+        ? { stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined, stageStep: guideStep }
+        : {};
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined,
-        stageStep: guideStep,
+        ...stagePayload,
       });
     } catch (err) {
       console.error('Failed to start explain:', err);
@@ -185,12 +208,14 @@ export default function ChatInput() {
     }
 
     try {
+      const stagePayload = mode === 'Guided'
+        ? { stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined, stageStep: guideStep }
+        : {};
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined,
-        stageStep: guideStep,
+        ...stagePayload,
       });
     } catch (err) {
       console.error('Failed to send message:', err);

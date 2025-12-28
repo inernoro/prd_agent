@@ -14,6 +14,12 @@ public record PromptStagesClientResponse(
 
 public interface IPromptStageService
 {
+    /// <summary>
+    /// 获取系统内置默认阶段配置（不读取 DB，不受覆盖影响）。\n
+    /// 用途：判断是否“使用默认”、以及初始化 DB 缺失时的种子数据。\n
+    /// </summary>
+    Task<PromptStageSettings> GetDefaultSettingsAsync(CancellationToken ct = default);
+
     Task<PromptStageSettings> GetEffectiveSettingsAsync(CancellationToken ct = default);
 
     Task<PromptStagesClientResponse> GetStagesForClientAsync(CancellationToken ct = default);

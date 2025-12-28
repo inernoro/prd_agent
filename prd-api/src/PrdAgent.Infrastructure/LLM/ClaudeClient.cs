@@ -80,6 +80,18 @@ public class ClaudeClient : ILLMClient
         bool enablePromptCache,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        static bool IsPrdContextMessage(string? content)
+            => !string.IsNullOrEmpty(content) &&
+               content.Contains("[[CONTEXT:PRD]]", StringComparison.Ordinal);
+
+        static string RedactPrdContextForLog(string? content, string? requestPurpose)
+        {
+            if (!IsPrdContextMessage(content)) return content ?? string.Empty;
+            return string.Equals(requestPurpose, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
+                ? "[PRD_FULL_REDACTED]"
+                : "[PRD_CONTENT_REDACTED]";
+        }
+
         var ctx = _contextAccessor?.Current;
         var requestId = ctx?.RequestId ?? Guid.NewGuid().ToString();
         var startedAt = DateTime.UtcNow;
@@ -158,9 +170,13 @@ public class ClaudeClient : ILLMClient
         if (_logWriter != null)
         {
             var systemRedacted = ctx?.SystemPromptRedacted ?? "[SYSTEM_PROMPT_REDACTED]";
-            var questionText = messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content;
+            var questionText = messages.LastOrDefault(m =>
+                    string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase) &&
+                    !IsPrdContextMessage(m.Content))
+                ?.Content;
             var userPromptChars = messages
                 .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                .Where(m => !IsPrdContextMessage(m.Content))
                 .Sum(m => (m.Content ?? string.Empty).Length);
             var reqRedacted = new
             {
@@ -174,7 +190,7 @@ public class ClaudeClient : ILLMClient
                 messages = messages.Select(m => new
                 {
                     role = m.Role,
-                    content = new object[] { new { type = "text", text = m.Content } }
+                    content = new object[] { new { type = "text", text = RedactPrdContextForLog(m.Content, ctx?.RequestPurpose) } }
                 }).ToArray()
             };
             var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqRedacted));

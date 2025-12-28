@@ -194,16 +194,14 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
                     {children}
                   </button>
                   {showPopover ? (
-                    <div
+                    <span
                       className="pointer-events-none absolute z-20 left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block group-focus-within:block"
                       aria-hidden="true"
                     >
-                      <div className="max-w-[320px] rounded-lg border border-border bg-surface-light/95 dark:bg-surface-dark/95 shadow-xl px-3 py-2 text-xs text-text-primary">
-                        <div className="line-clamp-6 whitespace-pre-wrap break-words">
-                          {t}
-                        </div>
-                      </div>
-                    </div>
+                      <span className="block max-w-[320px] rounded-lg border border-border bg-surface-light/95 dark:bg-surface-dark/95 shadow-xl px-3 py-2 text-xs text-text-primary">
+                        <span className="block line-clamp-6 whitespace-pre-wrap break-words">{t}</span>
+                      </span>
+                    </span>
                   ) : null}
                 </span>
               );

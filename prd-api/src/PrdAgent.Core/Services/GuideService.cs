@@ -206,14 +206,17 @@ public class GuideService : IGuideService
             Title = rp.Title
         };
 
-        // 构建系统Prompt
-        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, document.RawContent);
-        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, "[PRD_CONTENT_REDACTED]");
+        // 构建系统Prompt（PRD 不再注入 system；改为 user/context message 传入）
+        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
+        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
         var docHash = Sha256Hex(document.RawContent);
 
         // 构建讲解请求
         var messages = new List<LLMMessage>
         {
+            // PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
+            new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) },
+            // 阶段讲解提示词
             new() { Role = "user", Content = rp.PromptTemplate }
         };
 
