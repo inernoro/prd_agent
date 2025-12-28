@@ -235,36 +235,42 @@ function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | u
   const r = w0 / h0;
   if (!Number.isFinite(r) || r <= 0) return null;
 
-  // 目标：保持原图比例；以 1024 为基准，最大边限制到 1792（与常见 OpenAI 生图尺寸相容），过极端比例则夹到 1792:1024。
+  // 目标：保持原图比例；并尽量让“生成尺寸”贴近参考图的像素规模（便于画布上对齐比较）。
+  // 约束：短边 >= 1024，长边 <= 1792（与常见 OpenAI 生图尺寸相容），并做 8 对齐。
   const minSide = 1024;
   const maxSide = 1792;
-  const maxRatio = maxSide / minSide; // 1.75
+
+  const round8 = (n: number) => Math.max(8, Math.round(n / 8) * 8);
+  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
   let tw: number;
   let th: number;
+
   if (r >= 1) {
-    if (r >= maxRatio) {
+    // 宽图/方图：h 为短边，w 为长边
+    const maxShort = maxSide / r;
+    const targetShort = Math.min(h0, maxShort);
+    th = clamp(round8(targetShort), minSide, maxSide);
+    tw = th * r;
+    if (tw > maxSide) {
       tw = maxSide;
-      th = minSide;
-    } else {
-      tw = minSide * r;
-      th = minSide;
+      th = tw / r;
     }
   } else {
+    // 竖图：w 为短边，h 为长边
     const inv = 1 / r;
-    if (inv >= maxRatio) {
-      tw = minSide;
+    const maxShort = maxSide / inv;
+    const targetShort = Math.min(w0, maxShort);
+    tw = clamp(round8(targetShort), minSide, maxSide);
+    th = tw * inv;
+    if (th > maxSide) {
       th = maxSide;
-    } else {
-      tw = minSide;
-      th = minSide * inv;
+      tw = th / inv;
     }
   }
 
-  // 多数网关要求整 8/16：这里先做 8 对齐，最终不支持的尺寸仍由后端自动选择最近 allowed size。
-  const round8 = (n: number) => Math.max(8, Math.round(n / 8) * 8);
-  const w = round8(tw);
-  const h = round8(th);
+  const w = clamp(round8(tw), minSide, maxSide);
+  const h = clamp(round8(th), minSide, maxSide);
   return `${w}x${h}`;
 }
 
@@ -343,7 +349,9 @@ export default function AdvancedImageMasterTab() {
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
   const directPromptKey = userId ? `prdAdmin.imageMaster.directPrompt.${userId}` : '';
-  const [directPrompt, setDirectPrompt] = useState(false);
+  // 需求：直连作为默认值（首次进入默认开启）；若本地已有值则以本地为准
+  const [directPrompt, setDirectPrompt] = useState(true);
+  const [directPromptReady, setDirectPromptReady] = useState(false);
   const effectiveModel = useMemo(() => {
     const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
     if (modelPrefAuto) return serverDefaultModel;
@@ -579,24 +587,34 @@ export default function AdvancedImageMasterTab() {
   useEffect(() => {
     if (!directPromptKey) return;
     try {
+      setDirectPromptReady(false);
       const raw = localStorage.getItem(directPromptKey);
-      if (raw == null) return;
+      if (raw == null) {
+        // 首次：默认开启
+        setDirectPrompt(true);
+        setDirectPromptReady(true);
+        return;
+      }
       if (raw === '1' || raw === 'true') setDirectPrompt(true);
       if (raw === '0' || raw === 'false') setDirectPrompt(false);
+      setDirectPromptReady(true);
     } catch {
       // ignore
+      setDirectPromptReady(true);
     }
   }, [directPromptKey]);
 
   // 写入直连模式
   useEffect(() => {
     if (!directPromptKey) return;
+    // 重要：必须先读完本地偏好，避免初始值覆盖用户历史配置
+    if (!directPromptReady) return;
     try {
       localStorage.setItem(directPromptKey, directPrompt ? '1' : '0');
     } catch {
       // ignore
     }
-  }, [directPrompt, directPromptKey]);
+  }, [directPrompt, directPromptKey, directPromptReady]);
 
   // 如果手动选中的模型被禁用/不存在，自动回退到“自动”
   useEffect(() => {
@@ -2350,8 +2368,34 @@ export default function AdvancedImageMasterTab() {
                         )}
                       </div>
                     ) : it.status === 'running' ? (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <PrdLoader size={loaderSizeForBox(w, h)} />
+                      <div
+                        className="w-full h-full rounded-[16px] relative"
+                        // 需求：加载中要有“占位框”，告诉用户会在这里生成一张这么大的图
+                        // - 非选中：也要有细边框（避免 loader 像“漂浮出来的”）
+                        // - 选中：强化描边/光晕（不改变尺寸/比例）
+                        style={{
+                          background: 'rgba(255,255,255,0.01)',
+                          border: active ? '2px solid rgba(250,204,21,0.75)' : '1px solid rgba(255,255,255,0.12)',
+                          boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.22) inset, 0 0 18px rgba(250,204,21,0.35)' : 'none',
+                        }}
+                      >
+                        <div
+                          className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
+                          style={{
+                            background: 'rgba(0,0,0,0.28)',
+                            border: '1px solid rgba(255,255,255,0.10)',
+                            color: 'rgba(255,255,255,0.78)',
+                            // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
+                            transform: 'scale(var(--invZoom))',
+                            transformOrigin: 'right top',
+                          }}
+                          title="预计生成尺寸（画布占位）"
+                        >
+                          预计 {Math.round(w)} × {Math.round(h)}
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <PrdLoader size={loaderSizeForBox(w, h)} />
+                        </div>
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">

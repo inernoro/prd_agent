@@ -1628,19 +1628,32 @@ export default function LlmLogsPage() {
                     {imageGenUpstream ? (
                       <div className="mb-3">
                         <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
-                          <span>上游响应预览（脱敏）</span>
+                          <span>上游原始响应（脱敏/截断）</span>
                           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                             参考图：{imageGenUpstream.initImageProvided === true ? '已提供' : imageGenUpstream.initImageProvided === false ? '未提供' : '—'} ·
                             {' '}使用：{imageGenUpstream.initImageUsed === true ? '是' : imageGenUpstream.initImageUsed === false ? '否' : '—'}
                           </span>
                         </div>
+                        <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+                          说明：此处来自 Answer 中的 <code>upstreamBodyPreview</code> 字段（上游 HTTP 响应的脱敏预览），用于排查问题；并不代表模型返回了两次数据。
+                        </div>
                         <pre style={codeBoxStyle()}>{imageGenUpstream.preview}</pre>
                       </div>
                     ) : null}
                     {answerView === 'raw' ? (
-                      <pre style={codeBoxStyle()}>
-                        {answerDisplayText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
-                      </pre>
+                      <>
+                        {imageGenUpstream ? (
+                          <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                            <span>系统记录的 Answer（生图归一化摘要）</span>
+                            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                              包含：images/size/requestedSize/effectiveSize 等
+                            </span>
+                          </div>
+                        ) : null}
+                        <pre style={codeBoxStyle()}>
+                          {answerDisplayText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
+                        </pre>
+                      </>
                     ) : (
                       <div
                         className={[
