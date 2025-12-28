@@ -1,4 +1,4 @@
-export type SseEvent = { event?: string; data?: string };
+export type SseEvent = { id?: string; event?: string; data?: string };
 
 /**
  * 读取标准 SSE（text/event-stream）响应体。
@@ -17,29 +17,41 @@ export async function readSseStream(
   const decoder = new TextDecoder('utf-8');
   let buf = '';
 
-  while (!signal.aborted) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+  try {
+    while (!signal.aborted) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // 兼容 CRLF：统一为 LF，便于用 \n\n 切分事件
+      if (buf.includes('\r')) buf = buf.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-    while (true) {
-      const idx = buf.indexOf('\n\n');
-      if (idx < 0) break;
-      const raw = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
+      while (true) {
+        const idx = buf.indexOf('\n\n');
+        if (idx < 0) break;
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
 
-      const lines = raw.split('\n').map((l) => l.trimEnd());
-      let event: string | undefined;
-      const dataLines: string[] = [];
+        const lines = raw.split('\n').map((l) => l.trimEnd());
+        let id: string | undefined;
+        let event: string | undefined;
+        const dataLines: string[] = [];
 
-      for (const line of lines) {
-        if (!line) continue;
-        if (line.startsWith(':')) continue; // keepalive/comment
-        if (line.startsWith('event:')) event = line.slice('event:'.length).trim();
-        if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trim());
+        for (const line of lines) {
+          if (!line) continue;
+          if (line.startsWith(':')) continue; // keepalive/comment
+          if (line.startsWith('id:')) id = line.slice('id:'.length).trim();
+          if (line.startsWith('event:')) event = line.slice('event:'.length).trim();
+          if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trim());
+        }
+
+        onEvent({ id, event, data: dataLines.length ? dataLines.join('\n') : undefined });
       }
-
-      onEvent({ event, data: dataLines.length ? dataLines.join('\n') : undefined });
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
     }
   }
 }

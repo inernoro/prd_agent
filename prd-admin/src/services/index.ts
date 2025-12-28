@@ -25,7 +25,17 @@ import type {
   UpdateModelLabExperimentContract,
   UpsertModelLabModelSetContract,
 } from '@/services/contracts/modelLab';
-import type { GenerateImageGenContract, GetImageGenSizeCapsContract, PlanImageGenContract, RunImageGenBatchStreamContract } from '@/services/contracts/imageGen';
+import type {
+  CancelImageGenRunContract,
+  CreateImageGenRunContract,
+  GenerateImageGenContract,
+  GetImageGenRunContract,
+  GetImageGenSizeCapsContract,
+  PlanImageGenContract,
+  RunImageGenBatchStreamContract,
+  RunImageGenRunStreamContract,
+  StreamImageGenRunWithRetryContract,
+} from '@/services/contracts/imageGen';
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
 import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
@@ -77,7 +87,17 @@ import {
   updateModelLabExperimentReal,
   upsertModelLabModelSetReal,
 } from '@/services/real/modelLab';
-import { generateImageGenReal, getImageGenSizeCapsReal, planImageGenReal, runImageGenBatchStreamReal } from '@/services/real/imageGen';
+import {
+  cancelImageGenRunReal,
+  createImageGenRunReal,
+  generateImageGenReal,
+  getImageGenRunReal,
+  getImageGenSizeCapsReal,
+  planImageGenReal,
+  runImageGenBatchStreamReal,
+  runImageGenRunStreamReal,
+  streamImageGenRunWithRetryReal,
+} from '@/services/real/imageGen';
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
 import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
 import { suggestGroupNameReal } from '@/services/real/intent';
@@ -205,6 +225,11 @@ export const planImageGen: PlanImageGenContract = withAuth(planImageGenReal);
 export const generateImageGen: GenerateImageGenContract = withAuth(generateImageGenReal);
 export const runImageGenBatchStream: RunImageGenBatchStreamContract = withAuth(runImageGenBatchStreamReal);
 export const getImageGenSizeCaps: GetImageGenSizeCapsContract = withAuth(getImageGenSizeCapsReal);
+export const createImageGenRun: CreateImageGenRunContract = withAuth(createImageGenRunReal);
+export const getImageGenRun: GetImageGenRunContract = withAuth(getImageGenRunReal);
+export const runImageGenRunStream: RunImageGenRunStreamContract = withAuth(runImageGenRunStreamReal);
+export const streamImageGenRunWithRetry: StreamImageGenRunWithRetryContract = withAuth(streamImageGenRunWithRetryReal);
+export const cancelImageGenRun: CancelImageGenRunContract = withAuth(cancelImageGenRunReal);
 
 export const listModelLabGroups: ListModelLabGroupsContract = withAuth(listModelLabGroupsReal);
 export const upsertModelLabGroup: UpsertModelLabGroupContract = withAuth(upsertModelLabGroupReal);

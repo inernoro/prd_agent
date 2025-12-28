@@ -53,6 +53,9 @@ public class MongoDbContext
     public IMongoCollection<ImageMasterMessage> ImageMasterMessages => _database.GetCollection<ImageMasterMessage>("image_master_messages");
     public IMongoCollection<ImageAsset> ImageAssets => _database.GetCollection<ImageAsset>("image_assets");
     public IMongoCollection<ImageGenSizeCaps> ImageGenSizeCaps => _database.GetCollection<ImageGenSizeCaps>("image_gen_size_caps");
+    public IMongoCollection<ImageGenRun> ImageGenRuns => _database.GetCollection<ImageGenRun>("image_gen_runs");
+    public IMongoCollection<ImageGenRunItem> ImageGenRunItems => _database.GetCollection<ImageGenRunItem>("image_gen_run_items");
+    public IMongoCollection<ImageGenRunEvent> ImageGenRunEvents => _database.GetCollection<ImageGenRunEvent>("image_gen_run_events");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
 
     private void CreateIndexes()
@@ -222,6 +225,36 @@ public class MongoDbContext
                     { "ModelName", new BsonDocument("$exists", true) }
                 }
             }));
+
+        // ImageGenRuns：按 owner + createdAt；worker 取队列时按 status + createdAt
+        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.CreatedAt)));
+        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt)));
+        // 幂等键：同一 admin 下唯一（只对存在 IdempotencyKey 的文档生效）
+        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
+            new CreateIndexOptions<ImageGenRun>
+            {
+                Name = "uniq_image_gen_runs_owner_idem",
+                Unique = true,
+                // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
+                PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
+            }));
+
+        // ImageGenRunItems：按 runId + (itemIndex,imageIndex) 唯一；按 owner + runId 查询
+        ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
+            Builders<ImageGenRunItem>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.RunId)));
+        ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
+            Builders<ImageGenRunItem>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.ItemIndex).Ascending(x => x.ImageIndex),
+            new CreateIndexOptions<ImageGenRunItem> { Name = "uniq_image_gen_run_items_run_pos", Unique = true }));
+
+        // ImageGenRunEvents：按 runId + seq；用于 SSE afterSeq 续传
+        ImageGenRunEvents.Indexes.CreateOne(new CreateIndexModel<ImageGenRunEvent>(
+            Builders<ImageGenRunEvent>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.RunId)));
+        ImageGenRunEvents.Indexes.CreateOne(new CreateIndexModel<ImageGenRunEvent>(
+            Builders<ImageGenRunEvent>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.Seq),
+            new CreateIndexOptions<ImageGenRunEvent> { Name = "uniq_image_gen_run_events_run_seq", Unique = true }));
 
         // AdminPromptOverrides：同一管理员 + key 唯一（用于覆盖 system prompt）
         AdminPromptOverrides.Indexes.CreateOne(new CreateIndexModel<AdminPromptOverride>(

@@ -786,6 +786,9 @@ export default function LlmLabTab() {
   const [imageGenPlanSystemPromptIsOverridden, setImageGenPlanSystemPromptIsOverridden] = useState<boolean>(false);
   const [imageGenPlanSystemPromptUpdatedAt, setImageGenPlanSystemPromptUpdatedAt] = useState<string | null>(null);
   const [imageGenPlanSystemPromptLoading, setImageGenPlanSystemPromptLoading] = useState<boolean>(false);
+  // 默认锁定：避免用户误以为需要在这里输入；明确点击“解锁”后再编辑
+  const [imageGenPlanSystemPromptUnlocked, setImageGenPlanSystemPromptUnlocked] = useState(false);
+  const imageGenPlanSystemPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const imageGenPlanSystemPromptBaselineRef = useRef<string>('');
   const imageGenPlanSystemPromptLoadedRef = useRef<boolean>(false);
 
@@ -3032,7 +3035,9 @@ export default function LlmLabTab() {
                 {/* 3.3 文本框一排 */}
                 <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <div className="min-w-0">
+                    <div className="relative">
                     <textarea
+                      ref={imageGenPlanSystemPromptRef}
                       value={imageGenPlanSystemPromptText}
                       onChange={(e) => setImageGenPlanSystemPromptText(e.target.value)}
                       className="h-36 w-full rounded-[14px] px-3 py-2 text-[12px] outline-none resize-none disabled:opacity-60"
@@ -3042,7 +3047,32 @@ export default function LlmLabTab() {
                         color: 'var(--text-primary)',
                       }}
                       placeholder="系统提示词"
+                      disabled={!imageGenPlanSystemPromptUnlocked}
                     />
+
+                    {!imageGenPlanSystemPromptUnlocked ? (
+                      <div
+                        className="absolute inset-0 rounded-[14px] flex items-center justify-center"
+                        style={{
+                          background: 'rgba(0,0,0,0.35)',
+                          border: '1px solid rgba(255,255,255,0.10)',
+                          backdropFilter: 'blur(6px)',
+                        }}
+                      >
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => {
+                            setImageGenPlanSystemPromptUnlocked(true);
+                            // 下一帧 focus，避免被 overlay 阻挡
+                            requestAnimationFrame(() => imageGenPlanSystemPromptRef.current?.focus());
+                          }}
+                        >
+                          解锁
+                        </Button>
+                      </div>
+                    ) : null}
+                    </div>
                     <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       状态：{imageGenPlanSystemPromptIsOverridden ? '已覆盖' : '默认'}
                       {imageGenPlanSystemPromptUpdatedAt ? ` · updatedAt=${imageGenPlanSystemPromptUpdatedAt}` : ''}

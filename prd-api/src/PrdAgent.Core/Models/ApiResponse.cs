@@ -77,5 +77,8 @@ public static class ErrorCodes
 
     // 评论相关
     public const string PRD_COMMENT_NOT_FOUND = "PRD_COMMENT_NOT_FOUND";
+
+    // 生图相关
+    public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
 }
 

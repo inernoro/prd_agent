@@ -1,7 +1,7 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
-import { generateImageGen, getModels, planImageGen, runImageGenBatchStream } from '@/services';
+import { cancelImageGenRun, createImageGenRun, generateImageGen, getModels, planImageGen, streamImageGenRunWithRetry } from '@/services';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
 import { Copy, Download, Loader2, Maximize2, Square, Wand2 } from 'lucide-react';
@@ -11,6 +11,9 @@ import { systemDialog } from '@/lib/systemDialog';
 type ImageItem = {
   key: string;
   status: 'idle' | 'running' | 'done' | 'error';
+  runId?: string | null;
+  itemIndex?: number | null;
+  imageIndex?: number | null;
   prompt: string;
   requestedSize?: string;
   effectiveSize?: string;
@@ -55,6 +58,34 @@ async function copyToClipboard(text: string) {
     // ignore
   } finally {
     document.body.removeChild(ta);
+  }
+}
+
+async function copyImageToClipboard(src: string) {
+  const s = String(src ?? '').trim();
+  if (!s) return;
+  const clipboardAny = navigator.clipboard as unknown as { write?: (items: unknown[]) => Promise<void>; writeText?: (t: string) => Promise<void> };
+  const ClipboardItemAny = (window as unknown as { ClipboardItem?: new (items: Record<string, Blob>) => unknown }).ClipboardItem;
+
+  // 1) 尝试：ClipboardItem 写入图片（需要安全上下文 + 用户手势；部分浏览器/环境不支持）
+  if (ClipboardItemAny && typeof clipboardAny?.write === 'function') {
+    try {
+      const res = await fetch(s);
+      const blob = await res.blob();
+      const type = blob.type || 'image/png';
+      await clipboardAny.write([new ClipboardItemAny({ [type]: blob })]);
+      return;
+    } catch {
+      // fallback
+    }
+  }
+
+  // 2) 降级：复制链接/dataURL（用户可手动粘贴到支持的地方）
+  try {
+    await copyToClipboard(s);
+    await systemDialog.alert('当前环境不支持直接复制图片，已改为复制图片链接/数据。');
+  } catch {
+    // ignore
   }
 }
 
@@ -106,11 +137,18 @@ export default function ImageGenPanel() {
   const [singleError, setSingleError] = useState('');
 
   const [images, setImages] = useState<ImageItem[]>([]);
-  const [imagePreview, setImagePreview] = useState<{ open: boolean; title: string; src: string; prompt: string }>({
+  const [imagePreview, setImagePreview] = useState<{
+    open: boolean;
+    title: string;
+    src: string;
+    prompt: string;
+    revisedPrompt?: string;
+  }>({
     open: false,
     title: '图片预览',
     src: '',
     prompt: '',
+    revisedPrompt: '',
   });
 
   const [planLoading, setPlanLoading] = useState(false);
@@ -120,6 +158,7 @@ export default function ImageGenPanel() {
   const [batchMeta, setBatchMeta] = useState<{ runId?: string; total?: number; done?: number; failed?: number }>({});
   const [batchLog, setBatchLog] = useState<string>('');
   const abortRef = useRef<AbortController | null>(null);
+  const batchRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setModelsLoading(true);
@@ -135,10 +174,19 @@ export default function ImageGenPanel() {
     // no-op：模型由系统自动选择（按优先级）
   }, []);
 
-  const stopBatch = () => {
+  const stopBatch = async () => {
     abortRef.current?.abort();
     abortRef.current = null;
     setBatchRunning(false);
+    const rid = batchRunIdRef.current;
+    batchRunIdRef.current = null;
+    if (rid) {
+      try {
+        await cancelImageGenRun({ runId: rid });
+      } catch {
+        // ignore
+      }
+    }
   };
 
   const runSingle = async () => {
@@ -207,7 +255,7 @@ export default function ImageGenPanel() {
     }
     if (batchRunning) return;
 
-    stopBatch();
+    await stopBatch();
     setBatchRunning(true);
     setBatchMeta({});
     setBatchLog('');
@@ -216,27 +264,54 @@ export default function ImageGenPanel() {
     abortRef.current = ac;
 
     const items = planResult.items.map((x) => ({ prompt: x.prompt, count: x.count }));
+
+    // 1) 创建 run（后端后台执行；前端只订阅/查询）
+    const idem = `img_run_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const created = await createImageGenRun({
+      input: {
+        configModelId: activeModel.id,
+        items,
+        size: DEFAULT_SIZE,
+        responseFormat: DEFAULT_RESPONSE_FORMAT,
+        maxConcurrency: 3,
+      },
+      idempotencyKey: idem,
+    });
+    if (!created.success) {
+      setBatchLog((p) => (p ? `${p}\n` : '') + `createRunError: ${created.error?.message || '失败'}`);
+      await stopBatch();
+      return;
+    }
+    const runId = String(created.data?.runId || '').trim();
+    if (!runId) {
+      setBatchLog((p) => (p ? `${p}\n` : '') + `createRunError: runId 为空`);
+      await stopBatch();
+      return;
+    }
+    batchRunIdRef.current = runId;
+
+    // 2) 先放占位（以 itemIndex/imageIndex 精准对齐事件）
     const placeholders: ImageItem[] = [];
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       const c = Math.max(1, Number(items[itemIndex].count || 1));
       for (let imageIndex = 0; imageIndex < c; imageIndex++) {
         placeholders.push({
-          key: `batch-${Date.now()}-${itemIndex}-${imageIndex}`,
+          key: `run-${runId}-${itemIndex}-${imageIndex}`,
           status: 'idle',
+          runId,
+          itemIndex,
+          imageIndex,
           prompt: items[itemIndex].prompt,
         });
       }
     }
     setImages((prev) => [...placeholders, ...prev]);
 
-    const res = await runImageGenBatchStream({
-      input: {
-        modelId: activeModel.id,
-        items,
-        size: DEFAULT_SIZE,
-        responseFormat: DEFAULT_RESPONSE_FORMAT,
-        maxConcurrency: 3,
-      },
+    // 3) 订阅 SSE（断线自动重连；afterSeq 续传）
+    const res = await streamImageGenRunWithRetry({
+      runId,
+      afterSeq: 0,
+      maxAttempts: 20,
       signal: ac.signal,
       onEvent: (evt) => {
         if (!evt.data) return;
@@ -248,13 +323,23 @@ export default function ImageGenPanel() {
         if (!t) return;
 
         if (t === 'runStart') {
-          setBatchMeta({ runId: String(o.runId || ''), total: Number(o.total || 0), done: 0, failed: 0 });
-          setBatchLog((p) => (p ? `${p}\n` : '') + `runStart: total=${String(o.total ?? '')}`);
+          setBatchMeta({ runId, total: Number(o.total || 0), done: 0, failed: 0 });
+          setBatchLog((p) => (p ? `${p}\n` : '') + `runStart: runId=${runId} total=${String(o.total ?? '')}`);
           return;
         }
 
         if (t === 'imageStart') {
           setBatchLog((p) => (p ? `${p}\n` : '') + `imageStart: item=${String(o.itemIndex)} idx=${String(o.imageIndex)}`);
+          const itemIndex = Number(o.itemIndex ?? -1);
+          const imageIndex = Number(o.imageIndex ?? -1);
+          const p0 = String(o.prompt ?? '');
+          setImages((prev) => {
+            const idx = prev.findIndex((x) => x.runId === runId && x.itemIndex === itemIndex && x.imageIndex === imageIndex);
+            if (idx < 0) return prev;
+            const next = [...prev];
+            next[idx] = { ...next[idx], status: 'running', prompt: p0 || next[idx].prompt };
+            return next;
+          });
           return;
         }
 
@@ -267,14 +352,17 @@ export default function ImageGenPanel() {
           const effSize = String((o.effectiveSize as string | undefined) ?? '');
           const sizeAdjusted = Boolean((o.sizeAdjusted as boolean | undefined) ?? false);
           const ratioAdjusted = Boolean((o.ratioAdjusted as boolean | undefined) ?? false);
+          const itemIndex = Number(o.itemIndex ?? -1);
+          const imageIndex = Number(o.imageIndex ?? -1);
           const p0 = String((o.prompt as string | undefined) ?? '');
           setImages((prev) => {
-            const idx = prev.findIndex((x) => x.status !== 'done' && x.status !== 'error' && x.prompt === p0);
+            const idx = prev.findIndex((x) => x.runId === runId && x.itemIndex === itemIndex && x.imageIndex === imageIndex);
             if (idx < 0) return prev;
             const next = [...prev];
             next[idx] = {
               ...next[idx],
               status: 'done',
+              prompt: p0 || next[idx].prompt,
               base64: b64,
               url,
               revisedPrompt: rp,
@@ -290,13 +378,15 @@ export default function ImageGenPanel() {
 
         if (t === 'imageError') {
           setBatchMeta((prev) => ({ ...prev, failed: Number(prev.failed || 0) + 1 }));
+          const itemIndex = Number(o.itemIndex ?? -1);
+          const imageIndex = Number(o.imageIndex ?? -1);
           const p0 = String((o.prompt as string | undefined) ?? '');
           const msg = String((o.errorMessage as string | undefined) ?? '生图失败');
           setImages((prev) => {
-            const idx = prev.findIndex((x) => x.status !== 'done' && x.status !== 'error' && x.prompt === p0);
+            const idx = prev.findIndex((x) => x.runId === runId && x.itemIndex === itemIndex && x.imageIndex === imageIndex);
             if (idx < 0) return prev;
             const next = [...prev];
-            next[idx] = { ...next[idx], status: 'error', errorMessage: msg };
+            next[idx] = { ...next[idx], status: 'error', prompt: p0 || next[idx].prompt, errorMessage: msg };
             return next;
           });
           setBatchLog((p) => (p ? `${p}\n` : '') + `imageError: ${msg}`);
@@ -311,14 +401,14 @@ export default function ImageGenPanel() {
             failed: Number((o.failed as number | string | undefined) ?? prev.failed ?? 0),
           }));
           setBatchLog((p) => (p ? `${p}\n` : '') + `runDone: done=${String(o.done ?? '')} failed=${String(o.failed ?? '')}`);
-          stopBatch();
+          void stopBatch();
         }
       },
     });
 
     if (!res.success) {
       setBatchLog((p) => (p ? `${p}\n` : '') + `batchError: ${res.error?.message || '失败'}`);
-      stopBatch();
+      await stopBatch();
     }
   };
 
@@ -382,13 +472,13 @@ export default function ImageGenPanel() {
                           }}
                           onClick={() => {
                             if (!canShow) return;
-                            setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt });
+                            setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt, revisedPrompt: it.revisedPrompt || '' });
                           }}
                           onKeyDown={(e) => {
                             if (!canShow) return;
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
-                              setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt });
+                              setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt, revisedPrompt: it.revisedPrompt || '' });
                             }
                           }}
                         >
@@ -434,6 +524,25 @@ export default function ImageGenPanel() {
                               ].join(' ')}
                               onClick={(e) => {
                                 e.stopPropagation();
+                                void copyImageToClipboard(src);
+                              }}
+                              aria-label="复制图片"
+                              title="复制图片"
+                              disabled={it.status !== 'done' || !src}
+                            >
+                              <Copy size={12} />
+                              复制
+                            </button>
+                            <button
+                              type="button"
+                              className={[
+                                'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
+                                'transition-all duration-150',
+                                'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
+                                'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                              ].join(' ')}
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 void copyToClipboard(it.prompt);
                               }}
                               aria-label="复制提示词"
@@ -441,7 +550,7 @@ export default function ImageGenPanel() {
                               disabled={!it.prompt}
                             >
                               <Copy size={12} />
-                              复制
+                              提示词
                             </button>
                             <button
                               type="button"
@@ -578,7 +687,7 @@ export default function ImageGenPanel() {
         open={imagePreview.open}
         onOpenChange={(open) => setImagePreview((p) => ({ ...p, open }))}
         title={imagePreview.title || '图片预览'}
-        description="点击缩略图可打开预览；图片将自适应完整显示"
+        description={imagePreview.prompt ? `用户提示词：${imagePreview.prompt}` : '图片预览'}
         maxWidth={1100}
         contentStyle={{ height: 'min(90vh, 880px)' }}
         content={
@@ -592,6 +701,10 @@ export default function ImageGenPanel() {
               >
                 <Download size={16} />
                 下载
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => void copyImageToClipboard(imagePreview.src || '')} disabled={!imagePreview.src}>
+                <Copy size={16} />
+                复制图片
               </Button>
               <Button variant="secondary" size="sm" onClick={() => void copyToClipboard(imagePreview.prompt || '')} disabled={!imagePreview.prompt}>
                 <Copy size={16} />
@@ -608,6 +721,12 @@ export default function ImageGenPanel() {
                 复制链接
               </Button>
             </div>
+
+            {imagePreview.revisedPrompt ? (
+              <div className="pb-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                模型修订：{imagePreview.revisedPrompt}
+              </div>
+            ) : null}
 
             <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
               {imagePreview.src ? (

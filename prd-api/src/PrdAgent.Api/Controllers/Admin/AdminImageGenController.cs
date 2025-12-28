@@ -579,6 +579,305 @@ public class AdminImageGenController : ControllerBase
         await WriteEventAsync("run", new { type = "runDone", runId, total, done, failed, endedAt = DateTime.UtcNow }, cancellationToken);
     }
 
+    /// <summary>
+    /// 创建生图任务（runId）：用于断线可恢复的批量/单张生图
+    /// </summary>
+    [HttpPost("runs")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateRun([FromBody] CreateImageGenRunRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var idemKey = (Request.Headers["Idempotency-Key"].FirstOrDefault() ?? string.Empty).Trim();
+        if (idemKey.Length > 200) idemKey = idemKey[..200];
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
+            if (existed != null)
+            {
+                return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+            }
+        }
+
+        var cfgModelId = (request?.ConfigModelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(cfgModelId)) cfgModelId = null;
+        var platformId = (request?.PlatformId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
+        var modelId = (request?.ModelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
+        var modelNameLegacy = (request?.ModelName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelNameLegacy)) modelNameLegacy = null;
+        modelId ??= modelNameLegacy;
+
+        if (!string.IsNullOrWhiteSpace(cfgModelId))
+        {
+            var m = await _db.LLMModels.Find(x => x.Id == cfgModelId && x.Enabled).FirstOrDefaultAsync(ct);
+            if (m == null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用"));
+            }
+            platformId = m.PlatformId;
+            modelId = m.ModelName;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "必须提供 configModelId，或提供 platformId + modelId"));
+            }
+        }
+
+        var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
+        var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
+        var maxConc = Math.Clamp(request?.MaxConcurrency ?? 3, 1, 10);
+
+        var items = request?.Items ?? new List<ImageGenRunPlanItemInput>();
+        if (items.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "items 不能为空"));
+        }
+        // 清洗与限制：单条最多 5 张，总计最多 20 张
+        var plan = new List<ImageGenRunPlanItem>();
+        var total = 0;
+        for (var i = 0; i < items.Count; i++)
+        {
+            var p = (items[i].Prompt ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(p)) continue;
+            var c = Math.Clamp(items[i].Count <= 0 ? 1 : items[i].Count, 1, 5);
+            var s = (items[i].Size ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(s)) s = null;
+            plan.Add(new ImageGenRunPlanItem { Prompt = p, Count = c, Size = s });
+            total += c;
+            if (total > 20) break;
+        }
+        if (plan.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "items 不能为空（无有效 prompt）"));
+        }
+        if (total > 20)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.RATE_LIMITED, $"单次最多生成 20 张（当前 {total} 张）"));
+        }
+
+        var run = new ImageGenRun
+        {
+            OwnerAdminId = adminId,
+            Status = ImageGenRunStatus.Queued,
+            ConfigModelId = cfgModelId,
+            PlatformId = platformId,
+            ModelId = modelId,
+            Size = size,
+            ResponseFormat = responseFormat,
+            MaxConcurrency = maxConc,
+            Items = plan,
+            Total = total,
+            Done = 0,
+            Failed = 0,
+            CancelRequested = false,
+            LastSeq = 0,
+            IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        try
+        {
+            await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: ct);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && !string.IsNullOrWhiteSpace(idemKey))
+        {
+            // 幂等键并发冲突：返回已存在的 run
+            var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
+            if (existed != null) return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+            throw;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id }));
+    }
+
+    /// <summary>
+    /// 查询生图任务状态/进度（可选返回 items）
+    /// </summary>
+    [HttpGet("runs/{runId}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetRun(string runId, [FromQuery] bool includeItems = true, [FromQuery] bool includeImages = false, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        runId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        }
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId && x.OwnerAdminId == adminId).FirstOrDefaultAsync(ct);
+        if (run == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, "run 不存在"));
+        }
+
+        object? items = null;
+        if (includeItems)
+        {
+            var list = await _db.ImageGenRunItems
+                .Find(x => x.RunId == runId && x.OwnerAdminId == adminId)
+                .SortBy(x => x.ItemIndex).ThenBy(x => x.ImageIndex)
+                .ToListAsync(ct);
+            items = list.Select(x => new
+            {
+                x.RunId,
+                x.ItemIndex,
+                x.ImageIndex,
+                x.Prompt,
+                x.RequestedSize,
+                x.EffectiveSize,
+                x.SizeAdjusted,
+                x.RatioAdjusted,
+                status = x.Status.ToString(),
+                base64 = includeImages ? x.Base64 : null,
+                url = includeImages ? x.Url : null,
+                x.RevisedPrompt,
+                x.ErrorCode,
+                x.ErrorMessage,
+                x.CreatedAt,
+                x.StartedAt,
+                x.EndedAt
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            run = new
+            {
+                run.Id,
+                run.OwnerAdminId,
+                status = run.Status.ToString(),
+                run.ConfigModelId,
+                run.PlatformId,
+                run.ModelId,
+                run.Size,
+                run.ResponseFormat,
+                run.MaxConcurrency,
+                run.Total,
+                run.Done,
+                run.Failed,
+                run.CancelRequested,
+                run.LastSeq,
+                run.CreatedAt,
+                run.StartedAt,
+                run.EndedAt
+            },
+            items
+        }));
+    }
+
+    /// <summary>
+    /// 订阅生图任务事件（SSE）：支持 afterSeq 断线续传
+    /// </summary>
+    [HttpGet("runs/{runId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task RunStream(string runId, [FromQuery] long afterSeq = 0, CancellationToken cancellationToken = default)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var adminId = GetAdminId();
+        runId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            await WriteSseAsync(id: null, eventName: "run", dataJson: JsonSerializer.Serialize(new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = "runId 不能为空" }, JsonOptions), cancellationToken);
+            return;
+        }
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId && x.OwnerAdminId == adminId).FirstOrDefaultAsync(cancellationToken);
+        if (run == null)
+        {
+            await WriteSseAsync(id: null, eventName: "run", dataJson: JsonSerializer.Serialize(new { type = "error", errorCode = ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, errorMessage = "run 不存在" }, JsonOptions), cancellationToken);
+            return;
+        }
+
+        var lastKeepAliveAt = DateTime.UtcNow;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            // 取一批事件，避免一次性刷太多
+            var evts = await _db.ImageGenRunEvents
+                .Find(x => x.RunId == runId && x.OwnerAdminId == adminId && x.Seq > afterSeq)
+                .SortBy(x => x.Seq)
+                .Limit(120)
+                .ToListAsync(cancellationToken);
+
+            if (evts.Count > 0)
+            {
+                foreach (var e in evts)
+                {
+                    await WriteSseAsync(id: e.Seq.ToString(), eventName: e.EventName, dataJson: e.PayloadJson, cancellationToken);
+                    afterSeq = e.Seq;
+                }
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+            else
+            {
+                // keepalive：避免代理/浏览器超时关闭连接
+                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+                {
+                    await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                }
+
+                // 如果 run 已结束且已追到最新 seq，则关闭 SSE
+                run = await _db.ImageGenRuns.Find(x => x.Id == runId && x.OwnerAdminId == adminId).FirstOrDefaultAsync(cancellationToken);
+                if (run == null) break;
+                if (run.Status is ImageGenRunStatus.Completed or ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
+                {
+                    if (afterSeq >= run.LastSeq) break;
+                }
+
+                await Task.Delay(650, cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 请求取消生图任务（后台会尽量停止继续派发新的生成）
+    /// </summary>
+    [HttpPost("runs/{runId}/cancel")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CancelRun(string runId, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        runId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        }
+
+        var res = await _db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == runId && x.OwnerAdminId == adminId,
+            Builders<ImageGenRun>.Update.Set(x => x.CancelRequested, true),
+            cancellationToken: ct);
+
+        if (res.MatchedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, "run 不存在"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(true));
+    }
+
+    private async Task WriteSseAsync(string? id, string eventName, string dataJson, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            await Response.WriteAsync($"id: {id}\n", ct);
+        }
+        await Response.WriteAsync($"event: {eventName}\n", ct);
+        await Response.WriteAsync($"data: {dataJson}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
+    }
+
     private static async Task<string> CollectToTextAsync(ILLMClient client, string systemPrompt, List<LLMMessage> messages, CancellationToken ct)
     {
         var sb = new StringBuilder(capacity: 1024);
@@ -723,5 +1022,41 @@ public class ImageGenBatchRequest
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url
     public int? MaxConcurrency { get; set; } // 最大并发数
+}
+
+public class CreateImageGenRunRequest
+{
+    /// <summary>
+    /// 可选：内部配置模型 ID（LLMModel.Id）。若提供，则会自动解析 platformId + modelId。
+    /// </summary>
+    public string? ConfigModelId { get; set; }
+
+    /// <summary>
+    /// 平台 ID（LLMPlatform.Id）。
+    /// </summary>
+    public string? PlatformId { get; set; }
+
+    /// <summary>
+    /// 平台侧模型 ID（业务语义 modelId）。
+    /// </summary>
+    public string? ModelId { get; set; }
+
+    /// <summary>
+    /// 兼容字段：历史接口使用；语义等同于 ModelId。
+    /// </summary>
+    public string? ModelName { get; set; }
+
+    public List<ImageGenRunPlanItemInput> Items { get; set; } = new();
+
+    public string? Size { get; set; }
+    public string? ResponseFormat { get; set; } // b64_json | url
+    public int? MaxConcurrency { get; set; }
+}
+
+public class ImageGenRunPlanItemInput
+{
+    public string Prompt { get; set; } = string.Empty;
+    public int Count { get; set; } = 1;
+    public string? Size { get; set; }
 }
 

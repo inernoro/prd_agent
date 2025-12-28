@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using MongoDB.Driver;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
@@ -115,6 +116,9 @@ builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
 // OpenAI 兼容 Images API（用于“生图模型”）
 builder.Services.AddScoped<OpenAIImageClient>();
+
+// 生图后台任务执行器（可断线继续）
+builder.Services.AddHostedService<ImageGenRunWorker>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(_ =>
