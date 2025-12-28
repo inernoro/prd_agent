@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -53,7 +54,8 @@ public class OpenAIImageClient
         string? modelId = null,
         string? platformId = null,
         string? modelName = null,
-        string? initImageBase64 = null)
+        string? initImageBase64 = null,
+        bool initImageProvided = false)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -149,6 +151,9 @@ public class OpenAIImageClient
 
         var isVolces = IsVolcesImagesApi(apiUrl);
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
+        // 说明：某些路径（如 Volces 降级）会把 initImageBase64 清空，但我们仍希望日志能追溯“用户是否提供过参考图”
+        var initImageProvidedForLog = initImageProvided || initImageBase64 != null;
+        var initImageUsedForCall = initImageBase64 != null;
         var endpoint = initImageBase64 == null ? GetImagesEndpoint(apiUrl) : GetImagesEditEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
@@ -277,19 +282,55 @@ public class OpenAIImageClient
         // 写入 LLM 请求日志（生图）
         if (_logWriter != null)
         {
-            var reqRawJson = initImageBase64 == null
-                ? (isVolces
-                    ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
-                    : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest))
-                : JsonSerializer.Serialize(new
+            // 注意：不落库 initImageBase64 内容，只记录“是否提供/是否使用”
+            string reqRawJson;
+            if (initImageUsedForCall)
+            {
+                reqRawJson = JsonSerializer.Serialize(new
                 {
                     model = effectiveModelName,
                     prompt = prompt.Trim(),
                     n,
                     size = isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size,
                     responseFormat = isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat,
-                    hasInitImage = true
+                    initImageProvided = initImageProvidedForLog,
+                    initImageUsed = true
                 });
+            }
+            else
+            {
+                if (isVolces)
+                {
+                    var r = (VolcesImageRequest)reqObj;
+                    reqRawJson = JsonSerializer.Serialize(new
+                    {
+                        model = r.Model,
+                        prompt = r.Prompt,
+                        n = r.N,
+                        size = r.Size,
+                        responseFormat = r.ResponseFormat,
+                        sequentialImageGeneration = r.SequentialImageGeneration,
+                        stream = r.Stream,
+                        watermark = r.Watermark,
+                        initImageProvided = initImageProvidedForLog,
+                        initImageUsed = false
+                    });
+                }
+                else
+                {
+                    var r = (OpenAIImageRequest)reqObj;
+                    reqRawJson = JsonSerializer.Serialize(new
+                    {
+                        model = r.Model,
+                        prompt = r.Prompt,
+                        n = r.N,
+                        size = r.Size,
+                        responseFormat = r.ResponseFormat,
+                        initImageProvided = initImageProvidedForLog,
+                        initImageUsed = false
+                    });
+                }
+            }
             var reqLogJson = LlmLogRedactor.RedactJson(reqRawJson);
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
@@ -298,6 +339,7 @@ public class OpenAIImageClient
                     Model: effectiveModelName,
                     ApiBase: endpointUri != null && endpointUri.IsAbsoluteUri ? $"{endpointUri.Scheme}://{endpointUri.Host}/" : httpClient.BaseAddress?.ToString(),
                     Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : endpoint.TrimStart('/'),
+                    HttpMethod: "POST",
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
                         ["content-type"] = initImageBase64 == null ? "application/json" : "multipart/form-data",
@@ -618,6 +660,7 @@ public class OpenAIImageClient
             if (logId != null)
             {
                 var endedAt = DateTime.UtcNow;
+                    var respContentType = resp.Content.Headers.ContentType?.MediaType;
                 var responseFormatForLog = initImageBase64 == null
                     ? (isVolces ? ((VolcesImageRequest)reqObj).ResponseFormat : ((OpenAIImageRequest)reqObj).ResponseFormat)
                     : (isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat);
@@ -632,6 +675,7 @@ public class OpenAIImageClient
                 var sizeAdjustmentNote = (sizeAdjustedForLog && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(sizeForLog))
                     ? $"本次尺寸替换：{requestedSizeRaw} -> {sizeForLog}"
                     : null;
+                    var upstreamBodyPreview = RedactAndTruncateSuccessResponseBody(body ?? string.Empty, respContentType);
                 var summary = new
                 {
                     images = images.Count,
@@ -643,6 +687,12 @@ public class OpenAIImageClient
                     ratioAdjusted = ratioAdjustedForLog,
                     sizeAdjustmentNote,
                     allowedSizes = allowedSizesForLog,
+                    initImageProvided = initImageProvidedForLog,
+                    initImageUsed = initImageUsedForCall,
+                        upstreamBodyPreview,
+                        upstreamBodyPreviewHash = LlmLogRedactor.Sha256Hex(upstreamBodyPreview),
+                        upstreamBodyChars = body?.Length ?? 0,
+                        upstreamContentType = respContentType,
                     // 不记录 base64 内容；仅记录是否返回
                     hasBase64 = images.Any(x => !string.IsNullOrWhiteSpace(x.Base64)),
                     hasUrl = images.Any(x => !string.IsNullOrWhiteSpace(x.Url)),
@@ -1061,6 +1111,88 @@ public class OpenAIImageClient
         var maxChars = LlmLogLimits.DefaultErrorMaxChars;
         if (s.Length > maxChars) s = s[..maxChars] + "...[TRUNCATED]";
         return s;
+    }
+
+    private static string RedactAndTruncateSuccessResponseBody(string body, string? contentType)
+    {
+        var raw = body ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+
+        // 生图成功响应里最敏感/最巨大的部分是 b64_json/base64；这里做结构化脱敏与截断
+        if (!string.IsNullOrWhiteSpace(contentType) && contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                // JsonNode 便于“删除/替换字段”
+                var node = JsonNode.Parse(raw);
+                if (node != null)
+                {
+                    RedactImageResponseNode(node);
+                    var s0 = node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+                    s0 = LlmLogRedactor.RedactJson(s0);
+                    s0 = RedactSignedUrls(s0);
+                    var maxChars0 = 24000; // 成功响应可比 error 多留一些字段，便于排查
+                    if (s0.Length > maxChars0) s0 = s0[..maxChars0] + "...[TRUNCATED]";
+                    return s0;
+                }
+            }
+            catch
+            {
+                // fallthrough
+            }
+        }
+
+        // 非 JSON 或解析失败：仅做签名 URL 脱敏 + 截断
+        var s = RedactSignedUrls(raw);
+        var maxChars = 24000;
+        if (s.Length > maxChars) s = s[..maxChars] + "...[TRUNCATED]";
+        return s;
+    }
+
+    private static void RedactImageResponseNode(JsonNode node)
+    {
+        // 递归遍历所有 object/array，替换 b64_json/base64 等字段为占位符，并对 url 做签名 query 脱敏
+        if (node is JsonObject obj)
+        {
+            // 常见字段：data:[{b64_json, url, revised_prompt, ...}]
+            foreach (var kv in obj.ToList())
+            {
+                var key = kv.Key;
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                var v = kv.Value;
+                if (v == null) continue;
+
+                var keyLower = key.Trim().ToLowerInvariant();
+                if (keyLower is "b64_json" or "base64" or "image" or "image_base64")
+                {
+                    var sv = v.GetValue<string?>();
+                    var len = string.IsNullOrWhiteSpace(sv) ? 0 : sv!.Length;
+                    obj[key] = $"[REDACTED_BASE64 len={len}]";
+                    continue;
+                }
+
+                if (keyLower is "url")
+                {
+                    var sv = v.GetValue<string?>();
+                    if (!string.IsNullOrWhiteSpace(sv))
+                    {
+                        obj[key] = RedactSignedUrls(sv!);
+                    }
+                    continue;
+                }
+
+                RedactImageResponseNode(v);
+            }
+            return;
+        }
+
+        if (node is JsonArray arr)
+        {
+            foreach (var it in arr)
+            {
+                if (it != null) RedactImageResponseNode(it);
+            }
+        }
     }
 
     private static string RedactSignedUrls(string text)

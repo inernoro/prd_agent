@@ -8,6 +8,7 @@ public record LlmLogStart(
     string Model,
     string? ApiBase,
     string? Path,
+    string? HttpMethod,
     Dictionary<string, string>? RequestHeadersRedacted,
     string RequestBodyRedacted,
     string? RequestBodyHash,

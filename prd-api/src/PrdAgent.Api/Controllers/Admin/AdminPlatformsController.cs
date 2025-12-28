@@ -30,73 +30,10 @@ public class AdminPlatformsController : ControllerBase
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly ILlmRequestLogWriter _logWriter;
     
-    private const string ModelsCacheKeyPrefix = "platform:models:";
+    // v2：不再返回预设(demo)模型列表；同时通过升级 key 前缀避免旧缓存继续生效
+    private const string ModelsCacheKeyPrefix = "platform:models:v2:";
     private static readonly TimeSpan ModelsCacheExpiry = TimeSpan.FromHours(24);
     private static readonly TimeSpan ReclassifyIdempotencyExpiry = TimeSpan.FromMinutes(15);
-    
-    // 预设模型列表缓存
-    private static readonly Dictionary<string, List<PresetModel>> PresetModels = new()
-    {
-        ["openai"] = new()
-        {
-            new("gpt-4o", "GPT-4o", "gpt-4o"),
-            new("gpt-4o-mini", "GPT-4o Mini", "gpt-4o"),
-            new("gpt-4-turbo", "GPT-4 Turbo", "gpt-4"),
-            new("gpt-4", "GPT-4", "gpt-4"),
-            new("gpt-3.5-turbo", "GPT-3.5 Turbo", "gpt-3.5"),
-            new("o1", "o1", "o1"),
-            new("o1-mini", "o1 Mini", "o1"),
-            new("o1-preview", "o1 Preview", "o1"),
-        },
-        ["anthropic"] = new()
-        {
-            new("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", "claude-3.5"),
-            new("claude-3-5-haiku-20241022", "Claude 3.5 Haiku", "claude-3.5"),
-            new("claude-3-opus-20240229", "Claude 3 Opus", "claude-3"),
-            new("claude-3-sonnet-20240229", "Claude 3 Sonnet", "claude-3"),
-            new("claude-3-haiku-20240307", "Claude 3 Haiku", "claude-3"),
-        },
-        ["qwen"] = new()
-        {
-            new("qwen-max", "Qwen Max", "qwen"),
-            new("qwen-plus", "Qwen Plus", "qwen"),
-            new("qwen-turbo", "Qwen Turbo", "qwen"),
-            new("qwen-long", "Qwen Long", "qwen"),
-            new("qwen2.5-72b-instruct", "Qwen2.5 72B", "qwen2.5"),
-            new("qwen2.5-32b-instruct", "Qwen2.5 32B", "qwen2.5"),
-            new("qwen2.5-14b-instruct", "Qwen2.5 14B", "qwen2.5"),
-            new("qwen2.5-7b-instruct", "Qwen2.5 7B", "qwen2.5"),
-        },
-        ["zhipu"] = new()
-        {
-            new("glm-4-plus", "GLM-4 Plus", "glm-4"),
-            new("glm-4-0520", "GLM-4", "glm-4"),
-            new("glm-4-air", "GLM-4 Air", "glm-4"),
-            new("glm-4-airx", "GLM-4 AirX", "glm-4"),
-            new("glm-4-flash", "GLM-4 Flash", "glm-4"),
-            new("glm-4-long", "GLM-4 Long", "glm-4"),
-        },
-        ["baidu"] = new()
-        {
-            new("ernie-4.0-8k", "ERNIE 4.0", "ernie"),
-            new("ernie-4.0-turbo-8k", "ERNIE 4.0 Turbo", "ernie"),
-            new("ernie-3.5-8k", "ERNIE 3.5", "ernie"),
-            new("ernie-speed-128k", "ERNIE Speed", "ernie"),
-            new("ernie-lite-8k", "ERNIE Lite", "ernie"),
-        },
-        ["google"] = new()
-        {
-            new("gemini-2.0-flash-exp", "Gemini 2.0 Flash", "gemini-2.0"),
-            new("gemini-1.5-pro", "Gemini 1.5 Pro", "gemini-1.5"),
-            new("gemini-1.5-flash", "Gemini 1.5 Flash", "gemini-1.5"),
-            new("gemini-1.5-flash-8b", "Gemini 1.5 Flash 8B", "gemini-1.5"),
-        },
-        ["deepseek"] = new()
-        {
-            new("deepseek-chat", "DeepSeek Chat", "deepseek"),
-            new("deepseek-reasoner", "DeepSeek Reasoner (R1)", "deepseek"),
-        }
-    };
 
     public AdminPlatformsController(
         MongoDbContext db,
@@ -630,21 +567,19 @@ public class AdminPlatformsController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to fetch models from API for platform {Id}", platform.Id);
+                var providerId =
+                    (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim()
+                        .ToLowerInvariant();
+                var endpoint = GetModelsEndpoint(platform.ApiUrl);
+                _logger.LogWarning(ex,
+                    "Failed to fetch models from API for platform {PlatformId}. provider={ProviderId} endpoint={Endpoint}",
+                    platform.Id,
+                    providerId,
+                    endpoint);
             }
         }
 
-        // 使用预设列表
-        if (PresetModels.TryGetValue(platform.PlatformType, out var presets))
-        {
-            return presets.Select(p => new AvailableModelDto
-            {
-                ModelName = p.ModelName,
-                DisplayName = p.DisplayName,
-                Group = p.Group
-            }).ToList();
-        }
-
+        // 不提供任何“预设(demo)模型”兜底：没有就返回空
         return new List<AvailableModelDto>();
     }
 
@@ -656,6 +591,7 @@ public class AdminPlatformsController : ControllerBase
         var endpoint = GetModelsEndpoint(platform.ApiUrl);
         var apiKey = DecryptApiKey(platform.ApiKeyEncrypted);
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
+        var apiKeyEmpty = string.IsNullOrWhiteSpace(apiKey);
 
         using var client = _httpClientFactory.CreateClient("LoggedHttpClient");
         client.Timeout = TimeSpan.FromSeconds(30);
@@ -667,13 +603,28 @@ public class AdminPlatformsController : ControllerBase
         var adminId = GetAdminId();
         var (apiBase, path) = OpenAICompatUrl.SplitApiBaseAndPath(endpoint, client.BaseAddress);
 
+        if (apiKeyEmpty)
+        {
+            // 不记录明文密钥；仅提示“可能没有解密出有效 key”（常见原因：Jwt:Secret 变更/长度不足导致解密失败、或平台未保存 key）
+            _logger.LogWarning(
+                "Platform API key is empty when fetching /models. platformId={PlatformId} provider={ProviderId} endpoint={Endpoint}",
+                platform.Id,
+                providerId,
+                endpoint);
+        }
+
         var start = new LlmLogStart(
             RequestId: requestId,
             Provider: providerId,
             Model: "(models)",
             ApiBase: apiBase,
             Path: path,
-            RequestHeadersRedacted: new Dictionary<string, string> { ["Authorization"] = "Bearer ***" },
+            HttpMethod: "GET",
+            RequestHeadersRedacted: new Dictionary<string, string>
+            {
+                // 仅用于诊断是否“带了 key”：不泄露任何真实值
+                ["Authorization"] = apiKeyEmpty ? "Bearer (empty)" : "Bearer ***"
+            },
             RequestBodyRedacted: "",
             RequestBodyHash: null,
             QuestionText: null,
@@ -888,23 +839,6 @@ public class AdminPlatformsController : ControllerBase
         return PrdAgent.Infrastructure.LLM.OpenAICompatUrl.BuildEndpoint(apiUrl, "models");
     }
 
-    private string ExtractModelGroup(string modelId)
-    {
-        // 从模型ID推断分组
-        var lowerModel = modelId.ToLowerInvariant();
-        if (lowerModel.Contains("gpt-4o")) return "gpt-4o";
-        if (lowerModel.Contains("gpt-4")) return "gpt-4";
-        if (lowerModel.Contains("gpt-3.5")) return "gpt-3.5";
-        if (lowerModel.Contains("o1")) return "o1";
-        if (lowerModel.Contains("claude-3-5") || lowerModel.Contains("claude-3.5")) return "claude-3.5";
-        if (lowerModel.Contains("claude-3")) return "claude-3";
-        if (lowerModel.Contains("deepseek")) return "deepseek";
-        if (lowerModel.Contains("qwen")) return "qwen";
-        if (lowerModel.Contains("glm")) return "glm";
-        if (lowerModel.Contains("gemini")) return "gemini";
-        return "other";
-    }
-
     private object MapModelResponse(LLMModel m) => new
     {
         m.Id,
@@ -985,8 +919,6 @@ public class AdminPlatformsController : ControllerBase
     }
 }
 
-public record PresetModel(string ModelName, string DisplayName, string Group);
-
 public class ModelsApiResponse
 {
     public List<ModelItem> Data { get; set; } = new();
@@ -1060,4 +992,5 @@ public class AvailableModelDto
     public string? Group { get; set; }
     public List<string>? Tags { get; set; }
 }
+
 

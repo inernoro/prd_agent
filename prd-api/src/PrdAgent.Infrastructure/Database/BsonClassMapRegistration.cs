@@ -44,6 +44,7 @@ public static class BsonClassMapRegistration
             RegisterImageMasterSession();
             RegisterImageMasterMessage();
             RegisterImageAsset();
+            RegisterAdminPromptOverride();
 
             _registered = true;
         }
@@ -232,6 +233,20 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterAdminPromptOverride()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(AdminPromptOverride))) return;
+
+        BsonClassMap.RegisterClassMap<AdminPromptOverride>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 

@@ -56,6 +56,11 @@ type CanvasImageItem = {
   sha256?: string;
   naturalW?: number;
   naturalH?: number;
+  // image-gen meta（用于 UI 提示 requested -> effective）
+  requestedSize?: string | null;
+  effectiveSize?: string | null;
+  sizeAdjusted?: boolean;
+  ratioAdjusted?: boolean;
   // “开放世界”画布位置/尺寸（基础单位，渲染时乘以 zoom）
   x?: number;
   y?: number;
@@ -209,6 +214,79 @@ async function readImageSizeFromSrc(src: string): Promise<{ w: number; h: number
     return { w, h };
   } catch {
     return null;
+  }
+}
+
+function tryParseWxH(size: string | null | undefined): { w: number; h: number } | null {
+  const s = String(size ?? '').trim();
+  if (!s) return null;
+  const m = /^\s*(\d+)\s*[xX×＊*]\s*(\d+)\s*$/.exec(s);
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { w: Math.round(w), h: Math.round(h) };
+}
+
+function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | undefined): string | null {
+  if (!ref || !ref.w || !ref.h) return null;
+  const w0 = Math.max(1, Math.round(ref.w));
+  const h0 = Math.max(1, Math.round(ref.h));
+  const r = w0 / h0;
+  if (!Number.isFinite(r) || r <= 0) return null;
+
+  // 目标：保持原图比例；以 1024 为基准，最大边限制到 1792（与常见 OpenAI 生图尺寸相容），过极端比例则夹到 1792:1024。
+  const minSide = 1024;
+  const maxSide = 1792;
+  const maxRatio = maxSide / minSide; // 1.75
+
+  let tw: number;
+  let th: number;
+  if (r >= 1) {
+    if (r >= maxRatio) {
+      tw = maxSide;
+      th = minSide;
+    } else {
+      tw = minSide * r;
+      th = minSide;
+    }
+  } else {
+    const inv = 1 / r;
+    if (inv >= maxRatio) {
+      tw = minSide;
+      th = maxSide;
+    } else {
+      tw = minSide;
+      th = minSide * inv;
+    }
+  }
+
+  // 多数网关要求整 8/16：这里先做 8 对齐，最终不支持的尺寸仍由后端自动选择最近 allowed size。
+  const round8 = (n: number) => Math.max(8, Math.round(n / 8) * 8);
+  const w = round8(tw);
+  const h = round8(th);
+  return `${w}x${h}`;
+}
+
+async function fetchImageAsDataUrl(src: string): Promise<{ ok: true; dataUrl: string } | { ok: false; reason: string }> {
+  const url = String(src ?? '').trim();
+  if (!url) return { ok: false, reason: '图片地址为空' };
+  try {
+    const res = await fetch(url, { method: 'GET' });
+    if (!res.ok) return { ok: false, reason: `读取参考图失败：HTTP ${res.status}` };
+    const blob = await res.blob();
+    // 后端 edits 首帧图限制 10MB；前端提前拦截
+    if (blob.size > 10 * 1024 * 1024) return { ok: false, reason: '参考图过大（上限 10MB）' };
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(new Error('FileReader 失败'));
+      fr.readAsDataURL(blob);
+    });
+    if (!dataUrl || !dataUrl.startsWith('data:')) return { ok: false, reason: '参考图转换失败（非 dataURL）' };
+    return { ok: true, dataUrl };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : '读取参考图失败' };
   }
 }
 
@@ -1167,6 +1245,7 @@ export default function AdvancedImageMasterTab() {
         const msg = '内容为空';
         setError(msg);
         pushMsg('Assistant', `生成失败：${msg}`);
+        setBusy(false);
         return;
       }
     } else {
@@ -1177,6 +1256,7 @@ export default function AdvancedImageMasterTab() {
           const msg = pres.error?.message || '解析失败';
           setError(msg);
           pushMsg('Assistant', `解析失败：${msg}`);
+          setBusy(false);
           return;
         }
         plan = pres.data ?? null;
@@ -1184,6 +1264,7 @@ export default function AdvancedImageMasterTab() {
         const msg = e instanceof Error ? e.message : '网络错误';
         setError(msg);
         pushMsg('Assistant', `解析失败：${msg}`);
+        setBusy(false);
         return;
       }
 
@@ -1193,6 +1274,10 @@ export default function AdvancedImageMasterTab() {
     }
 
     const pickedIsVolcesSeedream = /volces|doubao|seedream/i.test(String(pickedModel?.modelName || ''));
+    const refDim =
+      (primaryRef?.naturalW && primaryRef?.naturalH ? { w: primaryRef.naturalW, h: primaryRef.naturalH } : null) ??
+      (selected?.naturalW && selected?.naturalH ? { w: selected.naturalW, h: selected.naturalH } : null);
+    const resolvedSizeForGen = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
 
     pushMsg(
       'Assistant',
@@ -1232,9 +1317,10 @@ export default function AdvancedImageMasterTab() {
               x.status === 'running')
         )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
-      // 本页生成固定 1K 方形：用它占位，避免新图与旧图堆叠
-      const genW = 1024;
-      const genH = 1024;
+      // 占位尺寸随 requested size（保持比例），避免“永远 1K 方形”的观感
+      const parsedSize = tryParseWxH(resolvedSizeForGen);
+      const genW = parsedSize?.w ?? 1024;
+      const genH = parsedSize?.h ?? 1024;
       // 如果存在智能面板：把生成结果写回面板（不再新建一张图）
       if (generatorExistingKey) {
         const found = prev.find((x) => x.key === generatorExistingKey) ?? null;
@@ -1283,13 +1369,27 @@ export default function AdvancedImageMasterTab() {
 
     try {
       const initSrc = (primaryRef?.src || selected?.src) ?? '';
+      let initImageBase64: string | undefined;
+      if (initSrc && initSrc.startsWith('data:')) {
+        initImageBase64 = initSrc;
+      } else if (initSrc) {
+        // 参考图通常已被持久化为自托管 URL；此时需要拉取并转 dataURL，否则后端永远收不到首帧
+        const got = await fetchImageAsDataUrl(initSrc);
+        if (got.ok) {
+          initImageBase64 = got.dataUrl;
+        } else {
+          // 不阻断本次生成：降级为文生图，并把原因反馈给用户
+          pushMsg('Assistant', `参考图未能传递，本次已降级为文生图：${got.reason}`);
+        }
+      }
+
       const gres = await generateImageGen({
         modelId: pickedModel!.id,
         prompt: firstPrompt,
         n: 1,
         size: resolvedSizeForGen,
         responseFormat: DEFAULT_RESPONSE_FORMAT,
-        initImageBase64: initSrc && initSrc.startsWith('data:') ? initSrc : undefined,
+        initImageBase64,
       });
       if (!gres.success) {
         const msg = gres.error?.message || '生成失败';
@@ -1299,6 +1399,7 @@ export default function AdvancedImageMasterTab() {
         return;
       }
       const img0 = (gres.data?.images ?? [])[0];
+      const meta = gres.data?.meta ?? null;
       const src =
         (img0?.url ?? '') ||
         (img0?.base64 ? (img0.base64.startsWith('data:') ? img0.base64 : `data:image/png;base64,${img0.base64}`) : '');
@@ -1308,6 +1409,9 @@ export default function AdvancedImageMasterTab() {
         pushMsg('Assistant', '生成失败：未返回图片');
         return;
       }
+      const eff = String(meta?.effectiveSize || '') || resolvedSizeForGen;
+      const req = String(meta?.requestedSize || '') || resolvedSizeForGen;
+      const effParsed = tryParseWxH(eff);
       setCanvas((prev) =>
         prev.map((x) =>
           x.key === key
@@ -1317,6 +1421,13 @@ export default function AdvancedImageMasterTab() {
                 kind: generatorExistingKey ? 'generator' : (x.kind ?? 'image'),
                 status: 'done',
                 src,
+                requestedSize: req,
+                effectiveSize: eff,
+                sizeAdjusted: Boolean(meta?.sizeAdjusted ?? false),
+                ratioAdjusted: Boolean(meta?.ratioAdjusted ?? false),
+                // 普通图片：跟随 effective size 更新占位；生成器面板：保持用户面板尺寸不动
+                w: generatorExistingKey ? x.w : (effParsed?.w ?? x.w),
+                h: generatorExistingKey ? x.h : (effParsed?.h ?? x.h),
               }
             : x
         )
@@ -1330,8 +1441,9 @@ export default function AdvancedImageMasterTab() {
       });
 
       // 上传并持久化资产：把外部签名 URL / base64 转为自托管 URL（避免过期）
-      const width = resolvedSizeForGen.startsWith('1024') ? 1024 : resolvedSizeForGen.startsWith('768') ? 768 : resolvedSizeForGen.startsWith('512') ? 512 : undefined;
-      const height = resolvedSizeForGen.endsWith('1024') ? 1024 : resolvedSizeForGen.endsWith('768') ? 768 : resolvedSizeForGen.endsWith('512') ? 512 : undefined;
+      const parsed = tryParseWxH(eff) ?? tryParseWxH(resolvedSizeForGen);
+      const width = parsed?.w;
+      const height = parsed?.h;
       const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
       if (!isAlreadyHosted) {
         const up = await uploadImageAsset({
@@ -1357,6 +1469,11 @@ export default function AdvancedImageMasterTab() {
           );
         }
       }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '生成失败';
+      setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+      setError(msg);
+      pushMsg('Assistant', `生成失败：${msg}`);
     } finally {
       setBusy(false);
     }
@@ -1450,8 +1567,6 @@ export default function AdvancedImageMasterTab() {
     setQuickInput('');
     await sendText(raw);
   };
-
-  const resolvedSizeForGen = imageGenSize;
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
     const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
@@ -2046,9 +2161,10 @@ export default function AdvancedImageMasterTab() {
               style={{ transformOrigin: '0 0' }}
             >
               {canvas.map((it) => {
-                if (it.status === 'error') return null;
                 const kind = it.kind ?? 'image';
-                if (kind === 'image' && !it.src && it.status !== 'running') return null;
+                // 错误态：普通图片暂不展示（避免画面噪音）；生成器需要展示错误与重试入口
+                if (it.status === 'error' && kind !== 'generator') return null;
+                if (kind === 'image' && !it.src && it.status !== 'running' && it.status !== 'error') return null;
                 const x = it.x ?? 0;
                 const y = it.y ?? 0;
                 const w = it.w ?? 320;
@@ -2158,9 +2274,63 @@ export default function AdvancedImageMasterTab() {
                           boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.18) inset' : 'none',
                         }}
                       >
+                        {it.status === 'done' && it.sizeAdjusted ? (
+                          <div
+                            className="absolute left-3 top-3 text-[11px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center"
+                            style={{
+                              background: 'rgba(168, 85, 247, 0.16)',
+                              border: '1px solid rgba(168, 85, 247, 0.30)',
+                              color: 'rgba(255,255,255,0.92)',
+                            }}
+                            title={
+                              it.ratioAdjusted
+                                ? `比例已微调：${String(it.requestedSize || '')} → ${String(it.effectiveSize || '')}`
+                                : `尺寸已替换：${String(it.requestedSize || '')} → ${String(it.effectiveSize || '')}`
+                            }
+                          >
+                            {it.ratioAdjusted ? '比例已微调' : '尺寸已替换'}
+                          </div>
+                        ) : null}
                         {it.status === 'running' ? (
                           <div className="absolute inset-0 flex items-center justify-center">
                             <PrdLoader size={loaderSizeForBox(w, h)} />
+                          </div>
+                        ) : it.status === 'error' ? (
+                          <div
+                            className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+                            style={{ color: 'rgba(255,255,255,0.82)' }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="text-[13px] font-extrabold" style={{ color: 'rgba(255,255,255,0.92)' }}>
+                              生成失败
+                            </div>
+                            <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.70)' }}>
+                              {String(it.errorMessage || '未知错误')}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="secondary"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // 使用当前 prompt 直接重试（引用图由用户当前多选决定）
+                                  void sendText(it.prompt || '');
+                                }}
+                              >
+                                重试
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // 仅选中生成器并聚焦输入，方便用户修改后再发
+                                  setSelectedKeys([it.key]);
+                                  focusQuickComposer();
+                                }}
+                              >
+                                修改提示词
+                              </Button>
+                            </div>
                           </div>
                         ) : it.src ? (
                           <div className="absolute inset-0 flex items-center justify-center">

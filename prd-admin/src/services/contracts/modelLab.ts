@@ -73,6 +73,8 @@ export type RunModelLabStreamInput = {
   expectedFormat?: 'json' | 'mcp' | 'functionCall' | 'imageGenPlan';
   /** 当 expectedFormat=imageGenPlan 时生效：限制 items 数量（1-20，默认 10） */
   imagePlanMaxItems?: number;
+  /** 当 expectedFormat=imageGenPlan 时生效：仅本次请求覆盖 system prompt */
+  systemPromptOverride?: string;
   /** 是否自动追加系统主模型作为标准答案（若未在已选模型里） */
   includeMainModelAsStandard?: boolean;
   params?: Partial<ModelLabParams>;

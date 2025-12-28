@@ -74,6 +74,8 @@ export type LlmRequestLogListItem = {
   apiBase?: string | null;
   /** 便于在列表中展示"外部请求 URL"（如更新模型/models.list 等） */
   path?: string | null;
+  /** 外部请求 HTTP Method（GET/POST/...） */
+  httpMethod?: string | null;
   /** 平台 ID（来自 LLMPlatform） */
   platformId?: string | null;
   /** 平台名称（来自 LLMPlatform.Name，如"硅基流动"、"薇薇安"） */
@@ -115,6 +117,8 @@ export type LlmRequestLog = {
   model: string;
   apiBase?: string | null;
   path?: string | null;
+  /** 外部请求 HTTP Method（GET/POST/...） */
+  httpMethod?: string | null;
   requestHeadersRedacted?: Record<string, string> | null;
   requestBodyRedacted: string;
   requestBodyHash?: string | null;

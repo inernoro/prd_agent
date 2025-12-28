@@ -36,6 +36,8 @@ export const Select = React.forwardRef<
           background: 'var(--bg-input)',
           border: '1px solid rgba(255,255,255,0.12)',
           color: 'var(--text-primary)',
+          // 让原生下拉面板按暗色方案渲染，避免白底 + 白字的可读性问题
+          colorScheme: 'dark',
           appearance: 'none',
           WebkitAppearance: 'none',
           ...style,

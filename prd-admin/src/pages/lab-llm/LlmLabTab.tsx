@@ -34,6 +34,9 @@ import {
   setVisionModel,
   updateModelLabExperiment,
   upsertModelLabModelSet,
+  getAdminImageGenPlanPromptOverride,
+  putAdminImageGenPlanPromptOverride,
+  deleteAdminImageGenPlanPromptOverride,
 } from '@/services';
 import type { ModelLabExperiment, ModelLabModelSet, ModelLabParams, ModelLabSelectedModel, ModelLabSuite } from '@/services/contracts/modelLab';
 import type { ImageGenGenerateResponse, ImageGenPlanItem, ImageGenPlanResponse } from '@/services/contracts/imageGen';
@@ -123,6 +126,8 @@ type LlmLabCacheV1 = {
   imgSize: string;
   singleN: number;
   promptText: string;
+  /** 生图意图解析：system prompt（本地缓存；真正持久化在后端） */
+  imageGenPlanSystemPromptText?: string;
 
   runError: string | null;
   runItems: ViewRunItem[];
@@ -256,6 +261,13 @@ function filenameSafe(s: string) {
 }
 
 const MAX_RUN_RAW_CHARS = 60_000;
+
+function pickRunText(rawText?: string, preview?: string): string {
+  const a = String(rawText ?? '').trim();
+  if (a) return a;
+  const b = String(preview ?? '').trim();
+  return b;
+}
 
 function normalizeJsonCandidatesFromText(raw: string): string[] {
   const t = (raw ?? '').trim();
@@ -433,12 +445,18 @@ function tryParseImageGenPlan(raw: string): { ok: true; itemsLen: number } | { o
   }
 }
 
-function getImagePlanItemsLenFromRaw(raw: string): number | null {
+function getImagePlanItemsInfoFromRaw(raw: string): { ok: true; itemsLen: number } | { ok: false; reason: string } | null {
   const t = (raw ?? '').trim();
   if (!t) return null;
   const parsed = tryParseImageGenPlan(t);
-  if (!parsed.ok) return 0;
-  return parsed.itemsLen;
+  if (!parsed.ok) return { ok: false, reason: parsed.reason };
+  return { ok: true, itemsLen: parsed.itemsLen };
+}
+
+function getImagePlanItemsLenFromRaw(raw: string): number | null {
+  const info = getImagePlanItemsInfoFromRaw(raw);
+  if (!info) return null;
+  return info.ok ? info.itemsLen : 0;
 }
 
 async function downloadImage(src: string, filename: string) {
@@ -710,12 +728,124 @@ export default function LlmLabTab() {
     mode === 'json' || mode === 'mcp' || mode === 'functionCall' || mode === 'imageGenPlan' ? mode : undefined;
   const [params, setParams] = useState<ModelLabParams>(defaultParams);
   const [promptText, setPromptText] = useState<string>('');
+  // 生图意图解析：system prompt（可编辑；按管理员账号持久化在后端）
+  const [imageGenPlanSystemPromptText, setImageGenPlanSystemPromptText] = useState<string>('');
+  const [imageGenPlanSystemPromptDefaultText, setImageGenPlanSystemPromptDefaultText] = useState<string>('');
+  const [imageGenPlanSystemPromptIsOverridden, setImageGenPlanSystemPromptIsOverridden] = useState<boolean>(false);
+  const [imageGenPlanSystemPromptUpdatedAt, setImageGenPlanSystemPromptUpdatedAt] = useState<string | null>(null);
+  const [imageGenPlanSystemPromptLoading, setImageGenPlanSystemPromptLoading] = useState<boolean>(false);
+  const imageGenPlanSystemPromptBaselineRef = useRef<string>('');
+  const imageGenPlanSystemPromptLoadedRef = useRef<boolean>(false);
+
+  const imageGenPlanSystemPromptDirty = useMemo(() => {
+    return String(imageGenPlanSystemPromptText ?? '') !== String(imageGenPlanSystemPromptBaselineRef.current ?? '');
+  }, [imageGenPlanSystemPromptText]);
+
+  const makeIdempotencyKey = useCallback(() => {
+    try {
+      if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+    } catch {
+      // ignore
+    }
+    return `idem_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }, []);
   const [selectedModels, setSelectedModels] = useState<ModelLabSelectedModel[]>([]);
   // 临时禁用：仅影响“本次运行”（startRun 时过滤），不写入实验 selectedModels
   const [disabledModelKeys, setDisabledModelKeys] = useState<Record<string, boolean>>({});
 
   const [mainMode, setMainMode] = useState<MainMode>('infer');
   const [imageSubMode, setImageSubMode] = useState<ImageSubMode>('single');
+
+  const shouldShowImageGenPlanPromptSplit = useMemo(() => {
+    return (mainMode === 'image' && imageSubMode === 'batch') || (mainMode === 'infer' && mode === 'imageGenPlan');
+  }, [imageSubMode, mainMode, mode]);
+
+  const loadImageGenPlanSystemPrompt = useCallback(
+    async (args?: { force?: boolean }) => {
+      if (!shouldShowImageGenPlanPromptSplit) return;
+      if (!useAuthStore.getState().token) return;
+
+      // 避免覆盖用户未保存的编辑：非 force 且已 dirty 时跳过
+      if (!args?.force && imageGenPlanSystemPromptDirty) return;
+
+      setImageGenPlanSystemPromptLoading(true);
+      try {
+        const res = await getAdminImageGenPlanPromptOverride();
+        if (!res.success) return;
+        const dto = res.data;
+        const promptText = dto.promptText ?? '';
+        const defaultPromptText = dto.defaultPromptText ?? '';
+        const isOverridden = dto.isOverridden;
+        const updatedAt = dto.updatedAt ?? null;
+
+        setImageGenPlanSystemPromptText(promptText);
+        setImageGenPlanSystemPromptDefaultText(defaultPromptText);
+        setImageGenPlanSystemPromptIsOverridden(isOverridden);
+        setImageGenPlanSystemPromptUpdatedAt(updatedAt);
+        imageGenPlanSystemPromptBaselineRef.current = promptText;
+        imageGenPlanSystemPromptLoadedRef.current = true;
+      } finally {
+        setImageGenPlanSystemPromptLoading(false);
+      }
+    },
+    [imageGenPlanSystemPromptDirty, shouldShowImageGenPlanPromptSplit]
+  );
+
+  const saveImageGenPlanSystemPrompt = useCallback(async () => {
+    if (!useAuthStore.getState().token) return;
+    setImageGenPlanSystemPromptLoading(true);
+    try {
+      const res = await putAdminImageGenPlanPromptOverride({
+        promptText: String(imageGenPlanSystemPromptText ?? ''),
+        idempotencyKey: makeIdempotencyKey(),
+      });
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '保存失败');
+        return;
+      }
+      const dto = res.data;
+      const promptText = dto.promptText ?? '';
+      const defaultPromptText = dto.defaultPromptText ?? '';
+      const isOverridden = dto.isOverridden;
+      const updatedAt = dto.updatedAt ?? null;
+
+      setImageGenPlanSystemPromptText(promptText);
+      setImageGenPlanSystemPromptDefaultText(defaultPromptText);
+      setImageGenPlanSystemPromptIsOverridden(isOverridden);
+      setImageGenPlanSystemPromptUpdatedAt(updatedAt);
+      imageGenPlanSystemPromptBaselineRef.current = promptText;
+      imageGenPlanSystemPromptLoadedRef.current = true;
+    } finally {
+      setImageGenPlanSystemPromptLoading(false);
+    }
+  }, [imageGenPlanSystemPromptText, makeIdempotencyKey]);
+
+  const resetImageGenPlanSystemPrompt = useCallback(async () => {
+    if (!useAuthStore.getState().token) return;
+    setImageGenPlanSystemPromptLoading(true);
+    try {
+      const res = await deleteAdminImageGenPlanPromptOverride({ idempotencyKey: makeIdempotencyKey() });
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '恢复默认失败');
+        return;
+      }
+      const dto = res.data;
+      const promptText = dto.promptText ?? '';
+      const defaultPromptText = dto.defaultPromptText ?? '';
+      const isOverridden = dto.isOverridden;
+      const updatedAt = dto.updatedAt ?? null;
+
+      setImageGenPlanSystemPromptText(promptText);
+      setImageGenPlanSystemPromptDefaultText(defaultPromptText);
+      setImageGenPlanSystemPromptIsOverridden(isOverridden);
+      setImageGenPlanSystemPromptUpdatedAt(updatedAt);
+      imageGenPlanSystemPromptBaselineRef.current = promptText;
+      imageGenPlanSystemPromptLoadedRef.current = true;
+    } finally {
+      setImageGenPlanSystemPromptLoading(false);
+    }
+  }, [makeIdempotencyKey]);
+
   const [imgSize, setImgSize] = useState<string>('1024x1024');
   const [singleN, setSingleN] = useState<number>(1);
   const [singleGroupId, setSingleGroupId] = useState<string>('');
@@ -841,6 +971,9 @@ export default function LlmLabTab() {
   // 启动时：从本地恢复 UI 选择与结果（除非用户手动清空）
   useEffect(() => {
     hydratedRef.current = false;
+    // 切换用户/刷新时：让 system prompt 重新按“本地缓存 -> 后端配置”流程加载
+    imageGenPlanSystemPromptLoadedRef.current = false;
+    imageGenPlanSystemPromptBaselineRef.current = '';
     try {
       const raw = localStorage.getItem(labCacheKey);
       if (!raw) {
@@ -863,6 +996,10 @@ export default function LlmLabTab() {
       if (typeof data.imgSize === 'string' && data.imgSize.trim()) setImgSize(data.imgSize.trim());
       if (typeof data.singleN === 'number') setSingleN(Math.max(1, Math.min(20, Number(data.singleN || 1))));
       if (typeof data.promptText === 'string') setPromptText(data.promptText);
+      if (typeof data.imageGenPlanSystemPromptText === 'string') {
+        setImageGenPlanSystemPromptText(data.imageGenPlanSystemPromptText);
+        imageGenPlanSystemPromptBaselineRef.current = data.imageGenPlanSystemPromptText;
+      }
 
       if (typeof data.runError === 'string' || data.runError === null) setRunError(data.runError ?? null);
       if (Array.isArray(data.runItems)) setRunItems(Object.fromEntries(data.runItems.map((x) => [x.itemId, x])));
@@ -889,6 +1026,14 @@ export default function LlmLabTab() {
       hydratedRef.current = true;
     }
   }, [attachLocalBlobsToImageItems, labCacheKey]);
+
+  // 生图意图解析：当进入相关模式时，从后端拉取“系统提示词覆盖”（避免黑盒）
+  useEffect(() => {
+    if (!shouldShowImageGenPlanPromptSplit) return;
+    if (!useAuthStore.getState().token) return;
+    if (imageGenPlanSystemPromptLoadedRef.current) return;
+    void loadImageGenPlanSystemPrompt();
+  }, [cacheUserId, loadImageGenPlanSystemPrompt, shouldShowImageGenPlanPromptSplit]);
 
   // 持久化：保存 UI 选择与结果到 localStorage（图片内容单独进 IndexedDB）
   useEffect(() => {
@@ -921,6 +1066,7 @@ export default function LlmLabTab() {
           imgSize,
           singleN: Number(singleN || 1),
           promptText: promptText ?? '',
+          imageGenPlanSystemPromptText: imageGenPlanSystemPromptText ?? '',
 
           runError: runError ?? null,
           runItems: Object.values(runItems ?? {}),
@@ -952,6 +1098,7 @@ export default function LlmLabTab() {
     imageError,
     imageItems,
     imageSubMode,
+    imageGenPlanSystemPromptText,
     imgSize,
     labCacheKey,
     mainMode,
@@ -1477,7 +1624,8 @@ export default function LlmLabTab() {
     let nextPlan: ImageGenPlanResponse | null = null;
     let stopId: string | null = null;
     try {
-      const res = await planImageGen({ text, maxItems: 10 });
+      const sp = String(imageGenPlanSystemPromptText ?? '').trim();
+      const res = await planImageGen({ text, maxItems: 10, systemPromptOverride: sp || undefined });
       if (!res.success) {
         setBatchError(res.error?.message || '解析失败');
         return;
@@ -1745,6 +1893,7 @@ export default function LlmLabTab() {
         ...(expectedFormat === 'imageGenPlan'
           ? {
               imagePlanMaxItems: 10,
+              systemPromptOverride: String(imageGenPlanSystemPromptText ?? '').trim() || undefined,
               includeMainModelAsStandard: true,
             }
           : {}),
@@ -1812,6 +1961,8 @@ export default function LlmLabTab() {
               setRunItems((p) => {
                 const cur = p[obj.itemId];
                 if (!cur) return p;
+                const nextPreview = typeof obj.preview === 'string' ? obj.preview : cur.preview;
+                const shouldFillRaw = !String(cur.rawText ?? '').trim() && typeof obj.preview === 'string' && obj.preview.trim().length > 0;
                 return {
                   ...p,
                   [obj.itemId]: {
@@ -1819,7 +1970,8 @@ export default function LlmLabTab() {
                     status: 'done',
                     ttftMs: obj.ttftMs ?? cur.ttftMs,
                     totalMs: obj.totalMs ?? cur.totalMs,
-                    preview: typeof obj.preview === 'string' ? obj.preview : cur.preview,
+                    preview: nextPreview,
+                    rawText: shouldFillRaw ? String(obj.preview) : cur.rawText,
                     repeatIndex: typeof obj.repeatIndex === 'number' ? Number(obj.repeatIndex) : cur.repeatIndex,
                     repeatN: typeof obj.repeatN === 'number' ? Number(obj.repeatN) : cur.repeatN,
                   },
@@ -1858,8 +2010,10 @@ export default function LlmLabTab() {
       const bTotal = b.totalMs ?? Number.POSITIVE_INFINITY;
 
       if (sortBy === 'imagePlanItemsDesc') {
-        const aLen = getImagePlanItemsLenFromRaw(a.rawText ?? a.preview ?? '') ?? 0;
-        const bLen = getImagePlanItemsLenFromRaw(b.rawText ?? b.preview ?? '') ?? 0;
+        const aText = pickRunText(a.rawText, a.preview);
+        const bText = pickRunText(b.rawText, b.preview);
+        const aLen = getImagePlanItemsLenFromRaw(aText) ?? 0;
+        const bLen = getImagePlanItemsLenFromRaw(bText) ?? 0;
         if (aLen !== bLen) return bLen - aLen; // 倒序：条目数越多越靠前
         if (aTtft !== bTtft) return aTtft - bTtft;
         return aTotal - bTotal;
@@ -2190,7 +2344,7 @@ export default function LlmLabTab() {
 
   return (
     <div className="h-full min-h-0">
-      <div className="h-full min-h-0 grid gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
+      <div className="h-full min-h-0 grid grid-cols-1 gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
         {/* 左上：试验区 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
           <Card className="p-4">
@@ -2234,7 +2388,7 @@ export default function LlmLabTab() {
             </button>
           </div>
 
-          <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <div className="mt-3 grid gap-2 grid-cols-1 sm:grid-cols-2">
             <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
               并发（1-50）
               <input
@@ -2270,7 +2424,7 @@ export default function LlmLabTab() {
 
         {/* 左下：自定义模型集合 + 大模型实验 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-2">
-          <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
+          <Card className="p-4 overflow-hidden flex flex-col min-h-0 lg:h-full">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2462,7 +2616,7 @@ export default function LlmLabTab() {
 
         {/* 右上：提示词 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
-          <Card className="p-4 h-full">
+          <Card className="p-4 lg:h-full">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div
               className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
@@ -2661,34 +2815,142 @@ export default function LlmLabTab() {
             </div>
           )}
 
-          <textarea
-            value={promptText}
-            onChange={(e) => setPromptText(e.target.value)}
-            onKeyDown={(e) => {
-              // 部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 可能失效，这里兜底强制全选
-              if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
-                e.preventDefault();
-                (e.currentTarget as HTMLTextAreaElement).select();
+          {shouldShowImageGenPlanPromptSplit ? (
+            <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    系统提示词
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      disabled={imageGenPlanSystemPromptLoading}
+                      onClick={async () => {
+                        if (imageGenPlanSystemPromptDirty) {
+                          const ok = await systemDialog.confirm('将丢弃未保存的系统提示词修改并从后端重新加载，是否继续？');
+                          if (!ok) return;
+                        }
+                        await loadImageGenPlanSystemPrompt({ force: true });
+                      }}
+                      title="从后端加载（若你未保存的修改会被覆盖）"
+                    >
+                      <ScanEye size={14} />
+                      刷新
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      disabled={imageGenPlanSystemPromptLoading || !String(imageGenPlanSystemPromptDefaultText ?? '').trim()}
+                      onClick={() => {
+                        setImageGenPlanSystemPromptText(String(imageGenPlanSystemPromptDefaultText ?? ''));
+                      }}
+                      title="将默认模板复制到编辑框（不写入后端）"
+                    >
+                      <Copy size={14} />
+                      复制默认
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      disabled={imageGenPlanSystemPromptLoading}
+                      onClick={async () => {
+                        const ok = await systemDialog.confirm('将恢复为默认系统提示词（并清除已保存覆盖），是否继续？');
+                        if (!ok) return;
+                        await resetImageGenPlanSystemPrompt();
+                      }}
+                      title="删除后端保存的覆盖提示词，恢复默认模板"
+                    >
+                      <Trash2 size={14} />
+                      恢复默认
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="primary"
+                      disabled={imageGenPlanSystemPromptLoading || !imageGenPlanSystemPromptDirty}
+                      onClick={async () => {
+                        await saveImageGenPlanSystemPrompt();
+                      }}
+                      title={imageGenPlanSystemPromptDirty ? '保存到后端（按管理员账号）' : '无改动'}
+                    >
+                      <Save size={14} />
+                      保存
+                    </Button>
+                  </div>
+                </div>
+                <textarea
+                  value={imageGenPlanSystemPromptText}
+                  onChange={(e) => setImageGenPlanSystemPromptText(e.target.value)}
+                  className="mt-2 h-36 w-full rounded-[14px] px-3 py-2 text-[12px] outline-none resize-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="用于“生图意图解析”的系统提示词（要求严格只输出 JSON）"
+                />
+                <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  状态：{imageGenPlanSystemPromptIsOverridden ? '已覆盖' : '默认'}
+                  {imageGenPlanSystemPromptUpdatedAt ? ` · updatedAt=${imageGenPlanSystemPromptUpdatedAt}` : ''}
+                  {typeof imageGenPlanSystemPromptText === 'string' ? ` · ${imageGenPlanSystemPromptText.length} chars` : ''}
+                </div>
+              </div>
+
+              <div className="min-w-0">
+                <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  用户输入
+                </div>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  onKeyDown={(e) => {
+                    // 部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 可能失效，这里兜底强制全选
+                    if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                      e.preventDefault();
+                      (e.currentTarget as HTMLTextAreaElement).select();
+                    }
+                  }}
+                  className="mt-2 h-36 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder={
+                    mainMode === 'infer'
+                      ? mode === 'imageGenPlan'
+                        ? '粘贴文章/PRD/需求（将用左侧“系统提示词”生成 JSON：{total, items:[{prompt,count,size?}] }）'
+                        : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
+                      : imageSubMode === 'single'
+                        ? '输入要生成的图片描述（将直接交给生图模型）'
+                        : '输入需求描述（将用左侧“系统提示词”解析出图片清单并提示数量）'
+                  }
+                />
+              </div>
+            </div>
+          ) : (
+            <textarea
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              onKeyDown={(e) => {
+                // 部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 可能失效，这里兜底强制全选
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+                  e.preventDefault();
+                  (e.currentTarget as HTMLTextAreaElement).select();
+                }
+              }}
+              className="mt-2 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              placeholder={
+                mainMode === 'infer'
+                  ? mode === 'imageGenPlan'
+                    ? '粘贴文章/PRD/需求（将解析并生成 JSON：{total, items:[{prompt,count,size?}] }）'
+                    : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
+                  : imageSubMode === 'single'
+                    ? '输入要生成的图片描述（将直接交给生图模型）'
+                    : '输入需求描述（将先用意图模型解析出图片清单并提示数量）'
               }
-            }}
-            className="mt-2 h-20 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-            placeholder={
-              mainMode === 'infer'
-                ? mode === 'imageGenPlan'
-                  ? '粘贴文章/PRD/需求（系统会用内置“生图意图解析”提示词生成 JSON：{total, items:[{prompt,count,size?}] }）'
-                  : '输入本次对比测试的 prompt（可使用内置模板快速填充）'
-                : imageSubMode === 'single'
-                  ? '输入要生成的图片描述（将直接交给生图模型）'
-                  : '输入需求描述（将先用意图模型解析出图片清单并提示数量）'
-            }
-          />
+            />
+          )}
           </Card>
         </div>
 
         {/* 右下：实时结果 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
-          <Card className="p-4 overflow-hidden flex flex-col min-h-0 h-full">
+          <Card className="p-4 overflow-hidden flex flex-col min-h-0 lg:h-full">
           {mainMode === 'infer' ? (
             <>
           <div className="flex items-center justify-between shrink-0">
@@ -2852,13 +3114,21 @@ export default function LlmLabTab() {
                   >
                     {mode === 'imageGenPlan'
                       ? (() => {
-                          const curRaw = (it.rawText ?? it.preview ?? '').trim();
-                          const curLen = curRaw ? (getImagePlanItemsLenFromRaw(curRaw) ?? 0) : 0;
+                          const curText = pickRunText(it.rawText, it.preview);
+                          const curInfo = curText ? getImagePlanItemsInfoFromRaw(curText) : null;
+                          const curKey = curInfo ? (curInfo.ok ? `ok:${curInfo.itemsLen}` : 'bad') : 'empty';
+
                           const prev = idx > 0 ? sortedItems[idx - 1] : null;
-                          const prevRaw = prev ? (prev.rawText ?? prev.preview ?? '').trim() : '';
-                          const prevLen = prevRaw ? (getImagePlanItemsLenFromRaw(prevRaw) ?? 0) : 0;
-                          const show = idx === 0 || curLen !== prevLen;
+                          const prevText = prev ? pickRunText(prev.rawText, prev.preview) : '';
+                          const prevInfo = prevText ? getImagePlanItemsInfoFromRaw(prevText) : null;
+                          const prevKey = prevInfo ? (prevInfo.ok ? `ok:${prevInfo.itemsLen}` : 'bad') : 'empty';
+
+                          const show = idx === 0 || curKey !== prevKey;
                           if (!show) return null;
+
+                          const label = curInfo ? (curInfo.ok ? `识别条目 ${curInfo.itemsLen}` : '识别条目 无法解析') : '识别条目 -';
+                          const title = curInfo && !curInfo.ok ? curInfo.reason : '按识别条目数分组（组间倒序）';
+
                           return (
                             <div
                               className="mb-2 px-2 py-1 rounded-[10px] text-xs font-semibold inline-flex items-center"
@@ -2867,15 +3137,15 @@ export default function LlmLabTab() {
                                 background: 'rgba(250, 204, 21, 0.06)',
                                 color: 'rgba(250, 204, 21, 0.92)',
                               }}
-                              title="按识别条目数分组（组间倒序）"
+                              title={title}
                             >
-                              识别条目 {curLen}
+                              {label}
                             </div>
                           );
                         })()
                       : null}
                     {(() => {
-                      const raw = (it.rawText ?? it.preview ?? '').trim();
+                      const raw = pickRunText(it.rawText, it.preview);
                       const v = raw ? validateByFormatTest(expectedFormat, raw) : null;
                       const chipStyle = (ok: boolean): React.CSSProperties => ({
                         background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.10)',

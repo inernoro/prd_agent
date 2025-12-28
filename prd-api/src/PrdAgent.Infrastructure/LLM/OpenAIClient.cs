@@ -154,6 +154,7 @@ public class OpenAIClient : ILLMClient
                     Model: _model,
                     ApiBase: apiBaseForLog,
                     Path: pathForLog,
+                    HttpMethod: "POST",
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
                         ["content-type"] = "application/json",

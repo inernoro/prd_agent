@@ -557,26 +557,31 @@ public class AdminModelLabController : ControllerBase
         var fmt = (effective.ExpectedFormat ?? string.Empty).Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(fmt))
         {
-            systemPrompt = fmt switch
+            if (fmt is "imagegenplan" or "image_gen_plan" or "image-gen-plan")
             {
-                "json" =>
-                    "你是结构化输出模型。请根据用户输入生成结构化结果，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
-                    "要求：必须是合法 JSON（对象或数组）。",
-                "functioncall" or "function_call" or "function-call" =>
-                    "你是函数调用规划模型。请根据用户输入选择一个合适的工具调用，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
-                    "JSON 格式（推荐）：{\"name\":\"tool_name\",\"arguments\":{...}}。\n" +
-                    "也允许 OpenAI 风格：{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"tool_name\",\"arguments\":{...}}}]}。\n" +
-                    "要求：必须是合法 JSON；arguments 必须是对象或可解析为对象的字符串。",
-                "mcp" =>
-                    "你是 MCP（Model Context Protocol）调用规划模型。请根据用户输入生成 MCP 调用指令，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
-                    "JSON 格式（推荐）：{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}。\n" +
-                    "也允许资源读取：{\"server\":\"server_id\",\"uri\":\"resource://...\"}。\n" +
-                    "也允许批量：{\"calls\":[{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}]}。\n" +
-                    "要求：必须是合法 JSON；必须包含 server 字段。",
-                "imagegenplan" or "image_gen_plan" or "image-gen-plan" =>
-                    ImageGenPlanPrompt.Build(effective.ImagePlanMaxItems),
-                _ => systemPrompt
-            };
+                systemPrompt = await ResolveImageGenPlanSystemPromptAsync(run.OwnerAdminId, effective, ct);
+            }
+            else
+            {
+                systemPrompt = fmt switch
+                {
+                    "json" =>
+                        "你是结构化输出模型。请根据用户输入生成结构化结果，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                        "要求：必须是合法 JSON（对象或数组）。",
+                    "functioncall" or "function_call" or "function-call" =>
+                        "你是函数调用规划模型。请根据用户输入选择一个合适的工具调用，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                        "JSON 格式（推荐）：{\"name\":\"tool_name\",\"arguments\":{...}}。\n" +
+                        "也允许 OpenAI 风格：{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"tool_name\",\"arguments\":{...}}}]}。\n" +
+                        "要求：必须是合法 JSON；arguments 必须是对象或可解析为对象的字符串。",
+                    "mcp" =>
+                        "你是 MCP（Model Context Protocol）调用规划模型。请根据用户输入生成 MCP 调用指令，并严格只输出 JSON（不要 Markdown/解释/多余字符）。\n" +
+                        "JSON 格式（推荐）：{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}。\n" +
+                        "也允许资源读取：{\"server\":\"server_id\",\"uri\":\"resource://...\"}。\n" +
+                        "也允许批量：{\"calls\":[{\"server\":\"server_id\",\"tool\":\"tool_name\",\"arguments\":{...}}]}。\n" +
+                        "要求：必须是合法 JSON；必须包含 server 字段。",
+                    _ => systemPrompt
+                };
+            }
         }
 
         var prompt = string.IsNullOrWhiteSpace(effective.PromptText)
@@ -742,6 +747,25 @@ public class AdminModelLabController : ControllerBase
         }
     }
 
+    private async Task<string> ResolveImageGenPlanSystemPromptAsync(string adminId, EffectiveRunRequest effective, CancellationToken ct)
+    {
+        var overrideText = (effective.SystemPromptOverride ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(overrideText))
+        {
+            return overrideText;
+        }
+
+        var saved = await _db.AdminPromptOverrides
+            .Find(x => x.OwnerAdminId == adminId && x.Key == "imageGenPlan")
+            .FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(saved?.PromptText))
+        {
+            return saved!.PromptText;
+        }
+
+        return ImageGenPlanPrompt.Build(effective.ImagePlanMaxItems);
+    }
+
     private async Task WriteWithLockAsync(SemaphoreSlim writeLock, string eventName, object payload, CancellationToken ct)
     {
         await writeLock.WaitAsync(ct);
@@ -781,6 +805,15 @@ public class AdminModelLabController : ControllerBase
 
         var fmt = (request.ExpectedFormat ?? string.Empty).Trim().ToLowerInvariant();
         var imagePlanMaxItems = Math.Clamp(request.ImagePlanMaxItems ?? 10, 1, 20);
+        var systemPromptOverride = (request.SystemPromptOverride ?? string.Empty).Trim();
+        if (systemPromptOverride.Length > 20_000)
+        {
+            return EffectiveRunRequest.Fail(ErrorCodes.INVALID_FORMAT, "systemPromptOverride 过长（最多 20000 字符）");
+        }
+        if (string.IsNullOrWhiteSpace(systemPromptOverride))
+        {
+            systemPromptOverride = null;
+        }
 
         var models = new List<ModelLabSelectedModel>();
         // 规则：若前端显式传 models，则认为是“本次运行的临时模型列表”（例如临时禁用/过滤），优先级最高，不写入实验。
@@ -900,6 +933,7 @@ public class AdminModelLabController : ControllerBase
             promptText: promptText,
             expectedFormat: string.IsNullOrWhiteSpace(request.ExpectedFormat) ? null : request.ExpectedFormat,
             imagePlanMaxItems: fmt is "imagegenplan" or "image_gen_plan" or "image-gen-plan" ? imagePlanMaxItems : 10,
+            systemPromptOverride: fmt is "imagegenplan" or "image_gen_plan" or "image-gen-plan" ? systemPromptOverride : null,
             @params: p,
             enablePromptCache: request.EnablePromptCache,
             models: models);
@@ -1004,6 +1038,12 @@ public class RunStreamRequest
     public int? ImagePlanMaxItems { get; set; }
 
     /// <summary>
+    /// 可选：当 ExpectedFormat=imageGenPlan 时生效。仅本次请求覆盖 system prompt。
+    /// 不传时将优先使用管理员已保存的覆盖提示词；两者都无则回退默认模板。
+    /// </summary>
+    public string? SystemPromptOverride { get; set; }
+
+    /// <summary>
     /// 可选：是否在本次对比中自动追加系统主模型作为“标准答案”。
     /// </summary>
     public bool? IncludeMainModelAsStandard { get; set; }
@@ -1028,6 +1068,7 @@ internal class EffectiveRunRequest
     public string? PromptText { get; private set; }
     public string? ExpectedFormat { get; private set; }
     public int ImagePlanMaxItems { get; private set; } = 10;
+    public string? SystemPromptOverride { get; private set; }
     public ModelLabParams Params { get; private set; } = new();
     public bool? EnablePromptCache { get; private set; }
     public List<ModelLabSelectedModel> Models { get; private set; } = new();
@@ -1045,6 +1086,7 @@ internal class EffectiveRunRequest
         string? promptText,
         string? expectedFormat,
         int imagePlanMaxItems,
+        string? systemPromptOverride,
         ModelLabParams @params,
         bool? enablePromptCache,
         List<ModelLabSelectedModel> models) => new()
@@ -1055,6 +1097,7 @@ internal class EffectiveRunRequest
         PromptText = promptText,
         ExpectedFormat = expectedFormat,
         ImagePlanMaxItems = Math.Clamp(imagePlanMaxItems, 1, 20),
+        SystemPromptOverride = systemPromptOverride,
         Params = @params,
         EnablePromptCache = enablePromptCache,
         Models = models

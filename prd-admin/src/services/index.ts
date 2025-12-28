@@ -29,9 +29,14 @@ import type { GenerateImageGenContract, GetImageGenSizeCapsContract, PlanImageGe
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
 import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
-import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
+import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PreviewImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
 import type { GetAdminPromptStagesContract, PutAdminPromptStagesContract, ResetAdminPromptStagesContract } from '@/services/contracts/promptStages';
+import type {
+  DeleteAdminImageGenPlanPromptOverrideContract,
+  GetAdminImageGenPlanPromptOverrideContract,
+  PutAdminImageGenPlanPromptOverrideContract,
+} from '@/services/contracts/promptOverrides';
 import type {
   AddImageMasterMessageContract,
   CreateImageMasterSessionContract,
@@ -83,9 +88,14 @@ import {
   listImageMasterSessionsReal,
   uploadImageAssetReal,
 } from '@/services/real/imageMaster';
-import { exportConfigReal, getDataSummaryReal, importConfigReal, purgeDataReal } from '@/services/real/data';
+import { exportConfigReal, getDataSummaryReal, importConfigReal, previewImportConfigReal, purgeDataReal } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
 import { getAdminPromptStagesReal, putAdminPromptStagesReal, resetAdminPromptStagesReal } from '@/services/real/promptStages';
+import {
+  deleteAdminImageGenPlanPromptOverrideReal,
+  getAdminImageGenPlanPromptOverrideReal,
+  putAdminImageGenPlanPromptOverrideReal,
+} from '@/services/real/promptOverrides';
 import {
   deleteAdminGroupReal,
   generateAdminGapSummaryReal,
@@ -176,6 +186,10 @@ export const putAdminPromptStages: PutAdminPromptStagesContract = withAuth(putAd
 export const resetAdminPromptStages: ResetAdminPromptStagesContract = withAuth(resetAdminPromptStagesReal);
 export const getApiLogsMeta: GetApiLogsMetaContract = withAuth(getApiLogsMetaReal);
 
+export const getAdminImageGenPlanPromptOverride: GetAdminImageGenPlanPromptOverrideContract = withAuth(getAdminImageGenPlanPromptOverrideReal);
+export const putAdminImageGenPlanPromptOverride: PutAdminImageGenPlanPromptOverrideContract = withAuth(putAdminImageGenPlanPromptOverrideReal);
+export const deleteAdminImageGenPlanPromptOverride: DeleteAdminImageGenPlanPromptOverrideContract = withAuth(deleteAdminImageGenPlanPromptOverrideReal);
+
 export const adminImpersonate: AdminImpersonateContract = withAuth(adminImpersonateReal);
 
 export const listModelLabExperiments: ListModelLabExperimentsContract = withAuth(listModelLabExperimentsReal);
@@ -209,5 +223,6 @@ export const uploadImageAsset: UploadImageAssetContract = withAuth(uploadImageAs
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);
+export const previewImportConfig: PreviewImportConfigContract = withAuth(previewImportConfigReal);
 export const getDataSummary: GetDataSummaryContract = withAuth(getDataSummaryReal);
 export const purgeData: PurgeDataContract = withAuth(purgeDataReal);

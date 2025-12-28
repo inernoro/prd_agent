@@ -1,4 +1,7 @@
 :root {
+  /* 让浏览器原生表单控件（select/option 等）按暗色方案渲染，避免出现“白底下拉 + 白字看不清” */
+  color-scheme: dark;
+
   --bg-base: #0b0b0d;
   --bg-elevated: #121216;
   --bg-card: rgba(255, 255, 255, 0.03);

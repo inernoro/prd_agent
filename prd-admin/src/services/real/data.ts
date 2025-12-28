@@ -1,4 +1,4 @@
-import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
+import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PreviewImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
 import { apiRequest } from '@/services/real/apiClient';
 
 export const exportConfigReal: ExportConfigContract = async () => {
@@ -7,6 +7,13 @@ export const exportConfigReal: ExportConfigContract = async () => {
 
 export const importConfigReal: ImportConfigContract = async (input) => {
   return await apiRequest('/api/v1/admin/data/config/import', {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const previewImportConfigReal: PreviewImportConfigContract = async (input) => {
+  return await apiRequest('/api/v1/admin/data/config/import/preview', {
     method: 'POST',
     body: input,
   });

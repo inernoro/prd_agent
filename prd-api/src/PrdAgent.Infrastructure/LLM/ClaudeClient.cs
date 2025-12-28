@@ -194,6 +194,7 @@ public class ClaudeClient : ILLMClient
                     Model: _model,
                     ApiBase: _httpClient.BaseAddress?.ToString(),
                     Path: "v1/messages",
+                    HttpMethod: "POST",
                     RequestHeadersRedacted: headers,
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),

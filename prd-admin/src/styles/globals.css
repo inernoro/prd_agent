@@ -5,6 +5,27 @@
   outline-offset: 2px;
 }
 
+/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清） */
+select {
+  color-scheme: dark;
+}
+
+/* 让 option/optgroup 尽量随 color-scheme 自适应（Canvas/CanvasText 会随暗色方案变化） */
+select option,
+select optgroup {
+  color: CanvasText;
+  background-color: Canvas;
+}
+
+/* 兼容：极少数不支持 Canvas/CanvasText 的环境 */
+@supports not (color: CanvasText) {
+  select option,
+  select optgroup {
+    color: #111;
+    background-color: #fff;
+  }
+}
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {

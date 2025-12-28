@@ -31,7 +31,10 @@ async function readImageGenSseStream(
 }
 
 export const planImageGenReal: PlanImageGenContract = async (input) => {
-  return await apiRequest('/api/v1/admin/image-gen/plan', { method: 'POST', body: { text: input.text, maxItems: input.maxItems } });
+  return await apiRequest('/api/v1/admin/image-gen/plan', {
+    method: 'POST',
+    body: { text: input.text, maxItems: input.maxItems, systemPromptOverride: input.systemPromptOverride },
+  });
 };
 
 export const generateImageGenReal: GenerateImageGenContract = async (input) => {

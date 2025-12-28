@@ -82,11 +82,29 @@ public class AdminImageGenController : ControllerBase
         var hasIntentModel = await _db.LLMModels.Find(m => m.IsIntent && m.Enabled).AnyAsync(ct);
         var usedPurpose = hasIntentModel ? "intent" : "fallbackMain";
 
-        var systemPrompt = ImageGenPlanPrompt.Build(maxItems);
+        var adminId = GetAdminId();
+        var systemPromptOverride = (request?.SystemPromptOverride ?? string.Empty).Trim();
+        if (systemPromptOverride.Length > 20_000)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "systemPromptOverride 过长（最多 20000 字符）"));
+        }
+
+        var systemPrompt = string.Empty;
+        if (!string.IsNullOrWhiteSpace(systemPromptOverride))
+        {
+            systemPrompt = systemPromptOverride;
+        }
+        else
+        {
+            // 读取管理员已保存的覆盖提示词（若存在则优先使用）
+            var saved = await _db.AdminPromptOverrides
+                .Find(x => x.OwnerAdminId == adminId && x.Key == "imageGenPlan")
+                .FirstOrDefaultAsync(ct);
+            systemPrompt = !string.IsNullOrWhiteSpace(saved?.PromptText) ? saved!.PromptText : ImageGenPlanPrompt.Build(maxItems);
+        }
 
         try
         {
-            var adminId = GetAdminId();
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
@@ -196,6 +214,7 @@ public class AdminImageGenController : ControllerBase
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
         var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
+        var initImageProvided = !string.IsNullOrWhiteSpace(initImageBase64);
 
         // seedream/volces：多数情况下不支持 OpenAI 标准 images/edits 的“首帧图生图”语义。
         // 策略：检测到 volces API 时，将首帧图交给 Vision 模型提取风格描述，拼进 prompt，再走 images/generations。
@@ -231,7 +250,7 @@ public class AdminImageGenController : ControllerBase
             RequestType: "imageGen",
             RequestPurpose: "imageGen.generate"));
 
-        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName, initImageBase64);
+        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName, initImageBase64, initImageProvided);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -656,6 +675,11 @@ public class ImageGenPlanRequest
 {
     public string Text { get; set; } = string.Empty;
     public int? MaxItems { get; set; }
+    /// <summary>
+    /// 可选：仅本次请求覆盖 system prompt（用于“生图意图解析”）。
+    /// 不传时将优先使用管理员已保存的覆盖提示词；两者都无则回退默认模板。
+    /// </summary>
+    public string? SystemPromptOverride { get; set; }
 }
 
 public class ImageGenPlanResponse

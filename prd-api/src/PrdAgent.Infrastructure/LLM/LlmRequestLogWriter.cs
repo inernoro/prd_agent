@@ -48,6 +48,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 Model = start.Model,
                 ApiBase = start.ApiBase,
                 Path = start.Path,
+                HttpMethod = string.IsNullOrWhiteSpace(start.HttpMethod) ? null : start.HttpMethod.Trim().ToUpperInvariant(),
                 PlatformId = start.PlatformId,
                 PlatformName = start.PlatformName,
                 RequestHeadersRedacted = start.RequestHeadersRedacted,

@@ -53,6 +53,7 @@ public class MongoDbContext
     public IMongoCollection<ImageMasterMessage> ImageMasterMessages => _database.GetCollection<ImageMasterMessage>("image_master_messages");
     public IMongoCollection<ImageAsset> ImageAssets => _database.GetCollection<ImageAsset>("image_assets");
     public IMongoCollection<ImageGenSizeCaps> ImageGenSizeCaps => _database.GetCollection<ImageGenSizeCaps>("image_gen_size_caps");
+    public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
 
     private void CreateIndexes()
     {
@@ -220,6 +221,17 @@ public class MongoDbContext
                     { "PlatformId", new BsonDocument("$exists", true) },
                     { "ModelName", new BsonDocument("$exists", true) }
                 }
+            }));
+
+        // AdminPromptOverrides：同一管理员 + key 唯一（用于覆盖 system prompt）
+        AdminPromptOverrides.Indexes.CreateOne(new CreateIndexModel<AdminPromptOverride>(
+            Builders<AdminPromptOverride>.IndexKeys
+                .Ascending(x => x.OwnerAdminId)
+                .Ascending(x => x.Key),
+            new CreateIndexOptions<AdminPromptOverride>
+            {
+                Name = "uniq_admin_prompt_overrides_owner_key",
+                Unique = true
             }));
     }
 }

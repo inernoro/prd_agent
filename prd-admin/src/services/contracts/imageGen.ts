@@ -32,7 +32,7 @@ export type ImageGenGenerateResponse = {
   meta?: ImageGenGenerateMeta | null;
 };
 
-export type PlanImageGenContract = (input: { text: string; maxItems?: number }) => Promise<ApiResponse<ImageGenPlanResponse>>;
+export type PlanImageGenContract = (input: { text: string; maxItems?: number; systemPromptOverride?: string }) => Promise<ApiResponse<ImageGenPlanResponse>>;
 
 export type GenerateImageGenContract = (input: {
   modelId: string;

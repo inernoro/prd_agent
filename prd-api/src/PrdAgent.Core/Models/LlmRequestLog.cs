@@ -25,6 +25,10 @@ public class LlmRequestLog
     public string Model { get; set; } = string.Empty;
     public string? ApiBase { get; set; }
     public string? Path { get; set; }
+    /// <summary>
+    /// 外部请求 HTTP Method（GET/POST/...），用于管理后台回放/复制 curl。
+    /// </summary>
+    public string? HttpMethod { get; set; }
 
     // 平台信息（来自 LLMPlatform）
     public string? PlatformId { get; set; }

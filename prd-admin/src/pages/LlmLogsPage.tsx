@@ -185,6 +185,25 @@ function extractAllowedSizesFromAnswerText(answerText: string | null | undefined
   }
 }
 
+function extractImageGenUpstreamPreviewFromAnswerText(answerText: string | null | undefined): {
+  preview: string;
+  initImageProvided?: boolean;
+  initImageUsed?: boolean;
+} | null {
+  const raw = (answerText ?? '').trim();
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw) as any;
+    const preview = String(obj?.upstreamBodyPreview ?? '').trim();
+    if (!preview) return null;
+    const initImageProvided = typeof obj?.initImageProvided === 'boolean' ? (obj.initImageProvided as boolean) : undefined;
+    const initImageUsed = typeof obj?.initImageUsed === 'boolean' ? (obj.initImageUsed as boolean) : undefined;
+    return { preview, initImageProvided, initImageUsed };
+  } catch {
+    return null;
+  }
+}
+
 // 判断是否为大模型请求（非外部 HTTP 请求）
 function isLlmRequest(requestType: string | null | undefined): boolean {
   const v = normalizeRequestType(requestType);
@@ -540,9 +559,14 @@ function buildCurlFromLog(detail: LlmRequestLog): string {
     .map(([k, v]) => `-H ${shellSingleQuote(`${k}: ${v}`)}`)
     .join(' \\\n  ');
 
-  const dataArg = bodyPretty ? ` \\\n  --data-raw ${shellSingleQuote(bodyPretty)}` : '';
+  const methodFromLog = String(detail.httpMethod ?? '').trim().toUpperCase();
+  const pathLower = (path ?? '').trim().toLowerCase();
+  const looksLikeModelsList = pathLower === 'v1/models' || pathLower.endsWith('/models') || pathLower.endsWith('models');
+  const inferredMethod = methodFromLog || (!bodyPretty && looksLikeModelsList ? 'GET' : 'POST');
 
-  return `curl -X POST ${shellSingleQuote(url)} \\\n  ${headerArgs}${dataArg}`;
+  const dataArg = inferredMethod === 'GET' ? '' : bodyPretty ? ` \\\n  --data-raw ${shellSingleQuote(bodyPretty)}` : '';
+
+  return `curl -X ${inferredMethod} ${shellSingleQuote(url)} \\\n  ${headerArgs}${dataArg}`;
 }
 
 // rawSse 已移除：管理后台仅展示最终 AnswerText 与统计信息
@@ -807,6 +831,7 @@ export default function LlmLogsPage() {
     () => (answerVisibleChars ? decodeEscapedTextForDisplay(answerText) : answerText),
     [answerVisibleChars, answerText]
   );
+  const imageGenUpstream = useMemo(() => extractImageGenUpstreamPreviewFromAnswerText(detail?.answerText ?? ''), [detail?.answerText]);
   useEffect(() => {
     // 内容不再包含 \uXXXX 时，自动关闭“可见字符”避免误解
     if (!answerHasUnicodeEscapes && answerVisibleChars) setAnswerVisibleChars(false);
@@ -1600,6 +1625,18 @@ export default function LlmLogsPage() {
                   </div>
 
                   <div className="mt-3">
+                    {imageGenUpstream ? (
+                      <div className="mb-3">
+                        <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                          <span>上游响应预览（脱敏）</span>
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            参考图：{imageGenUpstream.initImageProvided === true ? '已提供' : imageGenUpstream.initImageProvided === false ? '未提供' : '—'} ·
+                            {' '}使用：{imageGenUpstream.initImageUsed === true ? '是' : imageGenUpstream.initImageUsed === false ? '否' : '—'}
+                          </span>
+                        </div>
+                        <pre style={codeBoxStyle()}>{imageGenUpstream.preview}</pre>
+                      </div>
+                    ) : null}
                     {answerView === 'raw' ? (
                       <pre style={codeBoxStyle()}>
                         {answerDisplayText || (detail?.status === 'running' ? '（生成中…）' : '（无输出）')}
