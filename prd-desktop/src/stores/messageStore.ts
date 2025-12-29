@@ -3,23 +3,16 @@ import { persist } from 'zustand/middleware';
 import { DocCitation, Message, MessageBlock, MessageBlockKind } from '../types';
 
 export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
-export type MessageContextMode = 'QA' | 'Guided';
 
 interface MessageState {
   boundSessionId: string | null;
   isPinnedToBottom: boolean;
-  contextMode: MessageContextMode;
-  qaMessages: Message[];
-  guidedThreads: Record<number, Message[]>;
-  activeGuidedStep: number;
 
   messages: Message[];
   isStreaming: boolean;
   streamingMessageId: string | null;
   streamingPhase: StreamingPhase;
   
-  setContext: (mode: MessageContextMode, guidedStep?: number) => void;
-  setGuidedStep: (step: number) => void;
   bindSession: (sessionId: string | null) => void;
   setPinnedToBottom: (pinned: boolean) => void;
 
@@ -36,22 +29,6 @@ interface MessageState {
   setStreamingPhase: (phase: StreamingPhase) => void;
   stopStreaming: () => void;
   clearMessages: () => void;
-}
-
-function writeBack(state: Pick<MessageState, 'contextMode' | 'qaMessages' | 'guidedThreads' | 'activeGuidedStep'>, nextMessages: Message[]) {
-  if (state.contextMode === 'Guided') {
-    return {
-      qaMessages: state.qaMessages,
-      guidedThreads: {
-        ...state.guidedThreads,
-        [state.activeGuidedStep]: nextMessages,
-      },
-    };
-  }
-  return {
-    qaMessages: nextMessages,
-    guidedThreads: state.guidedThreads,
-  };
 }
 
 function reviveMessage(m: any): Message {
@@ -82,49 +59,11 @@ export const useMessageStore = create<MessageState>()(
     (set) => ({
       boundSessionId: null,
       isPinnedToBottom: true,
-      contextMode: 'QA',
-      qaMessages: [],
-      guidedThreads: {},
-      activeGuidedStep: 1,
 
       messages: [],
       isStreaming: false,
       streamingMessageId: null,
       streamingPhase: null,
-
-  setContext: (mode, guidedStep) => set((state) => {
-    const back = writeBack(state, state.messages);
-    const nextMode: MessageContextMode = mode;
-    const nextStep = guidedStep ?? state.activeGuidedStep ?? 1;
-
-    if (nextMode === 'Guided') {
-      const nextMessages = state.guidedThreads[nextStep] ?? [];
-      return {
-        ...back,
-        contextMode: 'Guided',
-        activeGuidedStep: nextStep,
-        messages: nextMessages,
-      };
-    }
-
-    return {
-      ...back,
-      contextMode: 'QA',
-      messages: state.qaMessages,
-    };
-  }),
-
-  setGuidedStep: (step) => set((state) => {
-    if (state.contextMode !== 'Guided') return state;
-    const back = writeBack(state, state.messages);
-    const nextStep = step || 1;
-    const nextMessages = state.guidedThreads[nextStep] ?? [];
-    return {
-      ...back,
-      activeGuidedStep: nextStep,
-      messages: nextMessages,
-    };
-  }),
 
   // 绑定“当前消息所属的 sessionId”，用于：
   // - 避免 ChatContainer 因卸载/重挂载而误清空同一会话的对话（看起来像“不持久化”）
@@ -136,10 +75,6 @@ export const useMessageStore = create<MessageState>()(
       return {
         boundSessionId: null,
         isPinnedToBottom: true,
-        contextMode: 'QA',
-        qaMessages: [],
-        guidedThreads: {},
-        activeGuidedStep: 1,
         messages: [],
         isStreaming: false,
         streamingMessageId: null,
@@ -149,10 +84,6 @@ export const useMessageStore = create<MessageState>()(
     return {
       boundSessionId: next,
       isPinnedToBottom: true,
-      contextMode: 'QA',
-      qaMessages: [],
-      guidedThreads: {},
-      activeGuidedStep: 1,
       messages: [],
       isStreaming: false,
       streamingMessageId: null,
@@ -168,20 +99,20 @@ export const useMessageStore = create<MessageState>()(
   
   addMessage: (message) => set((state) => {
     const next = [...state.messages, message];
-    return { messages: next, ...writeBack(state, next) };
+    return { messages: next };
   }),
   
-  setMessages: (messages) => set((state) => ({ messages, ...writeBack(state, messages) })),
+  setMessages: (messages) => set(() => ({ messages })),
 
   upsertMessage: (message) => set((state) => {
     const idx = state.messages.findIndex((m) => m.id === message.id);
     if (idx === -1) {
       const next = [...state.messages, message];
-      return { messages: next, ...writeBack(state, next) };
+      return { messages: next };
     }
     const next = [...state.messages];
     next[idx] = message;
-    return { messages: next, ...writeBack(state, next) };
+    return { messages: next };
   }),
 
   startStreaming: (message) => set((state) => {
@@ -193,7 +124,6 @@ export const useMessageStore = create<MessageState>()(
 
     return {
       messages: next,
-      ...writeBack(state, next),
       isStreaming: true,
       streamingMessageId: message.id,
       streamingPhase: state.streamingPhase ?? 'requesting',
@@ -206,7 +136,7 @@ export const useMessageStore = create<MessageState>()(
       if (m.id !== state.streamingMessageId) return m;
       return { ...m, content: (m.content ?? '') + content };
     });
-    return { messages: next, ...writeBack(state, next), streamingPhase: state.streamingPhase === 'typing' ? state.streamingPhase : 'typing' };
+    return { messages: next, streamingPhase: state.streamingPhase === 'typing' ? state.streamingPhase : 'typing' };
   }),
 
   startStreamingBlock: (block) => set((state) => {
@@ -229,7 +159,7 @@ export const useMessageStore = create<MessageState>()(
         ],
       };
     });
-    return { messages: next, ...writeBack(state, next) };
+    return { messages: next };
   }),
 
   appendToStreamingBlock: (blockId, content) => set((state) => {
@@ -247,7 +177,7 @@ export const useMessageStore = create<MessageState>()(
       nextBlocks[idx] = { ...nextBlocks[idx], content: (nextBlocks[idx].content ?? '') + (content ?? '') };
       return { ...m, content: (m.content ?? '') + (content ?? ''), blocks: nextBlocks };
     });
-    return { messages: next, ...writeBack(state, next), streamingPhase: state.streamingPhase === 'typing' ? state.streamingPhase : 'typing' };
+    return { messages: next, streamingPhase: state.streamingPhase === 'typing' ? state.streamingPhase : 'typing' };
   }),
 
   endStreamingBlock: (blockId) => set((state) => {
@@ -262,7 +192,7 @@ export const useMessageStore = create<MessageState>()(
       const isCode = nextBlocks[idx].kind === 'codeBlock';
       return { ...m, blocks: nextBlocks, content: isCode ? (m.content ?? '') + '```\n' : (m.content ?? '') };
     });
-    return { messages: next, ...writeBack(state, next) };
+    return { messages: next };
   }),
 
   setMessageCitations: (messageId, citations) => set((state) => {
@@ -270,7 +200,7 @@ export const useMessageStore = create<MessageState>()(
       if (m.id !== messageId) return m;
       return { ...m, citations: Array.isArray(citations) ? citations : [] };
     });
-    return { messages: next, ...writeBack(state, next) };
+    return { messages: next };
   }),
 
   setStreamingMessageCitations: (citations) => set((state) => {
@@ -279,7 +209,7 @@ export const useMessageStore = create<MessageState>()(
       if (m.id !== state.streamingMessageId) return m;
       return { ...m, citations: Array.isArray(citations) ? citations : [] };
     });
-    return { messages: next, ...writeBack(state, next) };
+    return { messages: next };
   }),
 
   setStreamingPhase: (phase) => set({ streamingPhase: phase }),
@@ -289,10 +219,6 @@ export const useMessageStore = create<MessageState>()(
       clearMessages: () => set({
         boundSessionId: null,
         isPinnedToBottom: true,
-        contextMode: 'QA',
-        qaMessages: [],
-        guidedThreads: {},
-        activeGuidedStep: 1,
         messages: [],
         isStreaming: false,
         streamingMessageId: null,
@@ -305,10 +231,6 @@ export const useMessageStore = create<MessageState>()(
       partialize: (s) => ({
         boundSessionId: s.boundSessionId,
         isPinnedToBottom: s.isPinnedToBottom,
-        contextMode: s.contextMode,
-        qaMessages: s.qaMessages,
-        guidedThreads: s.guidedThreads,
-        activeGuidedStep: s.activeGuidedStep,
         messages: s.messages,
       }),
       merge: (persisted: any, current) => {
@@ -317,16 +239,7 @@ export const useMessageStore = create<MessageState>()(
           ...current,
           ...p,
         };
-        next.qaMessages = reviveMessages(p.qaMessages);
         next.messages = reviveMessages(p.messages);
-        const gt: Record<string, any> = (p.guidedThreads && typeof p.guidedThreads === 'object') ? p.guidedThreads : {};
-        const revivedThreads: Record<number, Message[]> = {};
-        Object.keys(gt).forEach((k) => {
-          const n = Number(k);
-          if (!Number.isFinite(n)) return;
-          revivedThreads[n] = reviveMessages(gt[k]);
-        });
-        next.guidedThreads = revivedThreads;
         return next as MessageState;
       },
     }

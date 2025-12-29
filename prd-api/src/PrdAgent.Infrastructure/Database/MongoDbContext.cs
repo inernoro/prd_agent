@@ -36,11 +36,14 @@ public class MongoDbContext
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
-    public IMongoCollection<PromptStageSettings> PromptStages => _database.GetCollection<PromptStageSettings>("promptstages");
+    /// <summary>
+    /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
+    /// </summary>
+    public IMongoCollection<PromptSettings> Prompts => _database.GetCollection<PromptSettings>("promptstages");
     /// <summary>
     /// promptstages 原始集合（用于兼容旧结构迁移，避免 POCO 映射丢字段）
     /// </summary>
-    public IMongoCollection<BsonDocument> PromptStagesRaw => _database.GetCollection<BsonDocument>("promptstages");
+    public IMongoCollection<BsonDocument> PromptsRaw => _database.GetCollection<BsonDocument>("promptstages");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");

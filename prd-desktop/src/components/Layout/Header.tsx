@@ -5,7 +5,6 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import RoleSelector from '../Role/RoleSelector';
-import ModeToggle from '../Role/ModeToggle';
 
 interface HeaderProps {
   isDark: boolean;
@@ -79,7 +78,6 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
           {canPreview && (
             <>
               {sessionId ? <RoleSelector /> : null}
-              <ModeToggle />
             </>
           )}
 

@@ -42,7 +42,7 @@ import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/s
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
 import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PreviewImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
-import type { GetAdminPromptStagesContract, PutAdminPromptStagesContract, ResetAdminPromptStagesContract } from '@/services/contracts/promptStages';
+import type { GetAdminPromptsContract, PutAdminPromptsContract, ResetAdminPromptsContract } from '@/services/contracts/prompts';
 import type {
   DeleteAdminImageGenPlanPromptOverrideContract,
   GetAdminImageGenPlanPromptOverrideContract,
@@ -114,7 +114,7 @@ import {
 } from '@/services/real/imageMaster';
 import { exportConfigReal, getDataSummaryReal, importConfigReal, previewImportConfigReal, purgeDataReal } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
-import { getAdminPromptStagesReal, putAdminPromptStagesReal, resetAdminPromptStagesReal } from '@/services/real/promptStages';
+import { getAdminPromptsReal, putAdminPromptsReal, resetAdminPromptsReal } from '@/services/real/prompts';
 import {
   deleteAdminImageGenPlanPromptOverrideReal,
   getAdminImageGenPlanPromptOverrideReal,
@@ -206,9 +206,9 @@ export const listUploadArtifacts: ListUploadArtifactsContract = withAuth(listUpl
 export const getApiLogs: GetApiLogsContract = withAuth(getApiLogsReal);
 export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetailReal);
 
-export const getAdminPromptStages: GetAdminPromptStagesContract = withAuth(getAdminPromptStagesReal);
-export const putAdminPromptStages: PutAdminPromptStagesContract = withAuth(putAdminPromptStagesReal);
-export const resetAdminPromptStages: ResetAdminPromptStagesContract = withAuth(resetAdminPromptStagesReal);
+export const getAdminPrompts: GetAdminPromptsContract = withAuth(getAdminPromptsReal);
+export const putAdminPrompts: PutAdminPromptsContract = withAuth(putAdminPromptsReal);
+export const resetAdminPrompts: ResetAdminPromptsContract = withAuth(resetAdminPromptsReal);
 export const getApiLogsMeta: GetApiLogsMetaContract = withAuth(getApiLogsMetaReal);
 
 export const getAdminImageGenPlanPromptOverride: GetAdminImageGenPlanPromptOverrideContract = withAuth(getAdminImageGenPlanPromptOverrideReal);

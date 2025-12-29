@@ -59,7 +59,7 @@ export default function App() {
         <Route path="ai-chat" element={<AiChatPage />} />
         <Route path="llm-logs" element={<LlmLogsPage />} />
         <Route path="data" element={<DataManagePage />} />
-        <Route path="prompt-stages" element={<PromptStagesPage />} />
+        <Route path="prompts" element={<PromptStagesPage />} />
         <Route path="lab" element={<LabPage />} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>

@@ -63,15 +63,8 @@ public class SessionService : ISessionService
 
         session.Mode = mode;
         session.LastActiveAt = DateTime.UtcNow;
-        
-        if (mode == InteractionMode.Guided)
-        {
-            session.GuideStep = 1;
-        }
-        else
-        {
-            session.GuideStep = null;
-        }
+        // 去阶段化：保留字段兼容历史数据，但不再维护 GuideStep
+        session.GuideStep = null;
         
         await SaveSessionAsync(session);
         return session;

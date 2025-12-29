@@ -4,8 +4,8 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
-import { getAdminPromptStages, putAdminPromptStages, resetAdminPromptStages } from '@/services';
-import type { PromptStageEntry, PromptStageSettings } from '@/services/contracts/promptStages';
+import { getAdminPrompts, putAdminPrompts, resetAdminPrompts } from '@/services';
+import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square } from 'lucide-react';
@@ -73,19 +73,19 @@ type PromptOptimizeStreamEvent = {
   errorMessage?: string;
 };
 
-function normalizeStages(stages: PromptStageEntry[] | null | undefined): PromptStageEntry[] {
-  const src = Array.isArray(stages) ? stages : [];
-  const out: PromptStageEntry[] = [];
+function normalizePrompts(prompts: PromptEntry[] | null | undefined): PromptEntry[] {
+  const src = Array.isArray(prompts) ? prompts : [];
+  const out: PromptEntry[] = [];
 
   for (let i = 0; i < src.length; i += 1) {
-    const raw = (src[i] ?? {}) as Partial<PromptStageEntry>;
+    const raw = (src[i] ?? {}) as Partial<PromptEntry>;
     const role = (normalizeText((raw as { role?: unknown }).role).toUpperCase() as RoleEnum) || 'PM';
     if (role !== 'PM' && role !== 'DEV' && role !== 'QA') continue;
     const order = typeof raw.order === 'number' && Number.isFinite(raw.order) && raw.order > 0 ? raw.order : 1;
-    const stageKey = normalizeText(raw.stageKey).trim();
-    if (!stageKey) continue;
+    const promptKey = normalizeText(raw.promptKey).trim();
+    if (!promptKey) continue;
     out.push({
-      stageKey,
+      promptKey,
       role,
       order,
       title: normalizeText(raw.title),
@@ -111,28 +111,28 @@ function stableKey(v: unknown): string {
   return JSON.stringify(String(v));
 }
 
-function validateStages(stages: PromptStageEntry[]) {
-  if (!Array.isArray(stages) || stages.length === 0) return { ok: false, message: '至少需要 1 个阶段' };
+function validatePrompts(prompts: PromptEntry[]) {
+  if (!Array.isArray(prompts) || prompts.length === 0) return { ok: false, message: '至少需要 1 个提示词' };
 
   const keySet = new Set<string>();
   const ordersByRole = new Map<RoleEnum, Set<number>>();
-  for (const s of stages) {
-    const key = normalizeText(s.stageKey).trim();
-    if (!key) return { ok: false, message: 'stageKey 不能为空' };
-    if (keySet.has(key)) return { ok: false, message: `stageKey 重复：${key}` };
+  for (const p of prompts) {
+    const key = normalizeText(p.promptKey).trim();
+    if (!key) return { ok: false, message: 'promptKey 不能为空' };
+    if (keySet.has(key)) return { ok: false, message: `promptKey 重复：${key}` };
     keySet.add(key);
 
-    const role = (normalizeText((s as { role?: unknown }).role).toUpperCase() as RoleEnum) || 'PM';
-    if (role !== 'PM' && role !== 'DEV' && role !== 'QA') return { ok: false, message: `role 非法（stageKey=${key}）` };
+    const role = (normalizeText((p as { role?: unknown }).role).toUpperCase() as RoleEnum) || 'PM';
+    if (role !== 'PM' && role !== 'DEV' && role !== 'QA') return { ok: false, message: `role 非法（promptKey=${key}）` };
 
-    const order = Number(s.order);
-    if (!Number.isFinite(order) || order <= 0) return { ok: false, message: `order 必须为正整数（stageKey=${key}）` };
+    const order = Number(p.order);
+    if (!Number.isFinite(order) || order <= 0) return { ok: false, message: `order 必须为正整数（promptKey=${key}）` };
     const set = ordersByRole.get(role) ?? new Set<number>();
     if (set.has(order)) return { ok: false, message: `同一 role 下 order 重复：${role} / ${order}` };
     set.add(order);
     ordersByRole.set(role, set);
 
-    if (!normalizeText(s.title).trim()) return { ok: false, message: `title 不能为空（stageKey=${key}）` };
+    if (!normalizeText(p.title).trim()) return { ok: false, message: `title 不能为空（promptKey=${key}）` };
     // promptTemplate 可为空（代表该阶段不注入提示词）
   }
 
@@ -147,10 +147,10 @@ export default function PromptStagesPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [isOverridden, setIsOverridden] = useState(false);
-  const [settings, setSettings] = useState<PromptStageSettings | null>(null);
+  const [settings, setSettings] = useState<PromptSettings | null>(null);
   const [baselineSig, setBaselineSig] = useState<string>('');
 
-  const [activeStageKey, setActiveStageKey] = useState<string>('');
+  const [activePromptKey, setActivePromptKey] = useState<string>('');
   const [activeRole, setActiveRole] = useState<RoleKey>('pm');
 
   // 提示词优化（魔法棒）
@@ -166,17 +166,17 @@ export default function PromptStagesPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await getAdminPromptStages();
+      const res = await getAdminPrompts();
       if (!res.success) {
         setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '加载失败'}`);
         return;
       }
       setIsOverridden(!!res.data.isOverridden);
       setSettings(res.data.settings);
-      setBaselineSig(stableKey({ stages: normalizeStages(res.data.settings?.stages) }));
-      const ns = normalizeStages(res.data.settings?.stages);
-      const nextKey = ns[0]?.stageKey ?? '';
-      setActiveStageKey((prev) => (prev && ns.some((x) => x.stageKey === prev) ? prev : nextKey));
+      setBaselineSig(stableKey({ prompts: normalizePrompts(res.data.settings?.prompts) }));
+      const np = normalizePrompts(res.data.settings?.prompts);
+      const nextKey = np[0]?.promptKey ?? '';
+      setActivePromptKey((prev) => (prev && np.some((x) => x.promptKey === prev) ? prev : nextKey));
     } finally {
       setLoading(false);
     }
@@ -186,15 +186,15 @@ export default function PromptStagesPage() {
     void load();
   }, [load]);
 
-  const stages = useMemo(() => normalizeStages(settings?.stages), [settings?.stages]);
+  const prompts = useMemo(() => normalizePrompts(settings?.prompts), [settings?.prompts]);
   const roleEnum = useMemo(() => roleKeyToEnum(activeRole), [activeRole]);
   const roleStages = useMemo(
-    () => stages.filter((s) => s.role === roleEnum).sort((a, b) => a.order - b.order),
-    [stages, roleEnum]
+    () => prompts.filter((p) => p.role === roleEnum).sort((a, b) => a.order - b.order),
+    [prompts, roleEnum]
   );
   const stage = useMemo(
-    () => roleStages.find((s) => s.stageKey === activeStageKey) ?? roleStages[0] ?? null,
-    [roleStages, activeStageKey]
+    () => roleStages.find((p) => p.promptKey === activePromptKey) ?? roleStages[0] ?? null,
+    [roleStages, activePromptKey]
   );
 
   const roleLabel = useMemo(() => {
@@ -203,46 +203,46 @@ export default function PromptStagesPage() {
     return '测试（QA）';
   }, [activeRole]);
 
-  // 角色切换时：若当前 stageKey 不属于该角色，自动切到该角色第一项
+  // 角色切换时：若当前 promptKey 不属于该角色，自动切到该角色第一项
   useEffect(() => {
     if (!roleStages.length) {
-      setActiveStageKey('');
+      setActivePromptKey('');
       return;
     }
-    if (activeStageKey && roleStages.some((x) => x.stageKey === activeStageKey)) return;
-    setActiveStageKey(roleStages[0].stageKey);
-  }, [roleStages, activeStageKey]);
+    if (activePromptKey && roleStages.some((x) => x.promptKey === activePromptKey)) return;
+    setActivePromptKey(roleStages[0].promptKey);
+  }, [roleStages, activePromptKey]);
 
-  const currentSig = useMemo(() => stableKey({ stages }), [stages]);
+  const currentSig = useMemo(() => stableKey({ prompts }), [prompts]);
   const isDirty = useMemo(() => !!baselineSig && baselineSig !== currentSig, [baselineSig, currentSig]);
-  const validation = useMemo(() => validateStages(stages), [stages]);
+  const validation = useMemo(() => validatePrompts(prompts), [prompts]);
 
-  const setStageField = (field: 'title' | 'promptTemplate', value: string) => {
+  const setPromptField = (field: 'title' | 'promptTemplate', value: string) => {
     setSettings((prev) => {
       if (!prev) return prev;
-      const nextStages = normalizeStages(prev.stages).map((s) => {
-        if (s.stageKey !== activeStageKey) return s;
-        const next = { ...s };
+      const nextPrompts = normalizePrompts(prev.prompts).map((p) => {
+        if (p.promptKey !== activePromptKey) return p;
+        const next = { ...p };
         if (field === 'title') next.title = value;
         else next.promptTemplate = value;
         return next;
       });
-      return { ...prev, stages: nextStages };
+      return { ...prev, prompts: nextPrompts };
     });
   };
 
-  const addStage = () => {
+  const addPrompt = () => {
     const key = safeIdempotencyKey();
     setSettings((prev) => {
-      const base = normalizeStages(prev?.stages);
+      const base = normalizePrompts(prev?.prompts);
       const role = roleEnum;
       const inRole = base.filter((x) => x.role === role).sort((a, b) => a.order - b.order);
       const maxOrder = inRole.reduce((m, x) => Math.max(m, x.order), 0);
-      const next: PromptStageEntry = {
-        stageKey: `stage-${roleKeyToSuffix(roleEnumToKey(role))}-${key}`,
+      const next: PromptEntry = {
+        promptKey: `prompt-${roleKeyToSuffix(roleEnumToKey(role))}-${key}`,
         role,
         order: maxOrder + 1,
-        title: '新阶段',
+        title: '新提示词',
         promptTemplate: '',
       };
       const mergedRole = [...inRole, next].map((x, idx) => ({ ...x, order: idx + 1 }));
@@ -251,42 +251,42 @@ export default function PromptStagesPage() {
         .concat(mergedRole)
         .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
       // 保持 UpdatedAt/id 不变（保存后由后端回填）
-      if (prev) return { ...prev, stages: merged };
-      const created: PromptStageSettings = {
+      if (prev) return { ...prev, prompts: merged };
+      const created: PromptSettings = {
         id: 'global',
         updatedAt: new Date().toISOString(),
-        stages: merged,
+        prompts: merged,
       };
       return created;
     });
     // 等 state 更新后再切换 active
-    setActiveStageKey((_) => `stage-${roleKeyToSuffix(roleEnumToKey(roleEnum))}-${key}`);
+    setActivePromptKey((_) => `prompt-${roleKeyToSuffix(roleEnumToKey(roleEnum))}-${key}`);
   };
 
-  const removeStage = (stageKey: string) => {
+  const removePrompt = (promptKey: string) => {
     setSettings((prev) => {
       if (!prev) return prev;
-      const base = normalizeStages(prev.stages);
-      const removed = base.find((x) => x.stageKey === stageKey) ?? null;
-      const nextAll = base.filter((x) => x.stageKey !== stageKey);
-      if (!removed) return { ...prev, stages: nextAll };
+      const base = normalizePrompts(prev.prompts);
+      const removed = base.find((x) => x.promptKey === promptKey) ?? null;
+      const nextAll = base.filter((x) => x.promptKey !== promptKey);
+      if (!removed) return { ...prev, prompts: nextAll };
       // 仅在该 role 内重排 order
       const role = removed.role;
       const roleList = nextAll.filter((x) => x.role === role).sort((a, b) => a.order - b.order).map((x, idx) => ({ ...x, order: idx + 1 }));
       const merged = nextAll.filter((x) => x.role !== role).concat(roleList).sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
-      return { ...prev, stages: merged };
+      return { ...prev, prompts: merged };
     });
-    setActiveStageKey((prev) => {
-      if (prev !== stageKey) return prev;
-      const rest = roleStages.filter((x) => x.stageKey !== stageKey).sort((a, b) => a.order - b.order);
-      return rest[0]?.stageKey ?? '';
+    setActivePromptKey((prev) => {
+      if (prev !== promptKey) return prev;
+      const rest = roleStages.filter((x) => x.promptKey !== promptKey).sort((a, b) => a.order - b.order);
+      return rest[0]?.promptKey ?? '';
     });
   };
 
-  const copyStageKey = async (k: string) => {
+  const copyPromptKey = async (k: string) => {
     try {
       await navigator.clipboard.writeText(k);
-      setMsg('已复制 stageKey');
+      setMsg('已复制 promptKey');
       setTimeout(() => setMsg(null), 900);
     } catch {
       // ignore
@@ -332,7 +332,7 @@ export default function PromptStagesPage() {
 
     let res: Response;
     try {
-      const url = joinUrl(getApiBaseUrl(), '/api/v1/admin/prompt-stages/optimize/stream');
+      const url = joinUrl(getApiBaseUrl(), '/api/v1/admin/prompts/optimize/stream');
       res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -341,7 +341,7 @@ export default function PromptStagesPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          stageKey: stage?.stageKey ?? null,
+          promptKey: stage?.promptKey ?? null,
           order: stage?.order ?? null,
           role: roleEnum,
           title: stage?.title ?? null,
@@ -401,7 +401,7 @@ export default function PromptStagesPage() {
   const applyOptimized = () => {
     const next = (optText || '').trim();
     if (!next) return;
-    setStageField('promptTemplate', next);
+    setPromptField('promptTemplate', next);
     setOptOpen(false);
     setMsg('已替换为优化后的提示词（别忘了点保存）');
   };
@@ -417,23 +417,23 @@ export default function PromptStagesPage() {
     setMsg(null);
     try {
       const idem = safeIdempotencyKey();
-      const trimmedStages = [...stages]
+      const trimmedPrompts = [...prompts]
         .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)))
-        .map((s) => ({
-          stageKey: s.stageKey.trim(),
-          role: s.role,
-          order: Number(s.order),
-          title: (s.title ?? '').trim(),
-          promptTemplate: (s.promptTemplate ?? '').trim(),
+        .map((p) => ({
+          promptKey: p.promptKey.trim(),
+          role: p.role,
+          order: Number(p.order),
+          title: (p.title ?? '').trim(),
+          promptTemplate: (p.promptTemplate ?? '').trim(),
         }));
-      const res = await putAdminPromptStages({ stages: trimmedStages }, idem);
+      const res = await putAdminPrompts({ prompts: trimmedPrompts }, idem);
       if (!res.success) {
         setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '保存失败'}`);
         return;
       }
       setSettings(res.data.settings);
       setIsOverridden(true);
-      setBaselineSig(stableKey({ stages: normalizeStages(res.data.settings?.stages) }));
+      setBaselineSig(stableKey({ prompts: normalizePrompts(res.data.settings?.prompts) }));
       setMsg('已保存（所有客户端将逐步生效，通常 ≤ 5 分钟）');
     } finally {
       setSaving(false);
@@ -446,7 +446,7 @@ export default function PromptStagesPage() {
     setMsg(null);
     try {
       const idem = safeIdempotencyKey();
-      const res = await resetAdminPromptStages(idem);
+      const res = await resetAdminPrompts(idem);
       if (!res.success) {
         setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '恢复默认失败'}`);
         return;
@@ -472,7 +472,7 @@ export default function PromptStagesPage() {
               )}
             </div>
             <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              按阶段（可增删/排序）与角色（PM/DEV/QA）配置阶段名称与阶段提示词模板；将影响 Desktop 阶段展示、Guide 模板与问答 system prompt。
+              按提示词（可增删/排序）与角色（PM/DEV/QA）配置标题与提示词模板；将影响 Desktop 提示词按钮与问答注入。
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Badge variant={isOverridden ? 'success' : 'subtle'}>{isOverridden ? '已覆盖默认' : '使用默认'}</Badge>
@@ -532,23 +532,23 @@ export default function PromptStagesPage() {
       <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}>
         <Card className="p-4 min-h-0 flex flex-col">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>阶段总览</div>
+            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>提示词总览</div>
             <div className="shrink-0">
-              <Button variant="secondary" size="xs" onClick={addStage} disabled={loading || saving}>
+              <Button variant="secondary" size="xs" onClick={addPrompt} disabled={loading || saving}>
                 <Plus size={14} />
                 新增
               </Button>
             </div>
           </div>
           <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            共 {roleStages.length} 个阶段（{roleEnum}；支持新增/删除/排序/切换）
+            共 {roleStages.length} 个提示词（{roleEnum}；支持新增/删除/排序/切换）
           </div>
           <div className="mt-3 flex-1 min-h-0 overflow-auto grid gap-2">
             {roleStages.map((s) => {
-              const active = s.stageKey === (activeStageKey || roleStages[0]?.stageKey || '');
+              const active = s.promptKey === (activePromptKey || roleStages[0]?.promptKey || '');
               return (
                 <div
-                  key={s.stageKey}
+                  key={s.promptKey}
                   className="rounded-[14px] transition-colors"
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
@@ -558,11 +558,11 @@ export default function PromptStagesPage() {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => setActiveStageKey(s.stageKey)}
+                    onClick={() => setActivePromptKey(s.promptKey)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setActiveStageKey(s.stageKey);
+                        setActivePromptKey(s.promptKey);
                       }
                     }}
                     onDragOver={(e) => {
@@ -572,14 +572,14 @@ export default function PromptStagesPage() {
                       e.preventDefault();
                       e.stopPropagation();
                       const from = e.dataTransfer.getData('text/plain');
-                      const to = s.stageKey;
+                      const to = s.promptKey;
                       if (!from || from === to) return;
                       setSettings((prev) => {
                         if (!prev) return prev;
-                        const all = normalizeStages(prev.stages);
+                        const all = normalizePrompts(prev.prompts);
                         const list = all.filter((x) => x.role === roleEnum).sort((a, b) => a.order - b.order);
-                        const fromIdx = list.findIndex((x) => x.stageKey === from);
-                        const toIdx = list.findIndex((x) => x.stageKey === to);
+                        const fromIdx = list.findIndex((x) => x.promptKey === from);
+                        const toIdx = list.findIndex((x) => x.promptKey === to);
                         if (fromIdx < 0 || toIdx < 0) return prev;
                         const moved = [...list];
                         const [item] = moved.splice(fromIdx, 1);
@@ -589,11 +589,11 @@ export default function PromptStagesPage() {
                           .filter((x) => x.role !== roleEnum)
                           .concat(renumbered)
                           .sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
-                        return { ...prev, stages: merged };
+                        return { ...prev, prompts: merged };
                       });
                     }}
                     className="w-full text-left px-3 py-3 outline-none"
-                    title={normalizeText(s.title).trim() || `阶段 ${s.order}`}
+                    title={normalizeText(s.title).trim() || `提示词 ${s.order}`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <span
@@ -601,7 +601,7 @@ export default function PromptStagesPage() {
                         onDragStart={(e) => {
                           e.stopPropagation();
                           try {
-                            e.dataTransfer.setData('text/plain', s.stageKey);
+                            e.dataTransfer.setData('text/plain', s.promptKey);
                             e.dataTransfer.effectAllowed = 'move';
                           } catch {
                             // ignore
@@ -623,7 +623,7 @@ export default function PromptStagesPage() {
                         {s.order}
                       </span>
                       <div className="text-sm font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
-                        {normalizeText(s.title).trim() || `阶段 ${s.order}`}
+                        {normalizeText(s.title).trim() || `提示词 ${s.order}`}
                       </div>
                     </div>
                   </div>
@@ -639,39 +639,39 @@ export default function PromptStagesPage() {
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 编辑器：order {stage?.order ?? 0} · {roleLabel}
               </div>
-              {stage?.stageKey && (
+              {stage?.promptKey && (
                 <div className="mt-1 text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                  <span className="truncate">stageKey：{stage.stageKey}</span>
+                  <span className="truncate">promptKey：{stage.promptKey}</span>
                   <button
                     type="button"
-                    onClick={() => void copyStageKey(stage.stageKey)}
+                    onClick={() => void copyPromptKey(stage.promptKey)}
                     className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
                     style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.04)' }}
-                    aria-label="复制 stageKey"
-                    title="复制 stageKey"
+                    aria-label="复制 promptKey"
+                    title="复制 promptKey"
                   >
                     <Copy size={14} />
                   </button>
                 </div>
               )}
               <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                阶段提示词用于“聚焦指令”：引导讲解会严格使用；问答会作为背景约束（不要生硬照抄）。
+                提示词模板用于“聚焦指令”：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
               <ConfirmTip
-                title="删除阶段？"
-                description="将删除当前阶段（不可恢复）。建议先保存导出或复制内容。"
+                title="删除提示词？"
+                description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
                 confirmText="确认删除"
                 onConfirm={() => {
-                  if (stage?.stageKey) removeStage(stage.stageKey);
+                  if (stage?.promptKey) removePrompt(stage.promptKey);
                 }}
-                disabled={loading || saving || !stage?.stageKey || roleStages.length <= 1}
+                disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
                 side="top"
                 align="end"
               >
-                <Button variant="danger" size="xs" disabled={loading || saving || !stage?.stageKey || roleStages.length <= 1}>
+                <Button variant="danger" size="xs" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
                   <Trash2 size={14} />
                   删除
                 </Button>
@@ -691,12 +691,12 @@ export default function PromptStagesPage() {
           <div className="mt-4 grid gap-3 min-h-0">
             <div>
               <div className="flex items-center justify-between gap-3">
-                <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>阶段名称（title）</div>
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>用于 Desktop 阶段按钮展示</div>
+                <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>标题（title）</div>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>用于 Desktop 提示词按钮展示</div>
               </div>
               <input
                 value={stage?.title ?? ''}
-                onChange={(e) => setStageField('title', e.target.value)}
+                onChange={(e) => setPromptField('title', e.target.value)}
                 placeholder="例如：项目背景与问题定义"
                 className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none"
                 style={{
@@ -709,7 +709,7 @@ export default function PromptStagesPage() {
 
             <div className="flex-1 min-h-0 flex flex-col">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>阶段提示词（promptTemplate）</div>
+                <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>提示词模板（promptTemplate）</div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   字符：{(stage?.promptTemplate ?? '').length.toLocaleString()}
                 </div>
@@ -717,7 +717,7 @@ export default function PromptStagesPage() {
               <div className="mt-2 flex-1 min-h-[340px] relative">
                 <textarea
                   value={stage?.promptTemplate ?? ''}
-                  onChange={(e) => setStageField('promptTemplate', e.target.value)}
+                  onChange={(e) => setPromptField('promptTemplate', e.target.value)}
                   placeholder="建议包含：关注点、输出结构、边界约束等（支持 Markdown 指令/结构要求）"
                   className="h-full w-full rounded-[14px] px-3 py-3 pr-12 text-sm outline-none resize-none"
                   style={{
@@ -754,7 +754,7 @@ export default function PromptStagesPage() {
             </div>
 
             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              小建议：避免把“用户必须如何提问”写进阶段提示词；更推荐写“本阶段要关注什么、按什么结构输出、缺失要如何标注”。保存后约 5 分钟全端生效（后端有缓存）。
+              小建议：更推荐写“要关注什么、按什么结构输出、缺失要如何标注”。保存后约 5 分钟全端生效（后端有缓存）。
             </div>
           </div>
         </Card>
@@ -786,7 +786,7 @@ export default function PromptStagesPage() {
 
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                当前：role={roleEnum} · order={stage?.order ?? '—'} · stageKey={stage?.stageKey ?? '—'}
+                当前：role={roleEnum} · order={stage?.order ?? '—'} · promptKey={stage?.promptKey ?? '—'}
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={() => void startOptimize()} disabled={optBusy}>

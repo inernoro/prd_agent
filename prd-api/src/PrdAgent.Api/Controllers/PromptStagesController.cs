@@ -6,26 +6,26 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Api.Controllers;
 
 /// <summary>
-/// 阶段提示词（客户端只取阶段枚举/标题，不返回 promptTemplate）
+/// 提示词（客户端只取枚举/标题，不返回 promptTemplate）
 /// </summary>
 [ApiController]
-[Route("api/v1/prompt-stages")]
+[Route("api/v1/prompts")]
 [Authorize]
-public class PromptStagesController : ControllerBase
+public class PromptsController : ControllerBase
 {
-    private readonly IPromptStageService _promptStageService;
+    private readonly IPromptService _promptService;
 
-    public PromptStagesController(IPromptStageService promptStageService)
+    public PromptsController(IPromptService promptService)
     {
-        _promptStageService = promptStageService;
+        _promptService = promptService;
     }
 
     [HttpGet]
-    [ProducesResponseType(typeof(ApiResponse<PromptStagesClientResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<PromptsClientResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStages(CancellationToken ct)
     {
-        var resp = await _promptStageService.GetStagesForClientAsync(ct);
-        return Ok(ApiResponse<PromptStagesClientResponse>.Ok(resp));
+        var resp = await _promptService.GetPromptsForClientAsync(ct);
+        return Ok(ApiResponse<PromptsClientResponse>.Ok(resp));
     }
 }
 

@@ -127,14 +127,6 @@ pub struct SwitchRoleResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GuideControlResponse {
-    pub current_step: i32,
-    pub total_steps: i32,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TokenUsage {
     pub input: i32,
     pub output: i32,
@@ -153,8 +145,8 @@ pub struct MessageHistoryItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PromptStageClientItem {
-    pub stage_key: String,
+pub struct PromptClientItem {
+    pub prompt_key: String,
     pub order: i32,
     pub role: String,
     pub title: String,
@@ -162,9 +154,9 @@ pub struct PromptStageClientItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PromptStagesClientResponse {
+pub struct PromptsClientResponse {
     pub updated_at: String,
-    pub stages: Vec<PromptStageClientItem>,
+    pub prompts: Vec<PromptClientItem>,
 }
 
 #[allow(dead_code)]

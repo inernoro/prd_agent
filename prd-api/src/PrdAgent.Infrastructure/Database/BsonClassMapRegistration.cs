@@ -30,7 +30,7 @@ public static class BsonClassMapRegistration
             RegisterAttachment();
             RegisterLLMConfig();
             RegisterAppSettings();
-            RegisterPromptStageSettings();
+            RegisterPromptSettings();
             RegisterLlmRequestLog();
             RegisterApiRequestLog();
             RegisterInviteCode();
@@ -253,11 +253,11 @@ public static class BsonClassMapRegistration
         });
     }
 
-    private static void RegisterPromptStageSettings()
+    private static void RegisterPromptSettings()
     {
-        if (BsonClassMap.IsClassMapRegistered(typeof(PromptStageSettings))) return;
+        if (BsonClassMap.IsClassMapRegistered(typeof(PromptSettings))) return;
 
-        BsonClassMap.RegisterClassMap<PromptStageSettings>(cm =>
+        BsonClassMap.RegisterClassMap<PromptSettings>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(s => s.Id)
@@ -266,18 +266,18 @@ public static class BsonClassMapRegistration
             cm.SetIgnoreExtraElements(true);
         });
 
-        // nested types：PromptStageEntry/RoleStagePrompt 需要忽略旧结构字段（pm/dev/qa/step 等）
-        if (!BsonClassMap.IsClassMapRegistered(typeof(PromptStageEntry)))
+        // nested types：PromptEntry/RolePrompt 需要忽略旧结构字段（pm/dev/qa/step 等）
+        if (!BsonClassMap.IsClassMapRegistered(typeof(PromptEntry)))
         {
-            BsonClassMap.RegisterClassMap<PromptStageEntry>(cm =>
+            BsonClassMap.RegisterClassMap<PromptEntry>(cm =>
             {
                 cm.AutoMap();
                 cm.SetIgnoreExtraElements(true);
             });
         }
-        if (!BsonClassMap.IsClassMapRegistered(typeof(RoleStagePrompt)))
+        if (!BsonClassMap.IsClassMapRegistered(typeof(RolePrompt)))
         {
-            BsonClassMap.RegisterClassMap<RoleStagePrompt>(cm =>
+            BsonClassMap.RegisterClassMap<RolePrompt>(cm =>
             {
                 cm.AutoMap();
                 cm.SetIgnoreExtraElements(true);

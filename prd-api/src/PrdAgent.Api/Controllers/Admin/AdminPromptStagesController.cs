@@ -10,24 +10,24 @@ using System.Security.Claims;
 namespace PrdAgent.Api.Controllers.Admin;
 
 /// <summary>
-/// 管理后台 - 阶段提示词管理（按阶段 stageKey + order + 角色 PM/DEV/QA）
+/// 管理后台 - 提示词管理（按 promptKey + order + 角色 PM/DEV/QA）
 /// </summary>
 [ApiController]
-[Route("api/v1/admin/prompt-stages")]
+[Route("api/v1/admin/prompts")]
 [Authorize(Roles = "ADMIN")]
-public class AdminPromptStagesController : ControllerBase
+public class AdminPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ICacheManager _cache;
-    private readonly IPromptStageService _promptStageService;
+    private readonly IPromptService _promptService;
 
     private static readonly TimeSpan IdempotencyExpiry = TimeSpan.FromMinutes(15);
 
-    public AdminPromptStagesController(MongoDbContext db, ICacheManager cache, IPromptStageService promptStageService)
+    public AdminPromptsController(MongoDbContext db, ICacheManager cache, IPromptService promptService)
     {
         _db = db;
         _cache = cache;
-        _promptStageService = promptStageService;
+        _promptService = promptService;
     }
 
     private string GetAdminId()
@@ -38,21 +38,21 @@ public class AdminPromptStagesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
-        var effective = await _promptStageService.GetEffectiveSettingsAsync(ct);
-        var defaults = await _promptStageService.GetDefaultSettingsAsync(ct);
+        var effective = await _promptService.GetEffectiveSettingsAsync(ct);
+        var defaults = await _promptService.GetDefaultSettingsAsync(ct);
 
         static string Normalize(string? s) => (s ?? string.Empty).Trim();
 
-        static List<PromptStageEntry> NormalizeStages(PromptStageSettings? settings)
+        static List<PromptEntry> NormalizePrompts(PromptSettings? settings)
         {
-            var list = settings?.Stages ?? new List<PromptStageEntry>();
+            var list = settings?.Prompts ?? new List<PromptEntry>();
             return list
                 .Where(x => x.Role is UserRole.PM or UserRole.DEV or UserRole.QA)
-                .Select(x => new PromptStageEntry
+                .Select(x => new PromptEntry
                 {
                     Role = x.Role,
                     Order = x.Order,
-                    StageKey = Normalize(x.StageKey),
+                    PromptKey = Normalize(x.PromptKey),
                     Title = Normalize(x.Title),
                     PromptTemplate = Normalize(x.PromptTemplate)
                 })
@@ -61,10 +61,10 @@ public class AdminPromptStagesController : ControllerBase
                 .ToList();
         }
 
-        static bool StagesEqual(PromptStageSettings? a, PromptStageSettings? b)
+        static bool PromptsEqual(PromptSettings? a, PromptSettings? b)
         {
-            var aa = NormalizeStages(a);
-            var bb = NormalizeStages(b);
+            var aa = NormalizePrompts(a);
+            var bb = NormalizePrompts(b);
             if (aa.Count != bb.Count) return false;
             for (var i = 0; i < aa.Count; i++)
             {
@@ -72,7 +72,7 @@ public class AdminPromptStagesController : ControllerBase
                 var y = bb[i];
                 if (x.Role != y.Role) return false;
                 if (x.Order != y.Order) return false;
-                if (!string.Equals(x.StageKey, y.StageKey, StringComparison.Ordinal)) return false;
+                if (!string.Equals(x.PromptKey, y.PromptKey, StringComparison.Ordinal)) return false;
                 if (!string.Equals(x.Title, y.Title, StringComparison.Ordinal)) return false;
                 if (!string.Equals(x.PromptTemplate, y.PromptTemplate, StringComparison.Ordinal)) return false;
             }
@@ -82,46 +82,46 @@ public class AdminPromptStagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             // 新语义：只要与“系统内置默认阶段配置”不同，才算覆盖（即便 DB 中已被初始化为默认，也应视为“使用默认”）
-            isOverridden = !StagesEqual(effective, defaults),
+            isOverridden = !PromptsEqual(effective, defaults),
             settings = effective
         }));
     }
 
     [HttpPut]
-    public async Task<IActionResult> Put([FromBody] UpsertPromptStagesRequest request, CancellationToken ct)
+    public async Task<IActionResult> Put([FromBody] UpsertPromptsRequest request, CancellationToken ct)
     {
         var adminId = GetAdminId();
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptstages:put:{adminId}:{idemKey}";
-            var cached = await _cache.GetAsync<PromptStageSettings>(cacheKey);
+            var cacheKey = $"admin:prompts:put:{adminId}:{idemKey}";
+            var cached = await _cache.GetAsync<PromptSettings>(cacheKey);
             if (cached != null)
             {
                 return Ok(ApiResponse<object>.Ok(new { settings = cached }));
             }
         }
 
-        var stages = request?.Stages ?? new List<UpsertPromptStageItem>();
-        if (stages.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "stages 不能为空"));
+        var prompts = request?.Prompts ?? new List<UpsertPromptItem>();
+        if (prompts.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompts 不能为空"));
 
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var ordersByRole = new Dictionary<UserRole, HashSet<int>>();
-        foreach (var s in stages)
+        foreach (var p in prompts)
         {
-            var stageKey = (s.StageKey ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(stageKey))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "stageKey 不能为空"));
-            if (!keys.Add(stageKey))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "stageKey 不能重复"));
+            var promptKey = (p.PromptKey ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(promptKey))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "promptKey 不能为空"));
+            if (!keys.Add(promptKey))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "promptKey 不能重复"));
 
-            if (s.Order <= 0)
+            if (p.Order <= 0)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "order 必须为正整数"));
 
-            if (string.IsNullOrWhiteSpace(s.Role))
+            if (string.IsNullOrWhiteSpace(p.Role))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "role 不能为空"));
-            if (!Enum.TryParse<UserRole>(s.Role.Trim(), ignoreCase: true, out var role) || role is UserRole.ADMIN)
+            if (!Enum.TryParse<UserRole>(p.Role.Trim(), ignoreCase: true, out var role) || role is UserRole.ADMIN)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "role 仅支持 PM/DEV/QA"));
 
             if (!ordersByRole.TryGetValue(role, out var set))
@@ -129,26 +129,26 @@ public class AdminPromptStagesController : ControllerBase
                 set = new HashSet<int>();
                 ordersByRole[role] = set;
             }
-            if (!set.Add(s.Order))
+            if (!set.Add(p.Order))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "同一 role 下 order 不能重复"));
 
             // title 建议必填（否则 UI 无法展示）；promptTemplate 允许为空（代表该阶段不注入提示词）
-            if (string.IsNullOrWhiteSpace(s.Title))
+            if (string.IsNullOrWhiteSpace(p.Title))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "title 不能为空"));
         }
 
         // 统一保存：全量覆盖
-        var doc = new PromptStageSettings
+        var doc = new PromptSettings
         {
             Id = "global",
             UpdatedAt = DateTime.UtcNow,
-            Stages = stages
+            Prompts = prompts
                 .Select(x =>
                 {
                     Enum.TryParse<UserRole>(x.Role.Trim(), ignoreCase: true, out var role);
-                    return new PromptStageEntry
+                    return new PromptEntry
                     {
-                        StageKey = x.StageKey.Trim(),
+                        PromptKey = x.PromptKey.Trim(),
                         Role = role,
                         Order = x.Order,
                         Title = x.Title.Trim(),
@@ -160,17 +160,17 @@ public class AdminPromptStagesController : ControllerBase
                 .ToList()
         };
 
-        await _db.PromptStages.ReplaceOneAsync(
+        await _db.Prompts.ReplaceOneAsync(
             s => s.Id == "global",
             doc,
             new ReplaceOptions { IsUpsert = true },
             ct);
 
-        await _promptStageService.RefreshAsync(ct);
+        await _promptService.RefreshAsync(ct);
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptstages:put:{adminId}:{idemKey}";
+            var cacheKey = $"admin:prompts:put:{adminId}:{idemKey}";
             await _cache.SetAsync(cacheKey, doc, IdempotencyExpiry);
         }
 
@@ -184,7 +184,7 @@ public class AdminPromptStagesController : ControllerBase
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptstages:reset:{adminId}:{idemKey}";
+            var cacheKey = $"admin:prompts:reset:{adminId}:{idemKey}";
             var cached = await _cache.GetAsync<bool?>(cacheKey);
             if (cached == true)
             {
@@ -192,12 +192,12 @@ public class AdminPromptStagesController : ControllerBase
             }
         }
 
-        await _db.PromptStages.DeleteOneAsync(s => s.Id == "global", ct);
-        await _promptStageService.RefreshAsync(ct);
+        await _db.Prompts.DeleteOneAsync(s => s.Id == "global", ct);
+        await _promptService.RefreshAsync(ct);
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptstages:reset:{adminId}:{idemKey}";
+            var cacheKey = $"admin:prompts:reset:{adminId}:{idemKey}";
             await _cache.SetAsync(cacheKey, true, IdempotencyExpiry);
         }
 

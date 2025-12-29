@@ -100,7 +100,6 @@ public class SessionsController : ControllerBase
             DocumentId = session.DocumentId,
             CurrentRole = session.CurrentRole,
             Mode = session.Mode,
-            GuideStep = session.GuideStep,
             CreatedAt = session.CreatedAt,
             LastActiveAt = session.LastActiveAt
         };

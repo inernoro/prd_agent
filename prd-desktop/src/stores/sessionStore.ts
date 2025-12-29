@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Document, InteractionMode, PromptStageEnumItem, PromptStagesClientResponse, Session, UserRole } from '../types';
+import { Document, InteractionMode, PromptItem, PromptsClientResponse, Session, UserRole } from '../types';
 
 interface SessionState {
   sessionId: string | null;
@@ -10,10 +10,8 @@ interface SessionState {
   currentRole: UserRole;
   mode: InteractionMode;
   previousMode: InteractionMode | null;
-  guideStep: number;
-  activeStageKey: string | null;
-  promptStages: PromptStageEnumItem[] | null;
-  promptStagesUpdatedAt: string | null;
+  prompts: PromptItem[] | null;
+  promptsUpdatedAt: string | null;
   
   setSession: (session: Session, doc: Document) => void;
   setActiveGroupId: (groupId: string | null) => void;
@@ -22,9 +20,7 @@ interface SessionState {
   setMode: (mode: InteractionMode) => void;
   openPrdPreviewPage: () => void;
   backFromPrdPreview: () => void;
-  setGuideStep: (step: number) => void;
-  setActiveStageKey: (stageKey: string | null) => void;
-  setPromptStages: (resp: PromptStagesClientResponse) => void;
+  setPrompts: (resp: PromptsClientResponse) => void;
   clearSession: () => void;
 }
 
@@ -38,10 +34,8 @@ export const useSessionStore = create<SessionState>()(
       currentRole: 'PM',
       mode: 'QA',
       previousMode: null,
-      guideStep: 1,
-      activeStageKey: null,
-      promptStages: null,
-      promptStagesUpdatedAt: null,
+      prompts: null,
+      promptsUpdatedAt: null,
 
       setSession: (session, doc) => set({
         sessionId: session.sessionId,
@@ -50,7 +44,6 @@ export const useSessionStore = create<SessionState>()(
         document: doc,
         currentRole: session.currentRole,
         mode: session.mode,
-        guideStep: session.guideStep ?? 1,
       }),
 
       setActiveGroupId: (groupId) => set({ activeGroupId: groupId }),
@@ -64,19 +57,9 @@ export const useSessionStore = create<SessionState>()(
         currentRole: state.currentRole ?? 'PM',
         mode: 'QA',
         previousMode: null,
-        guideStep: 1,
-        activeStageKey: null,
       })),
 
-      setRole: (role) => set((state) => {
-        const list = Array.isArray(state.promptStages) ? state.promptStages : [];
-        const byRole = list.filter((s) => s.role === role).sort((a, b) => a.order - b.order);
-        const currentKey = state.activeStageKey;
-        const keep = currentKey && byRole.some((s) => s.stageKey === currentKey);
-        const nextKey = keep ? currentKey : (byRole[0]?.stageKey ?? null);
-        const nextStep = byRole.find((s) => s.stageKey === nextKey)?.order ?? state.guideStep;
-        return { currentRole: role, activeStageKey: nextKey, guideStep: nextStep };
-      }),
+      setRole: (role) => set({ currentRole: role }),
 
       setMode: (mode) => set((state) => ({
         mode,
@@ -94,45 +77,10 @@ export const useSessionStore = create<SessionState>()(
         previousMode: null,
       })),
 
-      setGuideStep: (step) => set((state) => {
-        const list = Array.isArray(state.promptStages) ? state.promptStages : [];
-        const found = list.find((s) => s.role === state.currentRole && s.order === step);
-        return {
-          guideStep: step,
-          activeStageKey: found?.stageKey ?? state.activeStageKey,
-        };
-      }),
-
-      setActiveStageKey: (stageKey) => set((state) => {
-        const k = (stageKey ?? '').trim();
-        if (!k) return { activeStageKey: null };
-        const list = Array.isArray(state.promptStages) ? state.promptStages : [];
-        const found = list.find((s) => s.stageKey === k);
-        return {
-          activeStageKey: k,
-          guideStep: found ? (found.order || state.guideStep) : state.guideStep,
-        };
-      }),
-
-      setPromptStages: (resp) => set((state) => {
-        const stages = Array.isArray(resp?.stages) ? resp.stages : null;
+      setPrompts: (resp) => set(() => {
+        const prompts = Array.isArray(resp?.prompts) ? resp.prompts : null;
         const updatedAt = typeof resp?.updatedAt === 'string' ? resp.updatedAt : null;
-        const currentKey = state.activeStageKey;
-        if (currentKey && stages?.some((s) => s.stageKey === currentKey)) {
-          return { promptStages: stages, promptStagesUpdatedAt: updatedAt };
-        }
-        // 尝试用 currentRole + guideStep 映射 stageKey；否则取该角色第一项
-        const step = state.guideStep ?? 1;
-        const found = stages?.find((s) => s.role === state.currentRole && s.order === step);
-        const byRole = stages?.filter((s) => s.role === state.currentRole).sort((a, b) => a.order - b.order) ?? [];
-        const nextKey = found?.stageKey ?? byRole[0]?.stageKey ?? state.activeStageKey;
-        const nextStep = stages?.find((s) => s.stageKey === nextKey)?.order ?? state.guideStep;
-        return {
-          promptStages: stages,
-          promptStagesUpdatedAt: updatedAt,
-          activeStageKey: nextKey ?? state.activeStageKey,
-          guideStep: nextStep,
-        };
+        return { prompts, promptsUpdatedAt: updatedAt };
       }),
 
       clearSession: () => set({
@@ -143,11 +91,8 @@ export const useSessionStore = create<SessionState>()(
         currentRole: 'PM',
         mode: 'QA',
         previousMode: null,
-        guideStep: 1,
-        activeStageKey: null,
-        // promptStages 属于全局枚举，保留；若用户退出登录，App 会重新拉取/覆盖
-        promptStages: null,
-        promptStagesUpdatedAt: null,
+        prompts: null,
+        promptsUpdatedAt: null,
       }),
     }),
     {
@@ -161,10 +106,8 @@ export const useSessionStore = create<SessionState>()(
         currentRole: s.currentRole,
         mode: s.mode,
         previousMode: s.previousMode,
-        guideStep: s.guideStep,
-        activeStageKey: s.activeStageKey,
-        promptStages: s.promptStages,
-        promptStagesUpdatedAt: s.promptStagesUpdatedAt,
+        prompts: s.prompts,
+        promptsUpdatedAt: s.promptsUpdatedAt,
       }),
       onRehydrateStorage: () => (state, err) => {
         // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为“聊天丢失”，且会影响消息线程切换。

@@ -15,9 +15,6 @@ namespace PrdAgent.Infrastructure.Cache;
 [JsonSerializable(typeof(Session))]
 [JsonSerializable(typeof(AuthRefreshSession))]
 [JsonSerializable(typeof(ParsedPrd))]
-// 引导进度
-[JsonSerializable(typeof(GuideProgress))]
-[JsonSerializable(typeof(List<string>))]
 // 缺口分析
 [JsonSerializable(typeof(GapAnalysisResult))]
 // Token 使用

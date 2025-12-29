@@ -12,7 +12,6 @@ public class SessionResponse
     public string DocumentId { get; set; } = string.Empty;
     public UserRole CurrentRole { get; set; }
     public InteractionMode Mode { get; set; }
-    public int? GuideStep { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime LastActiveAt { get; set; }
 }
@@ -26,12 +25,4 @@ public class SwitchRoleResponse
     public UserRole CurrentRole { get; set; }
 }
 
-/// <summary>
-/// 引导控制响应
-/// </summary>
-public class GuideControlResponse
-{
-    public int CurrentStep { get; set; }
-    public int TotalSteps { get; set; }
-    public GuideStatus Status { get; set; }
-}
+// 引导讲解相关响应已删除（去阶段化）

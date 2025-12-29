@@ -16,7 +16,7 @@ public class ChatService : IChatService
     private readonly IDocumentService _documentService;
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
-    private readonly IPromptStageService _promptStageService;
+    private readonly IPromptService _promptService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
@@ -28,7 +28,7 @@ public class ChatService : IChatService
         IDocumentService documentService,
         ICacheManager cache,
         IPromptManager promptManager,
-        IPromptStageService promptStageService,
+        IPromptService promptService,
         IUserService userService,
         IMessageRepository messageRepository,
         ILLMRequestContextAccessor llmRequestContext)
@@ -38,7 +38,7 @@ public class ChatService : IChatService
         _documentService = documentService;
         _cache = cache;
         _promptManager = promptManager;
-        _promptStageService = promptStageService;
+        _promptService = promptService;
         _userService = userService;
         _messageRepository = messageRepository;
         _llmRequestContext = llmRequestContext;
@@ -47,8 +47,7 @@ public class ChatService : IChatService
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
         string sessionId,
         string content,
-        string? stageKey = null,
-        int? stageStep = null,
+        string? promptKey = null,
         string? userId = null,
         List<string>? attachmentIds = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -110,49 +109,26 @@ public class ChatService : IChatService
         var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
         var docHash = Sha256Hex(document.RawContent);
 
-        // 阶段上下文（可选）：将阶段提示词作为“聚焦指令”注入 system prompt
+        // 提示词（可选）：将提示词模板作为“聚焦指令”注入 system prompt
         string systemPrompt = baseSystemPrompt;
-        var effectiveStageKey = (stageKey ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(effectiveStageKey) && stageStep.HasValue && stageStep.Value > 0)
+        var effectivePromptKey = (promptKey ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(effectivePromptKey))
         {
-            effectiveStageKey = (await _promptStageService.MapOrderToStageKeyAsync(session.CurrentRole, stageStep.Value, cancellationToken)) ?? string.Empty;
-        }
-
-        if (!string.IsNullOrWhiteSpace(effectiveStageKey))
-        {
-            var stage = await _promptStageService.GetStagePromptByKeyAsync(session.CurrentRole, effectiveStageKey, cancellationToken);
-            if (stage != null &&
-                (!string.IsNullOrWhiteSpace(stage.Title) || !string.IsNullOrWhiteSpace(stage.PromptTemplate)))
+            var prompt = await _promptService.GetPromptByKeyAsync(session.CurrentRole, effectivePromptKey, cancellationToken);
+            if (prompt != null &&
+                (!string.IsNullOrWhiteSpace(prompt.Title) || !string.IsNullOrWhiteSpace(prompt.PromptTemplate)))
             {
-                // 尝试补充 order（可选，仅用于展示）
-                int? order = null;
-                if (stageStep.HasValue && stageStep.Value > 0) order = stageStep.Value;
-                else
-                {
-                    try
-                    {
-                        var settings = await _promptStageService.GetEffectiveSettingsAsync(cancellationToken);
-                        var s = settings.Stages.FirstOrDefault(x => string.Equals(x.StageKey, effectiveStageKey, StringComparison.Ordinal));
-                        if (s != null) order = s.Order;
-                    }
-                    catch
-                    {
-                        // ignore
-                    }
-                }
-
-                var orderText = order.HasValue ? $"阶段 {order.Value} " : "阶段 ";
                 systemPrompt += @"
 
 ---
 
-# 当前阶段上下文
-你当前正在解读/讨论 PRD 的 " + orderText + @"（stageKey=" + effectiveStageKey + @"）「" + (stage.Title ?? string.Empty) + @"」。
+# 当前提示词上下文
+你当前正在按提示词（promptKey=" + effectivePromptKey + @"）「" + (prompt.Title ?? string.Empty) + @"」进行讲解/解读。
 
-## 阶段提示词（作为聚焦指令）
-说明：以下内容用于帮助你理解该阶段的关注点；当用户显式要求“讲解/简介”该阶段时需严格遵守；否则把它当作背景约束，不要生硬照抄。
+## 提示词模板（作为聚焦指令）
+说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注“PRD 未覆盖/需补充”，不得编造。
 
-" + (stage.PromptTemplate ?? string.Empty);
+" + (prompt.PromptTemplate ?? string.Empty);
             }
         }
 

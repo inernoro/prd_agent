@@ -121,7 +121,7 @@ builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 // 应用设置服务（带缓存）
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
-builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPromptStageService, PrdAgent.Infrastructure.Services.PromptStageService>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPromptService, PrdAgent.Infrastructure.Services.PromptService>();
 
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
@@ -665,22 +665,11 @@ builder.Services.AddScoped<IChatService>(sp =>
     var documentService = sp.GetRequiredService<IDocumentService>();
     var cache = sp.GetRequiredService<ICacheManager>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
-    var promptStageService = sp.GetRequiredService<IPromptStageService>();
+    var promptService = sp.GetRequiredService<IPromptService>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptStageService, userService, messageRepo, llmCtx);
-});
-
-builder.Services.AddScoped<IGuideService>(sp =>
-{
-    var llmClient = sp.GetRequiredService<ILLMClient>();
-    var sessionService = sp.GetRequiredService<ISessionService>();
-    var documentService = sp.GetRequiredService<IDocumentService>();
-    var promptManager = sp.GetRequiredService<IPromptManager>();
-    var promptStageService = sp.GetRequiredService<IPromptStageService>();
-    var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new GuideService(llmClient, sessionService, documentService, promptManager, promptStageService, llmCtx);
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, userService, messageRepo, llmCtx);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
@@ -694,12 +683,7 @@ builder.Services.AddScoped<IPreviewAskService>(sp =>
     return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx, settingsService);
 });
 
-// 注册引导进度仓储
-builder.Services.AddScoped<IGuideProgressRepository>(sp =>
-{
-    var cache = sp.GetRequiredService<ICacheManager>();
-    return new GuideProgressRepository(cache);
-});
+// 引导讲解体系已删除（去阶段化）
 
 // 注册在线状态服务
 builder.Services.AddScoped<IOnlineStatusService>(sp =>

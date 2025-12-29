@@ -1,14 +1,14 @@
 namespace PrdAgent.Api.Models.Requests;
 
-public class UpsertPromptStagesRequest
+public class UpsertPromptsRequest
 {
-    public List<UpsertPromptStageItem> Stages { get; set; } = new();
+    public List<UpsertPromptItem> Prompts { get; set; } = new();
 }
 
-public class UpsertPromptStageItem
+public class UpsertPromptItem
 {
     /// <summary>稳定标识（全局唯一）</summary>
-    public string StageKey { get; set; } = string.Empty;
+    public string PromptKey { get; set; } = string.Empty;
 
     /// <summary>仅允许 PM/DEV/QA</summary>
     public string Role { get; set; } = "PM";

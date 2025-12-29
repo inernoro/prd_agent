@@ -3,14 +3,14 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Api.Models.Requests;
 
 /// <summary>
-/// 管理后台：阶段提示词优化（流式）
+/// 管理后台：提示词优化（流式）
 /// </summary>
-public class PromptStageOptimizeStreamRequest
+public class PromptOptimizeStreamRequest
 {
     private const int MaxPromptChars = 32 * 1024;
 
-    /// <summary>稳定阶段标识</summary>
-    public string? StageKey { get; set; }
+    /// <summary>稳定提示词标识</summary>
+    public string? PromptKey { get; set; }
 
     /// <summary>排序号（可选，仅用于上下文）</summary>
     public int? Order { get; set; }
@@ -18,7 +18,7 @@ public class PromptStageOptimizeStreamRequest
     /// <summary>角色（仅允许 PM/DEV/QA）</summary>
     public UserRole Role { get; set; } = UserRole.PM;
 
-    /// <summary>阶段标题（可选，仅用于上下文）</summary>
+    /// <summary>标题（可选，仅用于上下文）</summary>
     public string? Title { get; set; }
 
     /// <summary>原始提示词模板</summary>

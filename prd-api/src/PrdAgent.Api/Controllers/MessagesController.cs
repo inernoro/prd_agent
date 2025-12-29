@@ -64,8 +64,7 @@ public class MessagesController : ControllerBase
             await foreach (var streamEvent in _chatService.SendMessageAsync(
                 sessionId,
                 request.Content,
-                request.StageKey,
-                request.StageStep,
+                request.PromptKey,
                 userId,
                 request.AttachmentIds,
                 cancellationToken))

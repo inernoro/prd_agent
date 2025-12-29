@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, useRef, KeyboardEvent, useCallback } from 'react';
+import { useMemo, useState, useRef, KeyboardEvent } from 'react';
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
-import { Message, PromptStageEnumItem, UserRole } from '../../types';
+import { Message, PromptItem, UserRole } from '../../types';
 
 function roleSuffix(role: UserRole) {
   if (role === 'DEV') return 'dev';
@@ -11,7 +11,7 @@ function roleSuffix(role: UserRole) {
   return 'pm';
 }
 
-function fallbackStages(role: UserRole): PromptStageEnumItem[] {
+function fallbackPrompts(role: UserRole): PromptItem[] {
   const suf = roleSuffix(role);
   const base =
     role === 'DEV'
@@ -41,7 +41,7 @@ function fallbackStages(role: UserRole): PromptStageEnumItem[] {
             { order: 6, title: '成功指标与验收标准' },
           ];
   return base.map((x) => ({
-    stageKey: `legacy-step-${x.order}-${suf}`,
+    promptKey: `legacy-prompt-${x.order}-${suf}`,
     order: x.order,
     role,
     title: x.title,
@@ -58,34 +58,15 @@ const DEMO_RESPONSES = [
 ];
 
 export default function ChatInput() {
-  const { sessionId, currentRole, mode, guideStep, setGuideStep, document, promptStages, activeStageKey, setActiveStageKey } = useSessionStore();
+  const { sessionId, currentRole, document, prompts } = useSessionStore();
   const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [showExplainGlow, setShowExplainGlow] = useState(false);
 
   // 检测是否为演示模式
   const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
-
-  type StageItem = PromptStageEnumItem;
-
-  // 阶段选择
-  const selectStep = useCallback((step: StageItem) => {
-    if (isStreaming) return;
-    setGuideStep(step.order);
-    setActiveStageKey(step.stageKey);
-  }, [isStreaming, setGuideStep, setActiveStageKey]);
-
-  // 旋转发光提示：强制常驻（便于调效果）
-  useEffect(() => {
-    setShowExplainGlow(mode === 'Guided' && !!document?.id);
-  }, [mode, document?.id]);
-
-  const markExplainHintSeen = () => {
-    // 强制常驻时不关闭动效
-  };
 
   // 演示模式下的模拟流式回复
   const simulateStreamingResponse = async (question: string) => {
@@ -110,18 +91,13 @@ export default function ChatInput() {
     stopStreaming();
   };
 
-  const stepsForRole = useMemo(() => {
-    const list = Array.isArray(promptStages) ? promptStages : [];
-    const filtered = list.filter((s) => s.role === currentRole).sort((a, b) => a.order - b.order);
-    return filtered.length ? filtered : fallbackStages(currentRole);
-  }, [promptStages, currentRole]);
-
-  const selectedStage = useMemo(() => {
-    const found = activeStageKey
-      ? stepsForRole.find((s) => s.stageKey === activeStageKey)
-      : stepsForRole.find((s) => s.order === guideStep);
-    return found ?? stepsForRole[0] ?? null;
-  }, [stepsForRole, activeStageKey, guideStep]);
+  const promptsForRole = useMemo(() => {
+    const list = Array.isArray(prompts) ? prompts : [];
+    const filtered = list
+      .filter((p) => p.role === currentRole)
+      .sort((a, b) => a.order - b.order);
+    return filtered.length ? filtered : fallbackPrompts(currentRole);
+  }, [prompts, currentRole]);
 
   const pushSimulatedUserMessage = (text: string) => {
     const userMessage: Message = {
@@ -135,59 +111,31 @@ export default function ChatInput() {
     return userMessage;
   };
 
-  const handleIntro = async () => {
+  const handlePromptExplain = async (p: PromptItem) => {
     if (!sessionId || isStreaming) return;
-    // 任何发送都视为“已开始使用该 PRD”，关闭一次性提示
-    if (showExplainGlow) markExplainHintSeen();
-    // “简介”按钮只是替用户发送一句话
-    const text = '请简单简介一下这个阶段。';
-    const userMessage = pushSimulatedUserMessage(text);
-
-    // 演示模式：走本地模拟
-    if (isDemoMode) {
-      await simulateStreamingResponse(userMessage.content);
-      return;
-    }
-
     try {
-      const stagePayload = mode === 'Guided'
-        ? { stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined, stageStep: guideStep }
-        : {};
-      await invoke('send_message', {
-        sessionId,
-        content: userMessage.content,
-        role: currentRole.toLowerCase(),
-        ...stagePayload,
-      });
-    } catch (err) {
-      console.error('Failed to send intro:', err);
-    }
-  };
-
-  const handleExplain = async () => {
-    if (!sessionId || isStreaming) return;
-    // 任何发送都视为“已开始使用该 PRD”，关闭一次性提示
-    if (showExplainGlow) markExplainHintSeen();
-    try {
-      const text = '请开始讲解这个阶段，并按要点输出。';
+      const text = `【讲解】${p.title}`;
       const userMessage = pushSimulatedUserMessage(text);
-      const stagePayload = mode === 'Guided'
-        ? { stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined, stageStep: guideStep }
-        : {};
+
+      // 演示模式：走本地模拟
+      if (isDemoMode) {
+        await simulateStreamingResponse(userMessage.content);
+        return;
+      }
+
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        ...stagePayload,
+        promptKey: p.promptKey,
       });
     } catch (err) {
-      console.error('Failed to start explain:', err);
+      console.error('Failed to send prompt explain:', err);
     }
   };
 
   const handleSend = async () => {
     if (!content.trim() || !sessionId || isStreaming) return;
-    if (showExplainGlow) markExplainHintSeen();
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -208,14 +156,10 @@ export default function ChatInput() {
     }
 
     try {
-      const stagePayload = mode === 'Guided'
-        ? { stageKey: activeStageKey ?? selectedStage?.stageKey ?? undefined, stageStep: guideStep }
-        : {};
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
-        ...stagePayload,
       });
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -250,57 +194,25 @@ export default function ChatInput() {
 
   return (
     <div className="border-t border-border bg-surface-light dark:bg-surface-dark">
-      {/* 讲解模式阶段选择栏 */}
-      {mode === 'Guided' && (
-        <div className="px-3 py-2 flex items-center gap-2">
-          {/* 阶段选择按钮 */}
+      {/* 提示词栏：按当前角色展示 */}
+      {canChat && document?.id && (
+        <div className="px-3 py-2 flex items-center gap-2 border-b border-border">
+          <div className="text-xs text-text-secondary flex-shrink-0">提示词</div>
           <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none">
-            {stepsForRole.map((step) => (
+            {promptsForRole.map((p) => (
               <button
-                key={step.stageKey}
-                onClick={() => selectStep(step)}
+                key={p.promptKey}
+                onClick={() => handlePromptExplain(p)}
                 disabled={isStreaming}
                 className={`flex-shrink-0 px-2.5 py-1.5 text-xs rounded-md transition-all ${
-                  (activeStageKey ? activeStageKey === step.stageKey : guideStep === step.order)
-                    ? 'bg-primary-500 text-white shadow-sm'
-                    : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
+                  'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
                 } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                title={p.title}
               >
-                <span className="font-medium">{step.order}</span>
-                <span className="ml-1 hidden sm:inline">{step.title}</span>
+                <span className="hidden sm:inline">{p.title}</span>
+                <span className="sm:hidden">{p.order}</span>
               </button>
             ))}
-          </div>
-
-          {/* 简介/讲解按钮 */}
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button
-              onClick={handleIntro}
-              disabled={!sessionId || isStreaming}
-              className="min-w-[3.25rem] px-2.5 py-1.5 text-xs rounded-md border border-border text-text-secondary hover:text-primary-500 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="简要概括该阶段"
-            >
-              简介
-            </button>
-            {showExplainGlow ? (
-              <button
-                onClick={handleExplain}
-                disabled={!sessionId || isStreaming}
-                className="min-w-[3.25rem] px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="开始讲解该阶段"
-              >
-                讲解
-              </button>
-            ) : (
-              <button
-                onClick={handleExplain}
-                disabled={!sessionId || isStreaming}
-                className="min-w-[3.25rem] px-2.5 py-1.5 text-xs rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="开始讲解该阶段"
-              >
-                讲解
-              </button>
-            )}
           </div>
         </div>
       )}

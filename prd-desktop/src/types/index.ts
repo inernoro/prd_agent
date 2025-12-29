@@ -1,5 +1,5 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
-export type InteractionMode = 'QA' | 'Guided' | 'Knowledge' | 'PrdPreview';
+export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview';
 export type MessageRole = 'User' | 'Assistant';
 
 export interface DocCitation {
@@ -23,19 +23,18 @@ export interface Session {
   documentId: string;
   currentRole: UserRole;
   mode: InteractionMode;
-  guideStep?: number;
 }
 
-export interface PromptStageEnumItem {
-  stageKey: string;
+export interface PromptItem {
+  promptKey: string;
   order: number;
   role: UserRole; // PM/DEV/QA
   title: string;
 }
 
-export interface PromptStagesClientResponse {
+export interface PromptsClientResponse {
   updatedAt: string;
-  stages: PromptStageEnumItem[];
+  prompts: PromptItem[];
 }
 
 export interface Document {
@@ -98,19 +97,6 @@ export interface StreamEvent {
   content?: string;
   errorCode?: string;
   errorMessage?: string;
-  blockId?: string;
-  blockKind?: MessageBlockKind;
-  blockLanguage?: string;
-  phase?: string;
-  citations?: DocCitation[];
-}
-
-export interface GuideEvent {
-  type: 'step' | 'delta' | 'stepDone' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
-  step?: number;
-  totalSteps?: number;
-  title?: string;
-  content?: string;
   blockId?: string;
   blockKind?: MessageBlockKind;
   blockLanguage?: string;

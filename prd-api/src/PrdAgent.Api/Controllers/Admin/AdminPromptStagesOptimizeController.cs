@@ -9,17 +9,17 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Api.Controllers.Admin;
 
 /// <summary>
-/// 管理后台 - 阶段提示词：一键优化（SSE）
+/// 管理后台 - 提示词：一键优化（SSE）
 /// </summary>
 [ApiController]
-[Route("api/v1/admin/prompt-stages/optimize")]
+[Route("api/v1/admin/prompts/optimize")]
 [Authorize(Roles = "ADMIN")]
-public class AdminPromptStagesOptimizeController : ControllerBase
+public class AdminPromptsOptimizeController : ControllerBase
 {
     private readonly ILLMClient _llmClient;
-    private readonly ILogger<AdminPromptStagesOptimizeController> _logger;
+    private readonly ILogger<AdminPromptsOptimizeController> _logger;
 
-    public AdminPromptStagesOptimizeController(ILLMClient llmClient, ILogger<AdminPromptStagesOptimizeController> logger)
+    public AdminPromptsOptimizeController(ILLMClient llmClient, ILogger<AdminPromptsOptimizeController> logger)
     {
         _llmClient = llmClient;
         _logger = logger;
@@ -27,7 +27,7 @@ public class AdminPromptStagesOptimizeController : ControllerBase
 
     [HttpPost("stream")]
     [Produces("text/event-stream")]
-    public async Task OptimizeStream([FromBody] PromptStageOptimizeStreamRequest request, CancellationToken cancellationToken)
+    public async Task OptimizeStream([FromBody] PromptOptimizeStreamRequest request, CancellationToken cancellationToken)
     {
         var (ok, err) = request.Validate();
         Response.ContentType = "text/event-stream";
@@ -36,13 +36,13 @@ public class AdminPromptStagesOptimizeController : ControllerBase
 
         if (!ok)
         {
-            var errorEvent = new PromptStageOptimizeStreamEvent
+            var errorEvent = new PromptOptimizeStreamEvent
             {
                 Type = "error",
                 ErrorCode = ErrorCodes.INVALID_FORMAT,
                 ErrorMessage = err ?? "参数错误"
             };
-            var errorData = JsonSerializer.Serialize(errorEvent, AppJsonContext.Default.PromptStageOptimizeStreamEvent);
+            var errorData = JsonSerializer.Serialize(errorEvent, AppJsonContext.Default.PromptOptimizeStreamEvent);
             await Response.WriteAsync($"event: optimize\n", cancellationToken);
             await Response.WriteAsync($"data: {errorData}\n\n", cancellationToken);
             await Response.Body.FlushAsync(cancellationToken);
@@ -50,14 +50,14 @@ public class AdminPromptStagesOptimizeController : ControllerBase
         }
 
         var mode = (request.Mode ?? "strict").Trim().ToLowerInvariant();
-        var stageKey = (request.StageKey ?? string.Empty).Trim();
+        var promptKey = (request.PromptKey ?? string.Empty).Trim();
         var title = (request.Title ?? string.Empty).Trim();
         var order = request.Order;
 
         // system prompt：要求仅输出“优化后的提示词正文”
         var systemPrompt =
             "你是世界一流的提示词工程师，擅长把含糊的提示词改写成清晰、可执行、可复用的模板。\n" +
-            "你的任务：将用户提供的阶段提示词（promptTemplate）优化为更标准的版本，用于 PRD 解读助手。\n\n" +
+            "你的任务：将用户提供的提示词（promptTemplate）优化为更标准的版本，用于 PRD 解读助手。\n\n" +
             "强制要求：\n" +
             "1) 输出必须是中文。\n" +
             "2) 只能输出“优化后的 promptTemplate 纯文本”，不要输出解释、不要输出分析、不要加标题、不要包裹 ```。\n" +
@@ -74,7 +74,7 @@ public class AdminPromptStagesOptimizeController : ControllerBase
         var ctx =
             $"上下文：role={roleText}" +
             (order.HasValue ? $", order={order.Value}" : "") +
-            (!string.IsNullOrWhiteSpace(stageKey) ? $", stageKey={stageKey}" : "") +
+            (!string.IsNullOrWhiteSpace(promptKey) ? $", promptKey={promptKey}" : "") +
             (!string.IsNullOrWhiteSpace(title) ? $", title={title}" : "") +
             "\n";
 
@@ -92,8 +92,8 @@ public class AdminPromptStagesOptimizeController : ControllerBase
         {
             // start
             var startData = JsonSerializer.Serialize(
-                new PromptStageOptimizeStreamEvent { Type = "start" },
-                AppJsonContext.Default.PromptStageOptimizeStreamEvent);
+                new PromptOptimizeStreamEvent { Type = "start" },
+                AppJsonContext.Default.PromptOptimizeStreamEvent);
             await Response.WriteAsync($"event: optimize\n", cancellationToken);
             await Response.WriteAsync($"data: {startData}\n\n", cancellationToken);
             await Response.Body.FlushAsync(cancellationToken);
@@ -103,8 +103,8 @@ public class AdminPromptStagesOptimizeController : ControllerBase
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     var data = JsonSerializer.Serialize(
-                        new PromptStageOptimizeStreamEvent { Type = "delta", Content = chunk.Content },
-                        AppJsonContext.Default.PromptStageOptimizeStreamEvent);
+                        new PromptOptimizeStreamEvent { Type = "delta", Content = chunk.Content },
+                        AppJsonContext.Default.PromptOptimizeStreamEvent);
                     await Response.WriteAsync($"event: optimize\n", cancellationToken);
                     await Response.WriteAsync($"data: {data}\n\n", cancellationToken);
                     await Response.Body.FlushAsync(cancellationToken);
@@ -112,13 +112,13 @@ public class AdminPromptStagesOptimizeController : ControllerBase
                 else if (chunk.Type == "error")
                 {
                     var data = JsonSerializer.Serialize(
-                        new PromptStageOptimizeStreamEvent
+                        new PromptOptimizeStreamEvent
                         {
                             Type = "error",
                             ErrorCode = ErrorCodes.LLM_ERROR,
                             ErrorMessage = chunk.ErrorMessage ?? "LLM 调用失败"
                         },
-                        AppJsonContext.Default.PromptStageOptimizeStreamEvent);
+                        AppJsonContext.Default.PromptOptimizeStreamEvent);
                     await Response.WriteAsync($"event: optimize\n", cancellationToken);
                     await Response.WriteAsync($"data: {data}\n\n", cancellationToken);
                     await Response.Body.FlushAsync(cancellationToken);
@@ -127,8 +127,8 @@ public class AdminPromptStagesOptimizeController : ControllerBase
             }
 
             var doneData = JsonSerializer.Serialize(
-                new PromptStageOptimizeStreamEvent { Type = "done" },
-                AppJsonContext.Default.PromptStageOptimizeStreamEvent);
+                new PromptOptimizeStreamEvent { Type = "done" },
+                AppJsonContext.Default.PromptOptimizeStreamEvent);
             await Response.WriteAsync($"event: optimize\n", cancellationToken);
             await Response.WriteAsync($"data: {doneData}\n\n", cancellationToken);
             await Response.Body.FlushAsync(cancellationToken);
@@ -143,13 +143,13 @@ public class AdminPromptStagesOptimizeController : ControllerBase
             try
             {
                 var data = JsonSerializer.Serialize(
-                    new PromptStageOptimizeStreamEvent
+                    new PromptOptimizeStreamEvent
                     {
                         Type = "error",
                         ErrorCode = ErrorCodes.LLM_ERROR,
                         ErrorMessage = "服务异常，请稍后重试"
                     },
-                    AppJsonContext.Default.PromptStageOptimizeStreamEvent);
+                    AppJsonContext.Default.PromptOptimizeStreamEvent);
                 await Response.WriteAsync($"event: optimize\n", cancellationToken);
                 await Response.WriteAsync($"data: {data}\n\n", cancellationToken);
                 await Response.Body.FlushAsync(cancellationToken);

@@ -28,7 +28,7 @@ export default function AppShell() {
       { key: '/users', label: '用户管理', icon: <Users size={18} /> },
       { key: '/groups', label: '群组管理', icon: <Users2 size={18} /> },
       { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} /> },
-      { key: '/prompt-stages', label: '提示词管理', icon: <FileText size={18} /> },
+      { key: '/prompts', label: '提示词管理', icon: <FileText size={18} /> },
       { key: '/ai-chat', label: 'AI 对话', icon: <MessagesSquare size={18} /> },
       { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} /> },
       { key: '/data', label: '数据管理', icon: <Database size={18} /> },

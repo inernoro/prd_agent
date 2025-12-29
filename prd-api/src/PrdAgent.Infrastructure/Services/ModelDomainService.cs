@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -100,6 +101,10 @@ public class ModelDomainService : IModelDomainService
             return "未命名群组";
         }
 
+        // 本地启发式兜底：从显式标题/产品名称/文件名中提取
+        // 目的：即使模型偶发不遵循“只输出名称”，也能返回稳定可用的群组名
+        var fallbackName = GroupNameHeuristics.Suggest(fileName, safeSnippet, maxLen: 20);
+
         // 使用意图模型（不存在则回退主模型）
         var client = await GetClientAsync(ModelPurpose.Intent, ct);
 
@@ -112,17 +117,21 @@ public class ModelDomainService : IModelDomainService
             ViewRole: null,
             DocumentChars: null,
             DocumentHash: null,
-            SystemPromptRedacted: "[INTENT_GROUP_NAME]",
+            // 展示给管理后台/日志的 system（脱敏版）：不要再用占位符，避免误导排障
+            SystemPromptRedacted: "意图：根据文件名与PRD片段输出群组名称（只输出名称，不追问）",
             RequestType: "intent",
             RequestPurpose: "groupName.suggest"));
 
         var systemPrompt =
-            "你是PRD Agent的意图模型。你的任务：根据给定的文件名与PRD片段，生成一个适合“群组名称”的短标题。\n" +
-            "要求：\n" +
-            "- 只输出一个名称，不要解释\n" +
-            "- 优先中文，1-20字\n" +
-            "- 避免包含版本号、日期、纯数字、文件扩展名\n" +
-            "- 如果片段包含明显标题，用它的语义进行概括";
+            "你是PRD Agent的意图模型。\n" +
+            "任务：根据给定的文件名与PRD片段，生成一个适合“群组名称”的短标题。\n" +
+            "强制要求（必须遵守）：\n" +
+            "- 只输出一个名称（单行），不要解释、不要提问、不要给选项\n" +
+            "- 如果信息不完整，也必须给出“最佳猜测”的名称；不要要求补充全文\n" +
+            "- 优先中文（允许混合英文），2-20字\n" +
+            "- 避免版本号/日期/纯数字/文件扩展名/引号/前缀（如“群组名称：”）\n" +
+            "- 优先从标题、产品名称/项目名称提取；其次概括主题\n" +
+            "输出格式：仅名称本身，不含任何标点前后缀";
 
         var userContent =
             $"文件名：{(string.IsNullOrWhiteSpace(fileName) ? "(无)" : fileName)}\n\n" +
@@ -134,9 +143,14 @@ public class ModelDomainService : IModelDomainService
             new() { Role = "user", Content = userContent }
         };
 
-        var text = await CollectToTextAsync(client, systemPrompt, messages, ct);
+        // 该意图属于“短文本提取”，禁用 prompt cache 可显著降低“错误复用/误命中”带来的离谱输出风险
+        var text = await CollectToTextAsync(client, systemPrompt, messages, enablePromptCache: false, ct);
         var name = NormalizeName(text);
-        return string.IsNullOrWhiteSpace(name) ? "未命名群组" : name;
+        if (string.IsNullOrWhiteSpace(name) || !LooksLikeAName(name))
+        {
+            return fallbackName;
+        }
+        return name;
     }
 
     private async Task<LLMModel?> FindPurposeModelAsync(ModelPurpose purpose, CancellationToken ct)
@@ -181,10 +195,11 @@ public class ModelDomainService : IModelDomainService
         ILLMClient client,
         string systemPrompt,
         List<LLMMessage> messages,
+        bool enablePromptCache,
         CancellationToken ct)
     {
         var sb = new StringBuilder();
-        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct).WithCancellation(ct))
+        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, enablePromptCache, ct).WithCancellation(ct))
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
@@ -196,6 +211,22 @@ public class ModelDomainService : IModelDomainService
             }
         }
         return sb.ToString();
+    }
+
+    private static bool LooksLikeAName(string name)
+    {
+        var s = (name ?? string.Empty).Trim();
+        if (s.Length < 2 || s.Length > 50) return false;
+
+        // 追问/说明式内容直接判为无效
+        var bad = new[]
+        {
+            "需要你提供", "请提供", "请告诉", "你想", "我可以", "方式A", "方式B", "目前只有片段", "不清楚", "无法", "不知道"
+        };
+        if (bad.Any(x => s.Contains(x, StringComparison.OrdinalIgnoreCase))) return false;
+        if (s.Contains("http", StringComparison.OrdinalIgnoreCase)) return false;
+        if (Regex.IsMatch(s, @"^[\d\W_]+$")) return false;
+        return true;
     }
 
     private static string NormalizeName(string raw)
@@ -212,7 +243,12 @@ public class ModelDomainService : IModelDomainService
                    .Replace("群名：", "", StringComparison.OrdinalIgnoreCase)
                    .Trim();
 
-        if (line.Length > 24) line = line[..24].Trim();
+        if (line.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            line = line[..^3].Trim();
+        }
+
+        if (line.Length > 20) line = line[..20].Trim();
         return line;
     }
 

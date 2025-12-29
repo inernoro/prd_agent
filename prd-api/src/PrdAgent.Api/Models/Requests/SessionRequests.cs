@@ -28,15 +28,9 @@ public class SendMessageRequest
     public List<string>? AttachmentIds { get; set; }
 
     /// <summary>
-    /// 阶段（可选，推荐）：稳定阶段标识
+    /// 提示词（可选，推荐）：稳定提示词标识
     /// </summary>
-    public string? StageKey { get; set; }
-
-    /// <summary>
-    /// 阶段（可选，兼容）：与引导讲解 step(order) 对齐（1..N）
-    /// - 旧客户端仍可能发送 stageStep
-    /// </summary>
-    public int? StageStep { get; set; }
+    public string? PromptKey { get; set; }
 
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
@@ -49,23 +43,4 @@ public class SendMessageRequest
     }
 }
 
-/// <summary>
-/// 启动引导请求
-/// </summary>
-public class StartGuideRequest
-{
-    /// <summary>角色</summary>
-    public UserRole Role { get; set; }
-}
-
-/// <summary>
-/// 引导控制请求
-/// </summary>
-public class GuideControlRequest
-{
-    /// <summary>控制动作</summary>
-    public GuideAction Action { get; set; }
-
-    /// <summary>目标步骤（仅GoTo时需要）</summary>
-    public int? Step { get; set; }
-}
+// 引导讲解相关请求已删除（去阶段化）

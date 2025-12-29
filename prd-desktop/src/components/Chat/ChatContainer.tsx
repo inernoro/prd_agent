@@ -13,7 +13,7 @@ const phaseText: Record<string, string> = {
 };
 
 export default function ChatContainer() {
-  const { mode, sessionId, currentRole, guideStep } = useSessionStore();
+  const { sessionId, currentRole } = useSessionStore();
   const {
     messages,
     startStreaming,
@@ -22,7 +22,6 @@ export default function ChatContainer() {
     appendToStreamingBlock,
     endStreamingBlock,
     setMessageCitations,
-    setStreamingMessageCitations,
     stopStreaming,
     setMessages,
     addMessage,
@@ -30,9 +29,6 @@ export default function ChatContainer() {
     streamingMessageId,
     streamingPhase,
     setStreamingPhase,
-    upsertMessage,
-    setContext,
-    setGuidedStep,
     bindSession,
   } = useMessageStore();
 
@@ -42,17 +38,6 @@ export default function ChatContainer() {
     streamingPhase !== 'typing' &&
     // 如果当前已经有“流式气泡”，阶段提示应在气泡内展示，避免重复
     (!streamingMessageId || !messages?.some((m) => m.id === streamingMessageId));
-
-  // 讲解页按阶段切换对话线程（不影响问答页）
-  useEffect(() => {
-    setContext(mode === 'Guided' ? 'Guided' : 'QA', guideStep);
-  }, [mode, guideStep, setContext]);
-
-  useEffect(() => {
-    if (mode === 'Guided') {
-      setGuidedStep(guideStep);
-    }
-  }, [mode, guideStep, setGuidedStep]);
 
   useEffect(() => {
     // 监听消息流事件
@@ -106,99 +91,7 @@ export default function ChatContainer() {
         console.error('Failed to unlisten message-chunk event:', err);
       });
     };
-  }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage, setStreamingPhase, setMessageCitations]);
-
-  useEffect(() => {
-    // 监听引导讲解流事件
-    const unlistenGuide = listen<any>(
-      'guide-chunk',
-      (event) => {
-        const { type, content, step, title, errorMessage, phase, blockId, blockKind, blockLanguage, citations } = event.payload as any;
-
-        if (type === 'step') {
-          const header = `### 阶段 ${step ?? ''}${title ? `：${title}` : ''}\n\n`;
-
-          // 如果已经有占位的流式气泡，则只补全 header；否则新建
-          if (isStreaming && streamingMessageId) {
-            const existingHeaderOk = (() => {
-              // 只要以 ### 开头就认为已经有 header
-              const msg = (useMessageStore.getState().messages || []).find((m) => m.id === streamingMessageId);
-              return msg?.content?.trimStart().startsWith('###');
-            })();
-            if (!existingHeaderOk) {
-              const existing = (useMessageStore.getState().messages || []).find((m) => m.id === streamingMessageId);
-              const headerBlock = { id: `header-${streamingMessageId}`, kind: 'heading' as const, content: header, isComplete: true as const };
-              upsertMessage({
-                id: streamingMessageId,
-                role: 'Assistant',
-                content: header + (existing?.content ?? ''),
-                timestamp: new Date(),
-                viewRole: currentRole,
-                blocks: existing?.blocks?.length ? [headerBlock, ...existing.blocks] : [headerBlock],
-              });
-            }
-          } else {
-            const id = `guide-${step ?? guideStep}-${Date.now()}`;
-            startStreaming({
-              id,
-              role: 'Assistant',
-              content: header,
-              timestamp: new Date(),
-              viewRole: currentRole,
-              blocks: [{ id: `header-${id}`, kind: 'heading', content: header, isComplete: true }],
-            });
-          }
-        } else if (type === 'blockStart' && blockId && blockKind) {
-          startStreamingBlock({ id: blockId, kind: blockKind, language: blockLanguage ?? null });
-        } else if (type === 'blockDelta' && blockId && content) {
-          appendToStreamingBlock(blockId, content);
-          setStreamingPhase('typing');
-        } else if (type === 'blockEnd' && blockId) {
-          endStreamingBlock(blockId);
-        } else if (type === 'delta' && content) {
-          // 兼容旧协议（引导）
-          appendToStreamingMessage(content);
-          setStreamingPhase('typing');
-        } else if (type === 'citations' && Array.isArray(citations)) {
-          setStreamingMessageCitations(citations);
-        } else if (type === 'stepDone') {
-          stopStreaming();
-        } else if (type === 'phase' && phase) {
-          // 在尚未产生 step/delta 之前也要展示友好状态
-          setStreamingPhase((phase as any) || null);
-          if (phase === 'requesting' && !isStreaming) {
-            // 创建占位气泡，避免页面只剩空光标/无反馈
-            const id = `guide-pending-${guideStep}-${Date.now()}`;
-            startStreaming({
-              id,
-              role: 'Assistant',
-              content: '',
-              timestamp: new Date(),
-              viewRole: currentRole,
-            });
-          }
-        } else if (type === 'error') {
-          stopStreaming();
-          addMessage({
-            id: `guide-error-${Date.now()}`,
-            role: 'Assistant',
-            content: `阶段讲解失败：${errorMessage || '未知错误'}`,
-            timestamp: new Date(),
-            viewRole: currentRole,
-          });
-        }
-      }
-    ).catch((err) => {
-      console.error('Failed to listen to guide-chunk event:', err);
-      return () => {};
-    });
-
-    return () => {
-      unlistenGuide.then((fn) => fn()).catch((err) => {
-        console.error('Failed to unlisten guide-chunk event:', err);
-      });
-    };
-  }, [currentRole, startStreaming, appendToStreamingMessage, stopStreaming, addMessage, isStreaming, streamingMessageId, guideStep, setStreamingPhase, upsertMessage, setStreamingMessageCitations]);
+  }, [currentRole, startStreaming, appendToStreamingMessage, startStreamingBlock, appendToStreamingBlock, endStreamingBlock, stopStreaming, addMessage, setStreamingPhase, setMessageCitations]);
 
   // 会话切换时加载历史消息
   useEffect(() => {
