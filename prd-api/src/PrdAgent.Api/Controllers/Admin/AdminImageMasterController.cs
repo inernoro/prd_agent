@@ -206,7 +206,7 @@ public class AdminImageMasterController : ControllerBase
         }
 
         // 3) store file (sha de-dupe at storage level) and upsert meta
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct);
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
 
         // owner+sha unique: try find existing
         var existing = await _db.ImageAssets.Find(x => x.OwnerUserId == adminId && x.Sha256 == stored.Sha256).FirstOrDefaultAsync(ct);
@@ -277,7 +277,15 @@ public class AdminImageMasterController : ControllerBase
             var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
             if (remain <= 0)
             {
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct);
+                _logger.LogInformation(
+                    "ImageMaster deleting physical asset. adminId={AdminId} assetId={AssetId} sha={Sha} url={Url} domain={Domain} type={Type}",
+                    adminId,
+                    asset.Id,
+                    asset.Sha256,
+                    asset.Url,
+                    AppDomainPaths.DomainImageMaster,
+                    AppDomainPaths.TypeImg);
+                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
             }
         }
         catch (Exception ex)
@@ -297,7 +305,7 @@ public class AdminImageMasterController : ControllerBase
         var sha = dot > 0 ? n[..dot] : n;
         if (sha.Length != 64) return NotFound();
 
-        var found = await _assetStorage.TryReadByShaAsync(sha, ct);
+        var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
         if (found == null) return NotFound();
         return File(found.Value.bytes, found.Value.mime);
     }

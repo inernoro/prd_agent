@@ -124,7 +124,30 @@ builder.Services.AddHostedService<ImageGenRunWorker>();
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
-    var provider = (cfg["Assets:Provider"] ?? "local").Trim();
+    // 兼容：历史文档/配置可能使用 Storage:*；以 Assets:* 为准
+    var providerRaw = (cfg["Assets:Provider"] ?? cfg["Storage:Provider"] ?? "auto").Trim();
+    var disableLocalRaw = (cfg["Assets:DisableLocal"] ?? cfg["Storage:DisableLocal"] ?? string.Empty).Trim();
+    var disableLocal = string.Equals(disableLocalRaw, "true", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(disableLocalRaw, "1", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(disableLocalRaw, "yes", StringComparison.OrdinalIgnoreCase);
+
+    static bool HasTencentCosConfig(IConfiguration cfg)
+    {
+        var bucket = (cfg["TencentCos:Bucket"] ?? string.Empty).Trim();
+        var region = (cfg["TencentCos:Region"] ?? string.Empty).Trim();
+        var sid = (cfg["TencentCos:SecretId"] ?? string.Empty).Trim();
+        var sk = (cfg["TencentCos:SecretKey"] ?? string.Empty).Trim();
+        return !string.IsNullOrWhiteSpace(bucket) &&
+               !string.IsNullOrWhiteSpace(region) &&
+               !string.IsNullOrWhiteSpace(sid) &&
+               !string.IsNullOrWhiteSpace(sk);
+    }
+
+    var provider = providerRaw;
+    if (string.IsNullOrWhiteSpace(provider) || string.Equals(provider, "auto", StringComparison.OrdinalIgnoreCase))
+    {
+        provider = HasTencentCosConfig(cfg) ? "tencentCos" : "local";
+    }
 
     if (string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
     {
@@ -135,12 +158,28 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         var publicBaseUrl = cfg["TencentCos:PublicBaseUrl"];
         var prefix = cfg["TencentCos:Prefix"];
         var tempDir = cfg["TencentCos:TempDir"];
+        var enableSafeDelete = string.Equals((cfg["TencentCos:EnableSafeDelete"] ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        var allowRaw = (cfg["TencentCos:SafeDeleteAllowPrefixes"] ?? string.Empty).Trim();
+        var allow = allowRaw
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
         var logger = sp.GetRequiredService<ILogger<TencentCosStorage>>();
-        return new TencentCosStorage(bucket, region, secretId, secretKey, publicBaseUrl, prefix, tempDir, logger);
+        return new TencentCosStorage(bucket, region, secretId, secretKey, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
     }
 
-    // local: 可通过配置覆盖 Assets:LocalDir；默认放到 app/data/assets
+    if (disableLocal)
+    {
+        throw new InvalidOperationException("Assets:DisableLocal 已启用，但未启用 Tencent COS（请设置 Assets:Provider=tencentCos 或配置 TencentCos:* 环境变量）");
+    }
+
+    // local: 可通过配置覆盖 Assets:LocalDir（兼容 Storage:LocalDir）
+    // 默认落到 {AppBase}/data/assets，避免某些运行环境根目录只读（如 /data 无法创建）
+    // - 容器默认 AppBase=/app => /app/data/assets（与 docker-compose 的 ./data:/app/data 映射一致）
+    // - 本机 dotnet run：落到 bin 目录旁边（用于开发调试）
     var baseDir = cfg["Assets:LocalDir"]
+                 ?? cfg["Storage:LocalDir"]
                  ?? Path.Combine(AppContext.BaseDirectory, "data", "assets");
     return new LocalAssetStorage(baseDir);
 });

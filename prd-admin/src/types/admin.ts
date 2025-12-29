@@ -157,3 +157,19 @@ export type LlmRequestLog = {
   durationMs?: number | null;
   status: string;
 };
+
+export type UploadArtifact = {
+  id: string;
+  requestId: string;
+  kind: 'input_image' | 'output_image' | string;
+  createdByAdminId: string;
+  prompt?: string | null;
+  relatedInputIds?: string[] | null;
+  sha256: string;
+  mime: string;
+  width: number;
+  height: number;
+  sizeBytes: number;
+  cosUrl: string;
+  createdAt: string;
+};

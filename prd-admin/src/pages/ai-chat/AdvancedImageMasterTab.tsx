@@ -25,6 +25,7 @@ import {
   Check,
   Copy,
   Download,
+  Eraser,
   Hand,
   ImagePlus,
   MapPin,
@@ -54,6 +55,9 @@ type CanvasImageItem = {
   checkedAt?: number;
   assetId?: string;
   sha256?: string;
+  /** 图片内容是否已持久化到后端资产（再由后端落本地或 COS）；避免刷新丢失 */
+  syncStatus?: 'pending' | 'synced' | 'failed';
+  syncError?: string | null;
   naturalW?: number;
   naturalH?: number;
   // image-gen meta（用于 UI 提示 requested -> effective）
@@ -548,6 +552,42 @@ export default function AdvancedImageMasterTab() {
   const [rightWidth, setRightWidth] = useState(0);
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
 
+  const oneClickCleanLocalCache = useCallback(async () => {
+    const keys = Array.from(new Set([splitKey, modelPrefKey, directPromptKey].map((x) => String(x ?? '').trim()).filter(Boolean)));
+    if (keys.length === 0) {
+      await systemDialog.alert('当前账号暂无可清理的本地缓存');
+      return;
+    }
+
+    const ok = await systemDialog.confirm({
+      title: '一键清理',
+      message: `将清理本页本地缓存（${keys.length} 项），用于修复历史异常数据/布局问题。是否继续？`,
+      confirmText: '清理',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    try {
+      keys.forEach((k) => localStorage.removeItem(k));
+    } catch {
+      // ignore
+    }
+
+    // 重置到默认值（避免“已清理但 UI 仍是旧状态”）
+    setModelPrefAuto(true);
+    setModelPrefModelId('');
+    setDirectPrompt(true);
+    setDirectPromptReady(true);
+
+    const cw = containerRef.current?.clientWidth ?? 0;
+    const fallback = Math.round((cw || 1200) * 0.2);
+    const def = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, fallback));
+    setRightWidth(def);
+
+    await systemDialog.alert('已清理本地缓存。若仍异常，建议刷新页面。');
+  }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, modelPrefKey, splitKey]);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [masterSession, setMasterSession] = useState<ImageMasterSession | null>(null);
@@ -590,6 +630,8 @@ export default function AdvancedImageMasterTab() {
         prompt: a.prompt ?? '',
         src: a.url || '',
         status: 'done' as const,
+        syncStatus: 'synced' as const,
+        syncError: null,
         w: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
         h: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
         naturalW: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
@@ -1605,6 +1647,8 @@ export default function AdvancedImageMasterTab() {
                 kind: 'image',
                 status: 'done',
                 src,
+                syncStatus: src.startsWith('/api/v1/admin/image-master/assets/file/') ? 'synced' : 'pending',
+                syncError: null,
                 requestedSize: req,
                 effectiveSize: eff,
                 sizeAdjusted: Boolean(meta?.sizeAdjusted ?? false),
@@ -1647,10 +1691,26 @@ export default function AdvancedImageMasterTab() {
                     assetId: a.id,
                     sha256: a.sha256,
                     src: a.url || x.src,
+                    syncStatus: 'synced',
+                    syncError: null,
                   }
                 : x
             )
           );
+        } else {
+          const msg = up.error?.message || '图片持久化失败';
+          setCanvas((prev) =>
+            prev.map((x) =>
+              x.key === key
+                ? {
+                    ...x,
+                    syncStatus: 'failed',
+                    syncError: msg,
+                  }
+                : x
+            )
+          );
+          pushMsg('Assistant', `图片未能持久化到后端资产（刷新可能丢失）：${msg}`);
         }
       }
     } catch (e) {
@@ -1855,6 +1915,8 @@ export default function AdvancedImageMasterTab() {
             errorMessage: null,
             assetId: undefined,
             sha256: undefined,
+            syncStatus: 'pending',
+            syncError: null,
             w: nextW,
             h: nextH,
             naturalW: dim?.w ?? it.naturalW,
@@ -1878,10 +1940,26 @@ export default function AdvancedImageMasterTab() {
                   assetId: a.id,
                   sha256: a.sha256,
                   src: a.url || x.src,
+                  syncStatus: 'synced',
+                  syncError: null,
                 }
               : x
           )
         );
+      } else {
+        const msg = up.error?.message || '图片持久化失败';
+        setCanvas((prev) =>
+          prev.map((x) =>
+            x.key === targetKey
+              ? {
+                  ...x,
+                  syncStatus: 'failed',
+                  syncError: msg,
+                }
+              : x
+          )
+        );
+        pushMsg('Assistant', `图片未能持久化到后端资产（刷新可能丢失）：${msg}`);
       }
       return;
       }
@@ -1906,6 +1984,8 @@ export default function AdvancedImageMasterTab() {
                   prompt: file.name || 'uploaded',
                   src,
                   status: 'done',
+                  syncStatus: 'pending',
+                  syncError: null,
                   w: dim?.w,
                   h: dim?.h,
                   naturalW: dim?.w,
@@ -1966,10 +2046,26 @@ export default function AdvancedImageMasterTab() {
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
     void (async () => {
+      let failedCount = 0;
       for (const it of added) {
         if (!it.src || !it.src.startsWith('data:')) continue;
         const up = await uploadImageAsset({ data: it.src, prompt: it.prompt });
-        if (!up.success) continue;
+        if (!up.success) {
+          failedCount += 1;
+          const msg = up.error?.message || '图片持久化失败';
+          setCanvas((prev) =>
+            prev.map((x) =>
+              x.key === it.key
+                ? {
+                    ...x,
+                    syncStatus: 'failed',
+                    syncError: msg,
+                  }
+                : x
+            )
+          );
+          continue;
+        }
         const a = up.data.asset;
         setCanvas((prev) =>
           prev.map((x) =>
@@ -1979,10 +2075,15 @@ export default function AdvancedImageMasterTab() {
                   assetId: a.id,
                   sha256: a.sha256,
                   src: a.url || x.src,
+                  syncStatus: 'synced',
+                  syncError: null,
                 }
               : x
           )
         );
+      }
+      if (failedCount > 0) {
+        pushMsg('Assistant', `有 ${failedCount} 张图片未能持久化到后端资产（刷新可能丢失）。请检查网络/权限/后端存储配置后重试上传。`);
       }
     })();
     };
@@ -2657,41 +2758,62 @@ export default function AdvancedImageMasterTab() {
                             </div>
                           </div>
                         ) : (
-                          <img
-                            src={it.src}
-                            alt={it.prompt}
-                            className="w-full h-full block"
-                            style={{
-                              objectFit: 'contain',
-                              borderRadius: 14,
-                              // 规则：不制造任何“假边框”；选中仅做高亮效果（光晕），不改变尺寸/比例
-                              filter: active
-                                ? 'drop-shadow(0 0 2px rgba(250,204,21,0.95)) drop-shadow(0 0 14px rgba(250,204,21,0.45))'
-                                : 'none',
-                            }}
-                            onLoad={(e) => {
-                              const img = e.currentTarget;
-                              const nw = img.naturalWidth || 0;
-                              const nh = img.naturalHeight || 0;
-                              if (!nw || !nh) return;
-                              setCanvas((prev) =>
-                                prev.map((x) => {
-                                  if (x.key !== it.key) return x;
-                                  // 规则：图片的显示尺寸 = natural 像素尺寸（比例关系只由画布 zoom 改变）
-                                  return { ...x, naturalW: nw, naturalH: nh, w: nw, h: nh, status: x.status === 'error' ? 'done' : x.status };
-                                })
-                              );
-                            }}
-                            onError={() => {
-                              setCanvas((prev) =>
-                                prev.map((x) =>
-                                  x.key === it.key
-                                    ? { ...x, status: 'error', errorMessage: x.errorMessage || '图片不可用（可能已删除或地址失效）' }
-                                    : x
-                                )
-                              );
-                            }}
-                          />
+                          <div className="w-full h-full relative">
+                            {it.syncStatus && it.syncStatus !== 'synced' ? (
+                              <div
+                                className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
+                                style={{
+                                  background: it.syncStatus === 'failed' ? 'rgba(239,68,68,0.22)' : 'rgba(0,0,0,0.28)',
+                                  border: it.syncStatus === 'failed' ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                  color: it.syncStatus === 'failed' ? 'rgba(255,255,255,0.90)' : 'rgba(255,255,255,0.78)',
+                                  transform: 'scale(var(--invZoom))',
+                                  transformOrigin: 'right top',
+                                }}
+                                title={
+                                  it.syncStatus === 'failed'
+                                    ? `图片未能持久化到后端资产，刷新可能丢失：${String(it.syncError || '未知原因')}`
+                                    : '图片正在持久化到后端资产（完成后可跨刷新/跨设备稳定访问）'
+                                }
+                              >
+                                {it.syncStatus === 'failed' ? '未持久化' : '同步中'}
+                              </div>
+                            ) : null}
+                            <img
+                              src={it.src}
+                              alt={it.prompt}
+                              className="w-full h-full block"
+                              style={{
+                                objectFit: 'contain',
+                                borderRadius: 14,
+                                // 规则：不制造任何“假边框”；选中仅做高亮效果（光晕），不改变尺寸/比例
+                                filter: active
+                                  ? 'drop-shadow(0 0 2px rgba(250,204,21,0.95)) drop-shadow(0 0 14px rgba(250,204,21,0.45))'
+                                  : 'none',
+                              }}
+                              onLoad={(e) => {
+                                const img = e.currentTarget;
+                                const nw = img.naturalWidth || 0;
+                                const nh = img.naturalHeight || 0;
+                                if (!nw || !nh) return;
+                                setCanvas((prev) =>
+                                  prev.map((x) => {
+                                    if (x.key !== it.key) return x;
+                                    // 规则：图片的显示尺寸 = natural 像素尺寸（比例关系只由画布 zoom 改变）
+                                    return { ...x, naturalW: nw, naturalH: nh, w: nw, h: nh, status: x.status === 'error' ? 'done' : x.status };
+                                  })
+                                );
+                              }}
+                              onError={() => {
+                                setCanvas((prev) =>
+                                  prev.map((x) =>
+                                    x.key === it.key
+                                      ? { ...x, status: 'error', errorMessage: x.errorMessage || '图片不可用（可能已删除或地址失效）' }
+                                      : x
+                                  )
+                                );
+                              }}
+                            />
+                          </div>
                         )}
                       </div>
                     )}
@@ -3895,6 +4017,21 @@ export default function AdvancedImageMasterTab() {
 
                 {/* 右侧：模型偏好 + 发送 */}
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'var(--text-secondary)',
+                    }}
+                    aria-label="一键清理"
+                    title="一键清理（清理本页本地缓存）"
+                    onClick={() => void oneClickCleanLocalCache()}
+                  >
+                    <Eraser size={18} />
+                  </button>
+
                   {/* 图2：发送左边的按钮是“模型偏好” */}
                   <DropdownMenu.Root open={modelPrefOpen} onOpenChange={setModelPrefOpen}>
                     <DropdownMenu.Trigger asChild>

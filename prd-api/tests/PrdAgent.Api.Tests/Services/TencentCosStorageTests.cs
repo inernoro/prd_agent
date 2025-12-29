@@ -57,6 +57,8 @@ public class TencentCosStorageTests
             // 测试写入一个可定位的目录，便于你在 COS 控制台直接看到
             prefix: runPrefix,
             tempDir: tempDir,
+            enableSafeDelete: false,
+            safeDeleteAllowPrefixes: null,
             logger: NullLogger<TencentCosStorage>.Instance);
 
         _output.WriteLine($"bucket={bucket}");

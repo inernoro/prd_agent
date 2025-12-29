@@ -5,8 +5,8 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
-import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta } from '@/services';
-import type { LlmRequestLog, LlmRequestLogListItem } from '@/types/admin';
+import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
+import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -110,6 +110,17 @@ function diffMs(fromIso: string | null | undefined, toIso: string | null | undef
 function fmtNum(v: number | null | undefined): string {
   // 重要：null/undefined 表示“未知/未上报”，不应显示为 0
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
+}
+
+function fmtBytes(v: number | null | undefined): string {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return '—';
+  if (v < 1024) return `${v} B`;
+  const kb = v / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(2)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)} GB`;
 }
 
 function fmtHashOrHidden(v: string | null | undefined): string {
@@ -743,10 +754,48 @@ export default function LlmLogsPage() {
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptToken, setPromptToken] = useState<string>('');
 
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [artifactsError, setArtifactsError] = useState<string>('');
+  const [artifacts, setArtifacts] = useState<UploadArtifact[]>([]);
+  const artifactsRidRef = useRef<string>('');
+
   const resetJsonCheck = () => {
     jsonCheckLastRef.current = null;
     setJsonCheckPhase('idle');
   };
+
+  useEffect(() => {
+    const rid = (detail?.requestId ?? '').trim();
+    if (!rid) {
+      artifactsRidRef.current = '';
+      setArtifacts([]);
+      setArtifactsError('');
+      setArtifactsLoading(false);
+      return;
+    }
+
+    artifactsRidRef.current = rid;
+    setArtifactsLoading(true);
+    setArtifactsError('');
+    void (async () => {
+      try {
+        const res = await listUploadArtifacts({ requestId: rid, limit: 200 });
+        if (artifactsRidRef.current !== rid) return;
+        if (res.success) {
+          setArtifacts(Array.isArray(res.data.items) ? res.data.items : []);
+        } else {
+          setArtifacts([]);
+          setArtifactsError(res.error?.message || '加载失败');
+        }
+      } catch (e) {
+        if (artifactsRidRef.current !== rid) return;
+        setArtifacts([]);
+        setArtifactsError(String((e as any)?.message || e || '加载失败'));
+      } finally {
+        if (artifactsRidRef.current === rid) setArtifactsLoading(false);
+      }
+    })();
+  }, [detail?.requestId]);
 
   const load = async (opts?: { resetPage?: boolean }) => {
     if (opts?.resetPage) setPage(1);
@@ -832,6 +881,19 @@ export default function LlmLogsPage() {
     [answerVisibleChars, answerText]
   );
   const imageGenUpstream = useMemo(() => extractImageGenUpstreamPreviewFromAnswerText(detail?.answerText ?? ''), [detail?.answerText]);
+  const artifactsSorted = useMemo(() => {
+    const arr = Array.isArray(artifacts) ? artifacts.slice() : [];
+    arr.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+    return arr;
+  }, [artifacts]);
+  const artifactInputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'input_image'), [artifactsSorted]);
+  const artifactOutputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'output_image'), [artifactsSorted]);
+  const isImageGenRequest = useMemo(() => {
+    const v = normalizeRequestType(detail?.requestType);
+    return v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
+  }, [detail?.requestType]);
+  const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
+  const shouldShowImagePreview = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   useEffect(() => {
     // 内容不再包含 \uXXXX 时，自动关闭“可见字符”避免误解
     if (!answerHasUnicodeEscapes && answerVisibleChars) setAnswerVisibleChars(false);
@@ -1625,6 +1687,164 @@ export default function LlmLogsPage() {
                   </div>
 
                   <div className="mt-3">
+                    {shouldShowImagePreview ? (
+                    <div className="mb-3">
+                      <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                        <span>图片预览</span>
+                        {detail?.requestId ? (
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            requestId: {detail.requestId}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {artifactsLoading ? (
+                        <div className="text-[12px] py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+                          加载中…
+                        </div>
+                      ) : artifactsError ? (
+                        <div className="text-[12px] py-6 text-center" style={{ color: 'rgba(239,68,68,0.92)' }}>
+                          加载失败：{artifactsError}
+                        </div>
+                      ) : !hasImageArtifacts ? (
+                        <div className="text-[12px] py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+                          暂无图片（仅生图/含参考图的请求会产生该数据）
+                        </div>
+                      ) : (
+                        <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                          {artifactInputs.length >= 2 && artifactOutputs.length >= 1 ? (
+                            <>
+                              <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                <img
+                                  src={artifactOutputs[0].cosUrl}
+                                  alt="output"
+                                  style={{ width: '100%', height: 360, objectFit: 'contain', display: 'block' }}
+                                />
+                              </div>
+                              <div className="mt-3 flex gap-2 overflow-auto">
+                                {artifactInputs.map((it) => (
+                                  <div key={it.id} className="shrink-0 rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.16)' }}>
+                                    <img src={it.cosUrl} alt="input" style={{ width: 140, height: 140, objectFit: 'cover', display: 'block' }} />
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-3 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                              </div>
+                            </>
+                          ) : artifactInputs.length === 1 && artifactOutputs.length >= 1 ? (
+                            <>
+                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                              </div>
+                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                                {[artifactInputs[0], artifactOutputs[0]].map((it, idx) => (
+                                  <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                    <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                      <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                        {idx === 0 ? '参考图' : '结果图'}
+                                      </div>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(it.cosUrl || '');
+                                            setCopiedHint('已复制');
+                                            setTimeout(() => setCopiedHint(''), 1200);
+                                          } catch {
+                                            setCopiedHint('复制失败（浏览器权限）');
+                                            setTimeout(() => setCopiedHint(''), 2000);
+                                          }
+                                        }}
+                                      >
+                                        <Copy size={14} />
+                                        复制URL
+                                      </Button>
+                                    </div>
+                                    <img src={it.cosUrl} alt={idx === 0 ? 'input' : 'output'} style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
+                                    <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                      <div className="truncate" title={it.cosUrl}>
+                                        {it.cosUrl}
+                                      </div>
+                                      <div className="mt-1 flex items-center justify-between gap-2">
+                                        <span>
+                                          {it.width}×{it.height}
+                                        </span>
+                                        <span>
+                                          {fmtBytes(it.sizeBytes)} · {String(it.mime || '').toLowerCase()}
+                                        </span>
+                                      </div>
+                                      <div className="mt-1 truncate" title={it.sha256}>
+                                        sha256: {it.sha256}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                              <div className="rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+                                  提示词
+                                </div>
+                                <div className="text-[12px]" style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
+                                  {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                                </div>
+                              </div>
+                              <div className="grid gap-2">
+                                {artifactOutputs.slice(0, 4).map((it) => (
+                                  <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                    <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                      <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                        结果图
+                                      </div>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(it.cosUrl || '');
+                                            setCopiedHint('已复制');
+                                            setTimeout(() => setCopiedHint(''), 1200);
+                                          } catch {
+                                            setCopiedHint('复制失败（浏览器权限）');
+                                            setTimeout(() => setCopiedHint(''), 2000);
+                                          }
+                                        }}
+                                      >
+                                        <Copy size={14} />
+                                        复制URL
+                                      </Button>
+                                    </div>
+                                    <img src={it.cosUrl} alt="output" style={{ width: '100%', height: 220, objectFit: 'contain', display: 'block' }} />
+                                    <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                      <div className="truncate" title={it.cosUrl}>
+                                        {it.cosUrl}
+                                      </div>
+                                      <div className="mt-1 flex items-center justify-between gap-2">
+                                        <span>
+                                          {it.width}×{it.height}
+                                        </span>
+                                        <span>
+                                          {fmtBytes(it.sizeBytes)} · {String(it.mime || '').toLowerCase()}
+                                        </span>
+                                      </div>
+                                      <div className="mt-1 truncate" title={it.sha256}>
+                                        sha256: {it.sha256}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    ) : null}
+
                     {imageGenUpstream ? (
                       <div className="mb-3">
                         <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>

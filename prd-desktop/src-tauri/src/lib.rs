@@ -11,6 +11,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.manage(StreamCancelState::default());
@@ -67,6 +68,7 @@ pub fn run() {
             commands::preview_ask_history::append_preview_ask_history,
             commands::preview_ask_history::clear_preview_ask_history,
             commands::preview_ask_history::clear_all_preview_ask_history,
+            commands::preview_ask_history::get_preview_ask_history_stats,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

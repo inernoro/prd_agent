@@ -38,14 +38,6 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
     }
 
     try {
-      localStorage.removeItem('auth-storage');
-      localStorage.removeItem('session-storage');
-      localStorage.removeItem('message-storage');
-    } catch {
-      // ignore
-    }
-
-    try {
       clearMessages();
       clearSession();
       clearGroups();
@@ -53,7 +45,24 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
       // ignore
     }
 
+    // 先登出（persist 可能会把“空状态”写回 localStorage）
+    // 因此 localStorage 的最终清理必须放在 logout 之后。
     logout();
+
+    try {
+      localStorage.removeItem('auth-storage');
+      localStorage.removeItem('session-storage');
+      localStorage.removeItem('message-storage');
+      localStorage.removeItem('prdAgent.sidebarWidth');
+    } catch {
+      // ignore
+    }
+
+    try {
+      sessionStorage.removeItem('demo-prd-content');
+    } catch {
+      // ignore
+    }
   };
 
   return (

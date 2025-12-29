@@ -12,6 +12,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -26,6 +27,7 @@ public class OpenAIImageClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
 
@@ -34,6 +36,7 @@ public class OpenAIImageClient
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<OpenAIImageClient> logger,
+        IAssetStorage assetStorage,
         ILlmRequestLogWriter? logWriter = null,
         ILLMRequestContextAccessor? ctxAccessor = null)
     {
@@ -41,6 +44,7 @@ public class OpenAIImageClient
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
+        _assetStorage = assetStorage;
         _logWriter = logWriter;
         _ctxAccessor = ctxAccessor;
     }
@@ -645,16 +649,92 @@ public class OpenAIImageClient
             }
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
+            // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
+            // 同时写入 UploadArtifacts（用于 LLM 日志页图片预览）
+            var createdByAdminId = ctx?.UserId ?? "system";
+            var inputArtifactIds = new List<string>();
+            if (!string.IsNullOrWhiteSpace(initImageBase64))
+            {
+                if (TryDecodeDataUrlOrBase64(initImageBase64, out var initBytes, out var initMime) && initBytes.Length > 0)
+                {
+                    // 参考图也落 COS（与输出一并可在日志页预览）
+                    var stored = await _assetStorage.SaveAsync(initBytes, initMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
+                    var dim = TryParseSize(NormalizeSizeString(size), out var iw, out var ih) ? new { w = iw, h = ih } : null;
+                    var input = new UploadArtifact
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        RequestId = requestId,
+                        Kind = "input_image",
+                        CreatedByAdminId = createdByAdminId,
+                        Prompt = prompt,
+                        Sha256 = stored.Sha256,
+                        Mime = stored.Mime,
+                        Width = dim?.w ?? 0,
+                        Height = dim?.h ?? 0,
+                        SizeBytes = stored.SizeBytes,
+                        CosUrl = stored.Url,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    await _db.UploadArtifacts.InsertOneAsync(input, cancellationToken: ct);
+                    inputArtifactIds.Add(input.Id);
+                }
+            }
+
+            var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)
             {
-                if (!string.IsNullOrWhiteSpace(images[i].Base64)) continue;
-                if (string.IsNullOrWhiteSpace(images[i].Url)) continue;
+                byte[]? bytes = null;
+                var outMime = "image/png";
 
-                var dataUrl = await TryDownloadImageAsDataUrlAsync(images[i].Url!, ct);
-                if (!string.IsNullOrWhiteSpace(dataUrl))
+                if (!string.IsNullOrWhiteSpace(images[i].Base64))
                 {
-                    images[i].Base64 = dataUrl;
+                    try
+                    {
+                        bytes = Convert.FromBase64String(images[i].Base64!);
+                    }
+                    catch
+                    {
+                        bytes = null;
+                    }
                 }
+                else if (!string.IsNullOrWhiteSpace(images[i].Url))
+                {
+                    var dl = await TryDownloadImageBytesAsync(images[i].Url!, ct);
+                    if (dl.bytes != null && dl.bytes.Length > 0)
+                    {
+                        bytes = dl.bytes;
+                        if (!string.IsNullOrWhiteSpace(dl.mime)) outMime = dl.mime!;
+                    }
+                }
+
+                if (bytes == null || bytes.Length == 0) continue;
+                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
+                images[i].Url = stored.Url;
+                images[i].Base64 = null;
+
+                // 尺寸：优先使用本次请求最终 size（若解析失败则为 0）
+                var sizeStr = NormalizeSizeString(size);
+                var okDim = TryParseSize(sizeStr, out var w0, out var h0);
+                var output = new UploadArtifact
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    RequestId = requestId,
+                    Kind = "output_image",
+                    CreatedByAdminId = createdByAdminId,
+                    Prompt = prompt,
+                    RelatedInputIds = inputArtifactIds.Count > 0 ? inputArtifactIds.ToList() : null,
+                    Sha256 = stored.Sha256,
+                    Mime = stored.Mime,
+                    Width = okDim ? w0 : 0,
+                    Height = okDim ? h0 : 0,
+                    SizeBytes = stored.SizeBytes,
+                    CosUrl = stored.Url,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _db.UploadArtifacts.InsertOneAsync(output, cancellationToken: ct);
+
+                // 写一份用于 LLM 日志摘要展示（不宜过大）
+                cosInfos.Add(new { index = images[i].Index, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
             }
 
             if (logId != null)
@@ -694,8 +774,9 @@ public class OpenAIImageClient
                         upstreamBodyChars = body?.Length ?? 0,
                         upstreamContentType = respContentType,
                     // 不记录 base64 内容；仅记录是否返回
-                    hasBase64 = images.Any(x => !string.IsNullOrWhiteSpace(x.Base64)),
+                    hasBase64 = false,
                     hasUrl = images.Any(x => !string.IsNullOrWhiteSpace(x.Url)),
+                    cos = cosInfos.Take(10).ToArray(),
                     revisedPrompt = images.FirstOrDefault()?.RevisedPrompt
                 };
                 var answerText = JsonSerializer.Serialize(summary);
@@ -999,6 +1080,50 @@ public class OpenAIImageClient
         {
             _logger.LogWarning(ex, "Image url download failed: host={Host}", uri.Host);
             return null;
+        }
+    }
+
+    private async Task<(byte[]? bytes, string? mime)> TryDownloadImageBytesAsync(string imageUrl, CancellationToken ct)
+    {
+        if (!Uri.TryCreate((imageUrl ?? string.Empty).Trim(), UriKind.Absolute, out var uri)) return (null, null);
+        if (!IsSafeExternalImageUri(uri)) return (null, null);
+
+        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
+        var downloadTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenDownloadTimeoutSeconds") ?? 120;
+        downloadTimeoutSeconds = Math.Clamp(downloadTimeoutSeconds, 30, 3600);
+        httpClient.Timeout = TimeSpan.FromSeconds(downloadTimeoutSeconds);
+        httpClient.DefaultRequestHeaders.Remove("Authorization");
+        httpClient.DefaultRequestHeaders.Accept.Clear();
+        httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("image/*"));
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+            using var resp = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Image url download failed: HTTP {Status} host={Host}", (int)resp.StatusCode, uri.Host);
+                return (null, null);
+            }
+
+            var contentType = resp.Content.Headers.ContentType?.MediaType;
+            var maxBytes = 15 * 1024 * 1024;
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var ms = new MemoryStream(capacity: 1024 * 1024);
+            await CopyToWithLimitAsync(stream, ms, maxBytes, ct);
+            var bytes = ms.ToArray();
+            if (bytes.Length == 0) return (null, null);
+            var mime = GuessImageMimeType(contentType, bytes);
+            return (bytes, mime);
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Image url download failed: host={Host}", uri.Host);
+            return (null, null);
         }
     }
 

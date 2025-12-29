@@ -17,8 +17,9 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     private readonly string _region;
     private readonly string _publicBaseUrl;
     private readonly string _prefix;
-    private readonly string _tempDir;
     private readonly ILogger<TencentCosStorage> _logger;
+    private readonly bool _enableSafeDelete;
+    private readonly string[] _safeDeleteAllowPrefixes;
 
     private readonly CosXmlServer _cos;
     private bool _disposed;
@@ -31,6 +32,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         string? publicBaseUrl,
         string? prefix,
         string? tempDir,
+        bool enableSafeDelete,
+        IEnumerable<string>? safeDeleteAllowPrefixes,
         ILogger<TencentCosStorage> logger)
     {
         _bucket = (bucket ?? string.Empty).Trim();
@@ -46,8 +49,11 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
 
         _prefix = NormalizePrefix(prefix);
         _publicBaseUrl = NormalizePublicBaseUrl(publicBaseUrl, _bucket, _region);
-        _tempDir = NormalizeTempDir(tempDir);
-        Directory.CreateDirectory(_tempDir);
+        // 重要：COS 上传/下载必须支持“纯内存流”模式（不依赖本地目录/临时文件）。
+        // tempDir 参数仅用于兼容历史配置，不再强制创建/使用。
+
+        _enableSafeDelete = enableSafeDelete;
+        _safeDeleteAllowPrefixes = NormalizeSafeDeleteAllowPrefixes(safeDeleteAllowPrefixes, _prefix);
 
         var config = new CosXmlConfig.Builder()
             .IsHttps(true)
@@ -76,6 +82,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
 
         await using var ms = new MemoryStream(bytes, writable: false);
         var req = new PutObjectRequest(_bucket, k, ms);
+        TrySetContentType(req, contentType);
         ct.ThrowIfCancellationRequested();
         await Task.Run(() => _cos.PutObject(req), ct).ConfigureAwait(false);
     }
@@ -272,14 +279,26 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         // - 放开删除到生产 `assets/` 前缀
         //
         // 如未来必须支持生产删除：必须引入多重保护（显式开关、白名单前缀、审计日志、强限流、二次确认、最小权限密钥）。
-        if (!IsItTestKey(k))
+        if (!IsSafeDeleteAllowed(k, out var reason))
         {
-            _logger.LogWarning("COS delete blocked (non-_it key). bucket={Bucket} key={Key}", _bucket, k);
-            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许删除 _it 测试目录下的对象");
+            _logger.LogWarning(
+                "COS delete blocked. bucket={Bucket} key={Key} enableSafeDelete={EnableSafeDelete} reason={Reason} allowPrefixes={AllowPrefixes}",
+                _bucket,
+                k,
+                _enableSafeDelete,
+                reason,
+                _safeDeleteAllowPrefixes);
+            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许删除 _it 测试目录下对象，或启用受控删除并命中白名单前缀");
         }
 
         try
         {
+            _logger.LogInformation(
+                "COS delete allowed. bucket={Bucket} key={Key} enableSafeDelete={EnableSafeDelete} reason={Reason}",
+                _bucket,
+                k,
+                _enableSafeDelete,
+                reason);
             var req = new DeleteObjectRequest(_bucket, k);
             ct.ThrowIfCancellationRequested();
             await Task.Run(() => _cos.DeleteObject(req), ct).ConfigureAwait(false);
@@ -328,7 +347,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return $"{_publicBaseUrl}/{EscapeKeyPath(k)}";
     }
 
-    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct)
+    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null)
     {
         ThrowIfDisposed();
         if (bytes == null || bytes.Length == 0) throw new ArgumentException("bytes empty");
@@ -336,7 +355,9 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var safeMime = string.IsNullOrWhiteSpace(mime) ? "image/png" : mime.Trim();
         var ext = MimeToExt(safeMime);
         var sha = Sha256Hex(bytes);
-        var key = BuildObjectKey(sha, ext);
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainImageMaster : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
+        var key = BuildObjectKey(d, t, sha, ext);
 
         // 去重：存在则不重复上传（即使重复上传也不会影响正确性，但浪费带宽）
         if (!await ExistsAsync(key, ct).ConfigureAwait(false))
@@ -348,38 +369,70 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return new StoredAsset(sha, url, bytes.LongLength, safeMime);
     }
 
-    public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct)
+    public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         ThrowIfDisposed();
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha)) return null;
         if (sha.Length < 16) return null;
 
+        var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
+
         // 支持常见图片扩展
         var exts = new[] { "png", "jpg", "jpeg", "webp", "gif" };
         foreach (var ext in exts)
         {
-            var key = BuildObjectKey(sha, ext);
-            var bytes = await TryDownloadBytesAsync(key, ct).ConfigureAwait(false);
-            if (bytes == null || bytes.Length == 0) continue;
-            return (bytes, ExtToMime(ext));
+            // 1) 新规则（domain/type）
+            if (!string.IsNullOrWhiteSpace(d) && !string.IsNullOrWhiteSpace(t))
+            {
+                var keyNew = BuildObjectKey(d!, t!, sha, ext);
+                var bytesNew = await TryDownloadBytesAsync(keyNew, ct).ConfigureAwait(false);
+                if (bytesNew != null && bytesNew.Length > 0) return (bytesNew, ExtToMime(ext));
+            }
+
+            // 2) 兼容旧规则（历史 key）
+            foreach (var keyLegacy in BuildLegacyKeys(sha, ext))
+            {
+                var bytes = await TryDownloadBytesAsync(keyLegacy, ct).ConfigureAwait(false);
+                if (bytes == null || bytes.Length == 0) continue;
+                return (bytes, ExtToMime(ext));
+            }
         }
         return null;
     }
 
-    public async Task DeleteByShaAsync(string sha256, CancellationToken ct)
+    public async Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         ThrowIfDisposed();
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha)) return;
         if (sha.Length < 16) return;
 
+        var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
+
         // 由于 ext 可能未知，这里按常见图片扩展逐个尝试删除（不存在视为成功）
         var exts = new[] { "png", "jpg", "jpeg", "webp", "gif" };
         foreach (var ext in exts)
         {
-            var key = BuildObjectKey(sha, ext);
-            await DeleteAsync(key, ct).ConfigureAwait(false);
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(d) && !string.IsNullOrWhiteSpace(t))
+                {
+                    var keyNew = BuildObjectKey(d!, t!, sha, ext);
+                    await DeleteAsync(keyNew, ct).ConfigureAwait(false);
+                }
+                foreach (var keyLegacy in BuildLegacyKeys(sha, ext))
+                {
+                    await DeleteAsync(keyLegacy, ct).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                // DeleteAsync 可能被安全护栏拦截；这里不抛出以免影响上层业务（上层会决定是否降级）。
+                _logger.LogWarning(ex, "COS deleteBySha failed. sha={Sha}", sha);
+            }
         }
     }
 
@@ -395,7 +448,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
 
     private static string NormalizePrefix(string? prefix)
     {
-        var p = (prefix ?? "data").Trim();
+        var p = (prefix ?? string.Empty).Trim();
         p = p.Trim('/');
 
         // 兼容历史配置：以前默认给的是 data/assets，现在统一把 Prefix 视为“根前缀”
@@ -408,7 +461,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         {
             p = string.Empty;
         }
-        return p;
+        return p.ToLowerInvariant();
     }
 
     private static string NormalizePublicBaseUrl(string? publicBaseUrl, string bucket, string region)
@@ -428,30 +481,60 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return raw.TrimEnd('/');
     }
 
-    private static string NormalizeTempDir(string? tempDir)
+    private static void TrySetContentType(object request, string? contentType)
     {
-        var raw = (tempDir ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(raw)) return raw;
-
-        // 默认使用 app/data/tmp（与 docker-compose 的 ./data:/app/data 映射保持一致）
-        return Path.Combine(AppContext.BaseDirectory, "data", "tmp");
+        var ct = (contentType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(ct)) return;
+        try
+        {
+            var t = request.GetType();
+            var mi = t.GetMethods()
+                .FirstOrDefault(m =>
+                    string.Equals(m.Name, "SetRequestHeader", StringComparison.Ordinal) &&
+                    m.GetParameters().Length == 2 &&
+                    m.GetParameters()[0].ParameterType == typeof(string) &&
+                    m.GetParameters()[1].ParameterType == typeof(string));
+            if (mi != null)
+            {
+                mi.Invoke(request, new object[] { "Content-Type", ct });
+            }
+        }
+        catch
+        {
+            // ignore：不同 SDK 版本可能不支持设置 header（不影响上传正确性）
+        }
     }
 
-    private string BuildObjectKey(string sha, string ext)
+    private string BuildObjectKey(string domain, string type, string sha, string ext)
     {
+        var d = AppDomainPaths.NormDomain(domain);
+        var t = AppDomainPaths.NormType(type);
         var s = (sha ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(s)) throw new ArgumentException("sha empty", nameof(sha));
-        var e = (ext ?? string.Empty).Trim().ToLowerInvariant();
+        var e = (ext ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(e)) e = "png";
 
-        // 生产规则：必须是“仅由 sha 决定”的确定性路径
-        // 原因：上层业务会先调用 SaveAsync 再查 DB 去重（owner+sha），
-        // 如果 key 带时间（如 yyyyMMdd），将导致同一 sha 在不同时间写入不同 key，形成“无人引用的垃圾对象”。
-        //
-        // 同时满足“单目录不宜过大”：按 sha 前两位分片到 256 个子目录。
+        // 规则：key 必须全小写且“仅由 domain/type/sha/ext 决定”，避免产生无人引用的垃圾对象
+        var rel = AppDomainPaths.CosKey(d, t, s, e); // already lower
+        if (string.IsNullOrWhiteSpace(_prefix)) return rel;
+        return $"{_prefix}/{rel}";
+    }
+
+    private IEnumerable<string> BuildLegacyKeys(string sha, string ext)
+    {
+        // 兼容历史版本：尝试旧的 key 结构（assets/shard2）与不带 shard 的结构
+        var s = (sha ?? string.Empty).Trim().ToLowerInvariant();
+        var e = (ext ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(s) || string.IsNullOrWhiteSpace(e)) yield break;
         var shard2 = s.Length >= 2 ? s[..2] : "xx";
-        if (string.IsNullOrWhiteSpace(_prefix)) return $"assets/{shard2}/{s}.{e}";
-        return $"{_prefix}/assets/{shard2}/{s}.{e}";
+        var roots = string.IsNullOrWhiteSpace(_prefix) ? new[] { "" } : new[] { _prefix };
+        foreach (var root in roots)
+        {
+            var r = string.IsNullOrWhiteSpace(root) ? "" : $"{root}/";
+            yield return $"{r}assets/{shard2}/{s}.{e}";
+            yield return $"{r}assets/{s}.{e}";
+            yield return $"{r}{s}.{e}";
+        }
     }
 
     private static string NormalizeKey(string key)
@@ -516,35 +599,91 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                k.Contains("/_it/", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void TryDeleteFile(string filePath)
+    private bool IsSafeDeleteAllowed(string normalizedKey, out string reason)
     {
-        try
+        // 1) 永久强约束：始终允许 _it 测试目录
+        if (IsItTestKey(normalizedKey))
         {
-            if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+            reason = "_it";
+            return true;
+        }
+
+        // 2) 受控删除：默认关闭；开启后仅允许 domain/type 白名单前缀
+        if (!_enableSafeDelete)
+        {
+            reason = "disabled";
+            return false;
+        }
+
+        if (_safeDeleteAllowPrefixes.Length == 0)
+        {
+            reason = "empty_allowlist";
+            return false;
+        }
+
+        // key 可能包含配置 _prefix（例如 data/...）；白名单使用“业务 domain/type”（不带 prefix）
+        var rel = StripConfiguredPrefix(normalizedKey, _prefix);
+        foreach (var p in _safeDeleteAllowPrefixes)
+        {
+            if (rel.StartsWith(p + "/", StringComparison.Ordinal)) // 必须是前缀目录，避免等值误删
             {
-                File.Delete(filePath);
+                reason = "whitelist";
+                return true;
             }
         }
-        catch
-        {
-            // ignore
-        }
+
+        reason = "not_whitelisted";
+        return false;
     }
 
-    private static void TryDeleteDirectory(string dirPath)
+    private static string StripConfiguredPrefix(string key, string prefix)
     {
-        try
+        var k = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var p = (prefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (string.IsNullOrWhiteSpace(p)) return k;
+        var pre = p + "/";
+        if (k.StartsWith(pre, StringComparison.OrdinalIgnoreCase))
         {
-            if (!string.IsNullOrWhiteSpace(dirPath) && Directory.Exists(dirPath))
+            return k.Substring(pre.Length);
+        }
+        return k;
+    }
+
+    private static string[] NormalizeSafeDeleteAllowPrefixes(IEnumerable<string>? allowPrefixes, string prefix)
+    {
+        if (allowPrefixes == null) return Array.Empty<string>();
+        var list = new List<string>();
+        foreach (var raw in allowPrefixes)
+        {
+            var s = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(s)) continue;
+            s = s.Replace('\\', '/').Trim().Trim('/');
+            if (string.IsNullOrWhiteSpace(s)) continue;
+
+            // 允许用户把配置写成 {prefix}/domain/type（我们会自动剥离 prefix）
+            s = StripConfiguredPrefix(s, prefix).Trim().Trim('/');
+            if (string.IsNullOrWhiteSpace(s)) continue;
+
+            // 仅允许 domain/type 两段（全小写，避免过宽前缀）
+            var parts = s.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2) continue;
+            try
             {
-                Directory.Delete(dirPath, recursive: true);
+                var d = AppDomainPaths.NormDomain(parts[0]);
+                var t = AppDomainPaths.NormType(parts[1]);
+                list.Add($"{d}/{t}");
+            }
+            catch
+            {
+                // ignore invalid
             }
         }
-        catch
-        {
-            // ignore
-        }
+        return list
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
     }
+
 
     private static byte[]? TryGetBytesFromResult(object? result)
     {

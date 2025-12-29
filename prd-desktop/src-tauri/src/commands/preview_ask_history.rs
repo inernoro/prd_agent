@@ -153,3 +153,30 @@ pub async fn clear_all_preview_ask_history(app: tauri::AppHandle) -> Result<(), 
     }
     Ok(())
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewAskHistoryStats {
+    pub exists: bool,
+    pub bytes: u64,
+}
+
+/// 获取“本章提问”历史落盘文件占用大小（仅本机文件）
+#[tauri::command]
+pub async fn get_preview_ask_history_stats(
+    app: tauri::AppHandle,
+) -> Result<PreviewAskHistoryStats, String> {
+    let path = get_history_path(&app)?;
+    if !path.exists() {
+        return Ok(PreviewAskHistoryStats {
+            exists: false,
+            bytes: 0,
+        });
+    }
+    let meta =
+        fs::metadata(&path).map_err(|e| format!("Failed to read history file meta: {}", e))?;
+    Ok(PreviewAskHistoryStats {
+        exists: true,
+        bytes: meta.len(),
+    })
+}

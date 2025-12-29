@@ -4,6 +4,10 @@ import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { invoke } from '../../lib/tauri';
 import { isTauri } from '../../lib/tauri';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useAuthStore } from '../../stores/authStore';
+import { useGroupListStore } from '../../stores/groupListStore';
+import { useMessageStore } from '../../stores/messageStore';
+import { useSessionStore } from '../../stores/sessionStore';
 
 interface ApiTestResult {
   success: boolean;
@@ -19,12 +23,55 @@ function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
 }
 
+function byteLen(s: string): number {
+  try {
+    return new TextEncoder().encode(s).byteLength;
+  } catch {
+    // fallback: rough estimate (UTF-16 code units)
+    return (s?.length ?? 0) * 2;
+  }
+}
+
+function estimateStorageBytes(storage: Storage): number {
+  let total = 0;
+  try {
+    for (let i = 0; i < storage.length; i += 1) {
+      const k = storage.key(i);
+      if (!k) continue;
+      const v = storage.getItem(k) ?? '';
+      total += byteLen(k) + byteLen(v);
+    }
+  } catch {
+    // ignore
+  }
+  return total;
+}
+
+function formatBytes(bytes: number): string {
+  const n = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+  if (n < 1024) return `${n} B`;
+  const kb = n / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(1)} GB`;
+}
+
 export default function SettingsModal() {
   const { config, isLoading, isModalOpen, closeModal, saveConfig, loadConfig } = useSettingsStore();
+  const logout = useAuthStore((s) => s.logout);
+  const clearSession = useSessionStore((s) => s.clearSession);
+  const clearGroups = useGroupListStore((s) => s.clear);
+  const clearMessages = useMessageStore((s) => s.clearMessages);
   const [apiUrl, setApiUrl] = useState('');
   const [error, setError] = useState('');
   const [useDefault, setUseDefault] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [clearConfirmStep, setClearConfirmStep] = useState<0 | 1 | 2>(0);
+  const [cacheBytes, setCacheBytes] = useState<number | null>(null);
+  const [cacheNote, setCacheNote] = useState<string>('');
 
   // 版本/更新
   const [appVersion, setAppVersion] = useState<string>('');
@@ -45,6 +92,9 @@ export default function SettingsModal() {
       setUpdateStatus('idle');
       setUpdateInfo(null);
       setUpdateError('');
+      setClearConfirmStep(0);
+      setCacheBytes(null);
+      setCacheNote('');
 
       if (!isTauri()) {
         setAppVersion('');
@@ -55,6 +105,30 @@ export default function SettingsModal() {
       }
     }
   }, [isModalOpen, loadConfig]);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const run = async () => {
+      // 浏览器存储（localStorage/sessionStorage）
+      const browserBytes = estimateStorageBytes(localStorage) + estimateStorageBytes(sessionStorage);
+
+      // 本机落盘文件（preview_ask_history.json）
+      let historyBytes = 0;
+      try {
+        const resp = await invoke<{ exists: boolean; bytes: number }>('get_preview_ask_history_stats');
+        historyBytes = typeof resp?.bytes === 'number' ? Math.max(0, resp.bytes) : 0;
+      } catch {
+        // ignore
+      }
+
+      const total = browserBytes + historyBytes;
+      setCacheBytes(total);
+      setCacheNote(historyBytes > 0 ? `（含本章提问历史 ${formatBytes(historyBytes)}）` : '');
+    };
+
+    void run();
+  }, [isModalOpen]);
 
   useEffect(() => {
     if (config) {
@@ -205,13 +279,108 @@ export default function SettingsModal() {
     }
   };
 
-  const handleOpenGithub = () => {
+  const handleOpenGithub = async () => {
     const url = 'https://github.com/inernoro/prd_agent';
-    // 在 Tauri 中最优是调用系统默认浏览器；此处先用 window.open 兜底（若受限则提示用户复制链接）。
+    // Tauri 2：优先用 plugin-shell 打开外部链接；避免 window.open 无效
+    if (isTauri()) {
+      try {
+        const mod = await import('@tauri-apps/plugin-shell');
+        await mod.open(url);
+        return;
+      } catch {
+        // fallback below
+      }
+    }
+
     try {
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch {
       alert(`请在浏览器中打开：${url}`);
+    }
+  };
+
+  const handleCopyGithub = async () => {
+    const url = 'https://github.com/inernoro/prd_agent';
+    try {
+      if (isTauri()) {
+        const mod = await import('@tauri-apps/plugin-clipboard-manager');
+        await mod.writeText(url);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        throw new Error('clipboard API 不可用');
+      }
+      alert('链接已复制');
+    } catch {
+      alert(`复制失败，请手动复制：${url}`);
+    }
+  };
+
+  const handleStartClear = () => {
+    if (isClearing) return;
+    setClearConfirmStep(1);
+  };
+
+  const handleCancelClear = () => {
+    if (isClearing) return;
+    setClearConfirmStep(0);
+  };
+
+  const handleContinueClear = () => {
+    if (isClearing) return;
+    setClearConfirmStep(2);
+  };
+
+  const handleDoClearLocalCache = async () => {
+    if (isClearing) return;
+    setIsClearing(true);
+    try {
+      try {
+        await invoke('clear_all_preview_ask_history');
+      } catch {
+        // ignore
+      }
+
+      try {
+        clearMessages();
+        clearSession();
+        clearGroups();
+      } catch {
+        // ignore
+      }
+
+      try {
+        // 先触发登出/清空 store（persist 可能会把“空状态”写回 localStorage）
+        // 因此 localStorage 的最终清理必须放在 logout 之后，避免出现“清理后仍有少量 KB 占用”。
+        logout();
+      } catch {
+        // ignore
+      }
+
+      // 最后清理浏览器存储，覆盖 persist 的写回
+      try {
+        localStorage.removeItem('auth-storage');
+        localStorage.removeItem('session-storage');
+        localStorage.removeItem('message-storage');
+        localStorage.removeItem('prdAgent.sidebarWidth');
+      } catch {
+        // ignore
+      }
+
+      try {
+        sessionStorage.removeItem('demo-prd-content');
+      } catch {
+        // ignore
+      }
+
+      try {
+        closeModal();
+      } catch {
+        // ignore
+      }
+    } finally {
+      setIsClearing(false);
+      setClearConfirmStep(0);
     }
   };
 
@@ -463,10 +632,13 @@ export default function SettingsModal() {
             <label className="block text-sm font-medium text-white/80">关于我们</label>
             <div className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2">
               <div className="text-xs text-white/50">项目主页</div>
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm text-white/80 font-mono break-all">
-                  https://github.com/inernoro/prd_agent
-                </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={handleCopyGithub}
+                  className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors"
+                >
+                  复制链接
+                </button>
                 <button
                   onClick={handleOpenGithub}
                   className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors"
@@ -477,6 +649,70 @@ export default function SettingsModal() {
               <p className="text-xs text-white/40">
                 若系统限制无法自动打开，请复制链接到浏览器访问。
               </p>
+            </div>
+          </div>
+
+          {/* 本地缓存 */}
+          <div className="space-y-3 pt-2">
+            <label className="block text-sm font-medium text-white/80">本地缓存</label>
+            <div className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2">
+              <div className="text-xs text-white/50">清理本机缓存与对话记录</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-white/40">
+                    将退出登录，并清空本机缓存（不影响服务器端数据）。
+                  </p>
+                  <div className="mt-1 text-xs text-white/60">
+                    本机缓存：{cacheBytes === null ? '计算中...' : formatBytes(cacheBytes)}{cacheNote}
+                  </div>
+                </div>
+                <button
+                  onClick={handleStartClear}
+                  disabled={isClearing}
+                  className="px-3 py-1.5 text-xs font-medium bg-red-500/20 hover:bg-red-500/30 text-red-100 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isClearing ? '清理中...' : '清除'}
+                </button>
+              </div>
+
+              {clearConfirmStep > 0 && (
+                <div className="mt-2 p-3 rounded-lg border border-red-500/30 bg-red-500/10">
+                  <div className="text-xs text-red-100">
+                    {clearConfirmStep === 1
+                      ? '确认清理本机缓存？这会退出登录，并清空本机缓存与对话记录（不影响服务器端数据）。'
+                      : '再次确认：清理后不可恢复。是否继续？'}
+                  </div>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCancelClear}
+                      disabled={isClearing}
+                      className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      取消
+                    </button>
+                    {clearConfirmStep === 1 ? (
+                      <button
+                        type="button"
+                        onClick={handleContinueClear}
+                        disabled={isClearing}
+                        className="px-3 py-1.5 text-xs font-medium bg-red-500/25 hover:bg-red-500/35 text-red-50 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        继续
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleDoClearLocalCache}
+                        disabled={isClearing}
+                        className="px-3 py-1.5 text-xs font-medium bg-red-500/30 hover:bg-red-500/40 text-red-50 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        确认清理
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

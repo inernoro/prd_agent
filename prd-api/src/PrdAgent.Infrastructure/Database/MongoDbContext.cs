@@ -56,6 +56,7 @@ public class MongoDbContext
     public IMongoCollection<ImageGenRun> ImageGenRuns => _database.GetCollection<ImageGenRun>("image_gen_runs");
     public IMongoCollection<ImageGenRunItem> ImageGenRunItems => _database.GetCollection<ImageGenRunItem>("image_gen_run_items");
     public IMongoCollection<ImageGenRunEvent> ImageGenRunEvents => _database.GetCollection<ImageGenRunEvent>("image_gen_run_events");
+    public IMongoCollection<UploadArtifact> UploadArtifacts => _database.GetCollection<UploadArtifact>("upload_artifacts");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
 
     private void CreateIndexes()
@@ -255,6 +256,14 @@ public class MongoDbContext
         ImageGenRunEvents.Indexes.CreateOne(new CreateIndexModel<ImageGenRunEvent>(
             Builders<ImageGenRunEvent>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.Seq),
             new CreateIndexOptions<ImageGenRunEvent> { Name = "uniq_image_gen_run_events_run_seq", Unique = true }));
+
+        // UploadArtifacts：按 requestId + createdAt；按 requestId + kind；按 sha256（非唯一，仅便于排查）
+        UploadArtifacts.Indexes.CreateOne(new CreateIndexModel<UploadArtifact>(
+            Builders<UploadArtifact>.IndexKeys.Ascending(x => x.RequestId).Descending(x => x.CreatedAt)));
+        UploadArtifacts.Indexes.CreateOne(new CreateIndexModel<UploadArtifact>(
+            Builders<UploadArtifact>.IndexKeys.Ascending(x => x.RequestId).Ascending(x => x.Kind).Descending(x => x.CreatedAt)));
+        UploadArtifacts.Indexes.CreateOne(new CreateIndexModel<UploadArtifact>(
+            Builders<UploadArtifact>.IndexKeys.Ascending(x => x.Sha256).Descending(x => x.CreatedAt)));
 
         // AdminPromptOverrides：同一管理员 + key 唯一（用于覆盖 system prompt）
         AdminPromptOverrides.Indexes.CreateOne(new CreateIndexModel<AdminPromptOverride>(
