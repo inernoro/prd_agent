@@ -5,7 +5,7 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
-import { getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
+import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -33,6 +33,7 @@ function codeBoxStyle(): React.CSSProperties {
 }
 
 const PROMPT_TOKEN_RE = /\[[A-Z0-9_]+\]/g;
+const PRD_TOKENS = new Set(['[PRD_CONTENT_REDACTED]', '[PRD_FULL_REDACTED]']);
 
 function splitTextByPromptTokens(text: string): Array<{ type: 'text' | 'token'; value: string }> {
   const s = text ?? '';
@@ -73,7 +74,7 @@ function BodyWithPromptTokens({
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') onTokenClick(p.value);
             }}
-            title={`点击预览 system prompt：${p.value}`}
+            title={PRD_TOKENS.has(p.value) ? `点击预览 PRD 原文：${p.value}` : `点击预览 system prompt：${p.value}`}
             style={{
               cursor: 'pointer',
               color: 'rgba(77, 163, 255, 0.95)',
@@ -757,6 +758,12 @@ export default function LlmLogsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptToken, setPromptToken] = useState<string>('');
+  const [tokenPreviewKind, setTokenPreviewKind] = useState<'system' | 'prd'>('system');
+  const [tokenPreviewLoading, setTokenPreviewLoading] = useState(false);
+  const [tokenPreviewError, setTokenPreviewError] = useState('');
+  const [tokenPreviewText, setTokenPreviewText] = useState('');
+  const [tokenPreviewTitle, setTokenPreviewTitle] = useState('');
+  const [prdCache, setPrdCache] = useState<Record<string, { title: string; content: string }>>({});
 
   const [artifactsLoading, setArtifactsLoading] = useState(false);
   const [artifactsError, setArtifactsError] = useState<string>('');
@@ -766,6 +773,62 @@ export default function LlmLogsPage() {
   const resetJsonCheck = () => {
     jsonCheckLastRef.current = null;
     setJsonCheckPhase('idle');
+  };
+
+  const openTokenPreview = async (token: string) => {
+    const t = String(token ?? '').trim();
+    if (!t) return;
+
+    setPromptToken(t);
+    setPromptOpen(true);
+    setTokenPreviewError('');
+    setTokenPreviewLoading(false);
+
+    // PRD token：按需拉取原文（后台管理员可读）
+    if (PRD_TOKENS.has(t)) {
+      setTokenPreviewKind('prd');
+      setTokenPreviewTitle('PRD 原文');
+      const groupId = String(detail?.groupId ?? '').trim();
+      const documentId = String(detail?.documentHash ?? '').trim();
+      if (!groupId || !documentId) {
+        setTokenPreviewText('');
+        setTokenPreviewError('缺少 groupId/documentHash，无法拉取 PRD 原文（该日志可能不是 chat 请求）');
+        return;
+      }
+
+      const cacheKey = `${groupId}:${documentId}`;
+      const cached = prdCache[cacheKey];
+      if (cached?.content) {
+        setTokenPreviewTitle(`PRD 原文：${cached.title || documentId}`);
+        setTokenPreviewText(cached.content);
+        return;
+      }
+
+      setTokenPreviewLoading(true);
+      setTokenPreviewText('');
+      try {
+        const res = await getAdminDocumentContent(documentId, { groupId });
+        if (res.success) {
+          const title = String(res.data.title ?? '').trim() || documentId;
+          const content = String(res.data.content ?? '');
+          setPrdCache((prev) => ({ ...prev, [cacheKey]: { title, content } }));
+          setTokenPreviewTitle(`PRD 原文：${title}`);
+          setTokenPreviewText(content);
+        } else {
+          setTokenPreviewError(res.error?.message || '拉取 PRD 原文失败');
+        }
+      } catch (e) {
+        setTokenPreviewError(String((e as any)?.message || e || '拉取 PRD 原文失败'));
+      } finally {
+        setTokenPreviewLoading(false);
+      }
+      return;
+    }
+
+    // 默认：system prompt 预览
+    setTokenPreviewKind('system');
+    setTokenPreviewTitle('System Prompt');
+    setTokenPreviewText((detail?.systemPromptText ?? '').trim());
   };
 
   useEffect(() => {
@@ -1485,8 +1548,7 @@ export default function LlmLogsPage() {
                     <BodyWithPromptTokens
                       text={prettyRequestBody || ''}
                       onTokenClick={(token) => {
-                        setPromptToken(token);
-                        setPromptOpen(true);
+                        void openTokenPreview(token);
                       }}
                     />
                   </div>
@@ -1969,8 +2031,18 @@ export default function LlmLogsPage() {
 
       <Dialog
         open={promptOpen}
-        onOpenChange={(open) => setPromptOpen(open)}
-        title="System Prompt 预览"
+        onOpenChange={(open) => {
+          setPromptOpen(open);
+          if (!open) {
+            setPromptToken('');
+            setTokenPreviewError('');
+            setTokenPreviewLoading(false);
+            setTokenPreviewText('');
+            setTokenPreviewTitle('');
+            setTokenPreviewKind('system');
+          }
+        }}
+        title={tokenPreviewTitle || (tokenPreviewKind === 'prd' ? 'PRD 原文预览' : 'System Prompt 预览')}
         description={detail ? `${promptToken || '[SYSTEM_PROMPT]'} · requestId: ${detail.requestId}` : promptToken || ''}
         maxWidth={980}
         contentStyle={{ height: '76vh' }}
@@ -1981,22 +2053,22 @@ export default function LlmLogsPage() {
             <div className="h-full min-h-0 flex flex-col">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  点击 body 中的占位符可预览（旧数据可能未记录）
+                  点击 body 中的占位符可预览原文（旧数据可能未记录/不可拉取）
                 </div>
                 <Button
                   variant="secondary"
                   size="sm"
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText((detail.systemPromptText ?? '').trim());
-                      setCopiedHint('system prompt 已复制');
+                      await navigator.clipboard.writeText((tokenPreviewText ?? '').trim());
+                      setCopiedHint('内容已复制');
                       setTimeout(() => setCopiedHint(''), 1200);
                     } catch {
                       setCopiedHint('复制失败（浏览器权限）');
                       setTimeout(() => setCopiedHint(''), 2000);
                     }
                   }}
-                  disabled={!((detail.systemPromptText ?? '').trim())}
+                  disabled={!((tokenPreviewText ?? '').trim())}
                 >
                   <Copy size={16} />
                   复制
@@ -2007,9 +2079,18 @@ export default function LlmLogsPage() {
                   {copiedHint}
                 </div>
               ) : null}
+              {tokenPreviewError ? (
+                <div className="mt-2 text-[11px]" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                  {tokenPreviewError}
+                </div>
+              ) : null}
               <div className="mt-3 flex-1 min-h-0 overflow-auto">
                 <pre style={codeBoxStyle()}>
-                  {((detail.systemPromptText ?? '').trim() || '未记录 system prompt（可能为旧日志或后端未写入该字段）')}
+                  {tokenPreviewLoading
+                    ? '加载中...'
+                    : ((tokenPreviewText ?? '').trim() || (tokenPreviewKind === 'prd'
+                      ? '未获取到 PRD 原文（可能为旧日志、缺少 documentHash/groupId，或该群组未绑定 PRD）'
+                      : '未记录 system prompt（可能为旧日志或后端未写入该字段）'))}
                 </pre>
               </div>
             </div>

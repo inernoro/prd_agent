@@ -431,10 +431,31 @@ export default function PromptStagesPage() {
         setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '保存失败'}`);
         return;
       }
-      setSettings(res.data.settings);
-      setIsOverridden(true);
-      setBaselineSig(stableKey({ prompts: normalizePrompts(res.data.settings?.prompts) }));
-      setMsg('已保存（所有客户端将逐步生效，通常 ≤ 5 分钟）');
+      // 先用 PUT 返回回填（UpdatedAt 由后端生成）
+      const saved = res.data?.settings;
+      if (!saved || !Array.isArray(saved.prompts)) {
+        setErr('保存成功但响应缺少 settings，请刷新重试（可能是代理/后端返回异常）');
+        return;
+      }
+      setSettings(saved);
+      setBaselineSig(stableKey({ prompts: normalizePrompts(saved?.prompts) }));
+
+      // 再 GET 一次拿到 isOverridden（后端逻辑：与系统默认完全一致则仍视为“使用默认”）
+      try {
+        const fresh = await getAdminPrompts();
+        if (fresh.success) {
+          setIsOverridden(!!fresh.data.isOverridden);
+          setSettings(fresh.data.settings);
+          setBaselineSig(stableKey({ prompts: normalizePrompts(fresh.data.settings?.prompts) }));
+        } else {
+          // GET 失败不影响保存结果
+          setIsOverridden(true);
+        }
+      } catch {
+        setIsOverridden(true);
+      }
+
+      setMsg('已保存（所有客户端将逐步生效，通常 ≤ 5 分钟；若内容与系统默认一致则仍显示“使用默认”）');
     } finally {
       setSaving(false);
     }

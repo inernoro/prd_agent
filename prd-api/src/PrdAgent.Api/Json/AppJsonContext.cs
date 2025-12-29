@@ -25,6 +25,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<SessionResponse>))]
 [JsonSerializable(typeof(ApiResponse<SwitchRoleResponse>))]
 [JsonSerializable(typeof(ApiResponse<UploadDocumentResponse>))]
+[JsonSerializable(typeof(ApiResponse<DocumentContentInfo>))]
 [JsonSerializable(typeof(ApiResponse<GroupResponse>))]
 [JsonSerializable(typeof(ApiResponse<JoinGroupResponse>))]
 [JsonSerializable(typeof(ApiResponse<List<GroupResponse>>))]
@@ -82,6 +83,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(TokenUsage))]
 [JsonSerializable(typeof(SenderInfo))]
 [JsonSerializable(typeof(DocumentInfo))]
+[JsonSerializable(typeof(DocumentContentInfo))]
 [JsonSerializable(typeof(SectionInfo))]
 [JsonSerializable(typeof(UserInfo))]
 // 引用模型（SSE citations）

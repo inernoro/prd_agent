@@ -15,50 +15,29 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const { user, logout } = useAuthStore();
   const { groups } = useGroupListStore();
   const { sessionId } = useSessionStore();
-  const clearSession = useSessionStore((s) => s.clearSession);
-  const clearGroups = useGroupListStore((s) => s.clear);
-  const clearMessages = useMessageStore((s) => s.clearMessages);
+  const clearContext = useSessionStore((s) => s.clearContext);
+  const clearChatContext = useMessageStore((s) => s.clearCurrentContext);
 
   const canPreview = useMemo(() => {
     return groups.length > 0;
   }, [groups.length]);
 
-  const clearLocalData = async () => {
-    const ok = window.confirm('确认清理本地数据？这会退出登录，并清空本机缓存与对话记录（不影响服务器端数据）。');
+  const handleClearCurrentContext = async () => {
+    const ok = window.confirm('确认清理当前对话上下文？这会清空本地对话记录（不影响服务器端数据），不会退出登录，也不会解绑 PRD。');
     if (!ok) return;
-    const ok2 = window.confirm('再次确认：清理后不可恢复。是否继续？');
+    const ok2 = window.confirm('再次确认：清理后当前会话上下文不可恢复。是否继续？');
     if (!ok2) return;
 
     try {
-      // 清空本机“本章提问”历史落盘文件
-      await invoke('clear_all_preview_ask_history');
+      // 若正在流式，先取消（最佳努力）
+      await invoke('cancel_stream', { kind: 'all' });
     } catch {
       // ignore
     }
 
     try {
-      clearMessages();
-      clearSession();
-      clearGroups();
-    } catch {
-      // ignore
-    }
-
-    // 先登出（persist 可能会把“空状态”写回 localStorage）
-    // 因此 localStorage 的最终清理必须放在 logout 之后。
-    logout();
-
-    try {
-      localStorage.removeItem('auth-storage');
-      localStorage.removeItem('session-storage');
-      localStorage.removeItem('message-storage');
-      localStorage.removeItem('prdAgent.sidebarWidth');
-    } catch {
-      // ignore
-    }
-
-    try {
-      sessionStorage.removeItem('demo-prd-content');
+      clearChatContext(sessionId);
+      clearContext();
     } catch {
       // ignore
     }
@@ -100,9 +79,9 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
           <div className="flex items-center gap-2">
             <span className="text-sm text-text-secondary">{user?.displayName}</span>
             <button
-              onClick={clearLocalData}
+              onClick={handleClearCurrentContext}
               className="text-sm text-text-secondary hover:text-text-primary"
-              title="清理本地数据"
+              title="清理当前上下文"
             >
               清理
             </button>

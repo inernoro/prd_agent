@@ -116,15 +116,35 @@ function App() {
     if (!isAuthenticated) return;
     if (user?.userId === 'demo-user-001') return;
 
-    invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
-      .then((res) => {
-        if (res?.success && res.data) {
-          setPrompts(res.data);
-        }
-      })
-      .catch(() => {
-        // 网络波动不打扰用户；UI 会回落到本地硬编码
-      });
+    let stopped = false;
+    const fetchOnce = () =>
+      invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
+        .then((res) => {
+          if (stopped) return;
+          if (res?.success && res.data) {
+            setPrompts(res.data);
+          }
+        })
+        .catch(() => {
+          // 网络波动不打扰用户；UI 会回落到本地硬编码
+        });
+
+    // 立刻拉一次
+    void fetchOnce();
+
+    // 后台配置变更后，Desktop 需要定期刷新（否则用户会误以为“保存没生效”）
+    // 频率：5 分钟（与后端 prompts cache TTL 对齐）
+    const timer = window.setInterval(() => void fetchOnce(), 5 * 60 * 1000);
+
+    // 用户切回前台时也刷新一次（更接近“刚保存就生效”的体验）
+    const onFocus = () => void fetchOnce();
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
   }, [isAuthenticated, user?.userId, setPrompts]);
 
   // 监听 deep link：prdagent://join/{inviteCode}

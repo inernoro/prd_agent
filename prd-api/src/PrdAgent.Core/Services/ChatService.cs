@@ -111,6 +111,7 @@ public class ChatService : IChatService
 
         // 提示词（可选）：将提示词模板作为“聚焦指令”注入 system prompt
         string systemPrompt = baseSystemPrompt;
+        string llmUserContent = content;
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(effectivePromptKey))
         {
@@ -118,6 +119,16 @@ public class ChatService : IChatService
             if (prompt != null &&
                 (!string.IsNullOrWhiteSpace(prompt.Title) || !string.IsNullOrWhiteSpace(prompt.PromptTemplate)))
             {
+                // 关键：对 LLM 请求，优先使用 promptTemplate 作为本次“讲解指令”，避免仅发送“【讲解】标题”导致模型无法按模板输出。
+                // 注意：入库的 userMessage.Content 仍保留原始 content（用于 UI 显示与回放），这里只影响发送给大模型的 messages。
+                if (!string.IsNullOrWhiteSpace(prompt.PromptTemplate))
+                {
+                    var pt = prompt.PromptTemplate.Trim();
+                    var c = (content ?? string.Empty).Trim();
+                    // 保留用户的“标题/问题”，并追加模板，便于日志排查与模型对齐输出结构。
+                    llmUserContent = string.IsNullOrWhiteSpace(c) ? pt : (c + "\n\n" + pt);
+                }
+
                 systemPrompt += @"
 
 ---
@@ -129,6 +140,9 @@ public class ChatService : IChatService
 说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注“PRD 未覆盖/需补充”，不得编造。
 
 " + (prompt.PromptTemplate ?? string.Empty);
+
+                // 日志侧的 system prompt（脱敏后）也应包含 promptKey/promptTemplate，便于排查与对照管理后台的提示词配置。
+                systemPromptRedacted = systemPrompt;
             }
         }
 
@@ -149,7 +163,7 @@ public class ChatService : IChatService
         messages.Add(new LLMMessage
         {
             Role = "user",
-            Content = content
+            Content = llmUserContent
         });
 
         // 调用LLM

@@ -28,6 +28,7 @@ interface MessageState {
   setStreamingMessageCitations: (citations: DocCitation[]) => void;
   setStreamingPhase: (phase: StreamingPhase) => void;
   stopStreaming: () => void;
+  clearCurrentContext: (sessionId: string | null) => void;
   clearMessages: () => void;
 }
 
@@ -215,6 +216,18 @@ export const useMessageStore = create<MessageState>()(
   setStreamingPhase: (phase) => set({ streamingPhase: phase }),
   
   stopStreaming: () => set({ isStreaming: false, streamingMessageId: null, streamingPhase: null }),
+
+  // 清理“当前对话上下文”（但保留 boundSessionId=sessionId），用于：
+  // - 清空本地消息，不回填服务端历史（否则用户点“清理”会立刻又出现历史消息）
+  // - 不影响 session/document（由 sessionStore 管），用户可继续在当前 PRD 上提问
+  clearCurrentContext: (sessionId) => set(() => ({
+    boundSessionId: sessionId ? String(sessionId).trim() : null,
+    isPinnedToBottom: true,
+    messages: [],
+    isStreaming: false,
+    streamingMessageId: null,
+    streamingPhase: null,
+  })),
   
       clearMessages: () => set({
         boundSessionId: null,

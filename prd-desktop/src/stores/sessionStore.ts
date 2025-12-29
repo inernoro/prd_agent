@@ -21,6 +21,7 @@ interface SessionState {
   openPrdPreviewPage: () => void;
   backFromPrdPreview: () => void;
   setPrompts: (resp: PromptsClientResponse) => void;
+  clearContext: () => void;
   clearSession: () => void;
 }
 
@@ -82,6 +83,21 @@ export const useSessionStore = create<SessionState>()(
         const updatedAt = typeof resp?.updatedAt === 'string' ? resp.updatedAt : null;
         return { prompts, promptsUpdatedAt: updatedAt };
       }),
+
+      // 仅清理“当前上下文”（不登出、不清群组列表、不清 prompts）
+      // - 不应影响 PRD 绑定与会话（否则 UI 会误显示“未绑定 PRD”）
+      // - 仅用于把页面状态从 PrdPreview 等拉回到 QA，避免“清理后仍停留在预览页”的错觉
+      clearContext: () => set((state) => ({
+        sessionId: state.sessionId ?? null,
+        activeGroupId: state.activeGroupId ?? null,
+        documentLoaded: state.documentLoaded ?? false,
+        document: state.document ?? null,
+        currentRole: state.currentRole ?? 'PM',
+        mode: 'QA',
+        previousMode: null,
+        prompts: state.prompts ?? null,
+        promptsUpdatedAt: state.promptsUpdatedAt ?? null,
+      })),
 
       clearSession: () => set({
         sessionId: null,

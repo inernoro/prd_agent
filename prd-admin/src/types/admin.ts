@@ -173,3 +173,16 @@ export type UploadArtifact = {
   cosUrl: string;
   createdAt: string;
 };
+
+export type MermaidRenderSet = {
+  svgLight?: string | null;
+  svgDark?: string | null;
+};
+
+export type DocumentContentInfo = {
+  id: string;
+  title: string;
+  content: string;
+  mermaidRenderCacheVersion?: number | null;
+  mermaidRenders?: Record<string, MermaidRenderSet> | null;
+};
