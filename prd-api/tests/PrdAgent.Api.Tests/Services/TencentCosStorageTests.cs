@@ -110,7 +110,6 @@ public class TencentCosStorageTests
         var bytes = System.Text.Encoding.UTF8.GetBytes(payloadText);
         const string mime = "image/png"; // ext->png
         var sha = Sha256Hex(bytes);
-        var shaKey = $"{runPrefix}/{sha}.png";
 
         // Act
         var stored = await storage.SaveAsync(bytes, mime, CancellationToken.None);
@@ -122,8 +121,10 @@ public class TencentCosStorageTests
         Assert.False(string.IsNullOrWhiteSpace(stored.Url));
         Assert.StartsWith("http", stored.Url, StringComparison.OrdinalIgnoreCase);
 
-        Assert.True(await storage.ExistsAsync(shaKey, CancellationToken.None));
-        _output.WriteLine($"saveAsyncKey: {shaKey}");
+        // SaveAsync 的实际 key 由存储实现决定（可能带分片目录），这里从 url 反推 key，避免测试与实现耦合。
+        var saveAsyncKey = new Uri(stored.Url).AbsolutePath.TrimStart('/');
+        Assert.True(await storage.ExistsAsync(saveAsyncKey, CancellationToken.None));
+        _output.WriteLine($"saveAsyncKey: {saveAsyncKey}");
         _output.WriteLine($"saveAsyncUrl: {stored.Url}");
 
         // 直链可访问性验证（如果桶策略是 public-read，这里应为 200；否则可能是 403/404）
@@ -141,7 +142,7 @@ public class TencentCosStorageTests
         // Cleanup：默认不删，保证你能在控制台看到；如需自动清理，设置 TENCENT_COS_TEST_CLEANUP=true/1
         if (shouldCleanup)
         {
-            foreach (var k in uploadedKeys.Append(shaKey))
+            foreach (var k in uploadedKeys.Append(saveAsyncKey))
             {
                 await storage.DeleteAsync(k, CancellationToken.None);
             }

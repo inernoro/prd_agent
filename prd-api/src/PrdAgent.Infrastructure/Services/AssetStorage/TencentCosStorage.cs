@@ -258,6 +258,26 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     {
         ThrowIfDisposed();
         var k = NormalizeKey(key);
+
+        // ===========================
+        // 安全护栏（强约束，禁止移除）
+        // ===========================
+        // 重要说明：
+        // - COS 的“目录”是对象 Key 的前缀，不是真目录；
+        // - 任何“删除目录”的实现，本质上都是枚举前缀后批量 DeleteObject，风险极高；
+        // - 目前阶段：为了避免误用/滥用/AI 误改造成灾难性数据删除，DeleteAsync 仅允许删除测试目录 `_it/` 下的对象。
+        //
+        // 严禁：
+        // - 实现“按前缀批量删除”（等价于删目录）
+        // - 放开删除到生产 `assets/` 前缀
+        //
+        // 如未来必须支持生产删除：必须引入多重保护（显式开关、白名单前缀、审计日志、强限流、二次确认、最小权限密钥）。
+        if (!IsItTestKey(k))
+        {
+            _logger.LogWarning("COS delete blocked (non-_it key). bucket={Bucket} key={Key}", _bucket, k);
+            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许删除 _it 测试目录下的对象");
+        }
+
         try
         {
             var req = new DeleteObjectRequest(_bucket, k);
@@ -375,8 +395,19 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
 
     private static string NormalizePrefix(string? prefix)
     {
-        var p = (prefix ?? "data/assets").Trim();
+        var p = (prefix ?? "data").Trim();
         p = p.Trim('/');
+
+        // 兼容历史配置：以前默认给的是 data/assets，现在统一把 Prefix 视为“根前缀”
+        // 生产对象统一放到 {prefix}/assets/... 下，避免出现 data/assets/assets/... 的重复层级。
+        if (p.EndsWith("/assets", StringComparison.OrdinalIgnoreCase))
+        {
+            p = p[..^"/assets".Length].TrimEnd('/');
+        }
+        if (string.Equals(p, "assets", StringComparison.OrdinalIgnoreCase))
+        {
+            p = string.Empty;
+        }
         return p;
     }
 
@@ -413,8 +444,14 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var e = (ext ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(e)) e = "png";
 
-        if (string.IsNullOrWhiteSpace(_prefix)) return $"{s}.{e}";
-        return $"{_prefix}/{s}.{e}";
+        // 生产规则：必须是“仅由 sha 决定”的确定性路径
+        // 原因：上层业务会先调用 SaveAsync 再查 DB 去重（owner+sha），
+        // 如果 key 带时间（如 yyyyMMdd），将导致同一 sha 在不同时间写入不同 key，形成“无人引用的垃圾对象”。
+        //
+        // 同时满足“单目录不宜过大”：按 sha 前两位分片到 256 个子目录。
+        var shard2 = s.Length >= 2 ? s[..2] : "xx";
+        if (string.IsNullOrWhiteSpace(_prefix)) return $"assets/{shard2}/{s}.{e}";
+        return $"{_prefix}/assets/{shard2}/{s}.{e}";
     }
 
     private static string NormalizeKey(string key)
@@ -468,6 +505,15 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TencentCosStorage));
+    }
+
+    private static bool IsItTestKey(string key)
+    {
+        var k = (key ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(k)) return false;
+        k = k.Replace('\\', '/');
+        return k.StartsWith("_it/", StringComparison.OrdinalIgnoreCase) ||
+               k.Contains("/_it/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void TryDeleteFile(string filePath)

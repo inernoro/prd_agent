@@ -27,7 +27,6 @@ import {
   Download,
   Hand,
   ImagePlus,
-  Loader2,
   MapPin,
   MousePointer2,
   Paperclip,
@@ -812,7 +811,7 @@ export default function AdvancedImageMasterTab() {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [focusStage, userId]);
 
   // 初始化右侧宽度：localStorage 优先，否则默认 20%
   useEffect(() => {
@@ -962,7 +961,7 @@ export default function AdvancedImageMasterTab() {
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [focusStage]);
+  }, [confirmAndDeleteSelectedKeys, focusStage]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const el = stageRef.current;
@@ -1399,7 +1398,7 @@ export default function AdvancedImageMasterTab() {
     return () => window.removeEventListener('resize', onResize);
   }, [recomputeTextareaHeight]);
 
-  const runFromText = async (displayText: string, requestText: string, primaryRef: CanvasImageItem | null) => {
+  const runFromText = async (displayText: string, requestText: string, primaryRef: CanvasImageItem | null, seedSelectedKey?: string) => {
     const display = String(displayText ?? '').trim();
     // 直连模式：解析 @model(...) 只用于“强制选模型”，不应当把标记本身发给生图 prompt
     const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -1416,8 +1415,10 @@ export default function AdvancedImageMasterTab() {
     }
 
     setError('');
-    setBusy(true);
     pushMsg('User', display || reqText);
+
+    const seedKey = String(seedSelectedKey ?? '').trim();
+    const selectedAtSend = seedKey ? (canvasRef.current.find((x) => x.key === seedKey) ?? null) : null;
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -1427,7 +1428,6 @@ export default function AdvancedImageMasterTab() {
         const msg = '内容为空';
         setError(msg);
         pushMsg('Assistant', `生成失败：${msg}`);
-        setBusy(false);
         return;
       }
     } else {
@@ -1438,7 +1438,6 @@ export default function AdvancedImageMasterTab() {
           const msg = pres.error?.message || '解析失败';
           setError(msg);
           pushMsg('Assistant', `解析失败：${msg}`);
-          setBusy(false);
           return;
         }
         plan = pres.data ?? null;
@@ -1446,7 +1445,6 @@ export default function AdvancedImageMasterTab() {
         const msg = e instanceof Error ? e.message : '网络错误';
         setError(msg);
         pushMsg('Assistant', `解析失败：${msg}`);
-        setBusy(false);
         return;
       }
 
@@ -1458,7 +1456,7 @@ export default function AdvancedImageMasterTab() {
     const pickedIsVolcesSeedream = /volces|doubao|seedream/i.test(String(pickedModel?.modelName || ''));
     const refDim =
       (primaryRef?.naturalW && primaryRef?.naturalH ? { w: primaryRef.naturalW, h: primaryRef.naturalH } : null) ??
-      (selected?.naturalW && selected?.naturalH ? { w: selected.naturalW, h: selected.naturalH } : null);
+      (selectedAtSend?.naturalW && selectedAtSend?.naturalH ? { w: selectedAtSend.naturalW, h: selectedAtSend.naturalH } : null);
     const resolvedSizeForGen = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
 
     pushMsg(
@@ -1467,11 +1465,11 @@ export default function AdvancedImageMasterTab() {
         `本次使用模型：${pickedModel?.name || pickedModel?.modelName}${forcedPick.forced ? '（@ 强制）' : ''}`,
         directPrompt ? '直连模式：输入将原样作为提示词发送（未进行解析/改写）。' : `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
         !directPrompt && items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
-        (primaryRef || selected) && pickedIsVolcesSeedream
+        (primaryRef || selectedAtSend) && pickedIsVolcesSeedream
           ? directPrompt
             ? '你选择了首帧图，但当前模型（seedream/Volces）通常不支持标准图生图首帧；且你开启了直连模式，本次不会自动做“风格提取→拼进提示词”，可能导致生成失败。需要该能力请关闭直连。'
             : '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
-          : (primaryRef || selected)
+          : (primaryRef || selectedAtSend)
             ? '你已选中一张图片作为参考图。本次将作为图生图参考传给生图接口（若上游平台不支持，会返回参数错误）。'
             : '',
       ]
@@ -1481,11 +1479,13 @@ export default function AdvancedImageMasterTab() {
 
     // 画板占位
     const near = stageCenterWorld();
-    const selectedFirstKey = selectedKeys[0] ?? '';
-    const selectedIsGenerator = selectedFirstKey ? (canvas.find((x) => x.key === selectedFirstKey)?.kind ?? 'image') === 'generator' : false;
+    const selectedFirstKey = seedKey;
+    const selectedIsGenerator = selectedFirstKey
+      ? (canvasRef.current.find((x) => x.key === selectedFirstKey)?.kind ?? 'image') === 'generator'
+      : false;
     const generatorExistingKey = selectedIsGenerator
       ? selectedFirstKey
-      : pickNearestGeneratorKey(canvas, near);
+      : pickNearestGeneratorKey(canvasRef.current, near);
     const key = generatorExistingKey ?? `gen_${Date.now()}`;
     setCanvas((prev) => {
       const existingRects = prev
@@ -1658,8 +1658,6 @@ export default function AdvancedImageMasterTab() {
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
       setError(msg);
       pushMsg('Assistant', `生成失败：${msg}`);
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -1731,11 +1729,43 @@ export default function AdvancedImageMasterTab() {
     return { requestText, primaryRef: merged[0] ?? null };
   };
 
+  const drainGenQueue = () => {
+    while (runningCountRef.current < MAX_GEN_CONCURRENCY && pendingJobsRef.current.length > 0) {
+      const job = pendingJobsRef.current.shift()!;
+      setPendingCount(pendingJobsRef.current.length);
+      runningCountRef.current += 1;
+      setRunningCount(runningCountRef.current);
+      setBusy(runningCountRef.current > 0);
+
+      void (async () => {
+        try {
+          await runFromText(job.displayText, job.requestText, job.primaryRef, job.seedSelectedKey);
+        } finally {
+          runningCountRef.current = Math.max(0, runningCountRef.current - 1);
+          setRunningCount(runningCountRef.current);
+          setBusy(runningCountRef.current > 0);
+          setPendingCount(pendingJobsRef.current.length);
+          drainGenQueue();
+        }
+      })();
+    }
+  };
+
   const sendText = async (rawText: string) => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
     const { requestText, primaryRef } = buildRequestTextWithRefs(raw);
-    await runFromText(raw, requestText, primaryRef);
+    const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
+    const job: GenJob = {
+      id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      displayText: raw,
+      requestText,
+      primaryRef,
+      seedSelectedKey,
+    };
+    pendingJobsRef.current.push(job);
+    setPendingCount(pendingJobsRef.current.length);
+    drainGenQueue();
   };
 
   const onSend = async () => {
@@ -3695,7 +3725,6 @@ export default function AdvancedImageMasterTab() {
                   outline: 'none',
                   boxShadow: 'none',
                 }}
-                disabled={busy}
               />
 
               {mentionOpen ? (
@@ -3844,7 +3873,6 @@ export default function AdvancedImageMasterTab() {
                     aria-label="附件"
                     title="附件"
                     onClick={() => fileRef.current?.click()}
-                    disabled={busy}
                   >
                     <Paperclip size={18} />
                   </button>
@@ -3860,7 +3888,6 @@ export default function AdvancedImageMasterTab() {
                     aria-label="@"
                     title="@"
                     onClick={() => insertTextAtCursor('@', { openMention: true })}
-                    disabled={busy}
                   >
                     <AtSign size={18} />
                   </button>
@@ -4022,21 +4049,36 @@ export default function AdvancedImageMasterTab() {
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
+                  {(runningCount > 0 || pendingCount > 0) ? (
+                    <div
+                      className="text-[11px] px-2 h-10 inline-flex items-center rounded-full"
+                      style={{
+                        border: '1px solid rgba(255,255,255,0.10)',
+                        background: 'rgba(0,0,0,0.18)',
+                        color: 'rgba(255,255,255,0.60)',
+                      }}
+                      title="生成队列：运行中 / 排队"
+                      aria-label="生成队列"
+                    >
+                      运行 {runningCount} · 排队 {pendingCount}
+                    </div>
+                  ) : null}
+
                   {/* 图2：发送（圆形箭头） */}
                   <button
                     type="button"
                     onClick={() => void onSend()}
-                    disabled={busy || !input.trim()}
+                    disabled={!input.trim()}
                     className="h-10 w-10 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
-                      background: busy || !input.trim() ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)',
-                      color: busy || !input.trim() ? 'rgba(255,255,255,0.45)' : 'var(--text-primary)',
+                      background: !input.trim() ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)',
+                      color: !input.trim() ? 'rgba(255,255,255,0.45)' : 'var(--text-primary)',
                     }}
                     aria-label="生成"
                     title="生成"
                   >
-                    {busy ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
+                    <ArrowUp size={18} />
                   </button>
                 </div>
               </div>
