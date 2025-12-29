@@ -53,15 +53,14 @@ services:
       - Session__TimeoutMinutes=30
       # 资产存储：auto / tencentCos / local
       # - 生产建议：tencentCos + 禁用 local，确保“绝不落盘”
-      - Assets__Provider=${ASSETS_PROVIDER:-tencentCos}
-      - Assets__DisableLocal=${ASSETS_DISABLE_LOCAL:-true}
+      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
       # Tencent COS（密钥禁止写死到仓库；生产环境建议通过部署系统/Secrets 注入）
-      - TencentCos__Bucket=${TENCENT_COS_BUCKET}
-      - TencentCos__Region=${TENCENT_COS_REGION}
-      - TencentCos__SecretId=${TENCENT_COS_SECRET_ID}
-      - TencentCos__SecretKey=${TENCENT_COS_SECRET_KEY}
-      - TencentCos__PublicBaseUrl=${TENCENT_COS_PUBLIC_BASE_URL}
-      - TencentCos__Prefix=${TENCENT_COS_PREFIX:-data}
+      - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
+      - TENCENT_COS_REGION=${TENCENT_COS_REGION}
+      - TENCENT_COS_SECRET_ID=${TENCENT_COS_SECRET_ID}
+      - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
+      - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
+      - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
     # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘

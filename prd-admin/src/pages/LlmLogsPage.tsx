@@ -107,6 +107,17 @@ function diffMs(fromIso: string | null | undefined, toIso: string | null | undef
   return b.getTime() - a.getTime();
 }
 
+function fmtMsSmart(v: number | null | undefined): string {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
+  const ms = Math.round(v);
+  if (Math.abs(ms) >= 10_000) {
+    const s = ms / 1000;
+    const s1 = Math.round(s * 10) / 10; // 1 位小数
+    return Number.isInteger(s1) ? `${s1.toFixed(0)}s` : `${s1.toFixed(1)}s`;
+  }
+  return `${ms}ms`;
+}
+
 function fmtNum(v: number | null | undefined): string {
   // 重要：null/undefined 表示“未知/未上报”，不应显示为 0
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
@@ -121,13 +132,6 @@ function fmtBytes(v: number | null | undefined): string {
   if (mb < 1024) return `${mb.toFixed(2)} MB`;
   const gb = mb / 1024;
   return `${gb.toFixed(2)} GB`;
-}
-
-function fmtHashOrHidden(v: string | null | undefined): string {
-  const s = (v ?? '').trim();
-  if (!s) return '—';
-  // 超长哈希会破坏布局：按需求显示“前几位 + …”
-  return s.length > 24 ? `${s.slice(0, 18)}…` : s;
 }
 
 type RequestTypeTone = 'gold' | 'green' | 'blue' | 'purple' | 'muted';
@@ -670,9 +674,9 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
   const ttfb = diffMs(it.startedAt, it.firstByteAt ?? null);
   const rightText =
     it.durationMs
-      ? `${it.durationMs}ms${ttfb !== null ? ` · TTFB ${ttfb}ms` : ''}`
+      ? `${fmtMsSmart(it.durationMs)}${ttfb !== null ? ` · TTFB ${fmtMsSmart(ttfb)}` : ''}`
       : ttfb !== null
-        ? `TTFB ${ttfb}ms`
+        ? `TTFB ${fmtMsSmart(ttfb)}`
         : formatLocalTime(it.startedAt);
 
   return (
@@ -893,18 +897,11 @@ export default function LlmLogsPage() {
     return v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
   const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
-  const shouldShowImagePreview = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
+  const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   useEffect(() => {
     // 内容不再包含 \uXXXX 时，自动关闭“可见字符”避免误解
     if (!answerHasUnicodeEscapes && answerVisibleChars) setAnswerVisibleChars(false);
   }, [answerHasUnicodeEscapes, answerVisibleChars]);
-  const assembledSummary = useMemo(() => {
-    if (!detail) return '';
-    const chars = detail.assembledTextChars;
-    const hash = (detail.assembledTextHash ?? '').trim();
-    if ((chars === null || chars === undefined || chars === 0) && !hash) return '';
-    return `用户可见输出（摘要字段）\nchars=${fmtNum(chars)}\nhash=${hash ? fmtHashOrHidden(hash) : '—'}\n\n说明：这里仅保留长度与哈希用于对照；具体内容请查看下方 Answer。`;
-  }, [detail]);
 
   const statusBadge = (s: string) => {
     const v = (s || '').toLowerCase();
@@ -913,6 +910,35 @@ export default function LlmLogsPage() {
     if (v === 'running') return <Badge variant="subtle" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
     if (v === 'cancelled') return <Badge variant="subtle" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
     return <Badge variant="subtle" size="sm">{s || '-'}</Badge>;
+  };
+
+  const statusRowStyle = (s: string): { container: React.CSSProperties; value: React.CSSProperties } => {
+    const v = (s || '').toLowerCase().trim();
+    if (v === 'failed') {
+      return {
+        container: { border: '1px solid rgba(239, 68, 68, 0.38)', background: 'rgba(239, 68, 68, 0.08)' },
+        value: { color: 'rgba(239, 68, 68, 0.95)' },
+      };
+    }
+    if (v === 'succeeded') {
+      return {
+        container: { border: '1px solid rgba(34, 197, 94, 0.38)', background: 'rgba(34, 197, 94, 0.08)' },
+        value: { color: 'rgba(34, 197, 94, 0.95)' },
+      };
+    }
+    if (v === 'running') {
+      return {
+        container: { border: '1px solid rgba(59, 130, 246, 0.38)', background: 'rgba(59, 130, 246, 0.08)' },
+        value: { color: 'rgba(147, 197, 253, 0.98)' },
+      };
+    }
+    if (v === 'cancelled') {
+      return {
+        container: { border: '1px solid rgba(148, 163, 184, 0.30)', background: 'rgba(148, 163, 184, 0.06)' },
+        value: { color: 'rgba(148, 163, 184, 0.95)' },
+      };
+    }
+    return { container: {}, value: {} };
   };
 
   const inputStyle: React.CSSProperties = {
@@ -1340,7 +1366,7 @@ export default function LlmLogsPage() {
           }
         }}
         title="LLM 请求详情"
-        description={detail ? `requestId: ${detail.requestId}` : '点击列表项查看详情'}
+        description={detail ? (joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '—') : '点击列表项查看详情'}
         maxWidth={1200}
         contentStyle={{ height: '82vh' }}
         content={
@@ -1391,15 +1417,30 @@ export default function LlmLogsPage() {
                     { k: 'firstByteAt', v: formatLocalTime(detail.firstByteAt ?? null) },
                     { k: 'endedAt', v: formatLocalTime(detail.endedAt ?? null) },
                     {
-                      k: 'TTFB',
-                      v: diffMs(detail.startedAt, detail.firstByteAt ?? null) !== null ? `${diffMs(detail.startedAt, detail.firstByteAt ?? null)}ms` : '—',
+                      k: 'time',
+                      v: (() => {
+                        const ttfb = diffMs(detail.startedAt, detail.firstByteAt ?? null);
+                        const total =
+                          typeof detail.durationMs === 'number'
+                            ? detail.durationMs
+                            : diffMs(detail.startedAt, detail.endedAt ?? null);
+                        return `首字延时 ${fmtMsSmart(ttfb)} · 总时长 ${fmtMsSmart(total)}`;
+                      })(),
                     },
-                  ].map((row) => (
-                    <div
-                      key={row.k}
-                      className="rounded-[12px] px-2.5 py-1.5 min-w-0"
-                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
-                    >
+                  ].map((row) => {
+                    const isStatus = row.k === 'status';
+                    const ss = isStatus ? statusRowStyle(String(row.v ?? '')) : null;
+                    return (
+                      <div
+                        key={row.k}
+                        className="rounded-[12px] px-2.5 py-1.5 min-w-0"
+                        style={{
+                          border: '1px solid var(--border-subtle)',
+                          background: 'rgba(255,255,255,0.02)',
+                          minWidth: 0,
+                          ...(ss?.container ?? {}),
+                        }}
+                      >
                       <div className="flex items-center gap-2">
                         <div className="text-[11px] font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>
                           {row.k}
@@ -1416,40 +1457,15 @@ export default function LlmLogsPage() {
                             fontWeight: 700,
                             fontFamily:
                               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
+                            ...(ss?.value ?? {}),
                           }}
                         />
                       </div>
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">
-                  <div>
-                    <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>endpoint</div>
-                    <pre style={codeBoxStyle()}>
-                      {joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '—'}
-                    </pre>
-                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      endpointChars: {(joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '').length || '—'}
-                    </div>
-                  </div>
-                  <div>
-                    {(() => {
-                      const headersObj = detail.requestHeadersRedacted ?? {};
-                      const headerKeys = Object.keys(headersObj).length;
-                      const headerChars = JSON.stringify(headersObj ?? {}).length;
-                      return (
-                        <>
-                          <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
-                            <span>headers</span>
-                            <span className="text-[11px]">
-                              {headerKeys} 项 · {headerChars} chars
-                            </span>
-                          </div>
-                          <pre style={codeBoxStyle()}>{JSON.stringify(headersObj, null, 2)}</pre>
-                        </>
-                      );
-                    })()}
-                  </div>
                   <div>
                     {(() => {
                       const raw = detail.requestBodyRedacted || '';
@@ -1474,6 +1490,28 @@ export default function LlmLogsPage() {
                       }}
                     />
                   </div>
+                  <div>
+                    {(() => {
+                      const headersObj = detail.requestHeadersRedacted ?? {};
+                      const headerKeys = Object.keys(headersObj).length;
+                      const headerChars = JSON.stringify(headersObj ?? {}).length;
+                      return (
+                        <>
+                          <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                            <span>headers</span>
+                            <span className="text-[11px]">
+                              {headerKeys} 项 · {headerChars} chars
+                            </span>
+                          </div>
+                          <pre style={codeBoxStyle()}>{JSON.stringify(headersObj, null, 2)}</pre>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      endpointChars: {(joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '').length || '—'}
+                    </div>
                 </div>
                 <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   {(() => {
@@ -1509,9 +1547,6 @@ export default function LlmLogsPage() {
 
               <Card className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
-                <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  statusCode: {detail.statusCode ?? '-'} · duration: {detail.durationMs ?? '-'}ms
-                </div>
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {(() => {
                     const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
@@ -1526,10 +1561,14 @@ export default function LlmLogsPage() {
                 </div>
                 <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
                   {[
-                    { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
-                    { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
-                    { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
-                    { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
+                    ...(isImageLikeLog
+                      ? []
+                      : [
+                          { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
+                          { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
+                          { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
+                          { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
+                        ]),
                     { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
                     // 这里用完整 hash，超长由 marquee 自动循环滚动
                     { k: 'Assembled hash（拼接哈希）', v: (detail.assembledTextHash ?? '').trim() || '—' },
@@ -1687,7 +1726,7 @@ export default function LlmLogsPage() {
                   </div>
 
                   <div className="mt-3">
-                    {shouldShowImagePreview ? (
+                    {hasImageArtifacts ? (
                     <div className="mb-3">
                       <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
                         <span>图片预览</span>
@@ -1705,10 +1744,6 @@ export default function LlmLogsPage() {
                       ) : artifactsError ? (
                         <div className="text-[12px] py-6 text-center" style={{ color: 'rgba(239,68,68,0.92)' }}>
                           加载失败：{artifactsError}
-                        </div>
-                      ) : !hasImageArtifacts ? (
-                        <div className="text-[12px] py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-                          暂无图片（仅生图/含参考图的请求会产生该数据）
                         </div>
                       ) : (
                         <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
@@ -1925,13 +1960,6 @@ export default function LlmLogsPage() {
                       </div>
                     )}
                   </div>
-
-                  {assembledSummary ? (
-                    <div className="mt-3">
-                      <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>用户可见输出（摘要字段）</div>
-                      <pre style={codeBoxStyle()}>{assembledSummary}</pre>
-                    </div>
-                  ) : null}
                 </div>
               </Card>
             </div>

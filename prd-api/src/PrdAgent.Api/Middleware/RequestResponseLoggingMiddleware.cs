@@ -218,22 +218,15 @@ public class RequestResponseLoggingMiddleware
                 ? LogLevel.Warning
                 : LogLevel.Information;
 
-        // 单行输出，尽量贴近 ASP.NET 的 "Request finished ..." 风格，但更聚焦且可控（不打 starting、不打 OPTIONS）
+        // 单行输出（控制台更清爽）
         // 示例：
-        // Request finished HTTP/1.1 GET http://localhost:5000/api/v1/config/models?page=1 - 200 null application/json; charset=utf-8 13.4012ms success=true items=20 total=123 rid=abcd ip=127.0.0.1
-        // ContentType 只用于展示；可能为空（例如 NoContent/204）
-        var contentType = string.IsNullOrWhiteSpace(responseContentType) ? "null" : responseContentType;
+        // 完成 GET http://localhost:5000/api/v1/config/models?page=1 - 200 null 3ms
         _logger.Log(level,
-            "Request finished {Protocol} {Method} {Url} - {StatusCode} null {ContentType} {DurationMs}ms{ApiSummary} rid={RequestId} ip={ClientIp}",
-            protocol,
+            "完成 {Method} {Url} - {StatusCode} null {DurationMs}ms",
             method,
             absoluteUrl,
             statusCode,
-            contentType,
-            $"{durationMs:0.####}",
-            string.IsNullOrWhiteSpace(apiSummary) ? "" : $" {apiSummary}",
-            requestId,
-            clientIp);
+            $"{durationMs:0.####}");
     }
 
     private static string BuildAbsoluteUrl(HttpContext context, string path, string? query)

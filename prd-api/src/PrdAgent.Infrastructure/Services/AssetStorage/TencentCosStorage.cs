@@ -391,13 +391,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                 if (bytesNew != null && bytesNew.Length > 0) return (bytesNew, ExtToMime(ext));
             }
 
-            // 2) 兼容旧规则（历史 key）
-            foreach (var keyLegacy in BuildLegacyKeys(sha, ext))
-            {
-                var bytes = await TryDownloadBytesAsync(keyLegacy, ct).ConfigureAwait(false);
-                if (bytes == null || bytes.Length == 0) continue;
-                return (bytes, ExtToMime(ext));
-            }
+            // 新系统：不做历史 key 兼容
         }
         return null;
     }
@@ -423,10 +417,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                     var keyNew = BuildObjectKey(d!, t!, sha, ext);
                     await DeleteAsync(keyNew, ct).ConfigureAwait(false);
                 }
-                foreach (var keyLegacy in BuildLegacyKeys(sha, ext))
-                {
-                    await DeleteAsync(keyLegacy, ct).ConfigureAwait(false);
-                }
+                // 新系统：不做历史 key 兼容
             }
             catch (Exception ex)
             {
@@ -514,27 +505,13 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var e = (ext ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(e)) e = "png";
 
-        // 规则：key 必须全小写且“仅由 domain/type/sha/ext 决定”，避免产生无人引用的垃圾对象
-        var rel = AppDomainPaths.CosKey(d, t, s, e); // already lower
+        // 规则：key 必须全小写且“仅由 domain/type/sha/ext 决定”
+        // - 新系统：不做历史兼容；为显著缩短文件名，使用 sha256 的前 16 字节（128-bit）做标识，再 base32 编码（小写、无 padding）
+        // - 说明：128-bit 仍是“极低碰撞概率”；若你要求数学意义上的“绝对不可能重复”，必须使用完整 sha256 或引入中心化分配/校验机制
+        var sid = Sha256HexToBase32Lower128(s);
+        var rel = $"{d}/{t}/{sid}.{e}";
         if (string.IsNullOrWhiteSpace(_prefix)) return rel;
         return $"{_prefix}/{rel}";
-    }
-
-    private IEnumerable<string> BuildLegacyKeys(string sha, string ext)
-    {
-        // 兼容历史版本：尝试旧的 key 结构（assets/shard2）与不带 shard 的结构
-        var s = (sha ?? string.Empty).Trim().ToLowerInvariant();
-        var e = (ext ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(s) || string.IsNullOrWhiteSpace(e)) yield break;
-        var shard2 = s.Length >= 2 ? s[..2] : "xx";
-        var roots = string.IsNullOrWhiteSpace(_prefix) ? new[] { "" } : new[] { _prefix };
-        foreach (var root in roots)
-        {
-            var r = string.IsNullOrWhiteSpace(root) ? "" : $"{root}/";
-            yield return $"{r}assets/{shard2}/{s}.{e}";
-            yield return $"{r}assets/{s}.{e}";
-            yield return $"{r}{s}.{e}";
-        }
     }
 
     private static string NormalizeKey(string key)
@@ -561,6 +538,53 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         using var sha = SHA256.Create();
         var h = sha.ComputeHash(bytes);
         return Convert.ToHexString(h).ToLowerInvariant();
+    }
+
+    private static string Sha256HexToBase32Lower128(string shaHex)
+    {
+        var s = (shaHex ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(s)) throw new ArgumentException("sha empty", nameof(shaHex));
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromHexString(s);
+        }
+        catch (Exception ex)
+        {
+            throw new ArgumentException("sha hex invalid", nameof(shaHex), ex);
+        }
+        if (bytes.Length != 32) throw new ArgumentException("sha256 hex must be 32 bytes", nameof(shaHex));
+
+        // 取前 16 字节（128-bit）：base32 长度为 ceil(128/5)=26
+        return Base32LowerNoPadding(bytes.AsSpan(0, 16));
+    }
+
+    private static string Base32LowerNoPadding(ReadOnlySpan<byte> data)
+    {
+        // RFC4648 base32 alphabet, lower-cased: a-z2-7
+        const string alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+        if (data.IsEmpty) return string.Empty;
+        var outputLen = (data.Length * 8 + 4) / 5; // ceil(bits/5)
+        var sb = new System.Text.StringBuilder(outputLen);
+        var buffer = 0;
+        var bitsLeft = 0;
+        for (var i = 0; i < data.Length; i++)
+        {
+            buffer = (buffer << 8) | data[i];
+            bitsLeft += 8;
+            while (bitsLeft >= 5)
+            {
+                var idx = (buffer >> (bitsLeft - 5)) & 31;
+                bitsLeft -= 5;
+                sb.Append(alphabet[idx]);
+            }
+        }
+        if (bitsLeft > 0)
+        {
+            var idx = (buffer << (5 - bitsLeft)) & 31;
+            sb.Append(alphabet[idx]);
+        }
+        return sb.ToString();
     }
 
     private static string MimeToExt(string mime)

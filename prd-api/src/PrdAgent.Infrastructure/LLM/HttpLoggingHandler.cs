@@ -27,10 +27,38 @@ public class HttpLoggingHandler : DelegatingHandler
 
     // 最大记录body长度（使用系统配置，默认 50k）
     private static readonly int MaxBodyLength = LlmLogLimits.DefaultHttpLogBodyMaxChars;
+    
+    // 避免把大文件/二进制读入内存并输出到控制台（尤其是 multipart 上传、COS/图片等）
+    private const long MaxBodyBytesToInspect = 256 * 1024; // 256KB
 
     public HttpLoggingHandler(ILogger<HttpLoggingHandler> logger)
     {
         _logger = logger;
+    }
+
+    private static bool IsTextLikeContentType(string? mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(mediaType)) return false;
+        var mt = mediaType.Trim().ToLowerInvariant();
+        if (mt.StartsWith("text/")) return true;
+        if (mt == "application/json" || mt.EndsWith("+json")) return true;
+        if (mt == "application/x-www-form-urlencoded") return true;
+        if (mt == "application/xml" || mt.EndsWith("+xml")) return true;
+        return false;
+    }
+
+    private static bool IsBinaryLikeContentType(string? mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(mediaType)) return false;
+        var mt = mediaType.Trim().ToLowerInvariant();
+        if (mt.StartsWith("multipart/")) return true;
+        if (mt == "application/octet-stream") return true;
+        if (mt.StartsWith("image/") || mt.StartsWith("audio/") || mt.StartsWith("video/")) return true;
+        if (mt is "application/zip" or "application/x-zip-compressed" or "application/gzip" or "application/x-gzip" or "application/pdf")
+        {
+            return true;
+        }
+        return false;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -40,9 +68,6 @@ public class HttpLoggingHandler : DelegatingHandler
         var requestId = Guid.NewGuid().ToString("N")[..8];
         var stopwatch = Stopwatch.StartNew();
 
-        // 记录请求
-        await LogRequestAsync(request, requestId);
-
         HttpResponseMessage response;
         try
         {
@@ -51,21 +76,23 @@ public class HttpLoggingHandler : DelegatingHandler
         catch (Exception ex)
         {
             stopwatch.Stop();
-            _logger.LogError(ex, 
-                "\n========== HTTP REQUEST FAILED [{RequestId}] ==========\n" +
-                "Duration: {Duration}ms\n" +
-                "Error: {ErrorMessage}\n" +
-                "=======================================================\n",
-                requestId, stopwatch.ElapsedMilliseconds, ex.Message);
+            var url = request.RequestUri?.ToString() ?? "(null)";
+            _logger.LogError(ex, "失败 OUT {Method} {Url} - null {DurationMs}ms", request.Method, url, $"{stopwatch.ElapsedMilliseconds:0.####}");
             throw;
         }
 
         stopwatch.Stop();
 
-        // 记录响应
-        await LogResponseAsync(response, requestId, stopwatch.ElapsedMilliseconds);
+        LogResponseSummary(response, requestId, stopwatch.ElapsedMilliseconds, request);
 
         return response;
+    }
+
+    private void LogResponseSummary(HttpResponseMessage response, string requestId, long durationMs, HttpRequestMessage request)
+    {
+        var url = request.RequestUri?.ToString() ?? "(null)";
+        var level = response.IsSuccessStatusCode ? LogLevel.Information : LogLevel.Warning;
+        _logger.Log(level, "完成 OUT {Method} {Url} - {StatusCode} null {DurationMs}ms", request.Method, url, (int)response.StatusCode, $"{durationMs:0.####}");
     }
 
     private async Task LogRequestAsync(HttpRequestMessage request, string requestId)
@@ -98,22 +125,39 @@ public class HttpLoggingHandler : DelegatingHandler
         // 记录请求体
         if (request.Content != null)
         {
-            var body = await request.Content.ReadAsStringAsync();
-            if (!string.IsNullOrEmpty(body))
+            var mediaType = request.Content.Headers.ContentType?.MediaType;
+            var len = request.Content.Headers.ContentLength;
+
+            var shouldSkip =
+                IsBinaryLikeContentType(mediaType) ||
+                !IsTextLikeContentType(mediaType) ||
+                (len.HasValue && len.Value > MaxBodyBytesToInspect);
+
+            if (shouldSkip)
             {
-                sb.AppendLine("  Body:");
-                var prettyBody = TryPrettyPrintJson(body);
-                
-                // 截断过长的body
-                if (prettyBody.Length > MaxBodyLength)
+                sb.AppendLine("  Body: [SKIPPED]");
+                sb.AppendLine($"    contentType: {mediaType ?? "unknown"}");
+                sb.AppendLine($"    contentLength: {(len.HasValue ? len.Value.ToString() : "unknown")}");
+            }
+            else
+            {
+                var body = await request.Content.ReadAsStringAsync();
+                if (!string.IsNullOrEmpty(body))
                 {
-                    prettyBody = prettyBody[..MaxBodyLength] + "\n    ... [TRUNCATED]";
-                }
-                
-                // 添加缩进
-                foreach (var line in prettyBody.Split('\n'))
-                {
-                    sb.AppendLine($"    {line}");
+                    sb.AppendLine("  Body:");
+                    var prettyBody = TryPrettyPrintJson(body);
+
+                    // 截断过长的body
+                    if (prettyBody.Length > MaxBodyLength)
+                    {
+                        prettyBody = prettyBody[..MaxBodyLength] + "\n    ... [TRUNCATED]";
+                    }
+
+                    // 添加缩进
+                    foreach (var line in prettyBody.Split('\n'))
+                    {
+                        sb.AppendLine($"    {line}");
+                    }
                 }
             }
         }
@@ -145,23 +189,40 @@ public class HttpLoggingHandler : DelegatingHandler
         }
         else if (response.Content != null)
         {
-            // 记录响应体
-            var body = await response.Content.ReadAsStringAsync();
-            if (!string.IsNullOrEmpty(body))
+            var mediaType = response.Content.Headers.ContentType?.MediaType;
+            var len = response.Content.Headers.ContentLength;
+
+            var shouldSkip =
+                IsBinaryLikeContentType(mediaType) ||
+                !IsTextLikeContentType(mediaType) ||
+                (len.HasValue && len.Value > MaxBodyBytesToInspect);
+
+            if (shouldSkip)
             {
-                sb.AppendLine("  Body:");
-                var prettyBody = TryPrettyPrintJson(body);
-                
-                // 截断过长的body
-                if (prettyBody.Length > MaxBodyLength)
+                sb.AppendLine("  Body: [SKIPPED]");
+                sb.AppendLine($"    contentType: {mediaType ?? "unknown"}");
+                sb.AppendLine($"    contentLength: {(len.HasValue ? len.Value.ToString() : "unknown")}");
+            }
+            else
+            {
+                // 记录响应体
+                var body = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrEmpty(body))
                 {
-                    prettyBody = prettyBody[..MaxBodyLength] + "\n    ... [TRUNCATED]";
-                }
-                
-                // 添加缩进
-                foreach (var line in prettyBody.Split('\n'))
-                {
-                    sb.AppendLine($"    {line}");
+                    sb.AppendLine("  Body:");
+                    var prettyBody = TryPrettyPrintJson(body);
+
+                    // 截断过长的body
+                    if (prettyBody.Length > MaxBodyLength)
+                    {
+                        prettyBody = prettyBody[..MaxBodyLength] + "\n    ... [TRUNCATED]";
+                    }
+
+                    // 添加缩进
+                    foreach (var line in prettyBody.Split('\n'))
+                    {
+                        sb.AppendLine($"    {line}");
+                    }
                 }
             }
         }

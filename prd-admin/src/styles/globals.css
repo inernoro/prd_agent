@@ -36,6 +36,52 @@ select optgroup {
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: content-box; }
 
+/* 图片上传：海浪透明遮罩（用于 syncStatus=pending 的画布图片） */
+@keyframes prdUploadWaveMove {
+  0% { transform: translateX(-28%); opacity: 0.55; }
+  50% { opacity: 0.85; }
+  100% { transform: translateX(28%); opacity: 0.55; }
+}
+
+.prd-upload-wave {
+  position: relative;
+  overflow: hidden;
+}
+
+.prd-upload-wave::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 一层极轻的冷色雾，避免遮挡图片细节 */
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.10) 0%, rgba(59, 130, 246, 0.04) 55%, rgba(59, 130, 246, 0.08) 100%);
+  mix-blend-mode: screen;
+  opacity: 0.55;
+}
+
+.prd-upload-wave::after {
+  content: '';
+  position: absolute;
+  inset: -18% -36%;
+  pointer-events: none;
+  /* “海浪”主体：多层波峰叠加 + 扫过 */
+  background:
+    radial-gradient(40px 18px at 10% 68%, rgba(255,255,255,0.14) 0 62%, transparent 64%),
+    radial-gradient(44px 20px at 26% 72%, rgba(255,255,255,0.12) 0 62%, transparent 64%),
+    radial-gradient(46px 22px at 42% 69%, rgba(255,255,255,0.10) 0 62%, transparent 64%),
+    radial-gradient(44px 20px at 58% 73%, rgba(255,255,255,0.12) 0 62%, transparent 64%),
+    radial-gradient(40px 18px at 74% 70%, rgba(255,255,255,0.14) 0 62%, transparent 64%),
+    radial-gradient(44px 20px at 90% 74%, rgba(255,255,255,0.10) 0 62%, transparent 64%),
+    linear-gradient(90deg, rgba(59,130,246,0.00) 0%, rgba(59,130,246,0.10) 45%, rgba(59,130,246,0.00) 100%);
+  filter: blur(0.2px);
+  opacity: 0.70;
+  animation: prdUploadWaveMove 1.15s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prd-upload-wave::after { animation: none !important; }
+}
+
 /* 主模型选中：轻量瞬时动效（行闪一下 + 星标弹一下） */
 @keyframes mainRowSweepRtl {
   0% { transform: translateX(110%); opacity: 0; }

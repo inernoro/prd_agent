@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -10,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Text.RegularExpressions;
 
 namespace PrdAgent.Api.Controllers.Admin;
@@ -28,6 +30,8 @@ public class AdminImageGenController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<AdminImageGenController> _logger;
     private readonly IAppSettingsService _settingsService;
+    private readonly IAssetStorage _assetStorage;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -37,7 +41,9 @@ public class AdminImageGenController : ControllerBase
         OpenAIImageClient imageClient,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<AdminImageGenController> logger,
-        IAppSettingsService settingsService)
+        IAppSettingsService settingsService,
+        IAssetStorage assetStorage,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _modelDomain = modelDomain;
@@ -45,6 +51,8 @@ public class AdminImageGenController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _logger = logger;
         _settingsService = settingsService;
+        _assetStorage = assetStorage;
+        _httpClientFactory = httpClientFactory;
     }
 
     private string GetAdminId() =>
@@ -214,7 +222,73 @@ public class AdminImageGenController : ControllerBase
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
         var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
-        var initImageProvided = !string.IsNullOrWhiteSpace(initImageBase64);
+        var initImageUrl = (request?.InitImageUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageUrl)) initImageUrl = null;
+        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
+
+        // 说明：即使后续因“Volces 降级”或其它原因把 initImageBase64 清空，也希望日志能追溯“用户是否提供过参考图”
+        var initImageProvided = !string.IsNullOrWhiteSpace(initImageBase64)
+                                || !string.IsNullOrWhiteSpace(initImageUrl)
+                                || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+
+        // 兼容：允许前端只传 URL / sha，服务端负责下载/读取并转为 base64（避免浏览器 CORS 与性能问题）
+        if (initImageBase64 == null && !string.IsNullOrWhiteSpace(initImageAssetSha256))
+        {
+            var sha = initImageAssetSha256.Trim().ToLowerInvariant();
+            if (sha.Length != 64 || !Regex.IsMatch(sha, "^[0-9a-f]{64}$"))
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "initImageAssetSha256 格式不正确"));
+            }
+
+            // 权限：仅允许使用当前管理员自己的资产 sha
+            var owned = await _db.ImageAssets.Find(x => x.OwnerUserId == adminId && x.Sha256 == sha).FirstOrDefaultAsync(ct);
+            if (owned == null)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权使用该参考图"));
+            }
+
+            var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+            if (found == null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考图文件不存在或不可用"));
+            }
+            if (found.Value.bytes.Length > 10 * 1024 * 1024)
+            {
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "参考图过大（上限 10MB）"));
+            }
+            var b64 = Convert.ToBase64String(found.Value.bytes);
+            var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+            initImageBase64 = $"data:{mime};base64,{b64}";
+        }
+
+        if (initImageBase64 == null && !string.IsNullOrWhiteSpace(initImageUrl))
+        {
+            if (!TryValidateExternalImageUrl(initImageUrl, out var uri) || uri == null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "initImageUrl 不合法（仅允许 https 外链）"));
+            }
+            if (!await IsPublicHostAsync(uri, ct))
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "initImageUrl 不合法（禁止内网/本机地址）"));
+            }
+            try
+            {
+                var (bytes, mime) = await DownloadExternalAsync(uri, ct);
+                if (bytes.Length > 10 * 1024 * 1024)
+                {
+                    return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "参考图过大（上限 10MB）"));
+                }
+                var b64 = Convert.ToBase64String(bytes);
+                var ctMime = string.IsNullOrWhiteSpace(mime) ? "image/png" : mime.Trim();
+                initImageBase64 = $"data:{ctMime};base64,{b64}";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ImageGen initImageUrl download failed: {Url}", uri.ToString());
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考图下载失败"));
+            }
+        }
 
         // seedream/volces：多数情况下不支持 OpenAI 标准 images/edits 的“首帧图生图”语义。
         // 策略：检测到 volces API 时，将首帧图交给 Vision 模型提取风格描述，拼进 prompt，再走 images/generations。
@@ -263,6 +337,86 @@ public class AdminImageGenController : ControllerBase
         }
 
         return Ok(ApiResponse<ImageGenResult>.Ok(res.Data!));
+    }
+
+    private static bool TryValidateExternalImageUrl(string raw, out Uri? uri)
+    {
+        uri = null;
+        if (!Uri.TryCreate((raw ?? string.Empty).Trim(), UriKind.Absolute, out var u)) return false;
+        if (!string.Equals(u.Scheme, "https", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(u.Host)) return false;
+        if (string.Equals(u.Host, "localhost", StringComparison.OrdinalIgnoreCase)) return false;
+        uri = u;
+        return true;
+    }
+
+    private static bool IsBlockedIp(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            // 0.0.0.0/8, 10/8, 127/8, 169.254/16, 172.16/12, 192.168/16, 100.64/10
+            if (b[0] == 0) return true;
+            if (b[0] == 10) return true;
+            if (b[0] == 127) return true;
+            if (b[0] == 169 && b[1] == 254) return true;
+            if (b[0] == 192 && b[1] == 168) return true;
+            if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;
+            if (b[0] == 100 && b[1] >= 64 && b[1] <= 127) return true;
+        }
+        else if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal) return true;
+            if (ip.IsIPv6SiteLocal) return true;
+            if (ip.IsIPv6Multicast) return true;
+            // Unique local fc00::/7
+            var b = ip.GetAddressBytes();
+            if ((b[0] & 0xFE) == 0xFC) return true;
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> IsPublicHostAsync(Uri uri, CancellationToken ct)
+    {
+        // Host 是 IP 时直接判断
+        if (IPAddress.TryParse(uri.Host, out var ip))
+        {
+            return !IsBlockedIp(ip);
+        }
+
+        try
+        {
+            var ips = await Dns.GetHostAddressesAsync(uri.DnsSafeHost, ct);
+            if (ips == null || ips.Length == 0) return false;
+            // 任意一个解析到内网/保留地址 => 拒绝（防止 DNS rebinding）
+            return ips.All(x => !IsBlockedIp(x));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<(byte[] bytes, string mime)> DownloadExternalAsync(Uri uri, CancellationToken ct)
+    {
+        var http = _httpClientFactory.CreateClient("LoggedHttpClient");
+        http.Timeout = TimeSpan.FromSeconds(60);
+        http.DefaultRequestHeaders.Remove("Authorization");
+        using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("ImageGen download failed: HTTP {Status} host={Host}", (int)resp.StatusCode, uri.Host);
+            throw new InvalidOperationException("下载失败");
+        }
+        var mime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+        using var ms = new MemoryStream(capacity: 1024 * 1024);
+        await stream.CopyToAsync(ms, ct);
+        return (ms.ToArray(), mime);
     }
 
     private async Task<string?> TryResolveImageGenApiUrlAsync(string? modelId, string? platformId, CancellationToken ct)
@@ -1011,6 +1165,14 @@ public class ImageGenGenerateRequest
     /// 图生图首帧（DataURL 或纯 base64）。当传入时，将优先走 images/edits（若上游支持）
     /// </summary>
     public string? InitImageBase64 { get; set; }
+    /// <summary>
+    /// 图生图首帧 URL（服务端下载并转 base64；用于规避浏览器 CORS）
+    /// </summary>
+    public string? InitImageUrl { get; set; }
+    /// <summary>
+    /// 图生图首帧：已上传到系统资产的 sha256（服务端读取文件；用于规避浏览器 CORS）
+    /// </summary>
+    public string? InitImageAssetSha256 { get; set; }
 }
 
 public class ImageGenBatchRequest

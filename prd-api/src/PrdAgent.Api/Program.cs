@@ -24,6 +24,7 @@ using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Serilog;
 using Serilog.Events;
+using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,7 +34,7 @@ var builder = WebApplication.CreateBuilder(args);
 BsonClassMapRegistration.Register();
 
 // 配置Serilog - Pretty格式输出
-Log.Logger = new LoggerConfiguration()
+var serilogCfg = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     // 压低框架噪音（你关心的是业务请求是否到达与返回摘要）
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
@@ -44,14 +45,25 @@ Log.Logger = new LoggerConfiguration()
     // 说明：不启用 Microsoft.AspNetCore.Hosting.Diagnostics（它会打 Request starting/finished 两次且包含 OPTIONS）。
     // 我们用自定义中间件只打一条“Request finished ...”风格日志，更清爽、可控。
     .Enrich.FromLogContext()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}",
-        theme: Serilog.Sinks.SystemConsole.Themes.AnsiConsoleTheme.Code)
     .WriteTo.File(
         "logs/prdagent-.log", 
         rollingInterval: RollingInterval.Day,
-        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
+        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}");
+
+// 避免控制台重复输出：如果配置里已经有 Serilog:WriteTo=Console，就不再在代码里额外加 Console sink
+var hasConsoleSinkInConfig = builder.Configuration
+    .GetSection("Serilog:WriteTo")
+    .GetChildren()
+    .Any(x => string.Equals((x["Name"] ?? "").Trim(), "Console", StringComparison.OrdinalIgnoreCase));
+
+if (!hasConsoleSinkInConfig)
+{
+    serilogCfg.WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss}] {Message:lj}{NewLine}{Exception}",
+        theme: Serilog.Sinks.SystemConsole.Themes.AnsiConsoleTheme.Code);
+}
+
+Log.Logger = serilogCfg.CreateLogger();
 
 builder.Host.UseSerilog();
 
@@ -124,40 +136,45 @@ builder.Services.AddHostedService<ImageGenRunWorker>();
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
-    // 兼容：历史文档/配置可能使用 Storage:*；以 Assets:* 为准
-    var providerRaw = (cfg["Assets:Provider"] ?? cfg["Storage:Provider"] ?? "auto").Trim();
-    var disableLocalRaw = (cfg["Assets:DisableLocal"] ?? cfg["Storage:DisableLocal"] ?? string.Empty).Trim();
-    var disableLocal = string.Equals(disableLocalRaw, "true", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(disableLocalRaw, "1", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(disableLocalRaw, "yes", StringComparison.OrdinalIgnoreCase);
+    var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("AssetStorage");
+    // 强约束：统一只使用一套“扁平环境变量”（不使用双下划线）：
+    // - ASSETS_PROVIDER=tencentCos
+    // - TENCENT_COS_BUCKET / TENCENT_COS_REGION / TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY / TENCENT_COS_PUBLIC_BASE_URL / TENCENT_COS_PREFIX
+    var providerRaw = (cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
 
-    static bool HasTencentCosConfig(IConfiguration cfg)
+    static (string bucket, string region, string secretId, string secretKey, string? publicBaseUrl, string? prefix) ReadTencentCosEnv(IConfiguration cfg)
     {
-        var bucket = (cfg["TencentCos:Bucket"] ?? string.Empty).Trim();
-        var region = (cfg["TencentCos:Region"] ?? string.Empty).Trim();
-        var sid = (cfg["TencentCos:SecretId"] ?? string.Empty).Trim();
-        var sk = (cfg["TencentCos:SecretKey"] ?? string.Empty).Trim();
-        return !string.IsNullOrWhiteSpace(bucket) &&
-               !string.IsNullOrWhiteSpace(region) &&
-               !string.IsNullOrWhiteSpace(sid) &&
-               !string.IsNullOrWhiteSpace(sk);
+        var bucket = (cfg["TENCENT_COS_BUCKET"] ?? string.Empty).Trim();
+        var region = (cfg["TENCENT_COS_REGION"] ?? string.Empty).Trim();
+        var sid = (cfg["TENCENT_COS_SECRET_ID"] ?? string.Empty).Trim();
+        var sk = (cfg["TENCENT_COS_SECRET_KEY"] ?? string.Empty).Trim();
+        var publicBaseUrl = (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim();
+        var prefix = (cfg["TENCENT_COS_PREFIX"] ?? string.Empty).Trim();
+        return (bucket, region, sid, sk, string.IsNullOrWhiteSpace(publicBaseUrl) ? null : publicBaseUrl, string.IsNullOrWhiteSpace(prefix) ? null : prefix);
     }
 
-    var provider = providerRaw;
-    if (string.IsNullOrWhiteSpace(provider) || string.Equals(provider, "auto", StringComparison.OrdinalIgnoreCase))
+    var provider = string.IsNullOrWhiteSpace(providerRaw) ? "tencentCos" : providerRaw;
+
+    // 强约束：任何情况下不允许使用本地文件存储（避免容器可写层过小导致宕机/数据丢失）
+    // - 若未配置 COS，则直接启动失败并给出清晰错误
+    if (!string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
     {
-        provider = HasTencentCosConfig(cfg) ? "tencentCos" : "local";
+        throw new InvalidOperationException(
+            $"本实例已强制禁用本地文件存储，但 ASSETS_PROVIDER={providerRaw}（仅允许 tencentCos）。");
     }
 
     if (string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
     {
-        var bucket = cfg["TencentCos:Bucket"] ?? string.Empty;
-        var region = cfg["TencentCos:Region"] ?? string.Empty;
-        var secretId = cfg["TencentCos:SecretId"] ?? string.Empty;
-        var secretKey = cfg["TencentCos:SecretKey"] ?? string.Empty;
-        var publicBaseUrl = cfg["TencentCos:PublicBaseUrl"];
-        var prefix = cfg["TencentCos:Prefix"];
-        var tempDir = cfg["TencentCos:TempDir"];
+        var (bucket, region, secretId, secretKey, publicBaseUrl, prefix) = ReadTencentCosEnv(cfg);
+        if (string.IsNullOrWhiteSpace(bucket) ||
+            string.IsNullOrWhiteSpace(region) ||
+            string.IsNullOrWhiteSpace(secretId) ||
+            string.IsNullOrWhiteSpace(secretKey))
+        {
+            throw new InvalidOperationException(
+                "已强制使用 Tencent COS，但缺少必需环境变量。请设置：TENCENT_COS_BUCKET / TENCENT_COS_REGION / TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY。");
+        }
+        var tempDir = (string?)null; // 纯内存流模式：不依赖本地 tempDir
         var enableSafeDelete = string.Equals((cfg["TencentCos:EnableSafeDelete"] ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
         var allowRaw = (cfg["TencentCos:SafeDeleteAllowPrefixes"] ?? string.Empty).Trim();
         var allow = allowRaw
@@ -166,22 +183,21 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToArray();
         var logger = sp.GetRequiredService<ILogger<TencentCosStorage>>();
-        return new TencentCosStorage(bucket, region, secretId, secretKey, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        log.LogInformation(
+            "AssetStorage selected: provider={ProviderRaw}->{Provider} tencentCos.bucket={Bucket} region={Region} prefix={Prefix} publicBaseUrl={PublicBaseUrl}",
+            providerRaw,
+            provider,
+            (bucket ?? string.Empty).Trim(),
+            (region ?? string.Empty).Trim(),
+            (prefix ?? string.Empty).Trim(),
+            (publicBaseUrl ?? string.Empty).Trim());
+        // 经过上面的 IsNullOrWhiteSpace 校验，bucket/region/secretId/secretKey 在运行时必定非空；
+        // 这里用 null-forgiving 消除 nullable 分析告警（避免 build warning 噪音）。
+        return new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
     }
 
-    if (disableLocal)
-    {
-        throw new InvalidOperationException("Assets:DisableLocal 已启用，但未启用 Tencent COS（请设置 Assets:Provider=tencentCos 或配置 TencentCos:* 环境变量）");
-    }
-
-    // local: 可通过配置覆盖 Assets:LocalDir（兼容 Storage:LocalDir）
-    // 默认落到 {AppBase}/data/assets，避免某些运行环境根目录只读（如 /data 无法创建）
-    // - 容器默认 AppBase=/app => /app/data/assets（与 docker-compose 的 ./data:/app/data 映射一致）
-    // - 本机 dotnet run：落到 bin 目录旁边（用于开发调试）
-    var baseDir = cfg["Assets:LocalDir"]
-                 ?? cfg["Storage:LocalDir"]
-                 ?? Path.Combine(AppContext.BaseDirectory, "data", "assets");
-    return new LocalAssetStorage(baseDir);
+    // 理论上不会走到这里；保留以满足编译器对“所有路径均有返回”的要求
+    throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
 });
 
 // 配置Redis

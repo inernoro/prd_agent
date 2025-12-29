@@ -49,6 +49,8 @@ type CanvasImageItem = {
   src: string;
   status: 'done' | 'error' | 'running';
   kind?: 'image' | 'generator' | 'shape' | 'text';
+  /** 用户手动调整过尺寸（避免 onLoad 用 natural 覆盖 w/h） */
+  userResized?: boolean;
   errorMessage?: string | null;
   refId?: number;
   checked?: boolean;
@@ -278,28 +280,6 @@ function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | u
   return `${w}x${h}`;
 }
 
-async function fetchImageAsDataUrl(src: string): Promise<{ ok: true; dataUrl: string } | { ok: false; reason: string }> {
-  const url = String(src ?? '').trim();
-  if (!url) return { ok: false, reason: '图片地址为空' };
-  try {
-    const res = await fetch(url, { method: 'GET' });
-    if (!res.ok) return { ok: false, reason: `读取参考图失败：HTTP ${res.status}` };
-    const blob = await res.blob();
-    // 后端 edits 首帧图限制 10MB；前端提前拦截
-    if (blob.size > 10 * 1024 * 1024) return { ok: false, reason: '参考图过大（上限 10MB）' };
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(String(fr.result || ''));
-      fr.onerror = () => reject(new Error('FileReader 失败'));
-      fr.readAsDataURL(blob);
-    });
-    if (!dataUrl || !dataUrl.startsWith('data:')) return { ok: false, reason: '参考图转换失败（非 dataURL）' };
-    return { ok: true, dataUrl };
-  } catch (e) {
-    return { ok: false, reason: e instanceof Error ? e.message : '读取参考图失败' };
-  }
-}
-
 async function readImageSizeFromFile(file: File): Promise<{ w: number; h: number } | null> {
   try {
     // createImageBitmap 能可靠拿到本地文件像素尺寸（不受跨域/解码限制影响）
@@ -371,6 +351,28 @@ export default function AdvancedImageMasterTab() {
       ts: Date.now(),
     },
   ]);
+
+  const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
+  const uploadToastTimerRef = useRef<number | null>(null);
+  const showUploadToast = useCallback((text: string) => {
+    const t = String(text ?? '').trim();
+    if (!t) return;
+    setUploadToast({ text: t });
+    if (uploadToastTimerRef.current != null) {
+      window.clearTimeout(uploadToastTimerRef.current);
+      uploadToastTimerRef.current = null;
+    }
+    uploadToastTimerRef.current = window.setTimeout(() => {
+      setUploadToast(null);
+      uploadToastTimerRef.current = null;
+    }, 1600);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (uploadToastTimerRef.current != null) window.clearTimeout(uploadToastTimerRef.current);
+      uploadToastTimerRef.current = null;
+    };
+  }, []);
 
   // 右侧对话输入（与画布快捷输入互不影响）
   const [input, setInput] = useState('');
@@ -498,6 +500,125 @@ export default function AdvancedImageMasterTab() {
     keys: string[];
     base: Record<string, { x: number; y: number }>;
   }>({ active: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
+
+  type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
+  const [resizing, setResizing] = useState(false);
+  const resizeRef = useRef<{
+    active: boolean;
+    pointerId: number;
+    key: string;
+    corner: ResizeCorner;
+    startClientX: number;
+    startClientY: number;
+    baseX: number;
+    baseY: number;
+    baseW: number;
+    baseH: number;
+  }>({
+    active: false,
+    pointerId: -1,
+    key: '',
+    corner: 'se',
+    startClientX: 0,
+    startClientY: 0,
+    baseX: 0,
+    baseY: 0,
+    baseW: 0,
+    baseH: 0,
+  });
+
+  const applyResizeFromClient = useCallback((clientX: number, clientY: number) => {
+    const rz = resizeRef.current;
+    if (!rz.active) return;
+    const dx = (clientX - rz.startClientX) / zoomRef.current;
+    const dy = (clientY - rz.startClientY) / zoomRef.current;
+    const minSize = 40;
+    const baseLeft = rz.baseX;
+    const baseTop = rz.baseY;
+    const baseRight = rz.baseX + rz.baseW;
+    const baseBottom = rz.baseY + rz.baseH;
+
+    let left = baseLeft;
+    let top = baseTop;
+    let right = baseRight;
+    let bottom = baseBottom;
+
+    if (rz.corner === 'se') {
+      right = baseRight + dx;
+      bottom = baseBottom + dy;
+      right = Math.max(baseLeft + minSize, right);
+      bottom = Math.max(baseTop + minSize, bottom);
+    } else if (rz.corner === 'nw') {
+      left = baseLeft + dx;
+      top = baseTop + dy;
+      left = Math.min(baseRight - minSize, left);
+      top = Math.min(baseBottom - minSize, top);
+    } else if (rz.corner === 'ne') {
+      right = baseRight + dx;
+      top = baseTop + dy;
+      right = Math.max(baseLeft + minSize, right);
+      top = Math.min(baseBottom - minSize, top);
+    } else if (rz.corner === 'sw') {
+      left = baseLeft + dx;
+      bottom = baseBottom + dy;
+      left = Math.min(baseRight - minSize, left);
+      bottom = Math.max(baseTop + minSize, bottom);
+    }
+
+    const nextW = Math.max(minSize, right - left);
+    const nextH = Math.max(minSize, bottom - top);
+
+    setCanvas((prev) =>
+      prev.map((it) =>
+        it.key === rz.key
+          ? {
+              ...it,
+              x: left,
+              y: top,
+              w: nextW,
+              h: nextH,
+              userResized: true,
+            }
+          : it
+      )
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!resizing) return;
+
+    const onMove = (e: PointerEvent) => {
+      const rz = resizeRef.current;
+      if (!rz.active) return;
+      if (rz.pointerId !== e.pointerId) return;
+      applyResizeFromClient(e.clientX, e.clientY);
+      // 避免拖拽时触发选中文本/滚动等
+      try {
+        e.preventDefault();
+      } catch {
+        // ignore
+      }
+    };
+
+    const end = (e: PointerEvent) => {
+      const rz = resizeRef.current;
+      if (!rz.active) return;
+      if (rz.pointerId !== e.pointerId) return;
+      resizeRef.current.active = false;
+      setResizing(false);
+      document.body.style.cursor = '';
+    };
+
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', end, { passive: true });
+    window.addEventListener('pointercancel', end, { passive: true });
+
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+  }, [applyResizeFromClient, resizing]);
   const [marquee, setMarquee] = useState<{
     active: boolean;
     startX: number;
@@ -545,6 +666,45 @@ export default function AdvancedImageMasterTab() {
       stageRef.current?.focus();
     }
   }, []);
+
+  const startResize = useCallback(
+    (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
+      if (activeTool === 'hand') return;
+      // 仅在单选时允许 resize（避免多选整体 resize 的复杂交互）
+      if (selectedKeysRef.current.length !== 1 || selectedKeysRef.current[0] !== it.key) return;
+
+      const x = it.x ?? 0;
+      const y = it.y ?? 0;
+      const w = Math.max(1, it.w ?? 1);
+      const h = Math.max(1, it.h ?? 1);
+
+      resizeRef.current = {
+        active: true,
+        pointerId: e.pointerId,
+        key: it.key,
+        corner,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        baseX: x,
+        baseY: y,
+        baseW: w,
+        baseH: h,
+      };
+
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+
+      setResizing(true);
+      document.body.style.cursor = corner === 'se' || corner === 'nw' ? 'nwse-resize' : 'nesw-resize';
+
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    [activeTool]
+  );
 
 
   // splitter：右侧宽度（px）
@@ -1594,18 +1754,29 @@ export default function AdvancedImageMasterTab() {
     });
 
     try {
-      const initSrc = (primaryRef?.src || selected?.src) ?? '';
+      const refForInit = (primaryRef ?? selected) as CanvasImageItem | null;
+      const initSrc = (refForInit?.src ?? '').trim();
+      const initSha = (refForInit?.sha256 ?? '').trim();
       let initImageBase64: string | undefined;
+      let initImageUrl: string | undefined;
+      let initImageAssetSha256: string | undefined;
+
       if (initSrc && initSrc.startsWith('data:')) {
+        // 本地粘贴/未持久化：直接传 dataURL
         initImageBase64 = initSrc;
+      } else if (initSha && initSha.length === 64) {
+        // 已持久化资产：优先传 sha256，让服务端直接读文件（避免浏览器 CORS / 省流量）
+        initImageAssetSha256 = initSha;
       } else if (initSrc) {
-        // 参考图通常已被持久化为自托管 URL；此时需要拉取并转 dataURL，否则后端永远收不到首帧
-        const got = await fetchImageAsDataUrl(initSrc);
-        if (got.ok) {
-          initImageBase64 = got.dataUrl;
-        } else {
-          // 不阻断本次生成：降级为文生图，并把原因反馈给用户
-          pushMsg('Assistant', `参考图未能传递，本次已降级为文生图：${got.reason}`);
+        // 若是自托管 file URL：解析 sha 后走 sha 逻辑（仍由服务端读取）
+        const m = /\/api\/v1\/admin\/image-master\/assets\/file\/([^/?#]+)/.exec(initSrc);
+        const name = (m?.[1] ?? '').trim();
+        const sha = (name.split('.')[0] ?? '').trim().toLowerCase();
+        if (sha.length === 64) {
+          initImageAssetSha256 = sha;
+        } else if (/^https?:\/\//i.test(initSrc)) {
+          // 外链：直接传 url，让服务端下载转 base64（不会受浏览器 CORS 限制）
+          initImageUrl = initSrc;
         }
       }
 
@@ -1616,6 +1787,8 @@ export default function AdvancedImageMasterTab() {
         size: resolvedSizeForGen,
         responseFormat: DEFAULT_RESPONSE_FORMAT,
         initImageBase64,
+        initImageUrl,
+        initImageAssetSha256,
       });
       if (!gres.success) {
         const msg = gres.error?.message || '生成失败';
@@ -1946,6 +2119,7 @@ export default function AdvancedImageMasterTab() {
               : x
           )
         );
+        showUploadToast(`上传成功：${file.name || '图片'}`);
       } else {
         const msg = up.error?.message || '图片持久化失败';
         setCanvas((prev) =>
@@ -2046,6 +2220,7 @@ export default function AdvancedImageMasterTab() {
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
     void (async () => {
+      let okCount = 0;
       let failedCount = 0;
       for (const it of added) {
         if (!it.src || !it.src.startsWith('data:')) continue;
@@ -2066,6 +2241,7 @@ export default function AdvancedImageMasterTab() {
           );
           continue;
         }
+        okCount += 1;
         const a = up.data.asset;
         setCanvas((prev) =>
           prev.map((x) =>
@@ -2081,6 +2257,9 @@ export default function AdvancedImageMasterTab() {
               : x
           )
         );
+      }
+      if (okCount > 0) {
+        showUploadToast(`上传成功：${okCount} 张`);
       }
       if (failedCount > 0) {
         pushMsg('Assistant', `有 ${failedCount} 张图片未能持久化到后端资产（刷新可能丢失）。请检查网络/权限/后端存储配置后重试上传。`);
@@ -2200,6 +2379,33 @@ export default function AdvancedImageMasterTab() {
 
   return (
     <div ref={containerRef} className="h-full min-h-0">
+      {uploadToast ? (
+        <div
+          className="fixed left-1/2 z-9999"
+          style={{
+            top: 18,
+            transform: 'translateX(-50%)',
+            pointerEvents: 'none',
+          }}
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div
+            className="inline-flex items-center gap-2 rounded-full px-4 h-10 text-[13px] font-semibold"
+            style={{
+              background: 'rgba(0,0,0,0.50)',
+              border: '1px solid rgba(255,255,255,0.18)',
+              color: 'rgba(255,255,255,0.92)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+            }}
+          >
+            <Check size={16} />
+            <span className="truncate max-w-[520px]">{uploadToast.text}</span>
+          </div>
+        </div>
+      ) : null}
       {/* 单一框架：左右无缝拼接 */}
       <Card className="h-full min-h-0 overflow-hidden p-0!">
         <div className="h-full min-h-0 flex">
@@ -2472,6 +2678,18 @@ export default function AdvancedImageMasterTab() {
                 const w = it.w ?? 320;
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
+                  const showSelectOverlay = activeTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
+                  const showHandles = showSelectOverlay && selectedKeys.length === 1;
+                  const vbW = Math.max(1, Math.round(w));
+                  const vbH = Math.max(1, Math.round(h));
+                  const handleBase: React.CSSProperties = {
+                    width: 12,
+                    height: 12,
+                    borderRadius: 999,
+                    background: 'rgba(255,255,255,0.92)',
+                    border: '2px solid rgba(96,165,250,0.95)',
+                    boxShadow: '0 10px 22px rgba(0,0,0,0.28)',
+                  };
                 return (
                   <div
                     key={it.key}
@@ -2574,8 +2792,8 @@ export default function AdvancedImageMasterTab() {
                         className="w-full h-full rounded-[16px] relative"
                         style={{
                           background: 'rgba(96,165,250,0.16)',
-                          border: active ? '2px solid rgba(96,165,250,0.85)' : '1px solid rgba(96,165,250,0.25)',
-                          boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.18) inset' : 'none',
+                          border: '1px solid rgba(96,165,250,0.25)',
+                          boxShadow: 'none',
                         }}
                       >
                         {it.status === 'done' && it.sizeAdjusted ? (
@@ -2659,8 +2877,8 @@ export default function AdvancedImageMasterTab() {
                         // - 选中：强化描边/光晕（不改变尺寸/比例）
                         style={{
                           background: 'rgba(255,255,255,0.01)',
-                          border: active ? '2px solid rgba(250,204,21,0.75)' : '1px solid rgba(255,255,255,0.12)',
-                          boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.22) inset, 0 0 18px rgba(250,204,21,0.35)' : 'none',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          boxShadow: 'none',
                         }}
                       >
                         <div
@@ -2758,7 +2976,7 @@ export default function AdvancedImageMasterTab() {
                             </div>
                           </div>
                         ) : (
-                          <div className="w-full h-full relative">
+                          <div className={`w-full h-full relative ${it.syncStatus === 'pending' ? 'prd-upload-wave' : ''}`}>
                             {it.syncStatus && it.syncStatus !== 'synced' ? (
                               <div
                                 className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
@@ -2785,10 +3003,8 @@ export default function AdvancedImageMasterTab() {
                               style={{
                                 objectFit: 'contain',
                                 borderRadius: 14,
-                                // 规则：不制造任何“假边框”；选中仅做高亮效果（光晕），不改变尺寸/比例
-                                filter: active
-                                  ? 'drop-shadow(0 0 2px rgba(250,204,21,0.95)) drop-shadow(0 0 14px rgba(250,204,21,0.45))'
-                                  : 'none',
+                                // 选中态由“蓝色描边+角点”统一表达（避免光晕不明显）
+                                filter: 'none',
                               }}
                               onLoad={(e) => {
                                 const img = e.currentTarget;
@@ -2799,6 +3015,7 @@ export default function AdvancedImageMasterTab() {
                                   prev.map((x) => {
                                     if (x.key !== it.key) return x;
                                     // 规则：图片的显示尺寸 = natural 像素尺寸（比例关系只由画布 zoom 改变）
+                                    if (x.userResized) return { ...x, naturalW: nw, naturalH: nh, status: x.status === 'error' ? 'done' : x.status };
                                     return { ...x, naturalW: nw, naturalH: nh, w: nw, h: nh, status: x.status === 'error' ? 'done' : x.status };
                                   })
                                 );
@@ -2817,6 +3034,98 @@ export default function AdvancedImageMasterTab() {
                         )}
                       </div>
                     )}
+
+                    {/* 选中覆盖层：蓝色描边 + 四角圆点（单选可 resize） */}
+                    {showSelectOverlay ? (
+                      <div className="absolute inset-0" style={{ pointerEvents: 'none', zIndex: 40 }}>
+                        <svg
+                          width="100%"
+                          height="100%"
+                          viewBox={`0 0 ${vbW} ${vbH}`}
+                          preserveAspectRatio="none"
+                          overflow="visible"
+                          style={{ position: 'absolute', inset: 0 }}
+                        >
+                          <rect
+                            x="0"
+                            y="0"
+                            width={vbW}
+                            height={vbH}
+                            rx="16"
+                            ry="16"
+                            fill="none"
+                            stroke="rgba(96,165,250,0.95)"
+                            strokeWidth="2"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        </svg>
+
+                        {showHandles ? (
+                          <>
+                            <div
+                              role="button"
+                              aria-label="resize-nw"
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                pointerEvents: 'auto',
+                                cursor: 'nwse-resize',
+                                transform: 'translate(-50%, -50%) scale(var(--invZoom))',
+                                transformOrigin: 'center',
+                                ...handleBase,
+                              }}
+                              onPointerDown={(e) => startResize(e, it, 'nw')}
+                            />
+                            <div
+                              role="button"
+                              aria-label="resize-ne"
+                              style={{
+                                position: 'absolute',
+                                left: '100%',
+                                top: 0,
+                                pointerEvents: 'auto',
+                                cursor: 'nesw-resize',
+                                transform: 'translate(-50%, -50%) scale(var(--invZoom))',
+                                transformOrigin: 'center',
+                                ...handleBase,
+                              }}
+                              onPointerDown={(e) => startResize(e, it, 'ne')}
+                            />
+                            <div
+                              role="button"
+                              aria-label="resize-sw"
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: '100%',
+                                pointerEvents: 'auto',
+                                cursor: 'nesw-resize',
+                                transform: 'translate(-50%, -50%) scale(var(--invZoom))',
+                                transformOrigin: 'center',
+                                ...handleBase,
+                              }}
+                              onPointerDown={(e) => startResize(e, it, 'sw')}
+                            />
+                            <div
+                              role="button"
+                              aria-label="resize-se"
+                              style={{
+                                position: 'absolute',
+                                left: '100%',
+                                top: '100%',
+                                pointerEvents: 'auto',
+                                cursor: 'nwse-resize',
+                                transform: 'translate(-50%, -50%) scale(var(--invZoom))',
+                                transformOrigin: 'center',
+                                ...handleBase,
+                              }}
+                              onPointerDown={(e) => startResize(e, it, 'se')}
+                            />
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
