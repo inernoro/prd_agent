@@ -121,10 +121,26 @@ builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddHostedService<ImageGenRunWorker>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
-builder.Services.AddSingleton<IAssetStorage>(_ =>
+builder.Services.AddSingleton<IAssetStorage>(sp =>
 {
-    // 可通过配置覆盖 Assets:LocalDir；默认放到 app/data/assets
-    var baseDir = builder.Configuration["Assets:LocalDir"]
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var provider = (cfg["Assets:Provider"] ?? "local").Trim();
+
+    if (string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
+    {
+        var bucket = cfg["TencentCos:Bucket"] ?? string.Empty;
+        var region = cfg["TencentCos:Region"] ?? string.Empty;
+        var secretId = cfg["TencentCos:SecretId"] ?? string.Empty;
+        var secretKey = cfg["TencentCos:SecretKey"] ?? string.Empty;
+        var publicBaseUrl = cfg["TencentCos:PublicBaseUrl"];
+        var prefix = cfg["TencentCos:Prefix"];
+        var tempDir = cfg["TencentCos:TempDir"];
+        var logger = sp.GetRequiredService<ILogger<TencentCosStorage>>();
+        return new TencentCosStorage(bucket, region, secretId, secretKey, publicBaseUrl, prefix, tempDir, logger);
+    }
+
+    // local: 可通过配置覆盖 Assets:LocalDir；默认放到 app/data/assets
+    var baseDir = cfg["Assets:LocalDir"]
                  ?? Path.Combine(AppContext.BaseDirectory, "data", "assets");
     return new LocalAssetStorage(baseDir);
 });

@@ -7,6 +7,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   addImageMasterMessage,
   createImageMasterSession,
+  deleteImageMasterAsset,
   generateImageGen,
   getImageMasterSession,
   getModels,
@@ -389,6 +390,10 @@ export default function AdvancedImageMasterTab() {
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const selectedKeysRef = useRef<string[]>([]);
+  useEffect(() => {
+    selectedKeysRef.current = selectedKeys;
+  }, [selectedKeys]);
   const primarySelectedKey = selectedKeys[0] ?? '';
   const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
@@ -530,6 +535,14 @@ export default function AdvancedImageMasterTab() {
     });
   }, []);
 
+  const focusStage = useCallback(() => {
+    try {
+      stageRef.current?.focus({ preventScroll: true });
+    } catch {
+      stageRef.current?.focus();
+    }
+  }, []);
+
 
   // splitter：右侧宽度（px）
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -542,12 +555,92 @@ export default function AdvancedImageMasterTab() {
   const [, setBooting] = useState(false);
   const initSessionRef = useRef<{ userId: string; started: boolean }>({ userId: '', started: false });
 
+  const MAX_GEN_CONCURRENCY = 3;
+  type GenJob = {
+    id: string;
+    displayText: string;
+    requestText: string;
+    primaryRef: CanvasImageItem | null;
+    seedSelectedKey: string;
+  };
+  const pendingJobsRef = useRef<GenJob[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const runningCountRef = useRef(0);
+  const [runningCount, setRunningCount] = useState(0);
+
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string }>({ open: false, src: '', prompt: '' });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const reloadMasterSession = useCallback(async () => {
+    const sid = masterSession?.id;
+    if (!sid) return;
+    const detail = await getImageMasterSession({ id: sid, messageLimit: 200, assetLimit: 80 });
+    if (!detail.success) return;
+    setMasterSession(detail.data.session);
+    const assets = Array.isArray(detail.data.assets) ? detail.data.assets : [];
+    const items: CanvasImageItem[] = (assets as ImageAsset[])
+      .map((a) => ({
+        key: a.id,
+        assetId: a.id,
+        sha256: a.sha256,
+        createdAt: Number.isFinite(Date.parse(a.createdAt)) ? Date.parse(a.createdAt) : Date.now(),
+        prompt: a.prompt ?? '',
+        src: a.url || '',
+        status: 'done' as const,
+        w: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
+        h: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
+        naturalW: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
+        naturalH: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
+      }))
+      .filter((x) => !!x.src)
+      .slice(0, 60);
+    setCanvas(items);
+    setSelectedKeys([]);
+  }, [masterSession?.id]);
+
+  const confirmAndDeleteSelectedKeys = useCallback(
+    async (keysArg?: string[]) => {
+      const keys = Array.from(new Set((keysArg ?? selectedKeysRef.current ?? []).filter(Boolean)));
+      if (keys.length === 0) return;
+
+      const ok = await systemDialog.confirm({
+        title: '确认删除',
+        message: `确认删除选中的 ${keys.length} 项？`,
+        tone: 'danger',
+        confirmText: '删除',
+        cancelText: '取消',
+      });
+      if (!ok) return;
+
+      const set = new Set(keys);
+      const snapshot = (canvasRef.current ?? []).filter((it) => set.has(it.key));
+      const assetIds = Array.from(
+        new Set(
+          snapshot
+            .filter((it) => (it.kind ?? 'image') === 'image')
+            .map((it) => (it.assetId ?? '').trim())
+            .filter((x) => !!x)
+        )
+      );
+
+      // 先乐观删除 UI
+      setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+      setSelectedKeys([]);
+
+      if (assetIds.length === 0) return;
+      const results = await Promise.all(assetIds.map((id) => deleteImageMasterAsset({ id })));
+      const failed = results.find((r) => !r.success) ?? null;
+      if (failed) {
+        await systemDialog.alert(failed.error?.message || '删除失败');
+        await reloadMasterSession();
+      }
+    },
+    [reloadMasterSession]
+  );
 
   useEffect(() => {
     setModelsLoading(true);
@@ -693,6 +786,18 @@ export default function AdvancedImageMasterTab() {
         setCanvas(items);
         if (items.length > 0) {
           setSelectedKeys((cur) => (cur.length > 0 ? cur : [items[0].key]));
+          // 进入页面后：默认把焦点给画布，确保 Delete/Backspace 等快捷键可立即生效
+          requestAnimationFrame(() => {
+            const ae = document.activeElement as HTMLElement | null;
+            const tag = (ae?.tagName ?? '').toLowerCase();
+            const isEditable =
+              tag === 'textarea' ||
+              tag === 'input' ||
+              Boolean(ae?.isContentEditable) ||
+              Boolean(ae?.getAttribute?.('contenteditable'));
+            if (isEditable) return;
+            focusStage();
+          });
         }
       }
     })()
@@ -799,6 +904,65 @@ export default function AdvancedImageMasterTab() {
       window.removeEventListener('keyup', onUp);
     };
   }, []);
+
+  // 画布快捷键兜底（当焦点不在画布上，但存在选中项时也应可操作）
+  useEffect(() => {
+    const deletingRef = { current: false };
+    const onDown = (e: KeyboardEvent) => {
+      // 若焦点已经在画布上，则交由画布自身 onKeyDown 处理，避免重复
+      const stageEl = stageRef.current;
+      const ae = document.activeElement as HTMLElement | null;
+      if (stageEl && ae && stageEl.contains(ae)) return;
+
+      // 输入控件内不处理，避免 Delete/Backspace 误删元素
+      const tag = (ae?.tagName ?? '').toLowerCase();
+      const isEditable =
+        tag === 'textarea' ||
+        tag === 'input' ||
+        Boolean(ae?.isContentEditable) ||
+        Boolean(ae?.getAttribute?.('contenteditable'));
+      if (isEditable) return;
+
+      const keys = selectedKeysRef.current;
+      if (!keys || keys.length === 0) return;
+
+      // Delete / Backspace：删除选中
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (deletingRef.current) return;
+        deletingRef.current = true;
+        e.preventDefault();
+        void (async () => {
+          try {
+            await confirmAndDeleteSelectedKeys([...keys]);
+          } finally {
+            deletingRef.current = false;
+          }
+        })();
+        return;
+      }
+
+      // Escape：取消选中
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedKeys([]);
+        return;
+      }
+
+      // 方向键：微调（Figma-ish）
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        const set = new Set(keys);
+        setCanvas((prev) => prev.map((it) => (set.has(it.key) ? { ...it, x: (it.x ?? 0) + dx, y: (it.y ?? 0) + dy } : it)));
+      }
+    };
+    // capture：尽量早于其它元素拿到事件，但仍遵守“输入控件不处理”的规则
+    const opts = { capture: true } as const;
+    window.addEventListener('keydown', onDown, opts);
+    return () => window.removeEventListener('keydown', onDown, opts);
+  }, [focusStage]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const el = stageRef.current;
@@ -1327,12 +1491,12 @@ export default function AdvancedImageMasterTab() {
       const existingRects = prev
         .filter(
           (x) =>
-            x.status !== 'error' &&
             ((x.kind ?? 'image') === 'generator' ||
               (x.kind ?? 'image') === 'shape' ||
               (x.kind ?? 'image') === 'text' ||
               !!x.src ||
-              x.status === 'running')
+              x.status === 'running' ||
+              x.status === 'error')
         )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
       // 占位尺寸随 requested size（保持比例），避免“永远 1K 方形”的观感
@@ -1626,12 +1790,12 @@ export default function AdvancedImageMasterTab() {
             .filter((x) => x.key !== targetKey)
             .filter(
               (x) =>
-                x.status !== 'error' &&
                 ((x.kind ?? 'image') === 'generator' ||
                   (x.kind ?? 'image') === 'shape' ||
                   (x.kind ?? 'image') === 'text' ||
                   !!x.src ||
-                  x.status === 'running')
+                  x.status === 'running' ||
+                  x.status === 'error')
             )
             .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
           const hit = others.some((r) => {
@@ -1736,12 +1900,12 @@ export default function AdvancedImageMasterTab() {
       const existingRects = prev
         .filter(
           (x) =>
-            x.status !== 'error' &&
             ((x.kind ?? 'image') === 'generator' ||
               (x.kind ?? 'image') === 'shape' ||
               (x.kind ?? 'image') === 'text' ||
               !!x.src ||
-              x.status === 'running')
+              x.status === 'running' ||
+              x.status === 'error')
         )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
       const placed: CanvasImageItem[] = [];
@@ -1861,12 +2025,12 @@ export default function AdvancedImageMasterTab() {
     if (!el) return;
     const itemsAll = canvas.filter(
       (x) =>
-        x.status !== 'error' &&
         ((x.kind ?? 'image') === 'generator' ||
           (x.kind ?? 'image') === 'shape' ||
           (x.kind ?? 'image') === 'text' ||
           !!x.src ||
-          x.status === 'running')
+          x.status === 'running' ||
+          x.status === 'error')
     );
     const items =
       selectedKeys.length > 0 ? itemsAll.filter((x) => selectedKeys.includes(x.key)) : itemsAll;
@@ -2077,12 +2241,12 @@ export default function AdvancedImageMasterTab() {
               const hits = canvas
                 .filter(
                   (it) =>
-                    it.status !== 'error' &&
                     ((it.kind ?? 'image') === 'generator' ||
                       (it.kind ?? 'image') === 'shape' ||
                       (it.kind ?? 'image') === 'text' ||
                       !!it.src ||
-                      it.status === 'running')
+                      it.status === 'running' ||
+                      it.status === 'error')
                 )
                 .filter((it) => {
                   const ix0 = it.x ?? 0;
@@ -2128,19 +2292,7 @@ export default function AdvancedImageMasterTab() {
               if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKeys.length > 0) {
                 // 避免在输入框中删除字符：这里只在画布获得焦点时触发
                 e.preventDefault();
-                void (async () => {
-                  const ok = await systemDialog.confirm({
-                    title: '确认删除',
-                    message: `确认删除选中的 ${selectedKeys.length} 张图片？`,
-                    tone: 'danger',
-                    confirmText: '删除',
-                    cancelText: '取消',
-                  });
-                  if (!ok) return;
-                  const set = new Set(selectedKeys);
-                  setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
-                  setSelectedKeys([]);
-                })();
+                void confirmAndDeleteSelectedKeys([...selectedKeys]);
                 return;
               }
 
@@ -2182,8 +2334,7 @@ export default function AdvancedImageMasterTab() {
             >
               {canvas.map((it) => {
                 const kind = it.kind ?? 'image';
-                // 错误态：普通图片暂不展示（避免画面噪音）；生成器需要展示错误与重试入口
-                if (it.status === 'error' && kind !== 'generator') return null;
+                // 错误态：仍需要渲染占位框（否则用户不知道尺寸，也无法直接选中/删除）
                 if (kind === 'image' && !it.src && it.status !== 'running' && it.status !== 'error') return null;
                 const x = it.x ?? 0;
                 const y = it.y ?? 0;
@@ -2213,6 +2364,7 @@ export default function AdvancedImageMasterTab() {
                     }}
                     onPointerDown={(e) => {
                       if (activeTool === 'hand') return;
+                      focusStage();
                       e.stopPropagation();
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
                       const shift = e.shiftKey;
@@ -2244,6 +2396,7 @@ export default function AdvancedImageMasterTab() {
                       e.preventDefault();
                     }}
                     onClick={(e) => {
+                      focusStage();
                       e.stopPropagation();
                       if (activeTool === 'hand') return;
                       // 生成器区域：仅做选中，不做 @img 引用插入
@@ -2444,32 +2597,72 @@ export default function AdvancedImageMasterTab() {
                       </div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <img
-                          src={it.src}
-                          alt={it.prompt}
-                          className="w-full h-full block"
-                          style={{
-                            objectFit: 'contain',
-                            borderRadius: 14,
-                            // 规则：不制造任何“假边框”；选中仅做高亮效果（光晕），不改变尺寸/比例
-                            filter: active
-                              ? 'drop-shadow(0 0 2px rgba(250,204,21,0.95)) drop-shadow(0 0 14px rgba(250,204,21,0.45))'
-                              : 'none',
-                          }}
-                          onLoad={(e) => {
-                            const img = e.currentTarget;
-                            const nw = img.naturalWidth || 0;
-                            const nh = img.naturalHeight || 0;
-                            if (!nw || !nh) return;
-                            setCanvas((prev) =>
-                              prev.map((x) => {
-                                if (x.key !== it.key) return x;
-                                // 规则：图片的显示尺寸 = natural 像素尺寸（比例关系只由画布 zoom 改变）
-                                return { ...x, naturalW: nw, naturalH: nh, w: nw, h: nh };
-                              })
-                            );
-                          }}
-                        />
+                        {it.status === 'error' ? (
+                          <div
+                            className="w-full h-full rounded-[16px] relative flex flex-col items-center justify-center gap-2 px-4 text-center"
+                            style={{
+                              background: 'rgba(0,0,0,0.18)',
+                              border: active ? '2px solid rgba(250,204,21,0.75)' : '1px solid rgba(255,255,255,0.12)',
+                              boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.22) inset, 0 0 18px rgba(250,204,21,0.30)' : 'none',
+                            }}
+                          >
+                            <div
+                              className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
+                              style={{
+                                background: 'rgba(0,0,0,0.28)',
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                color: 'rgba(255,255,255,0.78)',
+                                transform: 'scale(var(--invZoom))',
+                                transformOrigin: 'right top',
+                              }}
+                              title="元素尺寸（画布占位）"
+                            >
+                              {Math.round(w)} × {Math.round(h)}
+                            </div>
+                            <div className="text-[13px] font-extrabold" style={{ color: 'rgba(255,255,255,0.90)' }}>
+                              图片加载失败
+                            </div>
+                            <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                              {String(it.errorMessage || '图片不可用（可能已删除或地址失效）')}
+                            </div>
+                          </div>
+                        ) : (
+                          <img
+                            src={it.src}
+                            alt={it.prompt}
+                            className="w-full h-full block"
+                            style={{
+                              objectFit: 'contain',
+                              borderRadius: 14,
+                              // 规则：不制造任何“假边框”；选中仅做高亮效果（光晕），不改变尺寸/比例
+                              filter: active
+                                ? 'drop-shadow(0 0 2px rgba(250,204,21,0.95)) drop-shadow(0 0 14px rgba(250,204,21,0.45))'
+                                : 'none',
+                            }}
+                            onLoad={(e) => {
+                              const img = e.currentTarget;
+                              const nw = img.naturalWidth || 0;
+                              const nh = img.naturalHeight || 0;
+                              if (!nw || !nh) return;
+                              setCanvas((prev) =>
+                                prev.map((x) => {
+                                  if (x.key !== it.key) return x;
+                                  // 规则：图片的显示尺寸 = natural 像素尺寸（比例关系只由画布 zoom 改变）
+                                  return { ...x, naturalW: nw, naturalH: nh, w: nw, h: nh, status: x.status === 'error' ? 'done' : x.status };
+                                })
+                              );
+                            }}
+                            onError={() => {
+                              setCanvas((prev) =>
+                                prev.map((x) =>
+                                  x.key === it.key
+                                    ? { ...x, status: 'error', errorMessage: x.errorMessage || '图片不可用（可能已删除或地址失效）' }
+                                    : x
+                                )
+                              );
+                            }}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
@@ -3225,12 +3418,12 @@ export default function AdvancedImageMasterTab() {
                     const existingRects = prev
                       .filter(
                         (x) =>
-                          x.status !== 'error' &&
                           ((x.kind ?? 'image') === 'generator' ||
                             (x.kind ?? 'image') === 'shape' ||
                             (x.kind ?? 'image') === 'text' ||
                             !!x.src ||
-                            x.status === 'running')
+                            x.status === 'running' ||
+                            x.status === 'error')
                       )
                       .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
                     const pos = findNearestFreeTopLeft(existingRects, w, h, near);
@@ -3280,20 +3473,7 @@ export default function AdvancedImageMasterTab() {
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
-                onClick={async () => {
-                  if (selectedKeys.length === 0) return;
-                  const ok = await systemDialog.confirm({
-                    title: '确认删除',
-                    message: `确认删除选中的 ${selectedKeys.length} 项？`,
-                    tone: 'danger',
-                    confirmText: '删除',
-                    cancelText: '取消',
-                  });
-                  if (!ok) return;
-                  const set = new Set(selectedKeys);
-                  setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
-                  setSelectedKeys([]);
-                }}
+                onClick={() => void confirmAndDeleteSelectedKeys([...selectedKeys])}
                 disabled={selectedKeys.length === 0}
                 title="删除选中"
                 aria-label="删除选中"

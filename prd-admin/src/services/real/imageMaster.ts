@@ -2,6 +2,7 @@ import { apiRequest } from './apiClient';
 import type {
   AddImageMasterMessageContract,
   CreateImageMasterSessionContract,
+  DeleteImageMasterAssetContract,
   GetImageMasterSessionContract,
   ListImageMasterSessionsContract,
   UploadImageAssetContract,
@@ -32,7 +33,7 @@ export const getImageMasterSessionReal: GetImageMasterSessionContract = async (i
   return await apiRequest<{ session: ImageMasterSession; messages: ImageMasterMessage[]; assets: ImageAsset[] }>(
     `/api/v1/admin/image-master/sessions/${encodeURIComponent(input.id)}${q ? `?${q}` : ''}`,
     {
-    method: 'GET',
+      method: 'GET',
     }
   );
 };
@@ -54,6 +55,12 @@ export const uploadImageAssetReal: UploadImageAssetContract = async (input) => {
       width: input.width,
       height: input.height,
     },
+  });
+};
+
+export const deleteImageMasterAssetReal: DeleteImageMasterAssetContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(`/api/v1/admin/image-master/assets/${encodeURIComponent(input.id)}`, {
+    method: 'DELETE',
   });
 };
 

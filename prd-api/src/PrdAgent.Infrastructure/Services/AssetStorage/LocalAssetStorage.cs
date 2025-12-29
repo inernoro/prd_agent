@@ -48,6 +48,31 @@ public class LocalAssetStorage : IAssetStorage
         return null;
     }
 
+    public Task DeleteByShaAsync(string sha256, CancellationToken ct)
+    {
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sha)) return Task.CompletedTask;
+        if (sha.Length < 16) return Task.CompletedTask;
+
+        // 支持常见图片扩展（与读取逻辑保持一致）
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif" };
+        foreach (var ext in exts)
+        {
+            ct.ThrowIfCancellationRequested();
+            var fp = Path.Combine(_baseDir, $"{sha}.{ext}");
+            try
+            {
+                if (File.Exists(fp)) File.Delete(fp);
+            }
+            catch
+            {
+                // ignore：删除失败不应阻断主流程（控制层可选择记录日志）
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static string Sha256Hex(byte[] bytes)
     {
         using var sha = SHA256.Create();

@@ -259,6 +259,34 @@ public class AdminImageMasterController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { asset }));
     }
 
+    [HttpDelete("assets/{id}")]
+    public async Task<IActionResult> DeleteAsset(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var aid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(aid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var asset = await _db.ImageAssets.Find(x => x.Id == aid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
+        if (asset == null) return NotFound(ApiResponse<object>.Fail("ASSET_NOT_FOUND", "资产不存在"));
+
+        await _db.ImageAssets.DeleteOneAsync(x => x.Id == aid && x.OwnerUserId == adminId, ct);
+
+        // 当 sha 在全库不再被任何 ImageAssets 引用时才删除底层文件，避免误删共享内容。
+        try
+        {
+            var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
+            if (remain <= 0)
+            {
+                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ImageMaster delete asset file failed: sha={Sha}", asset.Sha256);
+        }
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     [HttpGet("assets/file/{name}")]
     [AllowAnonymous] // 仅图片文件读取，不返回敏感信息；但依赖 sha 不可猜测（64 hex）
     public async Task<IActionResult> GetAssetFile(string name, CancellationToken ct)

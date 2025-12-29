@@ -50,6 +50,7 @@ import type {
 import type {
   AddImageMasterMessageContract,
   CreateImageMasterSessionContract,
+  DeleteImageMasterAssetContract,
   GetImageMasterSessionContract,
   ListImageMasterSessionsContract,
   UploadImageAssetContract,
@@ -104,6 +105,7 @@ import { suggestGroupNameReal } from '@/services/real/intent';
 import {
   addImageMasterMessageReal,
   createImageMasterSessionReal,
+  deleteImageMasterAssetReal,
   getImageMasterSessionReal,
   listImageMasterSessionsReal,
   uploadImageAssetReal,
@@ -245,6 +247,7 @@ export const listImageMasterSessions: ListImageMasterSessionsContract = withAuth
 export const getImageMasterSession: GetImageMasterSessionContract = withAuth(getImageMasterSessionReal);
 export const addImageMasterMessage: AddImageMasterMessageContract = withAuth(addImageMasterMessageReal);
 export const uploadImageAsset: UploadImageAssetContract = withAuth(uploadImageAssetReal);
+export const deleteImageMasterAsset: DeleteImageMasterAssetContract = withAuth(deleteImageMasterAssetReal);
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);
