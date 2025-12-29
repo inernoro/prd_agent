@@ -145,7 +145,14 @@ async function apiRequestInner<T>(
   }
 
   const text = await res.text();
+  const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+  const maybeHtml = contentType.includes('text/html') || /^\s*</.test(text) || /<html/i.test(text);
   const json = await tryParseJson(text);
+
+  // Nginx/代理层 413：避免把整段 HTML 错误页塞进 UI（会卡顿/难读）
+  if (res.status === 413) {
+    return fail('DOCUMENT_TOO_LARGE', '请求体过大（HTTP 413）。请减小图片/内容大小，或调整 Nginx 的 client_max_body_size。') as unknown as ApiResponse<T>;
+  }
 
   // 处理 401 未授权：清除认证状态并跳转登录页
   if (res.status === 401) {
@@ -187,11 +194,16 @@ async function apiRequestInner<T>(
   if (!res.ok) {
     const jsonObj = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
     const err = getApiErrorLike(jsonObj?.error);
-    const message =
+    let message =
       err?.message ||
       (typeof jsonObj?.message === 'string' ? jsonObj.message : null) ||
       text ||
       `HTTP ${res.status} ${res.statusText}`;
+    if (maybeHtml) {
+      message = `HTTP ${res.status} ${res.statusText || 'Request Failed'}`;
+    } else if (typeof message === 'string' && message.length > 1600) {
+      message = `${message.slice(0, 1600)}…`;
+    }
     const code = err?.code || (res.status === 401 ? 'UNAUTHORIZED' : 'UNKNOWN');
     return fail(code, message) as unknown as ApiResponse<T>;
   }

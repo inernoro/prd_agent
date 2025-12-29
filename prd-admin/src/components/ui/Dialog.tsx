@@ -31,6 +31,7 @@ export function Dialog({
           style={{ background: 'rgba(0,0,0,0.72)' }}
         />
         <DialogPrimitive.Content
+          {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
             'fixed left-1/2 top-1/2 z-[110] w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
