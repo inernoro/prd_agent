@@ -14,6 +14,7 @@ interface MessageState {
   isStreaming: boolean;
   streamingMessageId: string | null;
   streamingPhase: StreamingPhase;
+  pendingAssistantId: string | null;
 
   // 上拉加载历史（向前分页）
   isLoadingOlder: boolean;
@@ -25,10 +26,13 @@ interface MessageState {
   triggerScrollToBottom: () => void;
 
   addMessage: (message: Message) => void;
+  addMessageAndScrollToBottom: (message: Message) => void;
+  addUserMessageWithPendingAssistant: (args: { userMessage: Message }) => void;
+  clearPendingAssistant: () => void;
   setMessages: (messages: Message[]) => void;
   initHistoryPaging: (pageSize: number) => void;
   prependMessages: (messages: Message[]) => number;
-  loadOlderMessages: (args: { sessionId: string; limit?: number }) => Promise<{ added: number }>;
+  loadOlderMessages: (args: { groupId: string; limit?: number }) => Promise<{ added: number }>;
   upsertMessage: (message: Message) => void;
   startStreaming: (message: Message) => void;
   appendToStreamingMessage: (content: string) => void;
@@ -76,7 +80,7 @@ type MessageHistoryItem = {
 
 export const useMessageStore = create<MessageState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       boundSessionId: null,
       isPinnedToBottom: true,
       scrollToBottomSeq: 0,
@@ -85,6 +89,7 @@ export const useMessageStore = create<MessageState>()(
       isStreaming: false,
       streamingMessageId: null,
       streamingPhase: null,
+      pendingAssistantId: null,
 
       isLoadingOlder: false,
       hasMoreOlder: true,
@@ -105,6 +110,7 @@ export const useMessageStore = create<MessageState>()(
         isStreaming: false,
         streamingMessageId: null,
         streamingPhase: null,
+        pendingAssistantId: null,
         isLoadingOlder: false,
         hasMoreOlder: true,
         oldestTimestamp: null,
@@ -118,6 +124,7 @@ export const useMessageStore = create<MessageState>()(
       isStreaming: false,
       streamingMessageId: null,
       streamingPhase: null,
+      pendingAssistantId: null,
       isLoadingOlder: false,
       hasMoreOlder: true,
       oldestTimestamp: null,
@@ -141,6 +148,55 @@ export const useMessageStore = create<MessageState>()(
     const next = [...state.messages, message];
     return { messages: next };
   }),
+
+      // 合并更新：减少一次渲染/布局抖动（点击提示词/发送更丝滑）
+      addMessageAndScrollToBottom: (message) => set((state) => {
+        const next = [...state.messages, message];
+        return {
+          messages: next,
+          isPinnedToBottom: true,
+          scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
+        };
+      }),
+
+      // 提示词/发送：先插入一个“请求中”的占位 assistant 气泡，再滚到底
+      // 这样用户不会觉得“点了没反应/页面卡住”，并且可与后续真实 start 事件无缝衔接
+      addUserMessageWithPendingAssistant: ({ userMessage }) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H1',location:'messageStore.ts:addUserMessageWithPendingAssistant:beforeSet',message:'before_set',data:{msgCount:get().messages?.length||0},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        const t0 = (globalThis as any).performance?.now?.() ?? Date.now();
+        set((state) => {
+        const pendingId = `pending-assistant-${Date.now()}`;
+        const pending: Message = {
+          id: pendingId,
+          role: 'Assistant',
+          content: '',
+          timestamp: new Date(),
+          viewRole: userMessage.viewRole,
+        };
+        const next = [...state.messages, userMessage, pending];
+        return {
+          messages: next,
+          pendingAssistantId: pendingId,
+          isPinnedToBottom: true,
+          scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
+        };
+        });
+        const t1 = (globalThis as any).performance?.now?.() ?? Date.now();
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H1',location:'messageStore.ts:addUserMessageWithPendingAssistant:afterSet',message:'after_set',data:{dtMs:Number(t1)-Number(t0),msgCount:get().messages?.length||0,pendingId:get().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      },
+
+      clearPendingAssistant: () => set((state) => {
+        if (!state.pendingAssistantId) return state;
+        const pid = state.pendingAssistantId;
+        return {
+          pendingAssistantId: null,
+          messages: state.messages.filter((m) => m.id !== pid),
+        };
+      }),
   
   setMessages: (messages) => set(() => ({ messages })),
 
@@ -167,6 +223,9 @@ export const useMessageStore = create<MessageState>()(
       added = toAdd.length;
       const next = [...toAdd, ...state.messages];
       const oldest = next.length > 0 ? next[0].timestamp : null;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H22',location:'messageStore.ts:prependMessages',message:'prepend_messages',data:{toAddLen:toAdd.length,beforeLen:state.messages.length,afterLen:next.length,oldestTs:oldest?oldest.toISOString():null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       return {
         messages: next,
         oldestTimestamp: oldest ? oldest.toISOString() : null,
@@ -175,11 +234,11 @@ export const useMessageStore = create<MessageState>()(
     return added;
   },
 
-  loadOlderMessages: async ({ sessionId, limit }) => {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return { added: 0 };
+  loadOlderMessages: async ({ groupId, limit }) => {
+    const gid = String(groupId || '').trim();
+    if (!gid) return { added: 0 };
 
-    const state = useMessageStore.getState();
+    const state = get();
     if (state.isLoadingOlder) return { added: 0 };
     if (!state.hasMoreOlder) return { added: 0 };
 
@@ -188,8 +247,11 @@ export const useMessageStore = create<MessageState>()(
 
     set({ isLoadingOlder: true });
     try {
-      const resp = await invoke<ApiResponse<MessageHistoryItem[]>>('get_message_history', {
-        sessionId: sid,
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H21',location:'messageStore.ts:loadOlderMessages:beforeInvoke',message:'load_older_before_invoke',data:{groupId:gid,take:Number(take),before:before?String(before):null,existingLen:get().messages?.length||0},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      const resp = await invoke<ApiResponse<MessageHistoryItem[]>>('get_group_message_history', {
+        groupId: gid,
         limit: take,
         before,
       });
@@ -206,10 +268,13 @@ export const useMessageStore = create<MessageState>()(
         viewRole: (m.viewRole as any) || undefined,
       }));
 
-      const added = useMessageStore.getState().prependMessages(mapped);
+      const added = get().prependMessages(mapped);
       // 当返回不足一页时，认为没有更多
       const hasMoreOlder = resp.data.length >= take;
       set({ isLoadingOlder: false, hasMoreOlder });
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H21',location:'messageStore.ts:loadOlderMessages:afterInvoke',message:'load_older_after_invoke',data:{respLen:Array.isArray(resp.data)?resp.data.length:0,added:Number(added),hasMoreOlder:Boolean(hasMoreOlder),nowLen:get().messages?.length||0},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       return { added };
     } catch {
       set({ isLoadingOlder: false });
@@ -325,7 +390,11 @@ export const useMessageStore = create<MessageState>()(
     return { messages: next };
   }),
 
-  setStreamingPhase: (phase) => set({ streamingPhase: phase }),
+  setStreamingPhase: (phase) => set((state) => {
+    // 一旦进入 typing（收到首包输出），不要再被 phase 事件覆盖，否则会出现“AI 已在输出，但 UI 仍长期显示请求/接收阶段”的错觉
+    if (state.streamingPhase === 'typing' && phase && phase !== 'typing') return state;
+    return { streamingPhase: phase };
+  }),
   
   stopStreaming: () => set({ isStreaming: false, streamingMessageId: null, streamingPhase: null }),
 
@@ -340,6 +409,7 @@ export const useMessageStore = create<MessageState>()(
     isStreaming: false,
     streamingMessageId: null,
     streamingPhase: null,
+    pendingAssistantId: null,
     isLoadingOlder: false,
     hasMoreOlder: true,
     oldestTimestamp: null,
@@ -353,6 +423,7 @@ export const useMessageStore = create<MessageState>()(
         isStreaming: false,
         streamingMessageId: null,
         streamingPhase: null,
+        pendingAssistantId: null,
         isLoadingOlder: false,
         hasMoreOlder: true,
         oldestTimestamp: null,
@@ -378,6 +449,7 @@ export const useMessageStore = create<MessageState>()(
         next.isLoadingOlder = false;
         next.hasMoreOlder = true;
         next.oldestTimestamp = revived.length > 0 ? revived[0].timestamp.toISOString() : null;
+        next.pendingAssistantId = null;
         return next as MessageState;
       },
     }

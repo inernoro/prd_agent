@@ -39,6 +39,8 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<UserPasswordUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<UnlockUserResponse>))]
 [JsonSerializable(typeof(ApiResponse<InviteCodeGenerateResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminCreateUserResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminBulkCreateUsersResponse>))]
 [JsonSerializable(typeof(ApiResponse<ForceExpireResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminGroupListItem>>))]
 [JsonSerializable(typeof(ApiResponse<AdminGroupListItem>))]
@@ -72,6 +74,9 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdateRoleRequest))]
 [JsonSerializable(typeof(UpdatePasswordRequest))]
 [JsonSerializable(typeof(GenerateInviteCodeRequest))]
+[JsonSerializable(typeof(AdminCreateUserRequest))]
+[JsonSerializable(typeof(AdminBulkCreateUsersRequest))]
+[JsonSerializable(typeof(AdminBulkCreateUserItem))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
 [JsonSerializable(typeof(ForceExpireRequest))]
 // Admin Data 请求
@@ -82,6 +87,10 @@ namespace PrdAgent.Api.Json;
 // 密码验证响应
 [JsonSerializable(typeof(ApiResponse<PasswordValidationResponse>))]
 [JsonSerializable(typeof(PasswordValidationResponse))]
+// 用户管理新增 DTO
+[JsonSerializable(typeof(AdminCreateUserResponse))]
+[JsonSerializable(typeof(AdminBulkCreateUsersResponse))]
+[JsonSerializable(typeof(AdminBulkCreateUserError))]
 // 核心模型类型
 [JsonSerializable(typeof(TokenUsage))]
 [JsonSerializable(typeof(SenderInfo))]

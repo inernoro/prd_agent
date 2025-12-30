@@ -59,14 +59,29 @@ const DEMO_RESPONSES = [
 
 export default function ChatInput() {
   const { sessionId, currentRole, document, prompts } = useSessionStore();
-  const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage, triggerScrollToBottom } = useMessageStore();
+  const { addUserMessageWithPendingAssistant, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [inputHeight, setInputHeight] = useState(36);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 检测是否为演示模式
   const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
+
+  // 等待 UI 先完成一次/两次绘制，再发起请求（避免 invoke 的同步开销挡住首帧反馈）
+  const waitForUiPaint = useCallback(async () => {
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    // 再等待一帧，确保样式/布局提交（避免使用 setTimeout 人为延迟）
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  }, []);
+
+  // 当真正进入流式阶段（start 到达）后，用 isStreaming 接管禁用逻辑
+  useEffect(() => {
+    if (isStreaming && isSubmitting) setIsSubmitting(false);
+  }, [isStreaming, isSubmitting]);
 
   // 演示模式下的模拟流式回复
   const simulateStreamingResponse = async (question: string) => {
@@ -107,23 +122,38 @@ export default function ChatInput() {
       timestamp: new Date(),
       viewRole: currentRole,
     };
-    addMessage(userMessage);
-    triggerScrollToBottom();
+    // 插入占位 assistant + 滚到底：避免“点了没反应/卡住”的体感
+    addUserMessageWithPendingAssistant({ userMessage });
     return userMessage;
   };
 
   const handlePromptExplain = async (p: PromptItem) => {
-    if (!sessionId || isStreaming) return;
+    if (!sessionId || isStreaming || isSubmitting) return;
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H2',location:'ChatInput.tsx:handlePromptExplain:start',message:'prompt_click_start',data:{promptKey:p?.promptKey||null,titleLen:(p?.title||'').length,msgCount:useMessageStore.getState().messages?.length||0,isStreaming:useMessageStore.getState().isStreaming,isPinnedToBottom:useMessageStore.getState().isPinnedToBottom},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      setIsSubmitting(true);
       const text = `【讲解】${p.title}`;
       const userMessage = pushSimulatedUserMessage(text);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H2',location:'ChatInput.tsx:handlePromptExplain:afterInsert',message:'after_insert_user_and_pending',data:{msgCount:useMessageStore.getState().messages?.length||0,pendingId:useMessageStore.getState().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      // #region agent log
+      requestAnimationFrame(()=>{fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H4',location:'ChatInput.tsx:handlePromptExplain:raf1',message:'raf_after_click',data:{pendingId:useMessageStore.getState().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});});
+      // #endregion
 
       // 演示模式：走本地模拟
       if (isDemoMode) {
+        await waitForUiPaint();
         await simulateStreamingResponse(userMessage.content);
         return;
       }
 
+      await waitForUiPaint();
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H5',location:'ChatInput.tsx:handlePromptExplain:beforeInvoke',message:'before_invoke_send_message',data:{pendingId:useMessageStore.getState().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
@@ -132,11 +162,12 @@ export default function ChatInput() {
       });
     } catch (err) {
       console.error('Failed to send prompt explain:', err);
+      setIsSubmitting(false);
     }
   };
 
   const handleSend = async () => {
-    if (!content.trim() || !sessionId || isStreaming) return;
+    if (!content.trim() || !sessionId || isStreaming || isSubmitting) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -146,18 +177,21 @@ export default function ChatInput() {
       viewRole: currentRole,
     };
 
-    addMessage(userMessage);
-    triggerScrollToBottom();
+    setIsSubmitting(true);
+    addUserMessageWithPendingAssistant({ userMessage });
     const questionContent = content.trim();
     setContent('');
 
     // 演示模式：模拟回复
     if (isDemoMode) {
+      await waitForUiPaint();
       await simulateStreamingResponse(questionContent);
       return;
     }
 
     try {
+      // 先让“用户消息 + loading 气泡 + 滚到底”完成渲染，再开始请求
+      await waitForUiPaint();
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,
@@ -165,6 +199,7 @@ export default function ChatInput() {
       });
     } catch (err) {
       console.error('Failed to send message:', err);
+      setIsSubmitting(false);
     }
   };
 
@@ -186,11 +221,17 @@ export default function ChatInput() {
     }
   };
 
+  // 统一控制高度：按钮与单行输入框永远对齐（避免反复出现“差一点点”）
+  const CONTROL_HEIGHT = 36;
+
   const adjustTextareaHeight = useCallback(() => {
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+      const next = Math.max(CONTROL_HEIGHT, Math.min(textarea.scrollHeight, 200));
+      textarea.style.height = next + 'px';
+      // 用 textarea 实际高度作为“对齐基准”：按钮容器强制同高，彻底杜绝像素漂移
+      setInputHeight(next);
     }
   }, []);
 
@@ -211,7 +252,7 @@ export default function ChatInput() {
               <button
                 key={p.promptKey}
                 onClick={() => handlePromptExplain(p)}
-                disabled={isStreaming}
+                disabled={isStreaming || isSubmitting}
                 className={`flex-shrink-0 px-2.5 py-1.5 text-xs rounded-md transition-all ${
                   'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
                 } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
@@ -226,15 +267,24 @@ export default function ChatInput() {
       )}
 
       {/* 输入区域 */}
-      <div className="px-3 pb-3 pt-2 flex items-end gap-2">
-        <button className="h-9 w-9 flex-shrink-0 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-          </svg>
-        </button>
+      <div className="px-3 pb-3 pt-2">
+        {/* 最简单布局：3列（附件 / 输入 / 发送），高度对齐；textarea 仅向上增长 */}
+        <div className="grid grid-cols-[36px,1fr,36px] items-stretch gap-2">
+        <div className="flex items-end" style={{ height: `${inputHeight}px` }}>
+          <button
+            type="button"
+            className="h-9 w-9 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+            aria-label="附件"
+            title="附件"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+          </button>
+        </div>
 
-        {/* 关键：min-w-0 允许在 flex 行内收缩，避免 placeholder 撑宽导致“没对齐/溢出” */}
-        <div className="flex-1 min-w-0 relative">
+        {/* 关键：min-w-0 允许在网格中收缩，避免 placeholder 撑宽导致溢出 */}
+        <div className="min-w-0 relative flex items-stretch" style={{ height: `${inputHeight}px` }}>
           <textarea
             ref={textareaRef}
             value={content}
@@ -243,27 +293,32 @@ export default function ChatInput() {
             }}
             onKeyDown={handleKeyDown}
             placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}
-            className="w-full min-w-0 min-h-[36px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm"
+            className="w-full min-w-0 px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm"
             rows={1}
             disabled={isStreaming || !canChat}
           />
         </div>
 
-        <button
-          onClick={isStreaming ? handleCancel : handleSend}
-          disabled={isStreaming ? false : (!content.trim() || !canChat)}
-          className="h-9 w-9 flex-shrink-0 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isStreaming ? (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
-            </svg>
-          ) : (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
-          )}
-        </button>
+        <div className="flex items-end justify-end" style={{ height: `${inputHeight}px` }}>
+          <button
+            onClick={isStreaming ? handleCancel : handleSend}
+            disabled={isStreaming ? false : (isSubmitting || !content.trim() || !canChat)}
+            className="h-9 w-9 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label={isStreaming ? '停止' : '发送'}
+            title={isStreaming ? '停止' : '发送'}
+          >
+            {isStreaming ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              </svg>
+            )}
+          </button>
+        </div>
+        </div>
       </div>
     </div>
   );

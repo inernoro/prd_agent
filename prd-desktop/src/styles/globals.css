@@ -53,6 +53,9 @@ html, body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: var(--color-background);
   color: var(--color-text);
+  /* 外层不允许滚动：滚动只发生在内部可滚容器（如消息列表） */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 #root {

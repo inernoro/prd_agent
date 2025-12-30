@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -20,12 +23,29 @@ public class AdminUsersController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminUsersController> _logger;
     private readonly ILoginAttemptService _loginAttemptService;
+    private static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
 
     public AdminUsersController(MongoDbContext db, ILogger<AdminUsersController> logger, ILoginAttemptService loginAttemptService)
     {
         _db = db;
         _logger = logger;
         _loginAttemptService = loginAttemptService;
+    }
+
+    private string GetAdminId()
+        => User.FindFirst("sub")?.Value
+           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+           ?? "unknown";
+
+    private static (bool ok, string? error) ValidateUsername(string username)
+    {
+        if (string.IsNullOrWhiteSpace(username))
+            return (false, "用户名不能为空");
+        if (username.Length < 4 || username.Length > 32)
+            return (false, "用户名长度需在4-32字符之间");
+        if (!UsernameRegex.IsMatch(username))
+            return (false, "用户名只能包含字母、数字和下划线");
+        return (true, null);
     }
 
     /// <summary>
@@ -122,6 +142,299 @@ public class AdminUsersController : ControllerBase
         };
 
         return Ok(ApiResponse<UserDetailResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 创建用户（管理员）
+    /// </summary>
+    [HttpPost]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CreateUser([FromBody] AdminCreateUserRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cached = await _db.AdminIdempotencyRecords
+                .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_users_create" && x.IdempotencyKey == idemKey)
+                .FirstOrDefaultAsync(ct);
+            if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
+            {
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<JsonElement>(cached.PayloadJson);
+                    return Ok(ApiResponse<object>.Ok(payload));
+                }
+                catch
+                {
+                    // ignore：幂等记录损坏时，降级为正常处理
+                }
+            }
+        }
+
+        var username = (request?.Username ?? string.Empty).Trim();
+        var (uOk, uErr) = ValidateUsername(username);
+        if (!uOk) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, uErr ?? "用户名不合法"));
+
+        var displayName = (request?.DisplayName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(displayName)) displayName = username;
+        if (displayName.Length > 50)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "显示名称不能超过50字符"));
+
+        var roleRaw = (request?.Role ?? string.Empty).Trim();
+        if (!Enum.TryParse<UserRole>(roleRaw, ignoreCase: true, out var role))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "role 不合法（PM/DEV/QA/ADMIN）"));
+
+        var password = request?.Password ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(password))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "密码不能为空"));
+
+        var passwordError = PasswordValidator.Validate(password);
+        if (passwordError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.WEAK_PASSWORD, passwordError));
+
+        var existed = await _db.Users.Find(u => u.Username == username).Limit(1).FirstOrDefaultAsync(ct);
+        if (existed != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.USERNAME_EXISTS, "用户名已存在"));
+
+        var user = new User
+        {
+            UserId = Guid.NewGuid().ToString("N"),
+            Username = username,
+            DisplayName = displayName,
+            Role = role,
+            Status = UserStatus.Active,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        try
+        {
+            await _db.Users.InsertOneAsync(user, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.USERNAME_EXISTS, "用户名已存在"));
+        }
+
+        _logger.LogWarning("Admin created user: username={Username}, role={Role}", user.Username, user.Role);
+
+        var payload2 = new AdminCreateUserResponse
+        {
+            UserId = user.UserId,
+            Username = user.Username,
+            DisplayName = user.DisplayName,
+            Role = user.Role.ToString(),
+            Status = user.Status.ToString(),
+            CreatedAt = user.CreatedAt
+        };
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var rec = new AdminIdempotencyRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerAdminId = adminId,
+                Scope = "admin_users_create",
+                IdempotencyKey = idemKey,
+                PayloadJson = JsonSerializer.Serialize(payload2),
+                CreatedAt = DateTime.UtcNow
+            };
+            try
+            {
+                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // ignore：并发写入同一 idemKey，保持幂等
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload2));
+    }
+
+    /// <summary>
+    /// 批量创建用户（管理员）
+    /// </summary>
+    [HttpPost("bulk")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> BulkCreateUsers([FromBody] AdminBulkCreateUsersRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cached = await _db.AdminIdempotencyRecords
+                .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_users_bulk_create" && x.IdempotencyKey == idemKey)
+                .FirstOrDefaultAsync(ct);
+            if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
+            {
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<JsonElement>(cached.PayloadJson);
+                    return Ok(ApiResponse<object>.Ok(payload));
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+        }
+
+        var items = request?.Items ?? new List<AdminBulkCreateUserItem>();
+        if (items.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "items 不能为空"));
+        if (items.Count > 200)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "批量创建数量过大（上限 200）"));
+
+        var failed = new List<AdminBulkCreateUserError>();
+        var valid = new List<(string username, string displayName, UserRole role, string password)>();
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var it in items)
+        {
+            var username = (it?.Username ?? string.Empty).Trim();
+            var (uOk, uErr) = ValidateUsername(username);
+            if (!uOk)
+            {
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = uErr ?? "用户名不合法" });
+                continue;
+            }
+
+            if (!seen.Add(username))
+            {
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "用户名重复" });
+                continue;
+            }
+
+            var displayName = (it?.DisplayName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(displayName)) displayName = username;
+            if (displayName.Length > 50)
+            {
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "显示名称不能超过50字符" });
+                continue;
+            }
+
+            var roleRaw = (it?.Role ?? string.Empty).Trim();
+            if (!Enum.TryParse<UserRole>(roleRaw, ignoreCase: true, out var role))
+            {
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "role 不合法（PM/DEV/QA/ADMIN）" });
+                continue;
+            }
+
+            var password = it?.Password ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(password))
+            {
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "密码不能为空" });
+                continue;
+            }
+            var passwordError = PasswordValidator.Validate(password);
+            if (passwordError != null)
+            {
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.WEAK_PASSWORD, Message = passwordError });
+                continue;
+            }
+
+            valid.Add((username, displayName, role, password));
+        }
+
+        // 已存在用户名（一次性查询）
+        var validUsernames = valid.Select(x => x.username).ToArray();
+        var existedUsernames = await _db.Users
+            .Find(u => validUsernames.Contains(u.Username))
+            .Project(u => u.Username)
+            .ToListAsync(ct);
+
+        var existedSet = new HashSet<string>(existedUsernames, StringComparer.Ordinal);
+        foreach (var un in existedSet)
+        {
+            failed.Add(new AdminBulkCreateUserError { Username = un, Code = ErrorCodes.USERNAME_EXISTS, Message = "用户名已存在" });
+        }
+
+        var toCreate = valid.Where(x => !existedSet.Contains(x.username)).ToList();
+        var docs = toCreate.Select(x => new User
+        {
+            UserId = Guid.NewGuid().ToString("N"),
+            Username = x.username,
+            DisplayName = x.displayName,
+            Role = x.role,
+            Status = UserStatus.Active,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(x.password),
+            CreatedAt = DateTime.UtcNow
+        }).ToList();
+
+        if (docs.Count > 0)
+        {
+            try
+            {
+                await _db.Users.InsertManyAsync(docs, new InsertManyOptions { IsOrdered = false }, ct);
+            }
+            catch (MongoBulkWriteException<User> ex)
+            {
+                // 处理并发导致的重复用户名
+                foreach (var we in ex.WriteErrors)
+                {
+                    if (we.Category != ServerErrorCategory.DuplicateKey) continue;
+                    if (we.Index < 0 || we.Index >= docs.Count) continue;
+                    var username = docs[we.Index].Username;
+                    failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.USERNAME_EXISTS, Message = "用户名已存在" });
+                }
+
+                // 从成功列表中剔除失败的重复项
+                var dupSet = new HashSet<string>(
+                    failed.Where(x => x.Code == ErrorCodes.USERNAME_EXISTS).Select(x => x.Username),
+                    StringComparer.Ordinal);
+                docs = docs.Where(d => !dupSet.Contains(d.Username)).ToList();
+            }
+        }
+
+        var createdItems = docs.Select(u => new AdminCreateUserResponse
+        {
+            UserId = u.UserId,
+            Username = u.Username,
+            DisplayName = u.DisplayName,
+            Role = u.Role.ToString(),
+            Status = u.Status.ToString(),
+            CreatedAt = u.CreatedAt
+        }).ToList();
+
+        var payload2 = new AdminBulkCreateUsersResponse
+        {
+            RequestedCount = items.Count,
+            CreatedCount = createdItems.Count,
+            FailedCount = failed.Count,
+            CreatedItems = createdItems,
+            FailedItems = failed
+        };
+
+        _logger.LogWarning(
+            "Admin bulk created users: requested={Requested} created={Created} failed={Failed}",
+            payload2.RequestedCount,
+            payload2.CreatedCount,
+            payload2.FailedCount);
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var rec = new AdminIdempotencyRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerAdminId = adminId,
+                Scope = "admin_users_bulk_create",
+                IdempotencyKey = idemKey,
+                PayloadJson = JsonSerializer.Serialize(payload2),
+                CreatedAt = DateTime.UtcNow
+            };
+            try
+            {
+                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // ignore
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload2));
     }
 
     /// <summary>
@@ -291,6 +604,29 @@ public class GenerateInviteCodeRequest
 public class UpdatePasswordRequest
 {
     public string Password { get; set; } = string.Empty;
+}
+
+public class AdminCreateUserRequest
+{
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    /// <summary>PM/DEV/QA/ADMIN</summary>
+    public string Role { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+}
+
+public class AdminBulkCreateUsersRequest
+{
+    public List<AdminBulkCreateUserItem> Items { get; set; } = new();
+}
+
+public class AdminBulkCreateUserItem
+{
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    /// <summary>PM/DEV/QA/ADMIN</summary>
+    public string Role { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
 }
 
 

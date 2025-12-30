@@ -3,6 +3,8 @@ import { ok, type ApiResponse } from '@/types/api';
 import type {
   GetUsersContract,
   GenerateInviteCodesContract,
+  CreateAdminUserContract,
+  BulkCreateAdminUsersContract,
   UpdateUserPasswordContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
@@ -10,6 +12,10 @@ import type {
   ForceExpireUserContract,
   ForceExpireTargets,
   GetUsersParams,
+  CreateAdminUserInput,
+  CreateAdminUserResponse,
+  BulkCreateAdminUsersItem,
+  BulkCreateAdminUsersResponse,
 } from '@/services/contracts/adminUsers';
 import type { AdminUser, PagedResult, UserRole, UserStatus } from '@/types/admin';
 
@@ -90,6 +96,46 @@ export const forceExpireUserReal: ForceExpireUserContract = async (
       body: { targets: ts },
     }
   );
+  return res;
+};
+
+function newIdempotencyKey() {
+  const c = (globalThis as unknown as { crypto?: Crypto }).crypto;
+  const uuid = c?.randomUUID?.();
+  if (uuid) return uuid;
+  return `idem_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+export const createUserReal: CreateAdminUserContract = async (input: CreateAdminUserInput): Promise<ApiResponse<CreateAdminUserResponse>> => {
+  const res = await apiRequest<CreateAdminUserResponse>(`/api/v1/admin/users`, {
+    method: 'POST',
+    body: {
+      username: (input.username ?? '').trim(),
+      password: input.password ?? '',
+      role: input.role,
+      displayName: input.displayName,
+    },
+    headers: { 'Idempotency-Key': newIdempotencyKey() },
+  });
+  return res;
+};
+
+export const bulkCreateUsersReal: BulkCreateAdminUsersContract = async (
+  items: BulkCreateAdminUsersItem[]
+): Promise<ApiResponse<BulkCreateAdminUsersResponse>> => {
+  const arr = Array.isArray(items) ? items : [];
+  const res = await apiRequest<BulkCreateAdminUsersResponse>(`/api/v1/admin/users/bulk`, {
+    method: 'POST',
+    body: {
+      items: arr.map((it) => ({
+        username: (it.username ?? '').trim(),
+        password: it.password ?? '',
+        role: it.role,
+        displayName: it.displayName,
+      })),
+    },
+    headers: { 'Idempotency-Key': newIdempotencyKey() },
+  });
   return res;
 };
 

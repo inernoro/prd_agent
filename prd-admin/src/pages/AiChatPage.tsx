@@ -15,6 +15,8 @@ import ImageGenPanel from '@/pages/ai-chat/ImageGenPanel';
 import AdvancedImageMasterTab from '@/pages/ai-chat/AdvancedImageMasterTab';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { systemDialog } from '@/lib/systemDialog';
+import { useLocation } from 'react-router-dom';
+import { getAdminPrompts } from '@/services';
 
 type LocalSession = {
   sessionId: string;
@@ -32,6 +34,48 @@ type UiMessage = {
   timestamp: number;
   citations?: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>;
 };
+
+type RoleEnum = 'PM' | 'DEV' | 'QA';
+
+function SegmentedTabs<T extends string>(props: {
+  items: Array<{ key: T; label: string }>;
+  value: T;
+  onChange: (next: T) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  const { items, value, onChange, disabled, ariaLabel } = props;
+  return (
+    <div
+      className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
+      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+      aria-label={ariaLabel}
+    >
+      {items.map((x) => {
+        const active = x.key === value;
+        return (
+          <button
+            key={x.key}
+            type="button"
+            className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+            style={{
+              color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+              background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+              border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+              opacity: disabled ? 0.6 : 1,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+            }}
+            disabled={!!disabled}
+            aria-pressed={active}
+            onClick={() => onChange(x.key)}
+          >
+            {x.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 const MAX_MESSAGE_CHARS = 16 * 1024;
 const ALLOWED_TEXT_EXTS = ['.md', '.txt', '.log', '.json', '.csv'];
@@ -223,6 +267,7 @@ function formatTime(ts: number) {
 }
 
 export default function AiChatPage() {
+  const location = useLocation();
   const authUser = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
@@ -230,6 +275,9 @@ export default function AiChatPage() {
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
 
   const userId = authUser?.userId ?? '';
+
+  const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const isTestMode = query.get('mode') === 'test';
 
   const [tab, setTab] = useState<'chat' | 'imageGen' | 'imageMaster'>('chat');
 
@@ -275,6 +323,29 @@ export default function AiChatPage() {
   const [pendingAttachmentText, setPendingAttachmentText] = useState<string>('');
   const [pendingAttachmentName, setPendingAttachmentName] = useState<string>('');
 
+  const [testRole, setTestRole] = useState<RoleEnum>('PM');
+  const [testPromptKey, setTestPromptKey] = useState<string>('');
+  const [testPromptsLoading, setTestPromptsLoading] = useState(false);
+  const [testPrompts, setTestPrompts] = useState<Array<{ promptKey: string; role: RoleEnum; title: string }>>([]);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [testErr, setTestErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTestMode) return;
+    // 测试模式强制在 chat tab，避免用户进入后看到图片页
+    setTab('chat');
+  }, [isTestMode]);
+
+  useEffect(() => {
+    if (!isTestMode) return;
+    const roleRaw = (query.get('role') ?? '').trim().toUpperCase();
+    const role = roleRaw === 'DEV' ? 'DEV' : roleRaw === 'QA' ? 'QA' : 'PM';
+    const pk = (query.get('promptKey') ?? '').trim();
+    setTestRole(role);
+    if (pk) setTestPromptKey(pk);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTestMode, location.search]);
+
   useEffect(() => {
     if (!userId) return;
     const loaded = loadSessions(userId);
@@ -284,6 +355,34 @@ export default function AiChatPage() {
     if (!activeSessionId && loaded.length > 0) setActiveSessionId(loaded[0].sessionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  useEffect(() => {
+    if (!isTestMode) return;
+    if (!token) return;
+    if (testPrompts.length > 0) return;
+    setTestPromptsLoading(true);
+    setTestErr(null);
+    setTestMsg(null);
+    getAdminPrompts()
+      .then((res) => {
+        if (!res.success) {
+          setTestErr(res.error?.message || '加载提示词失败');
+          return;
+        }
+        const items = Array.isArray(res.data?.settings?.prompts) ? res.data.settings.prompts : [];
+        const mapped = items
+          .map((x: any) => ({
+            promptKey: String(x.promptKey ?? '').trim(),
+            role: (String(x.role ?? '').trim().toUpperCase() as RoleEnum) || 'PM',
+            title: String(x.title ?? '').trim(),
+          }))
+          .filter((x) => x.promptKey && (x.role === 'PM' || x.role === 'DEV' || x.role === 'QA'));
+        setTestPrompts(mapped);
+      })
+      .catch(() => setTestErr('加载提示词失败（网络错误）'))
+      .finally(() => setTestPromptsLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTestMode, token]);
 
   useEffect(() => {
     if (!userId || !activeSessionId) {
@@ -325,6 +424,108 @@ export default function AiChatPage() {
     abortRef.current?.abort();
     abortRef.current = null;
     setIsStreaming(false);
+  };
+
+  const switchRole = async (sid: string, role: RoleEnum) => {
+    if (!token) {
+      await systemDialog.alert('未登录');
+      return false;
+    }
+    const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(sid)}/role`);
+    try {
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
+      const text = await res.text().catch(() => '');
+      if (!res.ok) {
+        await systemDialog.alert(text || `切换角色失败：HTTP ${res.status}`);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      await systemDialog.alert(e instanceof Error ? e.message : '网络错误');
+      return false;
+    }
+  };
+
+  const streamSendMessage = async (args: { sid: string; content: string; promptKey?: string | null }) => {
+    if (!token) {
+      await systemDialog.alert('未登录');
+      return;
+    }
+    if (isStreaming) return;
+
+    const finalText = String(args.content ?? '').trim();
+    if (!finalText) return;
+
+    setMessages((prev) =>
+      prev.concat({
+        id: `user-${Date.now()}`,
+        role: 'User',
+        content: finalText,
+        timestamp: Date.now(),
+      })
+    );
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setIsStreaming(true);
+
+    let res: Response;
+    try {
+      const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(args.sid)}/messages`);
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: finalText, promptKey: args.promptKey ?? null }),
+        signal: ac.signal,
+      });
+    } catch (e) {
+      setIsStreaming(false);
+      abortRef.current = null;
+      const msg = e instanceof Error ? e.message : '网络错误';
+      setMessages((prev) => prev.concat({ id: `neterr-${Date.now()}`, role: 'Assistant', content: `请求失败：${msg}`, timestamp: Date.now() }));
+      return;
+    }
+
+    if (!res.ok) {
+      setIsStreaming(false);
+      abortRef.current = null;
+      const t = await res.text();
+      setMessages((prev) =>
+        prev.concat({
+          id: `httperr-${Date.now()}`,
+          role: 'Assistant',
+          content: t || `HTTP ${res.status} ${res.statusText}`,
+          timestamp: Date.now(),
+        })
+      );
+      return;
+    }
+
+    await readSseStream(
+      res,
+      (evt) => {
+        if (!evt.data) return;
+        try {
+          const obj = JSON.parse(evt.data) as AiChatStreamEvent;
+          applyStreamEvent(obj);
+        } catch {
+          // ignore
+        }
+      },
+      ac.signal
+    );
   };
 
   const adjustComposerHeight = () => {
@@ -977,6 +1178,109 @@ export default function AiChatPage() {
           ) : null}
         </div>
       )}
+
+      {isTestMode && tab === 'chat' ? (
+        <Card className="p-4" variant="default">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>提示词测试模式</div>
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                流程：上传 PRD → 选择角色与提示词 → 一键运行。结果以 Markdown 渲染（与正常对话一致）。
+              </div>
+            </div>
+            <div className="shrink-0 flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={!userId}>
+                上传 PRD
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={!activeSessionId || isStreaming}
+                onClick={async () => {
+                  setTestErr(null);
+                  setTestMsg(null);
+                  if (!activeSessionId) {
+                    setCreateOpen(true);
+                    return;
+                  }
+                  const ok = await switchRole(activeSessionId, testRole);
+                  if (!ok) return;
+                  const pk = testPromptKey.trim();
+                  const content = '请按所选提示词对该 PRD 进行解读（测试）。输出必须为 Markdown，并严格遵守结构与边界约束。';
+                  await streamSendMessage({ sid: activeSessionId, content, promptKey: pk || null });
+                  setTestMsg('已触发测试运行（请查看下方对话流）');
+                }}
+              >
+                一键运行
+              </Button>
+            </div>
+          </div>
+
+          {testErr ? (
+            <div className="mt-3 text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
+              {testErr}
+            </div>
+          ) : null}
+          {testMsg ? (
+            <div className="mt-3 text-sm" style={{ color: 'rgba(34,197,94,0.95)' }}>
+              {testMsg}
+            </div>
+          ) : null}
+
+          <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: '240px 1fr' }}>
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>角色</div>
+              <div className="mt-2">
+                <SegmentedTabs<RoleEnum>
+                  ariaLabel="测试角色切换"
+                  items={[
+                    { key: 'PM', label: '产品经理（PM）' },
+                    { key: 'DEV', label: '开发工程师（DEV）' },
+                    { key: 'QA', label: '质量工程师（QA）' },
+                  ]}
+                  value={testRole}
+                  onChange={(r) => setTestRole(r)}
+                />
+              </div>
+              <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                当前会话：{activeSessionId ? `${activeSessionId.slice(0, 8)}...` : '未创建（请先上传 PRD）'}
+              </div>
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>提示词（promptKey）</div>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {testPromptsLoading ? '加载中...' : `${testPrompts.filter((x) => x.role === testRole).length} 个`}
+                </div>
+              </div>
+              <select
+                value={testPromptKey}
+                onChange={(e) => setTestPromptKey(e.target.value)}
+                className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none"
+                style={{
+                  border: '1px solid var(--border-subtle)',
+                  background: 'var(--bg-input)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <option value="">（不选择：仅按系统提示词回答）</option>
+                {testPrompts
+                  .filter((x) => x.role === testRole)
+                  .sort((a, b) => a.title.localeCompare(b.title))
+                  .map((x) => (
+                    <option key={x.promptKey} value={x.promptKey}>
+                      {x.title ? `${x.title} — ${x.promptKey}` : x.promptKey}
+                    </option>
+                  ))}
+              </select>
+              <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                提示：若从 /prompts 点击“测试”跳转，会自动带入 role/promptKey。
+              </div>
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="flex-1 min-h-0 flex flex-col">
         {tab === 'chat' ? chatPanel : tab === 'imageGen' ? <ImageGenPanel /> : <AdvancedImageMasterTab />}

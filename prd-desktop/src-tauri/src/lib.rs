@@ -37,6 +37,7 @@ pub fn run() {
             commands::intent::suggest_group_name,
             commands::session::get_session,
             commands::session::get_message_history,
+            commands::session::get_group_message_history,
             commands::session::switch_role,
             commands::session::send_message,
             commands::session::get_prompts,

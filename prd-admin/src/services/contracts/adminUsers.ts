@@ -19,3 +19,33 @@ export type GenerateInviteCodesContract = (count: number) => Promise<ApiResponse
 
 export type ForceExpireTargets = Array<'admin' | 'desktop'>;
 export type ForceExpireUserContract = (userId: string, targets: ForceExpireTargets) => Promise<ApiResponse<{ userId: string; targets: string[] }>>;
+
+export type CreateAdminUserInput = {
+  username: string;
+  password: string;
+  role: UserRole;
+  displayName?: string;
+};
+
+export type CreateAdminUserResponse = {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  status: UserStatus;
+  createdAt: string;
+};
+
+export type CreateAdminUserContract = (input: CreateAdminUserInput) => Promise<ApiResponse<CreateAdminUserResponse>>;
+
+export type BulkCreateAdminUsersItem = CreateAdminUserInput;
+
+export type BulkCreateAdminUsersResponse = {
+  requestedCount: number;
+  createdCount: number;
+  failedCount: number;
+  createdItems: CreateAdminUserResponse[];
+  failedItems: Array<{ username: string; code: string; message: string }>;
+};
+
+export type BulkCreateAdminUsersContract = (items: BulkCreateAdminUsersItem[]) => Promise<ApiResponse<BulkCreateAdminUsersResponse>>;

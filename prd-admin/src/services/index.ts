@@ -4,6 +4,8 @@ import type { LoginContract } from '@/services/contracts/auth';
 import type {
   GetUsersContract,
   GenerateInviteCodesContract,
+  CreateAdminUserContract,
+  BulkCreateAdminUsersContract,
   UpdateUserPasswordContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
@@ -82,6 +84,8 @@ import { loginReal } from '@/services/real/auth';
 import {
   getUsersReal,
   generateInviteCodesReal,
+  createUserReal,
+  bulkCreateUsersReal,
   updateUserPasswordReal,
   updateUserRoleReal,
   updateUserStatusReal,
@@ -163,6 +167,8 @@ function withAuth<TArgs extends unknown[], TResult>(
 export const login: LoginContract = loginReal;
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
+export const createUser: CreateAdminUserContract = withAuth(createUserReal);
+export const bulkCreateUsers: BulkCreateAdminUsersContract = withAuth(bulkCreateUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleReal);
 export const updateUserStatus: UpdateUserStatusContract = withAuth(updateUserStatusReal);
 export const updateUserPassword: UpdateUserPasswordContract = withAuth(updateUserPasswordReal);

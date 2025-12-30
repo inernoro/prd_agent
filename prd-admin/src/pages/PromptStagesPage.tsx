@@ -10,6 +10,7 @@ import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contrac
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -22,6 +23,46 @@ type RoleEnum = 'PM' | 'DEV' | 'QA';
 
 type TopTabKey = 'prd' | 'other';
 type PrdTabKey = 'user' | 'system';
+
+function SegmentedTabs<T extends string>(props: {
+  items: Array<{ key: T; label: string }>;
+  value: T;
+  onChange: (next: T) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  const { items, value, onChange, disabled, ariaLabel } = props;
+  return (
+    <div
+      className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
+      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+      aria-label={ariaLabel}
+    >
+      {items.map((x) => {
+        const active = x.key === value;
+        return (
+          <button
+            key={x.key}
+            type="button"
+            className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+            style={{
+              color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+              background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+              border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+              opacity: disabled ? 0.6 : 1,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+            }}
+            disabled={!!disabled}
+            aria-pressed={active}
+            onClick={() => onChange(x.key)}
+          >
+            {x.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function roleKeyToEnum(r: RoleKey): RoleEnum {
   if (r === 'dev') return 'DEV';
@@ -47,21 +88,6 @@ function roleEnumToChineseLabel(r: RoleEnum): string {
 
 function normalizeText(v: unknown): string {
   return typeof v === 'string' ? v : '';
-}
-
-function fmtDateTime(v?: string | null) {
-  if (!v) return '—';
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return String(v);
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(d);
 }
 
 function getApiBaseUrl() {
@@ -167,6 +193,7 @@ function validatePrompts(prompts: PromptEntry[]) {
 }
 
 export default function PromptStagesPage() {
+  const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -177,7 +204,7 @@ export default function PromptStagesPage() {
   const [topTab, setTopTab] = useState<TopTabKey>('prd');
   const [prdTab, setPrdTab] = useState<PrdTabKey>('user');
 
-  const [isOverridden, setIsOverridden] = useState(false);
+  const [, setIsOverridden] = useState(false);
   const [settings, setSettings] = useState<PromptSettings | null>(null);
   const [baselineSig, setBaselineSig] = useState<string>('');
 
@@ -185,7 +212,7 @@ export default function PromptStagesPage() {
   const [sysSaving, setSysSaving] = useState(false);
   const [sysErr, setSysErr] = useState<string | null>(null);
   const [sysMsg, setSysMsg] = useState<string | null>(null);
-  const [sysIsOverridden, setSysIsOverridden] = useState(false);
+  const [, setSysIsOverridden] = useState(false);
   const [sysSettings, setSysSettings] = useState<SystemPromptSettings | null>(null);
   const [sysBaselineSig, setSysBaselineSig] = useState<string>('');
 
@@ -635,9 +662,28 @@ export default function PromptStagesPage() {
   const uiErr = showUserPrompts ? err : showSystemPrompts ? sysErr : null;
   const uiMsg = showUserPrompts ? msg : showSystemPrompts ? sysMsg : null;
   const uiIsDirty = showUserPrompts ? isDirty : showSystemPrompts ? isSysDirty : false;
-  const uiIsOverridden = showUserPrompts ? isOverridden : showSystemPrompts ? sysIsOverridden : false;
-  const uiUpdatedAt = showUserPrompts ? settings?.updatedAt : showSystemPrompts ? sysSettings?.updatedAt : null;
   const uiValidation = showUserPrompts ? validation : showSystemPrompts ? sysValidation : { ok: true, message: '' };
+
+  // 顶部提示条：3s 自动消失
+  useEffect(() => {
+    if (!uiMsg) return;
+    const t = window.setTimeout(() => {
+      if (showUserPrompts) setMsg(null);
+      else if (showSystemPrompts) setSysMsg(null);
+    }, 3000);
+    return () => window.clearTimeout(t);
+  }, [uiMsg, showUserPrompts, showSystemPrompts]);
+
+  const goTest = useCallback(
+    (args: { role: RoleEnum; promptKey?: string | null }) => {
+      const qs = new URLSearchParams();
+      qs.set('mode', 'test');
+      qs.set('role', args.role);
+      if (args.promptKey) qs.set('promptKey', args.promptKey);
+      navigate(`/ai-chat?${qs.toString()}`);
+    },
+    [navigate]
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
@@ -652,78 +698,76 @@ export default function PromptStagesPage() {
                 </Badge>
               )}
             </div>
-            {/* tabs：两排（按需求） */}
+            {/* tabs：两排（按需求），胶囊分段切换（参考 LlmLabTab） */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant={topTab === 'prd' ? 'primary' : 'secondary'}
-                size="xs"
-                onClick={() => {
-                  setTopTab('prd');
+              <SegmentedTabs<TopTabKey>
+                ariaLabel="提示词域切换"
+                items={[
+                  { key: 'prd', label: 'PRD提示词' },
+                  { key: 'other', label: '其他提示词' },
+                ]}
+                value={topTab}
+                onChange={(next) => {
+                  setTopTab(next);
                   setErr(null);
                   setMsg(null);
                   setSysErr(null);
                   setSysMsg(null);
                 }}
-              >
-                PRD提示词
-              </Button>
-              <Button
-                variant={topTab === 'other' ? 'primary' : 'secondary'}
-                size="xs"
-                onClick={() => {
-                  setTopTab('other');
-                  setErr(null);
-                  setMsg(null);
-                  setSysErr(null);
-                  setSysMsg(null);
-                }}
-              >
-                其他提示词
-              </Button>
+              />
             </div>
 
             {showPrd && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button
-                  variant={prdTab === 'user' ? 'primary' : 'secondary'}
-                  size="xs"
-                  onClick={() => {
-                    setPrdTab('user');
-                    setSysErr(null);
-                    setSysMsg(null);
+                <SegmentedTabs<PrdTabKey>
+                  ariaLabel="PRD 提示词类型切换"
+                  items={[
+                    { key: 'user', label: '用户提示词' },
+                    { key: 'system', label: '系统提示词' },
+                  ]}
+                  value={prdTab}
+                  onChange={(next) => {
+                    setPrdTab(next);
+                    // 清理对方 tab 的提示，避免切换后还残留
+                    if (next === 'user') {
+                      setSysErr(null);
+                      setSysMsg(null);
+                    } else {
+                      setErr(null);
+                      setMsg(null);
+                    }
                   }}
-                >
-                  用户提示词
-                </Button>
-                <Button
-                  variant={prdTab === 'system' ? 'primary' : 'secondary'}
-                  size="xs"
-                  onClick={() => {
-                    setPrdTab('system');
-                    setErr(null);
-                    setMsg(null);
-                  }}
-                >
-                  系统提示词
-                </Button>
+                />
               </div>
             )}
-            {(showUserPrompts || showSystemPrompts) && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Badge variant={uiIsOverridden ? 'success' : 'subtle'}>{uiIsOverridden ? '已覆盖默认' : '使用默认'}</Badge>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>UpdatedAt：{fmtDateTime(uiUpdatedAt)}</div>
-                {!uiValidation.ok && (
-                  <div className="text-xs" style={{ color: 'rgba(255,120,120,0.95)' }}>
-                    {uiValidation.message}
-                  </div>
-                )}
+            {/* 顶部状态行（使用默认/UpdatedAt）按需求删除；仅保留校验错误提示 */}
+            {(showUserPrompts || showSystemPrompts) && !uiValidation.ok ? (
+              <div className="mt-2 text-xs" style={{ color: 'rgba(255,120,120,0.95)' }}>
+                {uiValidation.message}
               </div>
-            )}
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
             {!showOther && (
               <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    // 顶部“测试”：根据当前 tab 尽量带上更多上下文
+                    if (showUserPrompts) {
+                      goTest({ role: roleEnum, promptKey: activePromptKey || null });
+                      return;
+                    }
+                    // 系统提示词测试：仅 role
+                    goTest({ role: roleEnum, promptKey: null });
+                  }}
+                  disabled={uiLoading || uiSaving}
+                  title="跳转到 AI 对话页进行测试（上传 PRD / 选择角色与提示词 / 一键运行）"
+                >
+                  测试
+                </Button>
                 <Button
                   variant="secondary"
                   size="sm"
@@ -843,7 +887,7 @@ export default function PromptStagesPage() {
               return (
                 <div
                   key={s.promptKey}
-                  className="rounded-[14px] transition-colors min-w-0 overflow-hidden"
+                  className="rounded-[14px] transition-colors min-w-0 overflow-hidden relative"
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
                     border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
@@ -920,7 +964,25 @@ export default function PromptStagesPage() {
                         {normalizeText(s.title).trim() || `提示词 ${s.order}`}
                       </div>
                     </div>
+                    <div className="mt-1 text-[11px] break-words whitespace-normal" style={{ color: 'var(--text-muted)' }}>
+                      {normalizeText(s.promptTemplate).trim()
+                        ? normalizeText(s.promptTemplate).trim().replace(/\s+/g, ' ').slice(0, 120)
+                        : '（提示词模板为空：仅切换标题，不会注入结构要求）'}
+                    </div>
                   </div>
+
+                  <button
+                    type="button"
+                    className="absolute bottom-2 right-2 h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goTest({ role: roleEnum, promptKey: s.promptKey });
+                    }}
+                    title="跳转到 AI 对话页测试该提示词（上传 PRD 后一键运行）"
+                  >
+                    测试
+                  </button>
                 </div>
               );
             })}
@@ -970,15 +1032,6 @@ export default function PromptStagesPage() {
                   删除
                 </Button>
               </ConfirmTip>
-              <Button variant={activeRole === 'pm' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('pm')}>
-                PM
-              </Button>
-              <Button variant={activeRole === 'dev' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('dev')}>
-                DEV
-              </Button>
-              <Button variant={activeRole === 'qa' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('qa')}>
-                QA
-              </Button>
             </div>
           </div>
 
@@ -1065,17 +1118,7 @@ export default function PromptStagesPage() {
             <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               按角色（PM/DEV/QA）分别配置 PRD 问答 system prompt；仅用于“输出结构/边界/资料使用说明”等非 JSON 约束。
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button variant={activeRole === 'pm' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('pm')} disabled={sysLoading || sysSaving}>
-                产品经理（PM）
-              </Button>
-              <Button variant={activeRole === 'dev' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('dev')} disabled={sysLoading || sysSaving}>
-                开发工程师（DEV）
-              </Button>
-              <Button variant={activeRole === 'qa' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('qa')} disabled={sysLoading || sysSaving}>
-                质量工程师（QA）
-              </Button>
-            </div>
+            {/* 角色按钮行按需求删除：改为直接点击下方卡片选中 */}
 
             <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0">
               {(['PM', 'DEV', 'QA'] as const).map((r) => {
@@ -1090,6 +1133,19 @@ export default function PromptStagesPage() {
                       background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
                       border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
                     }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      const rk = roleEnumToKey(r);
+                      setActiveRole(rk);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        const rk = roleEnumToKey(r);
+                        setActiveRole(rk);
+                      }
+                    }}
                   >
                     <div className="flex items-center justify-between gap-3 min-w-0">
                       <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>{label}</div>
@@ -1102,6 +1158,20 @@ export default function PromptStagesPage() {
                       style={{ color: 'var(--text-muted)' }}
                     >
                       {t ? t.replace(/\s+/g, ' ').slice(0, 120) : '（未配置，将使用默认）'}
+                    </div>
+                    <div className="mt-2 flex items-center justify-end">
+                      <button
+                        type="button"
+                        className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          goTest({ role: r, promptKey: null });
+                        }}
+                        title="跳转到 AI 对话页测试该角色（上传 PRD 后一键运行）"
+                      >
+                        测试
+                      </button>
                     </div>
                   </div>
                 );

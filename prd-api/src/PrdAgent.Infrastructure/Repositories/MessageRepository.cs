@@ -48,6 +48,30 @@ public class MessageRepository : IMessageRepository
         list.Reverse();
         return list;
     }
+
+    public async Task<List<Message>> FindByGroupAsync(string groupId, DateTime? before, int limit)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid)) return new List<Message>();
+
+        var take = Math.Clamp(limit, 1, 200);
+
+        var fb = Builders<Message>.Filter;
+        var filter = fb.Eq(x => x.GroupId, gid);
+        if (before.HasValue)
+        {
+            filter &= fb.Lt(x => x.Timestamp, before.Value);
+        }
+
+        var list = await _messages
+            .Find(filter)
+            .SortByDescending(x => x.Timestamp)
+            .Limit(take)
+            .ToListAsync();
+
+        list.Reverse();
+        return list;
+    }
 }
 
 

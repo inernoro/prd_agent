@@ -190,6 +190,25 @@ pub async fn get_message_history(
 }
 
 #[command]
+pub async fn get_group_message_history(
+    group_id: String,
+    limit: Option<i32>,
+    before: Option<String>,
+) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
+    let client = ApiClient::new();
+    let limit = limit.unwrap_or(50).max(1).min(200);
+    let mut path = format!("/groups/{}/messages?limit={}", group_id, limit);
+    if let Some(b) = before {
+        let bb = b.trim().to_string();
+        if !bb.is_empty() {
+            path.push_str("&before=");
+            path.push_str(&bb);
+        }
+    }
+    client.get(&path).await
+}
+
+#[command]
 pub async fn switch_role(
     session_id: String,
     role: String,

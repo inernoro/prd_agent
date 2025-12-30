@@ -21,6 +21,7 @@ public class GroupsController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IUserService _userService;
     private readonly ISessionService _sessionService;
+    private readonly IMessageRepository _messageRepository;
     private readonly ICacheManager _cache;
     private readonly ILogger<GroupsController> _logger;
 
@@ -40,6 +41,7 @@ public class GroupsController : ControllerBase
         IDocumentService documentService,
         IUserService userService,
         ISessionService sessionService,
+        IMessageRepository messageRepository,
         ICacheManager cache,
         ILogger<GroupsController> logger)
     {
@@ -47,6 +49,7 @@ public class GroupsController : ControllerBase
         _documentService = documentService;
         _userService = userService;
         _sessionService = sessionService;
+        _messageRepository = messageRepository;
         _cache = cache;
         _logger = logger;
     }
@@ -529,5 +532,52 @@ public class GroupsController : ControllerBase
         _logger.LogInformation("Group dissolved: {GroupId} by {UserId}", groupId, userId);
 
         return Ok(ApiResponse<object>.Ok(new object()));
+    }
+
+    /// <summary>
+    /// 获取群组消息历史（分页，按时间升序返回）
+    /// </summary>
+    [HttpGet("{groupId}/messages")]
+    [ProducesResponseType(typeof(ApiResponse<List<MessageResponse>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetGroupMessages(
+        string groupId,
+        [FromQuery] int limit = 50,
+        [FromQuery] DateTime? before = null)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 验证用户是群组成员
+        var members = await _groupService.GetMembersAsync(groupId);
+        if (!members.Any(m => m.UserId == userId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+        }
+
+        var messages = await _messageRepository.FindByGroupAsync(groupId, before, limit);
+
+        var result = messages.Select(m => new MessageResponse
+        {
+            Id = m.Id,
+            Role = m.Role,
+            Content = m.Content,
+            ViewRole = m.ViewRole,
+            Timestamp = m.Timestamp,
+            TokenUsage = m.TokenUsage
+        }).ToList();
+
+        return Ok(ApiResponse<List<MessageResponse>>.Ok(result));
     }
 }

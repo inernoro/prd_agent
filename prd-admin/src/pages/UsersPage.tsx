@@ -3,7 +3,7 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser } from '@/services';
+import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser } from '@/services';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 
 type UserRow = {
@@ -75,6 +75,33 @@ export default function UsersPage() {
   const [inviteCount, setInviteCount] = useState(1);
   const [inviteCodes, setInviteCodes] = useState<string[]>([]);
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createUsername, setCreateUsername] = useState('');
+  const [createDisplayName, setCreateDisplayName] = useState('');
+  const [createRole, setCreateRole] = useState<UserRow['role']>('DEV');
+  const [createPwd, setCreatePwd] = useState('');
+  const [createPwd2, setCreatePwd2] = useState('');
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createResult, setCreateResult] = useState<{ userId: string; username: string } | null>(null);
+
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkPrefix, setBulkPrefix] = useState('');
+  const [bulkStart, setBulkStart] = useState(1);
+  const [bulkCount, setBulkCount] = useState(5);
+  const [bulkRole, setBulkRole] = useState<UserRow['role']>('DEV');
+  const [bulkPwd, setBulkPwd] = useState('');
+  const [bulkPwd2, setBulkPwd2] = useState('');
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkResult, setBulkResult] = useState<{
+    requestedCount: number;
+    createdCount: number;
+    failedCount: number;
+    createdItems: Array<{ userId: string; username: string }>;
+    failedItems: Array<{ username: string; code: string; message: string }>;
+  } | null>(null);
+
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
   const [pwd, setPwd] = useState('');
@@ -106,6 +133,67 @@ export default function UsersPage() {
     return pwd === pwd2;
   }, [pwd, pwd2]);
 
+  const createUsernameOk = useMemo(() => {
+    const u = (createUsername ?? '').trim();
+    if (!u) return false;
+    if (u.length < 4 || u.length > 32) return false;
+    return /^[a-zA-Z0-9_]+$/.test(u);
+  }, [createUsername]);
+
+  const createPwdChecks = useMemo(() => {
+    const v = createPwd ?? '';
+    const touched = v.length > 0;
+    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
+  }, [createPwd]);
+
+  const createPwdAllOk = useMemo(() => {
+    if (!createPwd) return false;
+    return passwordRules.every((r) => r.test(createPwd));
+  }, [createPwd]);
+
+  const createPwdMatchOk = useMemo(() => {
+    if (!createPwd || !createPwd2) return false;
+    return createPwd === createPwd2;
+  }, [createPwd, createPwd2]);
+
+  const bulkPwdChecks = useMemo(() => {
+    const v = bulkPwd ?? '';
+    const touched = v.length > 0;
+    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
+  }, [bulkPwd]);
+
+  const bulkPwdAllOk = useMemo(() => {
+    if (!bulkPwd) return false;
+    return passwordRules.every((r) => r.test(bulkPwd));
+  }, [bulkPwd]);
+
+  const bulkPwdMatchOk = useMemo(() => {
+    if (!bulkPwd || !bulkPwd2) return false;
+    return bulkPwd === bulkPwd2;
+  }, [bulkPwd, bulkPwd2]);
+
+  const bulkUsernames = useMemo(() => {
+    const prefix = (bulkPrefix ?? '').trim();
+    const count = Math.max(1, Math.min(200, Math.floor(bulkCount || 1)));
+    const start = Math.max(0, Math.floor(bulkStart || 0));
+    if (!prefix) return [];
+    const maxIndex = start + count - 1;
+    const width = Math.max(2, String(maxIndex).length);
+    const arr: string[] = [];
+    for (let i = 0; i < count; i++) {
+      arr.push(`${prefix}${String(start + i).padStart(width, '0')}`);
+    }
+    return arr;
+  }, [bulkPrefix, bulkStart, bulkCount]);
+
+  const bulkUsernamesOk = useMemo(() => {
+    if (bulkUsernames.length === 0) return false;
+    return bulkUsernames.every((u) => {
+      if (u.length < 4 || u.length > 32) return false;
+      return /^[a-zA-Z0-9_]+$/.test(u);
+    });
+  }, [bulkUsernames]);
+
   const query = useMemo(
     () => ({ page, pageSize: 20, search: search.trim() || undefined, role: role || undefined, status: status || undefined }),
     [page, search, role, status]
@@ -136,6 +224,85 @@ export default function UsersPage() {
 
   const onCopy = async (text: string) => {
     await navigator.clipboard.writeText(text);
+  };
+
+  const openCreateUser = () => {
+    setCreateUsername('');
+    setCreateDisplayName('');
+    setCreateRole('DEV');
+    setCreatePwd('');
+    setCreatePwd2('');
+    setCreateError(null);
+    setCreateResult(null);
+    setCreateSubmitting(false);
+    setCreateOpen(true);
+  };
+
+  const submitCreateUser = async () => {
+    if (!createUsernameOk) return;
+    if (!createPwdAllOk) return;
+    if (!createPwdMatchOk) return;
+
+    setCreateSubmitting(true);
+    setCreateError(null);
+    try {
+      const res = await createUser({
+        username: createUsername.trim(),
+        displayName: createDisplayName.trim() || undefined,
+        role: createRole,
+        password: createPwd,
+      });
+      if (!res.success) {
+        setCreateError(res.error?.message || '创建失败');
+        return;
+      }
+      setCreateResult({ userId: res.data.userId, username: res.data.username });
+      await load();
+    } finally {
+      setCreateSubmitting(false);
+    }
+  };
+
+  const openBulkCreate = () => {
+    setBulkPrefix('');
+    setBulkStart(1);
+    setBulkCount(5);
+    setBulkRole('DEV');
+    setBulkPwd('');
+    setBulkPwd2('');
+    setBulkError(null);
+    setBulkResult(null);
+    setBulkSubmitting(false);
+    setBulkOpen(true);
+  };
+
+  const submitBulkCreate = async () => {
+    if (!bulkUsernamesOk) {
+      setBulkError('生成的用户名不合法（需 4-32 位，仅字母/数字/下划线）');
+      return;
+    }
+    if (!bulkPwdAllOk) return;
+    if (!bulkPwdMatchOk) return;
+
+    setBulkSubmitting(true);
+    setBulkError(null);
+    try {
+      const items = bulkUsernames.map((u) => ({
+        username: u,
+        displayName: u,
+        role: bulkRole,
+        password: bulkPwd,
+      }));
+      const res = await bulkCreateUsers(items);
+      if (!res.success) {
+        setBulkError(res.error?.message || '批量创建失败');
+        return;
+      }
+      setBulkResult(res.data);
+      await load();
+    } finally {
+      setBulkSubmitting(false);
+    }
   };
 
   const openChangePassword = (u: UserRow) => {
@@ -222,16 +389,24 @@ export default function UsersPage() {
           <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>用户管理</div>
           <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>共 {total} 个用户</div>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => {
-            setInviteOpen(true);
-            setInviteCodes([]);
-          }}
-        >
-          生成邀请码
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={openCreateUser}>
+            创建用户
+          </Button>
+          <Button variant="secondary" size="sm" onClick={openBulkCreate}>
+            批量创建
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setInviteOpen(true);
+              setInviteCodes([]);
+            }}
+          >
+            生成邀请码
+          </Button>
+        </div>
       </div>
 
       <Card className="flex-1 min-h-0 flex flex-col">
@@ -407,6 +582,429 @@ export default function UsersPage() {
           </div>
         </div>
       </Card>
+
+      <Dialog
+        open={createOpen}
+        onOpenChange={(v) => {
+          setCreateOpen(v);
+          if (!v) {
+            setCreateUsername('');
+            setCreateDisplayName('');
+            setCreateRole('DEV');
+            setCreatePwd('');
+            setCreatePwd2('');
+            setCreateError(null);
+            setCreateResult(null);
+            setCreateSubmitting(false);
+          }
+        }}
+        title="创建用户"
+        description="创建账号（用户名）+ 密码 + 角色"
+        content={
+          <div className="space-y-4">
+            <div className="grid gap-3">
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>用户名</div>
+                <input
+                  value={createUsername}
+                  onChange={(e) => {
+                    setCreateUsername(e.target.value);
+                    setCreateError(null);
+                    setCreateResult(null);
+                  }}
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="4-32 位，仅字母/数字/下划线"
+                  autoComplete="off"
+                />
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>显示名称（可选）</div>
+                <input
+                  value={createDisplayName}
+                  onChange={(e) => {
+                    setCreateDisplayName(e.target.value);
+                    setCreateError(null);
+                    setCreateResult(null);
+                  }}
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="默认同用户名（上限 50）"
+                  autoComplete="off"
+                />
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>角色</div>
+                <select
+                  value={createRole}
+                  onChange={(e) => setCreateRole(e.target.value as UserRow['role'])}
+                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                >
+                  <option value="PM">PM</option>
+                  <option value="DEV">DEV</option>
+                  <option value="QA">QA</option>
+                  <option value="ADMIN">ADMIN</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>密码</div>
+                <input
+                  value={createPwd}
+                  onChange={(e) => {
+                    setCreatePwd(e.target.value);
+                    setCreateError(null);
+                    setCreateResult(null);
+                  }}
+                  type="password"
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="至少8位，含大小写、数字、特殊字符"
+                  autoComplete="new-password"
+                />
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认密码</div>
+                <input
+                  value={createPwd2}
+                  onChange={(e) => {
+                    setCreatePwd2(e.target.value);
+                    setCreateError(null);
+                    setCreateResult(null);
+                  }}
+                  type="password"
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="再次输入密码"
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+
+            <div
+              className="rounded-[16px] px-4 py-3"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+            >
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
+              <div className="mt-2 grid gap-1">
+                {createPwdChecks.map((r) => {
+                  const ok = r.touched ? r.ok : false;
+                  const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok ? 'ok' : 'bad';
+                  const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
+                  const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
+                  return (
+                    <div key={r.key} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                      <Icon size={16} style={{ color }} />
+                      <span style={{ color: 'var(--text-primary)' }}>{r.label}</span>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                  {createPwd2.length === 0 ? (
+                    <Circle size={16} style={{ color: 'var(--text-muted)' }} />
+                  ) : createPwdMatchOk ? (
+                    <CheckCircle2 size={16} style={{ color: 'rgba(34,197,94,0.95)' }} />
+                  ) : (
+                    <XCircle size={16} style={{ color: 'rgba(239,68,68,0.95)' }} />
+                  )}
+                  <span style={{ color: 'var(--text-primary)' }}>两次输入一致</span>
+                </div>
+              </div>
+            </div>
+
+            {!createUsernameOk && createUsername.trim().length > 0 && (
+              <div className="text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                用户名不合法：4-32 位，仅字母/数字/下划线
+              </div>
+            )}
+
+            {createResult && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
+              >
+                已创建：{createResult.username}（{createResult.userId}）
+              </div>
+            )}
+
+            {createError && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+              >
+                {createError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)} disabled={createSubmitting}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={submitCreateUser}
+                disabled={createSubmitting || !createUsernameOk || !createPwdAllOk || !createPwdMatchOk}
+              >
+                {createSubmitting ? '创建中...' : '确认创建'}
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={bulkOpen}
+        onOpenChange={(v) => {
+          setBulkOpen(v);
+          if (!v) {
+            setBulkPrefix('');
+            setBulkStart(1);
+            setBulkCount(5);
+            setBulkRole('DEV');
+            setBulkPwd('');
+            setBulkPwd2('');
+            setBulkError(null);
+            setBulkResult(null);
+            setBulkSubmitting(false);
+          }
+        }}
+        title="批量创建用户"
+        description="按前缀 + 数量生成用户名，统一密码与角色"
+        maxWidth={900}
+        content={
+          <div className="space-y-4">
+            <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 140px 140px 180px' }}>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>用户名前缀</div>
+                <input
+                  value={bulkPrefix}
+                  onChange={(e) => {
+                    setBulkPrefix(e.target.value);
+                    setBulkError(null);
+                    setBulkResult(null);
+                  }}
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="例如 dev_"
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>起始编号</div>
+                <input
+                  type="number"
+                  min={0}
+                  value={bulkStart}
+                  onChange={(e) => {
+                    setBulkStart(Number(e.target.value || 0));
+                    setBulkError(null);
+                    setBulkResult(null);
+                  }}
+                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                />
+              </div>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>数量</div>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={bulkCount}
+                  onChange={(e) => {
+                    setBulkCount(Number(e.target.value || 1));
+                    setBulkError(null);
+                    setBulkResult(null);
+                  }}
+                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                />
+              </div>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>角色</div>
+                <select
+                  value={bulkRole}
+                  onChange={(e) => setBulkRole(e.target.value as UserRow['role'])}
+                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                >
+                  <option value="PM">PM</option>
+                  <option value="DEV">DEV</option>
+                  <option value="QA">QA</option>
+                  <option value="ADMIN">ADMIN</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>统一密码</div>
+                <input
+                  value={bulkPwd}
+                  onChange={(e) => {
+                    setBulkPwd(e.target.value);
+                    setBulkError(null);
+                    setBulkResult(null);
+                  }}
+                  type="password"
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="至少8位，含大小写、数字、特殊字符"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认密码</div>
+                <input
+                  value={bulkPwd2}
+                  onChange={(e) => {
+                    setBulkPwd2(e.target.value);
+                    setBulkError(null);
+                    setBulkResult(null);
+                  }}
+                  type="password"
+                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  placeholder="再次输入密码"
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+
+            <div
+              className="rounded-[16px] px-4 py-3"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+            >
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>预览（最多显示前 30 条）</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {bulkUsernames.slice(0, 30).map((u) => (
+                  <code
+                    key={u}
+                    className="rounded-[10px] px-2 py-1 text-[12px]"
+                    style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                  >
+                    {u}
+                  </code>
+                ))}
+                {bulkUsernames.length > 30 && (
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>… 共 {bulkUsernames.length} 条</span>
+                )}
+              </div>
+              {!bulkUsernamesOk && bulkUsernames.length > 0 && (
+                <div className="mt-2 text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                  生成的用户名不合法：4-32 位，仅字母/数字/下划线（请检查前缀与长度）
+                </div>
+              )}
+            </div>
+
+            <div
+              className="rounded-[16px] px-4 py-3"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+            >
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
+              <div className="mt-2 grid gap-1">
+                {bulkPwdChecks.map((r) => {
+                  const ok2 = r.touched ? r.ok : false;
+                  const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok2 ? 'ok' : 'bad';
+                  const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
+                  const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
+                  return (
+                    <div key={r.key} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                      <Icon size={16} style={{ color }} />
+                      <span style={{ color: 'var(--text-primary)' }}>{r.label}</span>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                  {bulkPwd2.length === 0 ? (
+                    <Circle size={16} style={{ color: 'var(--text-muted)' }} />
+                  ) : bulkPwdMatchOk ? (
+                    <CheckCircle2 size={16} style={{ color: 'rgba(34,197,94,0.95)' }} />
+                  ) : (
+                    <XCircle size={16} style={{ color: 'rgba(239,68,68,0.95)' }} />
+                  )}
+                  <span style={{ color: 'var(--text-primary)' }}>两次输入一致</span>
+                </div>
+              </div>
+            </div>
+
+            {bulkResult && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
+              >
+                批量创建完成：成功 {bulkResult.createdCount} 个，失败 {bulkResult.failedCount} 个（请求 {bulkResult.requestedCount} 个）
+              </div>
+            )}
+
+            {bulkError && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+              >
+                {bulkError}
+              </div>
+            )}
+
+            {bulkResult?.failedItems?.length ? (
+              <div
+                className="rounded-[16px] px-4 py-3"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+              >
+                <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>失败明细（最多显示前 50 条）</div>
+                <div className="mt-2 grid gap-1">
+                  {bulkResult.failedItems.slice(0, 50).map((x) => (
+                    <div key={`${x.username}:${x.code}:${x.message}`} className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                      <span style={{ color: 'rgba(239,68,68,0.95)' }}>{x.username || '(空)'}</span>
+                      <span style={{ color: 'var(--text-muted)' }}> · {x.code}</span>
+                      <span style={{ color: 'var(--text-muted)' }}> · {x.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={bulkUsernames.length === 0}
+                  onClick={() => onCopy(bulkUsernames.join('\n'))}
+                >
+                  复制账号清单
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={bulkUsernames.length === 0 || !bulkPwd}
+                  onClick={() => onCopy(bulkUsernames.map((u) => `${u}\t${bulkPwd}`).join('\n'))}
+                >
+                  复制账号+密码
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkSubmitting}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={submitBulkCreate}
+                  disabled={bulkSubmitting || !bulkUsernamesOk || !bulkPwdAllOk || !bulkPwdMatchOk}
+                >
+                  {bulkSubmitting ? '创建中...' : '确认创建'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        }
+      />
 
       <Dialog
         open={inviteOpen}

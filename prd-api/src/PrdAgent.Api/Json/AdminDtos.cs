@@ -93,6 +93,41 @@ public class InviteCodeGenerateResponse
 }
 
 /// <summary>
+/// 管理端创建用户响应
+/// </summary>
+public class AdminCreateUserResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// 批量创建用户响应
+/// </summary>
+public class AdminBulkCreateUsersResponse
+{
+    public int RequestedCount { get; set; }
+    public int CreatedCount { get; set; }
+    public int FailedCount { get; set; }
+    public List<AdminCreateUserResponse> CreatedItems { get; set; } = new();
+    public List<AdminBulkCreateUserError> FailedItems { get; set; } = new();
+}
+
+/// <summary>
+/// 批量创建用户 - 失败项
+/// </summary>
+public class AdminBulkCreateUserError
+{
+    public string Username { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// 健康检查响应
 /// </summary>
 public class HealthCheckResponse
