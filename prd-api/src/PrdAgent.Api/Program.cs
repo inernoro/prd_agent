@@ -206,8 +206,22 @@ var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes
 builder.Services.AddSingleton<ICacheManager>(new RedisCacheManager(redisConnectionString, sessionTimeout));
 
 // 配置JWT认证
-var jwtSecret = builder.Configuration["Jwt:Secret"] 
-    ?? throw new InvalidOperationException("JWT Secret not configured");
+var jwtSecret = builder.Configuration["Jwt:Secret"];
+if (string.IsNullOrWhiteSpace(jwtSecret))
+{
+    // 注意：.NET 环境变量绑定规则为 Jwt__Secret（双下划线）
+    // 这里必须在启动阶段 fail-fast，避免 AddJwtBearer 的 options 懒加载导致线上“首个请求才爆炸”。
+    throw new InvalidOperationException("JWT Secret 未配置或为空。请设置配置项 Jwt:Secret（环境变量：Jwt__Secret）。");
+}
+
+var jwtSecretBytes = Encoding.UTF8.GetBytes(jwtSecret.Trim());
+// HMAC-SHA256 推荐至少 256-bit（32 bytes）密钥；同时也避免 0 长度触发 IDX10703
+if (jwtSecretBytes.Length < 32)
+{
+    throw new InvalidOperationException($"JWT Secret 过短（当前 {jwtSecretBytes.Length} bytes），至少需要 32 bytes。请更新配置项 Jwt:Secret（环境变量：Jwt__Secret）。");
+}
+
+var jwtSigningKey = new SymmetricSecurityKey(jwtSecretBytes);
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "prdagent";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "prdagent";
 
@@ -225,7 +239,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            // 预先构造并校验过的 signing key（启动阶段 fail-fast）
+            IssuerSigningKey = jwtSigningKey,
             // 我们的 JwtService 写入的角色 claim 为 "role"（非 ClaimTypes.Role）
             // 且 MapInboundClaims=false，因此需要显式指定 RoleClaimType，否则 [Authorize(Roles="ADMIN")] 会全部 403
             RoleClaimType = "role"

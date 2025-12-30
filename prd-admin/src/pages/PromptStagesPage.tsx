@@ -8,7 +8,7 @@ import { getAdminPrompts, putAdminPrompts, resetAdminPrompts } from '@/services'
 import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
-import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square } from 'lucide-react';
+import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket } from 'lucide-react';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -145,6 +145,7 @@ export default function PromptStagesPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [saveAnimKey, setSaveAnimKey] = useState<number>(0);
 
   const [isOverridden, setIsOverridden] = useState(false);
   const [settings, setSettings] = useState<PromptSettings | null>(null);
@@ -440,12 +441,14 @@ export default function PromptStagesPage() {
       setSettings(saved);
       setBaselineSig(stableKey({ prompts: normalizePrompts(saved?.prompts) }));
 
-      // 注意：后端对“有效提示词”有 5 分钟内存缓存；多实例部署时，紧接着再 GET
-      // 可能命中“其他节点的旧缓存”，从而把刚保存的内容覆盖回去（表现为点击保存立刻回滚）。
-      // 因此这里以 PUT 返回为准，不再用 GET 覆盖 settings；isOverridden 先乐观置为 true，
-      // 用户可稍后点击“刷新”由后端重新判定（若与系统默认一致会显示“使用默认”）。
+      // 保存后以 PUT 返回为准（避免用额外 GET 覆盖本地编辑态）。
       setIsOverridden(true);
-      setMsg('已保存（可能需要 ≤ 5 分钟全节点生效；期间点击刷新可能看到旧值，建议稍后再刷新）');
+      setMsg('已保存');
+      const k = Date.now();
+      setSaveAnimKey(k);
+      window.setTimeout(() => {
+        setSaveAnimKey((prev) => (prev === k ? 0 : prev));
+      }, 900);
     } finally {
       setSaving(false);
     }
@@ -535,10 +538,48 @@ export default function PromptStagesPage() {
         </div>
       )}
       {msg && (
-        <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(34,197,94,0.95)' }}>
+        <div
+          className="rounded-[14px] px-4 py-3 text-sm relative overflow-hidden"
+          style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(34,197,94,0.95)' }}
+        >
           {msg}
+          {msg === '已保存' && saveAnimKey ? (
+            <span
+              key={saveAnimKey}
+              className="ps-save-rocket"
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: '50%',
+                pointerEvents: 'none',
+                color: 'rgba(255, 215, 140, 0.95)',
+                filter: 'drop-shadow(0 10px 18px rgba(0,0,0,0.35))',
+                animation: 'psSaveRocketFly 820ms cubic-bezier(0.22, 0.9, 0.28, 1) both',
+              }}
+            >
+              <Rocket size={16} />
+            </span>
+          ) : null}
         </div>
       )}
+
+      <style>
+        {`
+@keyframes psSaveRocketFly {
+  0% {
+    transform: translate3d(-48px, -50%, 0) rotate(-10deg) scale(0.95);
+    opacity: 0;
+  }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% {
+    transform: translate3d(calc(100% + 48px), -50%, 0) rotate(10deg) scale(1.05);
+    opacity: 0;
+  }
+}
+        `}
+      </style>
 
       <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}>
         <Card className="p-4 min-h-0 flex flex-col">

@@ -8,6 +8,7 @@
 #   ./quick.sh all      - 同时启动后端 + Web管理后台 + 桌面端（统一输出到同一控制台）
 #   ./quick.sh check    - 桌面端本地 CI 等价检查（对齐 .github/workflows/ci.yml 的 desktop-check；不包含 tag/release 打包与签名）
 #   ./quick.sh ci       - 本地跑一遍 CI（server + admin + desktop），尽量在提交前暴露问题
+#   ./quick.sh version  - 同步桌面端版本号（用于让 Tauri 打包资产文件名跟随 git tag / CI tag）
 
 set -e
 
@@ -253,6 +254,20 @@ check_ci() {
     log_success "Local CI checks passed!"
 }
 
+# 同步桌面端版本号（让打包产物文件名跟随版本号）
+# - 支持：./quick.sh version v1.2.4 或 ./quick.sh version 1.2.4
+# - 不传参时：自动从 git tag（git describe --tags --abbrev=0）推断
+sync_desktop_version() {
+    log_info "Syncing desktop version..."
+    cd "$SCRIPT_DIR"
+    if [ ! -f "$SCRIPT_DIR/scripts/sync-desktop-version.sh" ]; then
+        log_error "Missing script: $SCRIPT_DIR/scripts/sync-desktop-version.sh"
+        exit 1
+    fi
+    bash "$SCRIPT_DIR/scripts/sync-desktop-version.sh" "${1:-}"
+    log_success "Desktop version synced!"
+}
+
 # 同时启动后端 + Web管理后台 + 桌面端
 start_all() {
     log_info "Starting all services..."
@@ -329,6 +344,7 @@ show_help() {
     echo "  all        Start backend + admin + desktop together (single console output)"
     echo "  check      Run desktop CI-equivalent checks (same as ci.yml desktop-check; excludes desktop-release packaging/signing)"
     echo "  ci         Run local CI checks (server + admin + desktop)"
+    echo "  version    Sync desktop version (tauri.conf.json/Cargo.toml/package.json) from arg/env/git tag"
     echo "  help       Show this help message"
     echo ""
 }
@@ -352,6 +368,9 @@ case "${1:-}" in
         ;;
     "ci")
         check_ci
+        ;;
+    "version")
+        sync_desktop_version "${2:-}"
         ;;
     "help"|"-h"|"--help")
         show_help

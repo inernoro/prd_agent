@@ -125,6 +125,29 @@ pnpm dev
 #    - deploy.sh 会先 `docker-compose pull api` 再 `docker-compose up -d --force-recreate`，避免复用旧的 :latest 镜像
 ```
 
+## 版本号与桌面端打包产物命名（CI/本地）
+
+桌面端（Tauri）打包产物文件名会包含应用版本号；该版本号来自：
+- `prd-desktop/src-tauri/tauri.conf.json` 的 `"version"`
+- `prd-desktop/src-tauri/Cargo.toml` 的 `[package].version`
+- `prd-desktop/package.json` 的 `"version"`
+
+为避免 CI 使用旧版本号导致产物仍然是 `*_1.0.0_*`，仓库提供了同步脚本：
+
+```bash
+# 显式指定版本（支持 v 前缀）
+./quick.sh version v1.2.4
+
+# 或者不传参：自动从 git tag 推断（git describe --tags --abbrev=0）
+./quick.sh version
+```
+
+在 GitHub Actions 中，建议在 `tauri build` 之前执行（tag 触发时 `GITHUB_REF_NAME` 通常就是 v1.2.4）：
+
+```bash
+bash scripts/sync-desktop-version.sh "${GITHUB_REF_NAME}"
+```
+
 ## API 端点
 
 | 端点 | 描述 |
