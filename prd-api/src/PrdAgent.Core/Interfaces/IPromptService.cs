@@ -20,6 +20,10 @@ public interface IPromptService
     /// </summary>
     Task<PromptSettings> GetDefaultSettingsAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// 获取“有效提示词设置”（管理员覆盖后生效）。
+    /// 按用户要求：任何情况下均从 MongoDB 回源读取，不允许使用内存/Redis 等时效缓存。
+    /// </summary>
     Task<PromptSettings> GetEffectiveSettingsAsync(CancellationToken ct = default);
 
     Task<PromptsClientResponse> GetPromptsForClientAsync(CancellationToken ct = default);

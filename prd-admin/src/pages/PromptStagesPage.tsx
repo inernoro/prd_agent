@@ -440,22 +440,12 @@ export default function PromptStagesPage() {
       setSettings(saved);
       setBaselineSig(stableKey({ prompts: normalizePrompts(saved?.prompts) }));
 
-      // 再 GET 一次拿到 isOverridden（后端逻辑：与系统默认完全一致则仍视为“使用默认”）
-      try {
-        const fresh = await getAdminPrompts();
-        if (fresh.success) {
-          setIsOverridden(!!fresh.data.isOverridden);
-          setSettings(fresh.data.settings);
-          setBaselineSig(stableKey({ prompts: normalizePrompts(fresh.data.settings?.prompts) }));
-        } else {
-          // GET 失败不影响保存结果
-          setIsOverridden(true);
-        }
-      } catch {
-        setIsOverridden(true);
-      }
-
-      setMsg('已保存（所有客户端将逐步生效，通常 ≤ 5 分钟；若内容与系统默认一致则仍显示“使用默认”）');
+      // 注意：后端对“有效提示词”有 5 分钟内存缓存；多实例部署时，紧接着再 GET
+      // 可能命中“其他节点的旧缓存”，从而把刚保存的内容覆盖回去（表现为点击保存立刻回滚）。
+      // 因此这里以 PUT 返回为准，不再用 GET 覆盖 settings；isOverridden 先乐观置为 true，
+      // 用户可稍后点击“刷新”由后端重新判定（若与系统默认一致会显示“使用默认”）。
+      setIsOverridden(true);
+      setMsg('已保存（可能需要 ≤ 5 分钟全节点生效；期间点击刷新可能看到旧值，建议稍后再刷新）');
     } finally {
       setSaving(false);
     }

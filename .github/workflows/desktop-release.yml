@@ -18,6 +18,8 @@ env:
 jobs:
   build-desktop:
     name: Build Desktop (${{ matrix.artifact_name }})
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -163,7 +165,34 @@ jobs:
         run: choco install nsis --version=3.11 -y --no-progress
 
       # 构建 Tauri 应用
-      - name: Build Tauri app
+      - name: Build Tauri app (tag release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS 签名和公证
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: "Developer ID Application"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Tauri 相关
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: prd-desktop
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }}
+          # 让 tauri-action 负责创建 Release + 上传 bundle + 生成/上传 updater 的 latest.json(.sig)
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          retryAttempts: 2
+
+      - name: Build Tauri app (workflow_dispatch / no upload)
+        if: github.event_name == 'workflow_dispatch'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -182,40 +211,9 @@ jobs:
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }}
 
-      # updater manifest 在不同 bundle 目录下可能出现多个 latest.json。
-      # Release 资产名必须唯一，因此将其复制为带 target 的唯一文件名。
-      - name: Prepare updater manifest (unique name)
-        shell: bash
-        run: |
-          set -euo pipefail
-          base="src-tauri/target/${{ matrix.target }}/release/bundle"
-          echo "bundle base: $base"
-
-          if [ ! -d "$base" ]; then
-            echo "ERROR: bundle directory not found: $base" >&2
-            exit 1
-          fi
-
-          json="$(find "$base" -type f -name latest.json -print -quit)"
-          if [ -z "$json" ]; then
-            echo "ERROR: latest.json not found under $base" >&2
-            exit 1
-          fi
-          out_json="$base/latest-${{ matrix.target }}.json"
-          cp "$json" "$out_json"
-          echo "prepared: $out_json (from $json)"
-
-          sig="$(find "$base" -type f -name 'latest.json.sig' -print -quit)"
-          if [ -z "$sig" ]; then
-            echo "ERROR: latest.json.sig not found under $base" >&2
-            exit 1
-          fi
-          out_sig="$base/latest-${{ matrix.target }}.json.sig"
-          cp "$sig" "$out_sig"
-          echo "prepared: $out_sig (from $sig)"
-
       # 上传构建产物
       - name: Upload artifacts
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: prd-agent-${{ matrix.artifact_name }}
@@ -228,48 +226,5 @@ jobs:
             prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb.sig
             prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.sig
-            prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/latest-${{ matrix.target }}.json
-            prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/latest-${{ matrix.target }}.json.sig
           if-no-files-found: error
-
-  # 创建 GitHub Release
-  create-release:
-    name: Create Release
-    needs: build-desktop
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Display downloaded files
-        run: ls -R artifacts
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
-          generate_release_notes: true
-          files: |
-            artifacts/**/*.msi
-            artifacts/**/*.msi.sig
-            artifacts/**/*.dmg
-            artifacts/**/*.dmg.sig
-            artifacts/**/*.deb
-            artifacts/**/*.deb.sig
-            artifacts/**/*.AppImage
-            artifacts/**/*.AppImage.sig
-            artifacts/**/latest-*.json
-            artifacts/**/latest-*.json.sig
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

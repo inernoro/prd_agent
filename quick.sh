@@ -7,6 +7,7 @@
 #   ./quick.sh desktop  - 启动桌面客户端
 #   ./quick.sh all      - 同时启动后端 + Web管理后台 + 桌面端（统一输出到同一控制台）
 #   ./quick.sh check    - 桌面端本地 CI 等价检查（对齐 .github/workflows/ci.yml 的 desktop-check；不包含 tag/release 打包与签名）
+#   ./quick.sh ci       - 本地跑一遍 CI（server + admin + desktop），尽量在提交前暴露问题
 
 set -e
 
@@ -225,6 +226,33 @@ check_desktop() {
     log_success "Desktop check passed!"
 }
 
+# 本地跑一遍 CI（server + admin + desktop）
+check_ci() {
+    log_info "Running local CI checks (server + admin + desktop)..."
+
+    # server checks (align with .github/workflows/ci.yml server-build)
+    log_info "Server: dotnet restore/build/test..."
+    cd "$SCRIPT_DIR/prd-api"
+    dotnet restore PrdAgent.sln
+    dotnet build PrdAgent.sln -c Release --no-restore
+    dotnet test PrdAgent.sln -c Release --no-build --verbosity normal
+
+    # admin checks (align with .github/workflows/ci.yml admin-build)
+    log_info "Admin: install/typecheck/build..."
+    cd "$SCRIPT_DIR/prd-admin"
+    if [ ! -d "node_modules" ]; then
+        log_warn "node_modules not found, running pnpm install..."
+        pnpm install
+    fi
+    pnpm tsc --noEmit
+    pnpm build
+
+    # desktop checks (reuse existing)
+    check_desktop
+
+    log_success "Local CI checks passed!"
+}
+
 # 同时启动后端 + Web管理后台 + 桌面端
 start_all() {
     log_info "Starting all services..."
@@ -300,6 +328,7 @@ show_help() {
     echo "  desktop    Start desktop client (prd-desktop)"
     echo "  all        Start backend + admin + desktop together (single console output)"
     echo "  check      Run desktop CI-equivalent checks (same as ci.yml desktop-check; excludes desktop-release packaging/signing)"
+    echo "  ci         Run local CI checks (server + admin + desktop)"
     echo "  help       Show this help message"
     echo ""
 }
@@ -320,6 +349,9 @@ case "${1:-}" in
         ;;
     "check")
         check_desktop
+        ;;
+    "ci")
+        check_ci
         ;;
     "help"|"-h"|"--help")
         show_help

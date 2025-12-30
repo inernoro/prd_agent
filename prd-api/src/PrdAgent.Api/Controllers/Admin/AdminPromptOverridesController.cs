@@ -6,6 +6,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -18,18 +19,14 @@ namespace PrdAgent.Api.Controllers.Admin;
 public class AdminPromptOverridesController : ControllerBase
 {
     private readonly MongoDbContext _db;
-    private readonly ICacheManager _cache;
-
-    private static readonly TimeSpan IdempotencyExpiry = TimeSpan.FromMinutes(15);
 
     private const string KeyImageGenPlan = "imageGenPlan";
     private const int ImageGenPlanDefaultMaxItems = 10;
     private const int PromptMaxChars = 20_000;
 
-    public AdminPromptOverridesController(MongoDbContext db, ICacheManager cache)
+    public AdminPromptOverridesController(MongoDbContext db)
     {
         _db = db;
-        _cache = cache;
     }
 
     private string GetAdminId()
@@ -68,11 +65,20 @@ public class AdminPromptOverridesController : ControllerBase
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptoverrides:put:{adminId}:{KeyImageGenPlan}:{idemKey}";
-            var cached = await _cache.GetAsync<object>(cacheKey);
-            if (cached != null)
+            var cached = await _db.AdminIdempotencyRecords
+                .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_promptoverrides_put_imageGenPlan" && x.IdempotencyKey == idemKey)
+                .FirstOrDefaultAsync(ct);
+            if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
             {
-                return Ok(ApiResponse<object>.Ok(cached));
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<JsonElement>(cached.PayloadJson);
+                    return Ok(ApiResponse<object>.Ok(payload));
+                }
+                catch
+                {
+                    // ignore：幂等记录损坏时，降级为正常处理
+                }
             }
         }
 
@@ -95,8 +101,23 @@ public class AdminPromptOverridesController : ControllerBase
 
             if (!string.IsNullOrWhiteSpace(idemKey))
             {
-                var cacheKey = $"admin:promptoverrides:put:{adminId}:{KeyImageGenPlan}:{idemKey}";
-                await _cache.SetAsync(cacheKey, payload, IdempotencyExpiry);
+                var rec = new AdminIdempotencyRecord
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    OwnerAdminId = adminId,
+                    Scope = "admin_promptoverrides_put_imageGenPlan",
+                    IdempotencyKey = idemKey,
+                    PayloadJson = JsonSerializer.Serialize(payload),
+                    CreatedAt = DateTime.UtcNow
+                };
+                try
+                {
+                    await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+                }
+                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    // ignore
+                }
             }
 
             return Ok(ApiResponse<object>.Ok(payload));
@@ -130,8 +151,23 @@ public class AdminPromptOverridesController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptoverrides:put:{adminId}:{KeyImageGenPlan}:{idemKey}";
-            await _cache.SetAsync(cacheKey, payload2, IdempotencyExpiry);
+            var rec = new AdminIdempotencyRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerAdminId = adminId,
+                Scope = "admin_promptoverrides_put_imageGenPlan",
+                IdempotencyKey = idemKey,
+                PayloadJson = JsonSerializer.Serialize(payload2),
+                CreatedAt = DateTime.UtcNow
+            };
+            try
+            {
+                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // ignore
+            }
         }
 
         return Ok(ApiResponse<object>.Ok(payload2));
@@ -144,11 +180,20 @@ public class AdminPromptOverridesController : ControllerBase
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptoverrides:del:{adminId}:{KeyImageGenPlan}:{idemKey}";
-            var cached = await _cache.GetAsync<object>(cacheKey);
-            if (cached != null)
+            var cached = await _db.AdminIdempotencyRecords
+                .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_promptoverrides_del_imageGenPlan" && x.IdempotencyKey == idemKey)
+                .FirstOrDefaultAsync(ct);
+            if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
             {
-                return Ok(ApiResponse<object>.Ok(cached));
+                try
+                {
+                    var cachedPayload = JsonSerializer.Deserialize<JsonElement>(cached.PayloadJson);
+                    return Ok(ApiResponse<object>.Ok(cachedPayload));
+                }
+                catch
+                {
+                    // ignore
+                }
             }
         }
 
@@ -167,8 +212,23 @@ public class AdminPromptOverridesController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:promptoverrides:del:{adminId}:{KeyImageGenPlan}:{idemKey}";
-            await _cache.SetAsync(cacheKey, payload, IdempotencyExpiry);
+            var rec = new AdminIdempotencyRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerAdminId = adminId,
+                Scope = "admin_promptoverrides_del_imageGenPlan",
+                IdempotencyKey = idemKey,
+                PayloadJson = JsonSerializer.Serialize(payload),
+                CreatedAt = DateTime.UtcNow
+            };
+            try
+            {
+                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // ignore
+            }
         }
 
         return Ok(ApiResponse<object>.Ok(payload));

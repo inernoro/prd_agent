@@ -10,7 +10,6 @@ namespace PrdAgent.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1/prompts")]
-[Authorize]
 public class PromptsController : ControllerBase
 {
     private readonly IPromptService _promptService;
@@ -21,6 +20,9 @@ public class PromptsController : ControllerBase
     }
 
     [HttpGet]
+    // Desktop 侧“提示词按钮”仅需枚举与标题，不涉及敏感内容；为避免桌面端因 token 同步/环境差异导致 401/403，
+    // 这里允许匿名访问（仍返回统一 ApiResponse 结构）。
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<PromptsClientResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStages(CancellationToken ct)
     {

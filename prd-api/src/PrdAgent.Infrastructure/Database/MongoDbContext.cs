@@ -61,6 +61,7 @@ public class MongoDbContext
     public IMongoCollection<ImageGenRunEvent> ImageGenRunEvents => _database.GetCollection<ImageGenRunEvent>("image_gen_run_events");
     public IMongoCollection<UploadArtifact> UploadArtifacts => _database.GetCollection<UploadArtifact>("upload_artifacts");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
+    public IMongoCollection<AdminIdempotencyRecord> AdminIdempotencyRecords => _database.GetCollection<AdminIdempotencyRecord>("admin_idempotency");
 
     private void CreateIndexes()
     {
@@ -278,5 +279,24 @@ public class MongoDbContext
                 Name = "uniq_admin_prompt_overrides_owner_key",
                 Unique = true
             }));
+
+        // AdminIdempotencyRecords：同一管理员 + scope + idemKey 唯一（用于写接口幂等，替代 Redis）
+        AdminIdempotencyRecords.Indexes.CreateOne(new CreateIndexModel<AdminIdempotencyRecord>(
+            Builders<AdminIdempotencyRecord>.IndexKeys
+                .Ascending(x => x.OwnerAdminId)
+                .Ascending(x => x.Scope)
+                .Ascending(x => x.IdempotencyKey),
+            new CreateIndexOptions<AdminIdempotencyRecord>
+            {
+                // 注意：历史环境可能已存在同名索引，但字段名为 PascalCase（OwnerAdminId/Scope/IdempotencyKey）。
+                // MongoDB 不允许“同名但定义不同”的索引，会导致启动时 createIndexes 直接抛异常并使 API 进程崩溃。
+                // 这里改用新名字，避免冲突；旧索引可后续人工清理。
+                Name = "uniq_admin_idempotency_owner_scope_key_v2",
+                Unique = true,
+                // 仅对字符串类型生效（与 ImageGenRuns 的 idemKey 规则一致）
+                PartialFilterExpression = new BsonDocument("idempotencyKey", new BsonDocument("$type", "string"))
+            }));
+        AdminIdempotencyRecords.Indexes.CreateOne(new CreateIndexModel<AdminIdempotencyRecord>(
+            Builders<AdminIdempotencyRecord>.IndexKeys.Descending(x => x.CreatedAt)));
     }
 }

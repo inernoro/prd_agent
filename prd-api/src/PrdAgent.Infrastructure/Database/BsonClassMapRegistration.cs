@@ -48,6 +48,7 @@ public static class BsonClassMapRegistration
             RegisterImageGenRunItem();
             RegisterImageGenRunEvent();
             RegisterAdminPromptOverride();
+            RegisterAdminIdempotencyRecord();
 
             _registered = true;
         }
@@ -263,6 +264,9 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            // 强制字段名使用 camelCase，保证 raw 解析（BsonDocument）与旧数据兼容
+            cm.MapMember(s => s.Prompts).SetElementName("prompts");
+            cm.MapMember(s => s.UpdatedAt).SetElementName("updatedAt");
             cm.SetIgnoreExtraElements(true);
         });
 
@@ -272,6 +276,11 @@ public static class BsonClassMapRegistration
             BsonClassMap.RegisterClassMap<PromptEntry>(cm =>
             {
                 cm.AutoMap();
+                cm.MapMember(x => x.PromptKey).SetElementName("promptKey");
+                cm.MapMember(x => x.Role).SetElementName("role");
+                cm.MapMember(x => x.Order).SetElementName("order");
+                cm.MapMember(x => x.Title).SetElementName("title");
+                cm.MapMember(x => x.PromptTemplate).SetElementName("promptTemplate");
                 cm.SetIgnoreExtraElements(true);
             });
         }
@@ -283,6 +292,24 @@ public static class BsonClassMapRegistration
                 cm.SetIgnoreExtraElements(true);
             });
         }
+    }
+
+    private static void RegisterAdminIdempotencyRecord()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(AdminIdempotencyRecord))) return;
+        BsonClassMap.RegisterClassMap<AdminIdempotencyRecord>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.MapMember(x => x.OwnerAdminId).SetElementName("ownerAdminId");
+            cm.MapMember(x => x.Scope).SetElementName("scope");
+            cm.MapMember(x => x.IdempotencyKey).SetElementName("idempotencyKey");
+            cm.MapMember(x => x.PayloadJson).SetElementName("payloadJson");
+            cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
+            cm.SetIgnoreExtraElements(true);
+        });
     }
 
     private static void RegisterLlmRequestLog()

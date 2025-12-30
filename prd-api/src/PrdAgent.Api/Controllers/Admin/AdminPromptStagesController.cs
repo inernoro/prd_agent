@@ -5,6 +5,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using System.Text.Json;
 using System.Security.Claims;
 
 namespace PrdAgent.Api.Controllers.Admin;
@@ -18,15 +19,11 @@ namespace PrdAgent.Api.Controllers.Admin;
 public class AdminPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;
-    private readonly ICacheManager _cache;
     private readonly IPromptService _promptService;
 
-    private static readonly TimeSpan IdempotencyExpiry = TimeSpan.FromMinutes(15);
-
-    public AdminPromptsController(MongoDbContext db, ICacheManager cache, IPromptService promptService)
+    public AdminPromptsController(MongoDbContext db, IPromptService promptService)
     {
         _db = db;
-        _cache = cache;
         _promptService = promptService;
     }
 
@@ -38,6 +35,7 @@ public class AdminPromptsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
+        // 按要求：任何情况下均回源 DB（PromptService 已禁用缓存）
         var effective = await _promptService.GetEffectiveSettingsAsync(ct);
         var defaults = await _promptService.GetDefaultSettingsAsync(ct);
 
@@ -94,11 +92,20 @@ public class AdminPromptsController : ControllerBase
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:prompts:put:{adminId}:{idemKey}";
-            var cached = await _cache.GetAsync<PromptSettings>(cacheKey);
-            if (cached != null)
+            var cached = await _db.AdminIdempotencyRecords
+                .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_prompts_put" && x.IdempotencyKey == idemKey)
+                .FirstOrDefaultAsync(ct);
+            if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
             {
-                return Ok(ApiResponse<object>.Ok(new { settings = cached }));
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<JsonElement>(cached.PayloadJson);
+                    return Ok(ApiResponse<object>.Ok(payload));
+                }
+                catch
+                {
+                    // ignore：幂等记录损坏时，降级为正常处理
+                }
             }
         }
 
@@ -168,13 +175,29 @@ public class AdminPromptsController : ControllerBase
 
         await _promptService.RefreshAsync(ct);
 
+        var payload2 = new { settings = doc };
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:prompts:put:{adminId}:{idemKey}";
-            await _cache.SetAsync(cacheKey, doc, IdempotencyExpiry);
+            var rec = new AdminIdempotencyRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerAdminId = adminId,
+                Scope = "admin_prompts_put",
+                IdempotencyKey = idemKey,
+                PayloadJson = JsonSerializer.Serialize(payload2),
+                CreatedAt = DateTime.UtcNow
+            };
+            try
+            {
+                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // ignore：并发写入同一 idemKey，保持幂等
+            }
         }
 
-        return Ok(ApiResponse<object>.Ok(new { settings = doc }));
+        return Ok(ApiResponse<object>.Ok(payload2));
     }
 
     [HttpPost("reset")]
@@ -184,24 +207,49 @@ public class AdminPromptsController : ControllerBase
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:prompts:reset:{adminId}:{idemKey}";
-            var cached = await _cache.GetAsync<bool?>(cacheKey);
-            if (cached == true)
+            var cached = await _db.AdminIdempotencyRecords
+                .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_prompts_reset" && x.IdempotencyKey == idemKey)
+                .FirstOrDefaultAsync(ct);
+            if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
             {
-                return Ok(ApiResponse<object>.Ok(new { reset = true }));
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<JsonElement>(cached.PayloadJson);
+                    return Ok(ApiResponse<object>.Ok(payload));
+                }
+                catch
+                {
+                    // ignore：幂等记录损坏时，降级为正常处理
+                }
             }
         }
 
         await _db.Prompts.DeleteOneAsync(s => s.Id == "global", ct);
         await _promptService.RefreshAsync(ct);
 
+        var payload2 = new { reset = true };
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var cacheKey = $"admin:prompts:reset:{adminId}:{idemKey}";
-            await _cache.SetAsync(cacheKey, true, IdempotencyExpiry);
+            var rec = new AdminIdempotencyRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerAdminId = adminId,
+                Scope = "admin_prompts_reset",
+                IdempotencyKey = idemKey,
+                PayloadJson = JsonSerializer.Serialize(payload2),
+                CreatedAt = DateTime.UtcNow
+            };
+            try
+            {
+                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // ignore
+            }
         }
 
-        return Ok(ApiResponse<object>.Ok(new { reset = true }));
+        return Ok(ApiResponse<object>.Ok(payload2));
     }
 }
 

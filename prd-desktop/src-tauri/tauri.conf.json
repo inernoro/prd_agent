@@ -49,7 +49,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json"
+        "https://github.com/inernoro/prd_agent/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY3Q0NGQUI0QkFERTdFNTIKUldSU2Z0NjZ0UHJNWjFzT2gyL1BLZUpKakdVNDYxUXBLSWlhd2txK1RhemQrWk9CeHRNcVBxOWEK"
     }

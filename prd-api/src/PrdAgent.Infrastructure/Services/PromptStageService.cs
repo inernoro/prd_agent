@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -13,29 +12,18 @@ namespace PrdAgent.Infrastructure.Services;
 public class PromptService : IPromptService
 {
     private readonly MongoDbContext _db;
-    private readonly IMemoryCache _cache;
     private readonly IPromptManager _promptManager;
 
-    private const string CacheKey = "Prompts:Effective:Global";
-    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(5);
-
-    public PromptService(MongoDbContext db, IMemoryCache cache, IPromptManager promptManager)
+    public PromptService(MongoDbContext db, IPromptManager promptManager)
     {
         _db = db;
-        _cache = cache;
         _promptManager = promptManager;
     }
 
     public async Task<PromptSettings> GetEffectiveSettingsAsync(CancellationToken ct = default)
     {
-        if (_cache.TryGetValue<PromptSettings>(CacheKey, out var cached))
-        {
-            return cached!;
-        }
-
-        var effective = await BuildEffectiveSettingsAsync(ct);
-        _cache.Set(CacheKey, effective, CacheExpiration);
-        return effective;
+        // 按要求：任何情况下均回源 MongoDB，不使用内存缓存（避免时效性与多实例一致性问题）
+        return await BuildEffectiveSettingsAsync(ct);
     }
 
     public Task<PromptSettings> GetDefaultSettingsAsync(CancellationToken ct = default)
@@ -91,8 +79,9 @@ public class PromptService : IPromptService
 
     public async Task RefreshAsync(CancellationToken ct = default)
     {
-        _cache.Remove(CacheKey);
-        _ = await GetEffectiveSettingsAsync(ct);
+        // 已禁用缓存：Refresh 无需做任何事，保留接口以兼容调用方
+        _ = ct;
+        await Task.CompletedTask;
     }
 
     private async Task<PromptSettings> BuildEffectiveSettingsAsync(CancellationToken ct)
@@ -226,7 +215,8 @@ public class PromptService : IPromptService
 
     private static (List<PromptEntry> Entries, DateTime? UpdatedAt, bool NeedsWriteBack) ParsePrompts(BsonDocument raw)
     {
-        var updatedAt = ReadDateTime(raw, "updatedAt");
+        // 兼容历史：既可能是 updatedAt（camelCase），也可能是 UpdatedAt（PascalCase）
+        var updatedAt = ReadDateTime(raw, "updatedAt") ?? ReadDateTime(raw, "UpdatedAt");
         var needsWriteBack = false;
 
         BsonArray? arr = null;
@@ -234,10 +224,22 @@ public class PromptService : IPromptService
         {
             arr = promptsVal.AsBsonArray;
         }
+        else if (raw.TryGetValue("Prompts", out var promptsVal2) && promptsVal2.IsBsonArray)
+        {
+            // 兼容：PascalCase 写入
+            arr = promptsVal2.AsBsonArray;
+            needsWriteBack = true;
+        }
         else if (raw.TryGetValue("stages", out var stagesVal) && stagesVal.IsBsonArray)
         {
             // 兼容旧结构：stages
             arr = stagesVal.AsBsonArray;
+            needsWriteBack = true;
+        }
+        else if (raw.TryGetValue("Stages", out var stagesVal2) && stagesVal2.IsBsonArray)
+        {
+            // 兼容旧结构：Stages（PascalCase）
+            arr = stagesVal2.AsBsonArray;
             needsWriteBack = true;
         }
 
