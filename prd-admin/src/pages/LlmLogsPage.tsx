@@ -738,12 +738,12 @@ export default function LlmLogsPage() {
   const [jsonCheckPhase, setJsonCheckPhase] = useState<'idle' | 'scanning' | 'passed' | 'failed'>('idle');
   const jsonCheckLastRef = useRef<{ ok: boolean; reason?: string } | null>(null);
 
-  const [qProvider, setQProvider] = useState('');
-  const [qModel, setQModel] = useState('');
-  const [qStatus, setQStatus] = useState('');
-  const [qRequestId, setQRequestId] = useState('');
-  const [qGroupId, setQGroupId] = useState('');
-  const [qSessionId, setQSessionId] = useState('');
+  const [qProvider, setQProvider] = useState(() => searchParams.get('provider') ?? '');
+  const [qModel, setQModel] = useState(() => searchParams.get('model') ?? '');
+  const [qStatus, setQStatus] = useState(() => searchParams.get('status') ?? '');
+  const [qRequestId, setQRequestId] = useState(() => searchParams.get('requestId') ?? '');
+  const [qGroupId, setQGroupId] = useState(() => searchParams.get('groupId') ?? '');
+  const [qSessionId, setQSessionId] = useState(() => searchParams.get('sessionId') ?? '');
 
   const [metaProviders, setMetaProviders] = useState<string[]>([]);
   const [metaModels, setMetaModels] = useState<string[]>([]);

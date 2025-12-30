@@ -19,6 +19,7 @@ public class PreviewAskService : IPreviewAskService
     private readonly IPromptManager _promptManager;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAppSettingsService _settingsService;
+    private readonly ISystemPromptService _systemPromptService;
 
     public PreviewAskService(
         ILLMClient llmClient,
@@ -26,7 +27,8 @@ public class PreviewAskService : IPreviewAskService
         IDocumentService documentService,
         IPromptManager promptManager,
         ILLMRequestContextAccessor llmRequestContext,
-        IAppSettingsService settingsService)
+        IAppSettingsService settingsService,
+        ISystemPromptService systemPromptService)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
@@ -34,6 +36,7 @@ public class PreviewAskService : IPreviewAskService
         _promptManager = promptManager;
         _llmRequestContext = llmRequestContext;
         _settingsService = settingsService;
+        _systemPromptService = systemPromptService;
     }
 
     public async IAsyncEnumerable<PreviewAskStreamEvent> AskInSectionAsync(
@@ -131,8 +134,8 @@ public class PreviewAskService : IPreviewAskService
         }
 
         // 构建 system prompt（PRD 不再注入 system；改为 user/context message 传入）
-        var systemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
-        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
+        var systemPrompt = await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
+        var systemPromptRedacted = systemPrompt;
         var docHash = Sha256Hex(raw);
 
         var requestId = Guid.NewGuid().ToString();

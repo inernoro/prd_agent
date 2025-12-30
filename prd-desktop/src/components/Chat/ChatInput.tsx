@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef, KeyboardEvent } from 'react';
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
@@ -59,7 +59,7 @@ const DEMO_RESPONSES = [
 
 export default function ChatInput() {
   const { sessionId, currentRole, document, prompts } = useSessionStore();
-  const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
+  const { addMessage, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage, triggerScrollToBottom } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -108,6 +108,7 @@ export default function ChatInput() {
       viewRole: currentRole,
     };
     addMessage(userMessage);
+    triggerScrollToBottom();
     return userMessage;
   };
 
@@ -146,6 +147,7 @@ export default function ChatInput() {
     };
 
     addMessage(userMessage);
+    triggerScrollToBottom();
     const questionContent = content.trim();
     setContent('');
 
@@ -184,13 +186,19 @@ export default function ChatInput() {
     }
   };
 
-  const adjustTextareaHeight = () => {
+  const adjustTextareaHeight = useCallback(() => {
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
     }
-  };
+  }, []);
+
+  // 关键：发送后会 setContent('')，但如果不重算高度，textarea 会保留上一次的高，导致和按钮不对齐
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => adjustTextareaHeight());
+    return () => cancelAnimationFrame(raf);
+  }, [content, adjustTextareaHeight]);
 
   return (
     <div className="border-t border-border bg-surface-light dark:bg-surface-dark">
@@ -232,7 +240,6 @@ export default function ChatInput() {
             value={content}
             onChange={(e) => {
               setContent(e.target.value);
-              adjustTextareaHeight();
             }}
             onKeyDown={handleKeyDown}
             placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}

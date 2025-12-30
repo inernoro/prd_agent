@@ -49,6 +49,7 @@ public static class BsonClassMapRegistration
             RegisterImageGenRunEvent();
             RegisterAdminPromptOverride();
             RegisterAdminIdempotencyRecord();
+            RegisterSystemPromptSettings();
 
             _registered = true;
         }
@@ -310,6 +311,31 @@ public static class BsonClassMapRegistration
             cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
             cm.SetIgnoreExtraElements(true);
         });
+    }
+
+    private static void RegisterSystemPromptSettings()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(SystemPromptSettings))) return;
+        BsonClassMap.RegisterClassMap<SystemPromptSettings>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                // 单例：固定为 "global"；保留 Guid 生成器以兼容潜在历史写入，不影响正常逻辑
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(SystemPromptEntry)))
+        {
+            BsonClassMap.RegisterClassMap<SystemPromptEntry>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapMember(x => x.Role).SetElementName("role");
+                cm.MapMember(x => x.SystemPrompt).SetElementName("systemPrompt");
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
     }
 
     private static void RegisterLlmRequestLog()

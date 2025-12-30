@@ -37,7 +37,9 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<UserStatusUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserRoleUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserPasswordUpdateResponse>))]
+[JsonSerializable(typeof(ApiResponse<UnlockUserResponse>))]
 [JsonSerializable(typeof(ApiResponse<InviteCodeGenerateResponse>))]
+[JsonSerializable(typeof(ApiResponse<ForceExpireResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminGroupListItem>>))]
 [JsonSerializable(typeof(ApiResponse<AdminGroupListItem>))]
 [JsonSerializable(typeof(ApiResponse<List<AdminGroupMemberDto>>))]
@@ -71,6 +73,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdatePasswordRequest))]
 [JsonSerializable(typeof(GenerateInviteCodeRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
+[JsonSerializable(typeof(ForceExpireRequest))]
 // Admin Data 请求
 [JsonSerializable(typeof(DataConfigImportRequest))]
 [JsonSerializable(typeof(DataPurgeRequest))]

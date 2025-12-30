@@ -17,6 +17,7 @@ public class ChatService : IChatService
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
     private readonly IPromptService _promptService;
+    private readonly ISystemPromptService _systemPromptService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
@@ -29,6 +30,7 @@ public class ChatService : IChatService
         ICacheManager cache,
         IPromptManager promptManager,
         IPromptService promptService,
+        ISystemPromptService systemPromptService,
         IUserService userService,
         IMessageRepository messageRepository,
         ILLMRequestContextAccessor llmRequestContext)
@@ -39,6 +41,7 @@ public class ChatService : IChatService
         _cache = cache;
         _promptManager = promptManager;
         _promptService = promptService;
+        _systemPromptService = systemPromptService;
         _userService = userService;
         _messageRepository = messageRepository;
         _llmRequestContext = llmRequestContext;
@@ -105,8 +108,8 @@ public class ChatService : IChatService
         };
 
         // 构建系统Prompt
-        var baseSystemPrompt = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
-        var systemPromptRedacted = _promptManager.BuildSystemPrompt(session.CurrentRole, prdContent: string.Empty);
+        var baseSystemPrompt = await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
+        var systemPromptRedacted = baseSystemPrompt;
         var docHash = Sha256Hex(document.RawContent);
 
         // 提示词（可选）：将提示词模板作为“聚焦指令”注入 system prompt
@@ -242,6 +245,7 @@ public class ChatService : IChatService
             SenderId = userId,
             Role = MessageRole.User,
             Content = content,
+            LlmRequestId = llmRequestId,
             ViewRole = session.CurrentRole,
             AttachmentIds = attachmentIds ?? new List<string>()
         };
@@ -254,6 +258,7 @@ public class ChatService : IChatService
             GroupId = session.GroupId ?? "",
             Role = MessageRole.Assistant,
             Content = fullResponse.ToString(),
+            LlmRequestId = llmRequestId,
             ViewRole = session.CurrentRole,
             TokenUsage = new TokenUsage
             {

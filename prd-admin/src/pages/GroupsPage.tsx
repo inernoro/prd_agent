@@ -16,6 +16,9 @@ import {
 } from '@/services';
 import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { LlmRequestDetailDialog } from '@/components/llm/LlmRequestDetailDialog';
 
 type GroupRow = {
   groupId: string;
@@ -57,6 +60,7 @@ type MessageRow = {
   role: 'User' | 'Assistant';
   senderId?: string | null;
   content: string;
+  llmRequestId?: string | null;
   timestamp: string;
   tokenUsage?: { input: number; output: number } | null;
 };
@@ -64,6 +68,26 @@ type MessageRow = {
 function fmtDate(v?: string | null) {
   if (!v) return '-';
   return v;
+}
+
+function MessageMarkdown({ content }: { content: string }) {
+  const text = (content ?? '').trim();
+  return (
+    <div className="prd-md">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, ...props }) => (
+            <a href={href} target="_blank" rel="noreferrer" {...props}>
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {text || '（空内容）'}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export default function GroupsPage() {
@@ -83,6 +107,9 @@ export default function GroupsPage() {
   const [gaps, setGaps] = useState<GapRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [actionBusy, setActionBusy] = useState(false);
+
+  const [llmDetailOpen, setLlmDetailOpen] = useState(false);
+  const [llmDetailRequestId, setLlmDetailRequestId] = useState<string | null>(null);
 
   const query = useMemo(
     () => ({ page, pageSize: 20, search: search.trim() || undefined, inviteStatus }),
@@ -167,6 +194,7 @@ export default function GroupsPage() {
           role: m.role,
           senderId: m.senderId ?? null,
           content: m.content,
+          llmRequestId: m.llmRequestId ?? null,
           timestamp: m.timestamp,
           tokenUsage: m.tokenUsage ?? null,
         }))
@@ -208,7 +236,7 @@ export default function GroupsPage() {
           <select
             value={inviteStatus}
             onChange={(e) => {
-              setInviteStatus(e.target.value as any);
+              setInviteStatus(e.target.value as 'all' | 'valid' | 'expired');
               setPage(1);
             }}
             className="h-10 rounded-[14px] px-3 text-sm"
@@ -594,28 +622,77 @@ export default function GroupsPage() {
                   </>
                 ) : (
                   <div className="p-4 space-y-3">
+                    <style>{`
+                      .prd-md { font-size: 13px; line-height: 1.65; color: var(--text-secondary); }
+                      .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 14px 0 8px; }
+                      .prd-md h1 { font-size: 18px; }
+                      .prd-md h2 { font-size: 16px; }
+                      .prd-md h3 { font-size: 14px; }
+                      .prd-md p { margin: 8px 0; }
+                      .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
+                      .prd-md li { margin: 4px 0; }
+                      .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
+                      .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.04); color: var(--text-secondary); border-radius: 10px; }
+                      .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+                      .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
+                      .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+                      .prd-md pre code { background: transparent; border: 0; padding: 0; }
+                      .prd-md table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+                      .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; }
+                      .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+                    `}</style>
                     {messages.map((m) => (
+                      (() => {
+                        const isAi = m.role === 'Assistant';
+                        const titleColor = isAi ? 'rgba(147, 197, 253, 0.95)' : 'rgba(252, 165, 165, 0.95)';
+                        const box = isAi
+                          ? { background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.18)' }
+                          : { background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.18)' };
+                        const rid = (m.llmRequestId ?? '').trim();
+                        return (
                       <div
                         key={m.id}
                         className="rounded-[16px] p-4"
-                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+                        style={box}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            <div className="text-sm font-semibold" style={{ color: titleColor }}>
                               {m.role === 'Assistant' ? 'AI' : '用户'} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>{fmtDate(m.timestamp)}</span>
                             </div>
-                            <div className="mt-2 text-sm whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
-                              {m.content}
+                            <div className="mt-2 text-sm break-words">
+                              <MessageMarkdown content={m.content} />
                             </div>
                           </div>
-                          {m.tokenUsage ? (
-                            <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                              tokens: in {m.tokenUsage.input} / out {m.tokenUsage.output}
-                            </div>
-                          ) : null}
+                          <div className="shrink-0 flex flex-col items-end gap-2">
+                            {rid ? (
+                              <button
+                                type="button"
+                                className="text-[11px] font-semibold rounded-full px-2.5 h-6 inline-flex items-center"
+                                style={{
+                                  color: 'rgba(147, 197, 253, 0.95)',
+                                  border: '1px solid rgba(59,130,246,0.28)',
+                                  background: 'rgba(59,130,246,0.10)',
+                                }}
+                                title={`查看本次 LLM 调用请求详情：${rid}`}
+                                onClick={() => {
+                                  setLlmDetailRequestId(rid);
+                                  setLlmDetailOpen(true);
+                                }}
+                              >
+                                requestId: {rid.length > 10 ? `${rid.slice(0, 10)}…` : rid}
+                              </button>
+                            ) : null}
+                            {m.tokenUsage ? (
+                              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                tokens: in {m.tokenUsage.input} / out {m.tokenUsage.output}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
+                        );
+                      })()
                     ))}
                   </div>
                 )}
@@ -627,6 +704,16 @@ export default function GroupsPage() {
             </div>
           )
         }
+      />
+
+      <LlmRequestDetailDialog
+        open={llmDetailOpen}
+        onOpenChange={(v) => {
+          setLlmDetailOpen(v);
+          if (!v) setLlmDetailRequestId(null);
+        }}
+        requestId={llmDetailRequestId}
+        jumpToLogsHref={llmDetailRequestId ? `/llm-logs?tab=llm&requestId=${encodeURIComponent(llmDetailRequestId)}` : undefined}
       />
     </div>
   );

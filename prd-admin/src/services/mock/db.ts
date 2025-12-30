@@ -23,6 +23,9 @@ export const db = {
       status,
       createdAt: nowISO(),
       lastLoginAt: idx % 4 === 0 ? nowISO() : undefined,
+      // mock：每 9 个用户里随机模拟一个“锁定中”
+      lockoutRemainingSeconds: idx % 9 === 0 ? 600 : 0,
+      isLocked: idx % 9 === 0,
     };
   }),
   platforms: [

@@ -94,6 +94,7 @@ export type AdminMessage = {
   senderId?: string | null;
   role: 'User' | 'Assistant';
   content: string;
+  llmRequestId?: string | null;
   viewRole?: 'PM' | 'DEV' | 'QA' | 'ADMIN' | null;
   timestamp: string;
   tokenUsage?: { input: number; output: number } | null;

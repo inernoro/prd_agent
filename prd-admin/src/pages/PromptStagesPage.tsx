@@ -4,8 +4,9 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
-import { getAdminPrompts, putAdminPrompts, resetAdminPrompts } from '@/services';
+import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts } from '@/services';
 import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
+import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contracts/systemPrompts';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket } from 'lucide-react';
@@ -18,6 +19,9 @@ function safeIdempotencyKey() {
 
 type RoleKey = 'pm' | 'dev' | 'qa';
 type RoleEnum = 'PM' | 'DEV' | 'QA';
+
+type TopTabKey = 'prd' | 'other';
+type PrdTabKey = 'user' | 'system';
 
 function roleKeyToEnum(r: RoleKey): RoleEnum {
   if (r === 'dev') return 'DEV';
@@ -33,6 +37,12 @@ function roleEnumToKey(r: RoleEnum): RoleKey {
 
 function roleKeyToSuffix(r: RoleKey) {
   return r === 'dev' ? 'dev' : r === 'qa' ? 'qa' : 'pm';
+}
+
+function roleEnumToChineseLabel(r: RoleEnum): string {
+  if (r === 'DEV') return '开发工程师（DEV）';
+  if (r === 'QA') return '质量工程师（QA）';
+  return '产品经理（PM）';
 }
 
 function normalizeText(v: unknown): string {
@@ -97,6 +107,23 @@ function normalizePrompts(prompts: PromptEntry[] | null | undefined): PromptEntr
   return out.sort((a, b) => (a.role === b.role ? a.order - b.order : a.role.localeCompare(b.role)));
 }
 
+function normalizeSystemEntries(entries: SystemPromptEntry[] | null | undefined): SystemPromptEntry[] {
+  const src = Array.isArray(entries) ? entries : [];
+  const out: SystemPromptEntry[] = [];
+
+  for (let i = 0; i < src.length; i += 1) {
+    const raw = (src[i] ?? {}) as Partial<SystemPromptEntry>;
+    const role = (normalizeText((raw as { role?: unknown }).role).toUpperCase() as RoleEnum) || 'PM';
+    if (role !== 'PM' && role !== 'DEV' && role !== 'QA') continue;
+    out.push({
+      role,
+      systemPrompt: normalizeText((raw as { systemPrompt?: unknown }).systemPrompt),
+    });
+  }
+
+  return out.sort((a, b) => a.role.localeCompare(b.role));
+}
+
 function stableKey(v: unknown): string {
   if (v === null || v === undefined) return 'null';
   if (typeof v === 'string') return JSON.stringify(v);
@@ -147,9 +174,20 @@ export default function PromptStagesPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [saveAnimKey, setSaveAnimKey] = useState<number>(0);
 
+  const [topTab, setTopTab] = useState<TopTabKey>('prd');
+  const [prdTab, setPrdTab] = useState<PrdTabKey>('user');
+
   const [isOverridden, setIsOverridden] = useState(false);
   const [settings, setSettings] = useState<PromptSettings | null>(null);
   const [baselineSig, setBaselineSig] = useState<string>('');
+
+  const [sysLoading, setSysLoading] = useState(false);
+  const [sysSaving, setSysSaving] = useState(false);
+  const [sysErr, setSysErr] = useState<string | null>(null);
+  const [sysMsg, setSysMsg] = useState<string | null>(null);
+  const [sysIsOverridden, setSysIsOverridden] = useState(false);
+  const [sysSettings, setSysSettings] = useState<SystemPromptSettings | null>(null);
+  const [sysBaselineSig, setSysBaselineSig] = useState<string>('');
 
   const [activePromptKey, setActivePromptKey] = useState<string>('');
   const [activeRole, setActiveRole] = useState<RoleKey>('pm');
@@ -187,6 +225,30 @@ export default function PromptStagesPage() {
     void load();
   }, [load]);
 
+  const loadSystem = useCallback(async () => {
+    setSysLoading(true);
+    setSysErr(null);
+    setSysMsg(null);
+    try {
+      const res = await getAdminSystemPrompts();
+      if (!res.success) {
+        setSysErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '加载失败'}`);
+        return;
+      }
+      setSysIsOverridden(!!res.data.isOverridden);
+      setSysSettings(res.data.settings);
+      setSysBaselineSig(stableKey({ entries: normalizeSystemEntries(res.data.settings?.entries) }));
+    } finally {
+      setSysLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (topTab !== 'prd' || prdTab !== 'system') return;
+    if (sysSettings) return;
+    void loadSystem();
+  }, [topTab, prdTab, sysSettings, loadSystem]);
+
   const prompts = useMemo(() => normalizePrompts(settings?.prompts), [settings?.prompts]);
   const roleEnum = useMemo(() => roleKeyToEnum(activeRole), [activeRole]);
   const roleStages = useMemo(
@@ -198,11 +260,7 @@ export default function PromptStagesPage() {
     [roleStages, activePromptKey]
   );
 
-  const roleLabel = useMemo(() => {
-    if (activeRole === 'pm') return '产品经理（PM）';
-    if (activeRole === 'dev') return '开发（DEV）';
-    return '测试（QA）';
-  }, [activeRole]);
+  const roleLabel = useMemo(() => roleEnumToChineseLabel(roleEnum), [roleEnum]);
 
   // 角色切换时：若当前 promptKey 不属于该角色，自动切到该角色第一项
   useEffect(() => {
@@ -218,6 +276,30 @@ export default function PromptStagesPage() {
   const isDirty = useMemo(() => !!baselineSig && baselineSig !== currentSig, [baselineSig, currentSig]);
   const validation = useMemo(() => validatePrompts(prompts), [prompts]);
 
+  const sysEntries = useMemo(() => normalizeSystemEntries(sysSettings?.entries), [sysSettings?.entries]);
+  const sysText = useMemo(() => sysEntries.find((x) => x.role === roleEnum)?.systemPrompt ?? '', [sysEntries, roleEnum]);
+  const sysCurrentSig = useMemo(() => stableKey({ entries: sysEntries }), [sysEntries]);
+  const isSysDirty = useMemo(() => !!sysBaselineSig && sysBaselineSig !== sysCurrentSig, [sysBaselineSig, sysCurrentSig]);
+  const sysValidation = useMemo(() => {
+    const entries = sysEntries;
+    const byRole = new Map<RoleEnum, string>();
+    for (const e of entries) {
+      const role = (normalizeText(e.role).toUpperCase() as RoleEnum) || 'PM';
+      const text = normalizeText(e.systemPrompt).trim();
+      byRole.set(role, text);
+    }
+    for (const role of ['PM', 'DEV', 'QA'] as const) {
+      const v = byRole.get(role) ?? '';
+      if (!v) return { ok: false, message: `systemPrompt 不能为空（${role}）` };
+      const lower = v.toLowerCase();
+      if (lower.includes('只返回json') || lower.includes('only return json') || lower.includes('json schema') || lower.includes('```json')) {
+        return { ok: false, message: `禁止在系统提示词中配置 JSON 输出强制约束（${role}）` };
+      }
+      if (v.length > 20000) return { ok: false, message: `systemPrompt 过长（上限 20000 字符，${role}）` };
+    }
+    return { ok: true, message: '' };
+  }, [sysEntries]);
+
   const setPromptField = (field: 'title' | 'promptTemplate', value: string) => {
     setSettings((prev) => {
       if (!prev) return prev;
@@ -229,6 +311,18 @@ export default function PromptStagesPage() {
         return next;
       });
       return { ...prev, prompts: nextPrompts };
+    });
+  };
+
+  const setSystemPromptText = (value: string) => {
+    setSysSettings((prev) => {
+      if (!prev) return prev;
+      const base = normalizeSystemEntries(prev.entries);
+      const exists = base.some((x) => x.role === roleEnum);
+      const nextEntries = (exists ? base : [...base, { role: roleEnum, systemPrompt: '' }]).map((x) =>
+        x.role === roleEnum ? { ...x, systemPrompt: value } : x
+      );
+      return { ...prev, entries: nextEntries };
     });
   };
 
@@ -472,78 +566,225 @@ export default function PromptStagesPage() {
     }
   };
 
+  const saveSystem = async () => {
+    if (!sysSettings) return;
+    if (!sysValidation.ok) {
+      setSysErr(sysValidation.message);
+      return;
+    }
+    setSysSaving(true);
+    setSysErr(null);
+    setSysMsg(null);
+    try {
+      const idem = safeIdempotencyKey();
+      const trimmedEntries = normalizeSystemEntries(sysSettings.entries).map((e) => ({
+        role: e.role,
+        systemPrompt: (e.systemPrompt ?? '').trim(),
+      }));
+      const res = await putAdminSystemPrompts({ entries: trimmedEntries }, idem);
+      if (!res.success) {
+        setSysErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '保存失败'}`);
+        return;
+      }
+      const saved = res.data?.settings;
+      if (!saved || !Array.isArray(saved.entries)) {
+        setSysErr('保存成功但响应缺少 settings，请刷新重试（可能是代理/后端返回异常）');
+        return;
+      }
+      setSysSettings(saved);
+      setSysBaselineSig(stableKey({ entries: normalizeSystemEntries(saved.entries) }));
+      setSysIsOverridden(true);
+      setSysMsg('已保存');
+      const k = Date.now();
+      setSaveAnimKey(k);
+      window.setTimeout(() => {
+        setSaveAnimKey((prev) => (prev === k ? 0 : prev));
+      }, 900);
+    } finally {
+      setSysSaving(false);
+    }
+  };
+
+  const resetSystem = async () => {
+    setSysSaving(true);
+    setSysErr(null);
+    setSysMsg(null);
+    try {
+      const idem = safeIdempotencyKey();
+      const res = await resetAdminSystemPrompts(idem);
+      if (!res.success) {
+        setSysErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '恢复默认失败'}`);
+        return;
+      }
+      setSysMsg('已恢复为系统默认系统提示词');
+      setSysSettings(null);
+      setSysBaselineSig('');
+      await loadSystem();
+    } finally {
+      setSysSaving(false);
+    }
+  };
+
+  const showPrd = topTab === 'prd';
+  const showOther = topTab === 'other';
+  const showUserPrompts = showPrd && prdTab === 'user';
+  const showSystemPrompts = showPrd && prdTab === 'system';
+
+  const uiLoading = showUserPrompts ? loading : showSystemPrompts ? sysLoading : false;
+  const uiSaving = showUserPrompts ? saving : showSystemPrompts ? sysSaving : false;
+  const uiErr = showUserPrompts ? err : showSystemPrompts ? sysErr : null;
+  const uiMsg = showUserPrompts ? msg : showSystemPrompts ? sysMsg : null;
+  const uiIsDirty = showUserPrompts ? isDirty : showSystemPrompts ? isSysDirty : false;
+  const uiIsOverridden = showUserPrompts ? isOverridden : showSystemPrompts ? sysIsOverridden : false;
+  const uiUpdatedAt = showUserPrompts ? settings?.updatedAt : showSystemPrompts ? sysSettings?.updatedAt : null;
+  const uiValidation = showUserPrompts ? validation : showSystemPrompts ? sysValidation : { ok: true, message: '' };
+
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
+    <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
       <Card className="p-4" variant="gold">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>提示词管理</div>
-              {isDirty && (
+              {uiIsDirty && (
                 <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
                   未保存
                 </Badge>
               )}
             </div>
-            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              按提示词（可增删/排序）与角色（PM/DEV/QA）配置标题与提示词模板；将影响 Desktop 提示词按钮与问答注入。
-            </div>
+            {/* tabs：两排（按需求） */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Badge variant={isOverridden ? 'success' : 'subtle'}>{isOverridden ? '已覆盖默认' : '使用默认'}</Badge>
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>UpdatedAt：{fmtDateTime(settings?.updatedAt)}</div>
-              {!validation.ok && (
-                <div className="text-xs" style={{ color: 'rgba(255,120,120,0.95)' }}>
-                  {validation.message}
-                </div>
-              )}
+              <Button
+                variant={topTab === 'prd' ? 'primary' : 'secondary'}
+                size="xs"
+                onClick={() => {
+                  setTopTab('prd');
+                  setErr(null);
+                  setMsg(null);
+                  setSysErr(null);
+                  setSysMsg(null);
+                }}
+              >
+                PRD提示词
+              </Button>
+              <Button
+                variant={topTab === 'other' ? 'primary' : 'secondary'}
+                size="xs"
+                onClick={() => {
+                  setTopTab('other');
+                  setErr(null);
+                  setMsg(null);
+                  setSysErr(null);
+                  setSysMsg(null);
+                }}
+              >
+                其他提示词
+              </Button>
             </div>
+
+            {showPrd && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  variant={prdTab === 'user' ? 'primary' : 'secondary'}
+                  size="xs"
+                  onClick={() => {
+                    setPrdTab('user');
+                    setSysErr(null);
+                    setSysMsg(null);
+                  }}
+                >
+                  用户提示词
+                </Button>
+                <Button
+                  variant={prdTab === 'system' ? 'primary' : 'secondary'}
+                  size="xs"
+                  onClick={() => {
+                    setPrdTab('system');
+                    setErr(null);
+                    setMsg(null);
+                  }}
+                >
+                  系统提示词
+                </Button>
+              </div>
+            )}
+            {(showUserPrompts || showSystemPrompts) && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Badge variant={uiIsOverridden ? 'success' : 'subtle'}>{uiIsOverridden ? '已覆盖默认' : '使用默认'}</Badge>
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>UpdatedAt：{fmtDateTime(uiUpdatedAt)}</div>
+                {!uiValidation.ok && (
+                  <div className="text-xs" style={{ color: 'rgba(255,120,120,0.95)' }}>
+                    {uiValidation.message}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <Button variant="secondary" size="sm" onClick={load} disabled={loading || saving}>
-              <RefreshCw size={16} />
-              刷新
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={save}
-              disabled={loading || saving || !settings || !isDirty || !validation.ok}
-              title={!isDirty ? '未修改无需保存' : !validation.ok ? '请先补齐必填项' : '保存'}
-            >
-              <Save size={16} />
-              保存
-            </Button>
-            <ConfirmTip
-              title="恢复默认？"
-              description="将删除管理员覆盖配置，所有阶段提示词回落到系统默认（不可恢复覆盖内容）。"
-              confirmText="确认恢复默认"
-              onConfirm={reset}
-              disabled={loading || saving}
-              side="top"
-              align="end"
-            >
-              <Button variant="danger" size="sm" disabled={loading || saving}>
-                <RotateCcw size={16} />
-                恢复默认
-              </Button>
-            </ConfirmTip>
+            {!showOther && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={showUserPrompts ? load : loadSystem}
+                  disabled={uiLoading || uiSaving}
+                >
+                  <RefreshCw size={16} />
+                  刷新
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={showUserPrompts ? save : saveSystem}
+                  disabled={
+                    uiLoading ||
+                    uiSaving ||
+                    (showUserPrompts ? !settings : !sysSettings) ||
+                    !uiIsDirty ||
+                    !uiValidation.ok
+                  }
+                  title={!uiIsDirty ? '未修改无需保存' : !uiValidation.ok ? '请先修正校验错误' : '保存'}
+                >
+                  <Save size={16} />
+                  保存
+                </Button>
+                <ConfirmTip
+                  title="恢复默认？"
+                  description={
+                    showUserPrompts
+                      ? '将删除管理员覆盖配置，所有阶段提示词回落到系统默认（不可恢复覆盖内容）。'
+                      : '将删除管理员覆盖配置，系统提示词回落到系统默认（不可恢复覆盖内容）。'
+                  }
+                  confirmText="确认恢复默认"
+                  onConfirm={showUserPrompts ? reset : resetSystem}
+                  disabled={uiLoading || uiSaving}
+                  side="top"
+                  align="end"
+                >
+                  <Button variant="danger" size="sm" disabled={uiLoading || uiSaving}>
+                    <RotateCcw size={16} />
+                    恢复默认
+                  </Button>
+                </ConfirmTip>
+              </>
+            )}
           </div>
         </div>
       </Card>
 
-      {err && (
+      {uiErr && (
         <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>
-          {err}
+          {uiErr}
         </div>
       )}
-      {msg && (
+      {uiMsg && (
         <div
           className="rounded-[14px] px-4 py-3 text-sm relative overflow-hidden"
           style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(34,197,94,0.95)' }}
         >
-          {msg}
-          {msg === '已保存' && saveAnimKey ? (
+          {uiMsg}
+          {uiMsg === '已保存' && saveAnimKey ? (
             <span
               key={saveAnimKey}
               className="ps-save-rocket"
@@ -581,8 +822,9 @@ export default function PromptStagesPage() {
         `}
       </style>
 
-      <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}>
-        <Card className="p-4 min-h-0 flex flex-col">
+      {showUserPrompts ? (
+        <div className="grid gap-4 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}>
+        <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>提示词总览</div>
             <div className="shrink-0">
@@ -595,13 +837,13 @@ export default function PromptStagesPage() {
           <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             共 {roleStages.length} 个提示词（{roleEnum}；支持新增/删除/排序/切换）
           </div>
-          <div className="mt-3 flex-1 min-h-0 overflow-auto grid gap-2">
+          <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0">
             {roleStages.map((s) => {
               const active = s.promptKey === (activePromptKey || roleStages[0]?.promptKey || '');
               return (
                 <div
                   key={s.promptKey}
-                  className="rounded-[14px] transition-colors"
+                  className="rounded-[14px] transition-colors min-w-0 overflow-hidden"
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
                     border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
@@ -685,7 +927,7 @@ export default function PromptStagesPage() {
           </div>
         </Card>
 
-        <Card className="p-4 min-h-0 flex flex-col" variant="default">
+        <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -811,6 +1053,108 @@ export default function PromptStagesPage() {
           </div>
         </Card>
       </div>
+      ) : showSystemPrompts ? (
+        <div
+          className="grid gap-4 flex-1 min-h-0 overflow-x-hidden"
+          style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}
+        >
+          <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>系统提示词总览</div>
+            </div>
+            <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              按角色（PM/DEV/QA）分别配置 PRD 问答 system prompt；仅用于“输出结构/边界/资料使用说明”等非 JSON 约束。
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button variant={activeRole === 'pm' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('pm')} disabled={sysLoading || sysSaving}>
+                产品经理（PM）
+              </Button>
+              <Button variant={activeRole === 'dev' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('dev')} disabled={sysLoading || sysSaving}>
+                开发工程师（DEV）
+              </Button>
+              <Button variant={activeRole === 'qa' ? 'primary' : 'secondary'} size="xs" onClick={() => setActiveRole('qa')} disabled={sysLoading || sysSaving}>
+                质量工程师（QA）
+              </Button>
+            </div>
+
+            <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0">
+              {(['PM', 'DEV', 'QA'] as const).map((r) => {
+                const t = sysEntries.find((x) => x.role === r)?.systemPrompt ?? '';
+                const active = r === roleEnum;
+                const label = roleEnumToChineseLabel(r);
+                return (
+                  <div
+                    key={r}
+                    className="rounded-[14px] px-3 py-3 transition-colors min-w-0 overflow-hidden"
+                    style={{
+                      background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
+                      border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-3 min-w-0">
+                      <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>{label}</div>
+                      <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        字符：{t.length.toLocaleString()}
+                      </div>
+                    </div>
+                    <div
+                      className="mt-1 text-[11px] break-words whitespace-normal"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {t ? t.replace(/\s+/g, ' ').slice(0, 120) : '（未配置，将使用默认）'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  编辑器：{roleLabel} · systemPrompt
+                </div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  注意：这里禁止写入“只返回 JSON / JSON schema / ```json”等约束（避免用户误配导致 PRD 问答异常）。
+                </div>
+              </div>
+              <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                字符：{(sysText ?? '').length.toLocaleString()}
+              </div>
+            </div>
+
+            <div className="mt-3 flex-1 min-h-0">
+              <textarea
+                value={sysText ?? ''}
+                onChange={(e) => setSystemPromptText(e.target.value)}
+                placeholder="建议包含：资料使用说明、输出结构（Markdown 小节）、PRD 未覆盖时的处理方式、边界约束等（禁止 JSON 输出强制约束）"
+                disabled={sysLoading || sysSaving || !sysSettings}
+                className="h-full w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
+                style={{
+                  border: '1px solid var(--border-subtle)',
+                  background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                  color: 'var(--text-primary)',
+                  lineHeight: 1.6,
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                }}
+              />
+            </div>
+
+            <div className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              生效范围：仅 PRD 问答（会话问答 / 本章提问）。不影响 gaps/分析等需要 JSON 输出的内部任务。
+            </div>
+          </Card>
+        </div>
+      ) : (
+        <Card className="p-4 flex-1 min-h-0" variant="default">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>其他提示词</div>
+          <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+            暂未开放：后续可在这里接入与 PRD 问答无关的提示词（例如模型实验室、图片/工具类等）。
+          </div>
+        </Card>
+      )}
 
       <Dialog
         open={optOpen}

@@ -3,7 +3,7 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, forceExpireUser } from '@/services';
+import { getUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser } from '@/services';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 
 type UserRow = {
@@ -14,6 +14,8 @@ type UserRow = {
   status: 'Active' | 'Disabled';
   createdAt: string;
   lastLoginAt?: string;
+  isLocked?: boolean;
+  lockoutRemainingSeconds?: number;
 };
 
 function fmtDateTime(v?: string | null) {
@@ -86,6 +88,8 @@ export default function UsersPage() {
   const [forceExpireError, setForceExpireError] = useState<string | null>(null);
   const [forceTargets, setForceTargets] = useState<{ admin: boolean; desktop: boolean }>({ admin: true, desktop: true });
 
+  const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
+
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
     const touched = v.length > 0;
@@ -140,6 +144,24 @@ export default function UsersPage() {
     setPwd2('');
     setPwdSubmitError(null);
     setPwdOpen(true);
+  };
+
+  const isLockedUser = (u: UserRow) => {
+    const remaining = typeof u.lockoutRemainingSeconds === 'number' ? u.lockoutRemainingSeconds : 0;
+    if (remaining > 0) return true;
+    return u.isLocked === true;
+  };
+
+  const onUnlock = async (u: UserRow) => {
+    if (!u?.userId) return;
+    setUnlockingUserId(u.userId);
+    try {
+      const res = await unlockUser(u.userId);
+      if (!res.success) return;
+      await load();
+    } finally {
+      setUnlockingUserId(null);
+    }
   };
 
   const submitChangePassword = async () => {
@@ -333,6 +355,21 @@ export default function UsersPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {isLockedUser(u) && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={unlockingUserId === u.userId}
+                            onClick={() => onUnlock(u)}
+                            title={
+                              typeof u.lockoutRemainingSeconds === 'number' && u.lockoutRemainingSeconds > 0
+                                ? `当前锁定剩余 ${u.lockoutRemainingSeconds} 秒`
+                                : '解除登录锁定'
+                            }
+                          >
+                            {unlockingUserId === u.userId ? '解除中...' : '解除锁定'}
+                          </Button>
+                        )}
                         <Button variant="secondary" size="sm" onClick={() => openForceExpire(u)}>
                           一键过期
                         </Button>

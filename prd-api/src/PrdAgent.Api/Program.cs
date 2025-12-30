@@ -122,6 +122,7 @@ builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPromptService, PrdAgent.Infrastructure.Services.PromptService>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
 
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
@@ -681,10 +682,11 @@ builder.Services.AddScoped<IChatService>(sp =>
     var cache = sp.GetRequiredService<ICacheManager>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var promptService = sp.GetRequiredService<IPromptService>();
+    var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, userService, messageRepo, llmCtx);
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, llmCtx);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
@@ -695,7 +697,8 @@ builder.Services.AddScoped<IPreviewAskService>(sp =>
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var settingsService = sp.GetRequiredService<IAppSettingsService>();
-    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx, settingsService);
+    var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
+    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx, settingsService, systemPromptService);
 });
 
 // 引导讲解体系已删除（去阶段化）

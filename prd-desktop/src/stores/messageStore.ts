@@ -1,23 +1,34 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { DocCitation, Message, MessageBlock, MessageBlockKind } from '../types';
+import { invoke } from '../lib/tauri';
+import type { ApiResponse, DocCitation, Message, MessageBlock, MessageBlockKind } from '../types';
 
 export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
 
 interface MessageState {
   boundSessionId: string | null;
   isPinnedToBottom: boolean;
+  scrollToBottomSeq: number;
 
   messages: Message[];
   isStreaming: boolean;
   streamingMessageId: string | null;
   streamingPhase: StreamingPhase;
+
+  // 上拉加载历史（向前分页）
+  isLoadingOlder: boolean;
+  hasMoreOlder: boolean;
+  oldestTimestamp: string | null; // ISO string
   
   bindSession: (sessionId: string | null) => void;
   setPinnedToBottom: (pinned: boolean) => void;
+  triggerScrollToBottom: () => void;
 
   addMessage: (message: Message) => void;
   setMessages: (messages: Message[]) => void;
+  initHistoryPaging: (pageSize: number) => void;
+  prependMessages: (messages: Message[]) => number;
+  loadOlderMessages: (args: { sessionId: string; limit?: number }) => Promise<{ added: number }>;
   upsertMessage: (message: Message) => void;
   startStreaming: (message: Message) => void;
   appendToStreamingMessage: (content: string) => void;
@@ -55,16 +66,29 @@ function reviveMessages(list: any): Message[] {
   return list.map(reviveMessage).filter((x) => x.id);
 }
 
+type MessageHistoryItem = {
+  id: string;
+  role: string;
+  content: string;
+  viewRole?: string;
+  timestamp: string;
+};
+
 export const useMessageStore = create<MessageState>()(
   persist(
     (set) => ({
       boundSessionId: null,
       isPinnedToBottom: true,
+      scrollToBottomSeq: 0,
 
       messages: [],
       isStreaming: false,
       streamingMessageId: null,
       streamingPhase: null,
+
+      isLoadingOlder: false,
+      hasMoreOlder: true,
+      oldestTimestamp: null,
 
   // 绑定“当前消息所属的 sessionId”，用于：
   // - 避免 ChatContainer 因卸载/重挂载而误清空同一会话的对话（看起来像“不持久化”）
@@ -76,19 +100,27 @@ export const useMessageStore = create<MessageState>()(
       return {
         boundSessionId: null,
         isPinnedToBottom: true,
+        scrollToBottomSeq: 0,
         messages: [],
         isStreaming: false,
         streamingMessageId: null,
         streamingPhase: null,
+        isLoadingOlder: false,
+        hasMoreOlder: true,
+        oldestTimestamp: null,
       };
     }
     return {
       boundSessionId: next,
       isPinnedToBottom: true,
+      scrollToBottomSeq: 0,
       messages: [],
       isStreaming: false,
       streamingMessageId: null,
       streamingPhase: null,
+      isLoadingOlder: false,
+      hasMoreOlder: true,
+      oldestTimestamp: null,
     };
   }),
 
@@ -97,6 +129,13 @@ export const useMessageStore = create<MessageState>()(
     if (state.isPinnedToBottom === next) return state;
     return { isPinnedToBottom: next };
   }),
+
+  // 用户主动触发“跳到最新一页”（例如发送消息/点击提示词）
+  // 仅作为轻量信号：由 MessageList 监听并执行 scrollIntoView
+  triggerScrollToBottom: () => set((state) => ({
+    isPinnedToBottom: true,
+    scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
+  })),
   
   addMessage: (message) => set((state) => {
     const next = [...state.messages, message];
@@ -104,6 +143,79 @@ export const useMessageStore = create<MessageState>()(
   }),
   
   setMessages: (messages) => set(() => ({ messages })),
+
+  // 初次加载/切换会话后：用当前已加载的 messages 初始化游标
+  initHistoryPaging: (pageSize) => set((state) => {
+    const ps = Math.max(1, Math.min(200, Number(pageSize) || 50));
+    const list = Array.isArray(state.messages) ? state.messages : [];
+    const oldest = list.length > 0 ? list[0].timestamp : null;
+    return {
+      oldestTimestamp: oldest ? oldest.toISOString() : null,
+      hasMoreOlder: list.length >= ps,
+      isLoadingOlder: false,
+    };
+  }),
+
+  prependMessages: (messages) => {
+    let added = 0;
+    set((state) => {
+      const list = Array.isArray(messages) ? messages : [];
+      if (list.length === 0) return state;
+      const existing = new Set(state.messages.map((m) => m.id));
+      const toAdd = list.filter((m) => m?.id && !existing.has(m.id));
+      if (toAdd.length === 0) return state;
+      added = toAdd.length;
+      const next = [...toAdd, ...state.messages];
+      const oldest = next.length > 0 ? next[0].timestamp : null;
+      return {
+        messages: next,
+        oldestTimestamp: oldest ? oldest.toISOString() : null,
+      };
+    });
+    return added;
+  },
+
+  loadOlderMessages: async ({ sessionId, limit }) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return { added: 0 };
+
+    const state = useMessageStore.getState();
+    if (state.isLoadingOlder) return { added: 0 };
+    if (!state.hasMoreOlder) return { added: 0 };
+
+    const take = Math.max(1, Math.min(200, Number(limit) || 50));
+    const before = state.oldestTimestamp ? new Date(state.oldestTimestamp).toISOString() : null;
+
+    set({ isLoadingOlder: true });
+    try {
+      const resp = await invoke<ApiResponse<MessageHistoryItem[]>>('get_message_history', {
+        sessionId: sid,
+        limit: take,
+        before,
+      });
+      if (!resp?.success || !Array.isArray(resp.data)) {
+        set({ isLoadingOlder: false });
+        return { added: 0 };
+      }
+
+      const mapped: Message[] = resp.data.map((m) => ({
+        id: m.id,
+        role: (m.role === 'User' ? 'User' : 'Assistant') as any,
+        content: m.content,
+        timestamp: new Date(m.timestamp),
+        viewRole: (m.viewRole as any) || undefined,
+      }));
+
+      const added = useMessageStore.getState().prependMessages(mapped);
+      // 当返回不足一页时，认为没有更多
+      const hasMoreOlder = resp.data.length >= take;
+      set({ isLoadingOlder: false, hasMoreOlder });
+      return { added };
+    } catch {
+      set({ isLoadingOlder: false });
+      return { added: 0 };
+    }
+  },
 
   upsertMessage: (message) => set((state) => {
     const idx = state.messages.findIndex((m) => m.id === message.id);
@@ -223,19 +335,27 @@ export const useMessageStore = create<MessageState>()(
   clearCurrentContext: (sessionId) => set(() => ({
     boundSessionId: sessionId ? String(sessionId).trim() : null,
     isPinnedToBottom: true,
+    scrollToBottomSeq: 0,
     messages: [],
     isStreaming: false,
     streamingMessageId: null,
     streamingPhase: null,
+    isLoadingOlder: false,
+    hasMoreOlder: true,
+    oldestTimestamp: null,
   })),
   
       clearMessages: () => set({
         boundSessionId: null,
         isPinnedToBottom: true,
+        scrollToBottomSeq: 0,
         messages: [],
         isStreaming: false,
         streamingMessageId: null,
         streamingPhase: null,
+        isLoadingOlder: false,
+        hasMoreOlder: true,
+        oldestTimestamp: null,
       }),
     }),
     {
@@ -252,7 +372,12 @@ export const useMessageStore = create<MessageState>()(
           ...current,
           ...p,
         };
-        next.messages = reviveMessages(p.messages);
+        const revived = reviveMessages(p.messages);
+        next.messages = revived;
+        // 非持久化字段：基于已持久化的 messages 进行重建
+        next.isLoadingOlder = false;
+        next.hasMoreOlder = true;
+        next.oldestTimestamp = revived.length > 0 ? revived[0].timestamp.toISOString() : null;
         return next as MessageState;
       },
     }

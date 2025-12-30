@@ -63,6 +63,18 @@ public class LoginAttemptService : ILoginAttemptService
         await _cache.RemoveAsync(attemptKey);
     }
 
+    public async Task UnlockAsync(string username)
+    {
+        var normalizedUsername = (username ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedUsername))
+            return;
+
+        var attemptKey = $"{AttemptKeyPrefix}{normalizedUsername}";
+        var lockoutKey = $"{LockoutKeyPrefix}{normalizedUsername}";
+        await _cache.RemoveAsync(attemptKey);
+        await _cache.RemoveAsync(lockoutKey);
+    }
+
     public async Task<int> GetLockoutRemainingSecondsAsync(string username)
     {
         var lockoutKey = $"{LockoutKeyPrefix}{username.ToLowerInvariant()}";

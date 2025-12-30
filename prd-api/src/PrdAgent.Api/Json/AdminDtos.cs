@@ -25,6 +25,10 @@ public class UserListItem
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    /// <summary>是否处于登录锁定期（由 LoginAttemptService 动态计算）</summary>
+    public bool IsLocked { get; set; }
+    /// <summary>剩余锁定秒数（0 表示未锁定）</summary>
+    public int LockoutRemainingSeconds { get; set; }
 }
 
 /// <summary>
@@ -39,6 +43,8 @@ public class UserDetailResponse
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    public bool IsLocked { get; set; }
+    public int LockoutRemainingSeconds { get; set; }
 }
 
 /// <summary>
@@ -66,6 +72,16 @@ public class UserPasswordUpdateResponse
 {
     public string UserId { get; set; } = string.Empty;
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// 管理端解锁用户响应
+/// </summary>
+public class UnlockUserResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
+    public DateTime UnlockedAt { get; set; }
 }
 
 /// <summary>

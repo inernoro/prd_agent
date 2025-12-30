@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 
@@ -18,11 +19,13 @@ public class AdminUsersController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminUsersController> _logger;
+    private readonly ILoginAttemptService _loginAttemptService;
 
-    public AdminUsersController(MongoDbContext db, ILogger<AdminUsersController> logger)
+    public AdminUsersController(MongoDbContext db, ILogger<AdminUsersController> logger, ILoginAttemptService loginAttemptService)
     {
         _db = db;
         _logger = logger;
+        _loginAttemptService = loginAttemptService;
     }
 
     /// <summary>
@@ -63,9 +66,10 @@ public class AdminUsersController : ControllerBase
             .Limit(pageSize)
             .ToListAsync();
 
-        var response = new UserListResponse
+        var items = await Task.WhenAll(users.Select(async u =>
         {
-            Items = users.Select(u => new UserListItem
+            var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(u.Username);
+            return new UserListItem
             {
                 UserId = u.UserId,
                 Username = u.Username,
@@ -73,8 +77,15 @@ public class AdminUsersController : ControllerBase
                 Role = u.Role.ToString(),
                 Status = u.Status.ToString(),
                 CreatedAt = u.CreatedAt,
-                LastLoginAt = u.LastLoginAt
-            }).ToList(),
+                LastLoginAt = u.LastLoginAt,
+                IsLocked = remaining > 0,
+                LockoutRemainingSeconds = remaining
+            };
+        }));
+
+        var response = new UserListResponse
+        {
+            Items = items.ToList(),
             Total = total,
             Page = page,
             PageSize = pageSize
@@ -96,6 +107,7 @@ public class AdminUsersController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         }
 
+        var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(user.Username);
         var response = new UserDetailResponse
         {
             UserId = user.UserId,
@@ -104,10 +116,42 @@ public class AdminUsersController : ControllerBase
             Role = user.Role.ToString(),
             Status = user.Status.ToString(),
             CreatedAt = user.CreatedAt,
-            LastLoginAt = user.LastLoginAt
+            LastLoginAt = user.LastLoginAt,
+            IsLocked = remaining > 0,
+            LockoutRemainingSeconds = remaining
         };
 
         return Ok(ApiResponse<UserDetailResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 解除登录锁定（管理员）
+    /// </summary>
+    [HttpPost("{userId}/unlock")]
+    [ProducesResponseType(typeof(ApiResponse<UnlockUserResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UnlockUser(string userId)
+    {
+        var uid = (userId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(uid))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userId 不能为空"));
+        }
+
+        var user = await _db.Users.Find(u => u.UserId == uid).FirstOrDefaultAsync();
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        await _loginAttemptService.UnlockAsync(user.Username);
+        _logger.LogInformation("Admin unlocked user login lockout: userId={UserId}, username={Username}", uid, user.Username);
+
+        return Ok(ApiResponse<UnlockUserResponse>.Ok(new UnlockUserResponse
+        {
+            UserId = uid,
+            Username = user.Username,
+            UnlockedAt = DateTime.UtcNow
+        }));
     }
 
     /// <summary>

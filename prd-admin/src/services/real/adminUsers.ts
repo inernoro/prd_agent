@@ -6,6 +6,7 @@ import type {
   UpdateUserPasswordContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
+  UnlockUserContract,
   ForceExpireUserContract,
   ForceExpireTargets,
   GetUsersParams,
@@ -54,6 +55,15 @@ export const updateUserPasswordReal: UpdateUserPasswordContract = async (userId:
   const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/password`, {
     method: 'PUT',
     body: { password },
+  });
+  if (!res.success) return res as unknown as ApiResponse<true>;
+  return ok(true);
+};
+
+export const unlockUserReal: UnlockUserContract = async (userId: string): Promise<ApiResponse<true>> => {
+  const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/unlock`, {
+    method: 'POST',
+    body: {},
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);

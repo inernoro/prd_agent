@@ -3,6 +3,7 @@ import { ok } from '@/types/api';
 import type {
   AdminGroup,
   AdminGroupMember,
+  AdminMessage,
   AdminGapStatus,
   GetAdminGroupGapsContract,
   GetAdminGroupMembersContract,
@@ -100,7 +101,7 @@ export const getAdminGroupMessagesReal: GetAdminGroupMessagesContract = async (g
   q.set('page', String(params.page));
   q.set('pageSize', String(params.pageSize));
   if (params.q) q.set('q', params.q);
-  return await apiRequest<PagedResult<any>>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/messages?${q.toString()}`);
+  return await apiRequest<PagedResult<AdminMessage>>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/messages?${q.toString()}`);
 };
 
 

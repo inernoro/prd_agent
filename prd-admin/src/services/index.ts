@@ -7,6 +7,7 @@ import type {
   UpdateUserPasswordContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
+  UnlockUserContract,
   ForceExpireUserContract,
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
@@ -45,6 +46,11 @@ import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
 import type { GetAdminPromptsContract, PutAdminPromptsContract, ResetAdminPromptsContract } from '@/services/contracts/prompts';
 import type {
+  GetAdminSystemPromptsContract,
+  PutAdminSystemPromptsContract,
+  ResetAdminSystemPromptsContract,
+} from '@/services/contracts/systemPrompts';
+import type {
   DeleteAdminImageGenPlanPromptOverrideContract,
   GetAdminImageGenPlanPromptOverrideContract,
   PutAdminImageGenPlanPromptOverrideContract,
@@ -73,7 +79,15 @@ import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import { loginReal } from '@/services/real/auth';
-import { getUsersReal, generateInviteCodesReal, updateUserPasswordReal, updateUserRoleReal, updateUserStatusReal, forceExpireUserReal } from '@/services/real/adminUsers';
+import {
+  getUsersReal,
+  generateInviteCodesReal,
+  updateUserPasswordReal,
+  updateUserRoleReal,
+  updateUserStatusReal,
+  unlockUserReal,
+  forceExpireUserReal,
+} from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal } from '@/services/real/models';
@@ -117,6 +131,7 @@ import {
 import { exportConfigReal, getDataSummaryReal, importConfigReal, previewImportConfigReal, purgeDataReal } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
 import { getAdminPromptsReal, putAdminPromptsReal, resetAdminPromptsReal } from '@/services/real/prompts';
+import { getAdminSystemPromptsReal, putAdminSystemPromptsReal, resetAdminSystemPromptsReal } from '@/services/real/systemPrompts';
 import {
   deleteAdminImageGenPlanPromptOverrideReal,
   getAdminImageGenPlanPromptOverrideReal,
@@ -151,6 +166,7 @@ export const getUsers: GetUsersContract = withAuth(getUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleReal);
 export const updateUserStatus: UpdateUserStatusContract = withAuth(updateUserStatusReal);
 export const updateUserPassword: UpdateUserPasswordContract = withAuth(updateUserPasswordReal);
+export const unlockUser: UnlockUserContract = withAuth(unlockUserReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
 export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);
 
@@ -212,6 +228,9 @@ export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetail
 export const getAdminPrompts: GetAdminPromptsContract = withAuth(getAdminPromptsReal);
 export const putAdminPrompts: PutAdminPromptsContract = withAuth(putAdminPromptsReal);
 export const resetAdminPrompts: ResetAdminPromptsContract = withAuth(resetAdminPromptsReal);
+export const getAdminSystemPrompts: GetAdminSystemPromptsContract = withAuth(getAdminSystemPromptsReal);
+export const putAdminSystemPrompts: PutAdminSystemPromptsContract = withAuth(putAdminSystemPromptsReal);
+export const resetAdminSystemPrompts: ResetAdminSystemPromptsContract = withAuth(resetAdminSystemPromptsReal);
 export const getApiLogsMeta: GetApiLogsMetaContract = withAuth(getApiLogsMetaReal);
 
 export const getAdminImageGenPlanPromptOverride: GetAdminImageGenPlanPromptOverrideContract = withAuth(getAdminImageGenPlanPromptOverrideReal);

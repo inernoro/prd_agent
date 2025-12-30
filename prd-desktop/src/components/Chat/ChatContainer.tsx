@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { memo, useEffect } from 'react';
 import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -12,25 +12,24 @@ const phaseText: Record<string, string> = {
   typing: '开始输出…',
 };
 
-export default function ChatContainer() {
+function ChatContainerInner() {
   const { sessionId, currentRole } = useSessionStore();
-  const {
-    messages,
-    startStreaming,
-    appendToStreamingMessage,
-    startStreamingBlock,
-    appendToStreamingBlock,
-    endStreamingBlock,
-    setMessageCitations,
-    stopStreaming,
-    setMessages,
-    addMessage,
-    isStreaming,
-    streamingMessageId,
-    streamingPhase,
-    setStreamingPhase,
-    bindSession,
-  } = useMessageStore();
+  const messages = useMessageStore((s) => s.messages);
+  const startStreaming = useMessageStore((s) => s.startStreaming);
+  const appendToStreamingMessage = useMessageStore((s) => s.appendToStreamingMessage);
+  const startStreamingBlock = useMessageStore((s) => s.startStreamingBlock);
+  const appendToStreamingBlock = useMessageStore((s) => s.appendToStreamingBlock);
+  const endStreamingBlock = useMessageStore((s) => s.endStreamingBlock);
+  const setMessageCitations = useMessageStore((s) => s.setMessageCitations);
+  const stopStreaming = useMessageStore((s) => s.stopStreaming);
+  const setMessages = useMessageStore((s) => s.setMessages);
+  const initHistoryPaging = useMessageStore((s) => s.initHistoryPaging);
+  const addMessage = useMessageStore((s) => s.addMessage);
+  const isStreaming = useMessageStore((s) => s.isStreaming);
+  const streamingMessageId = useMessageStore((s) => s.streamingMessageId);
+  const streamingPhase = useMessageStore((s) => s.streamingPhase);
+  const setStreamingPhase = useMessageStore((s) => s.setStreamingPhase);
+  const bindSession = useMessageStore((s) => s.bindSession);
 
   const showTopPhaseBanner =
     isStreaming &&
@@ -119,12 +118,14 @@ export default function ChatContainer() {
             viewRole: (m.viewRole as any) || undefined,
           }));
           setMessages(mapped);
+          // 初次载入：用于“向上瀑布加载”游标初始化
+          initHistoryPaging(50);
         }
       })
       .catch((err) => {
         console.error('Failed to load message history:', err);
       });
-  }, [sessionId, bindSession, setMessages]);
+  }, [sessionId, bindSession, setMessages, initHistoryPaging]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -144,4 +145,6 @@ export default function ChatContainer() {
     </div>
   );
 }
+
+export default memo(ChatContainerInner);
 

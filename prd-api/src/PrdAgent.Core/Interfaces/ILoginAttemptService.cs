@@ -14,6 +14,9 @@ public interface ILoginAttemptService
     /// <summary>重置尝试记录</summary>
     Task ResetAttemptsAsync(string username);
 
+    /// <summary>管理员解锁：清除锁定标记与失败计数</summary>
+    Task UnlockAsync(string username);
+
     /// <summary>获取剩余锁定时间（秒）</summary>
     Task<int> GetLockoutRemainingSecondsAsync(string username);
 }

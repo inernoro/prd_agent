@@ -44,6 +44,10 @@ public class MongoDbContext
     /// promptstages 原始集合（用于兼容旧结构迁移，避免 POCO 映射丢字段）
     /// </summary>
     public IMongoCollection<BsonDocument> PromptsRaw => _database.GetCollection<BsonDocument>("promptstages");
+    /// <summary>
+    /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
+    /// </summary>
+    public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
@@ -98,6 +102,12 @@ public class MongoDbContext
             Builders<Message>.IndexKeys.Ascending(m => m.GroupId)));
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
             Builders<Message>.IndexKeys.Ascending(m => m.SessionId)));
+        // 用于按 sessionId + 时间游标分页（before）
+        Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
+            Builders<Message>.IndexKeys
+                .Ascending(m => m.SessionId)
+                .Descending(m => m.Timestamp),
+            new CreateIndexOptions { Name = "idx_messages_session_ts" }));
 
         // ContentGaps索引
         ContentGaps.Indexes.CreateOne(new CreateIndexModel<ContentGap>(

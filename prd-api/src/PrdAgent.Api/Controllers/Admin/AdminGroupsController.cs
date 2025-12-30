@@ -393,6 +393,7 @@ public class AdminGroupsController : ControllerBase
             SenderId = m.SenderId,
             Role = m.Role.ToString(),
             Content = m.Content,
+            LlmRequestId = m.LlmRequestId,
             ViewRole = m.ViewRole?.ToString(),
             Timestamp = m.Timestamp,
             TokenUsage = m.TokenUsage == null ? null : new AdminTokenUsageDto { Input = m.TokenUsage.Input, Output = m.TokenUsage.Output }
@@ -514,6 +515,7 @@ public class AdminMessageDto
     public string? SenderId { get; set; }
     public string Role { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+    public string? LlmRequestId { get; set; }
     public string? ViewRole { get; set; }
     public DateTime Timestamp { get; set; }
     public AdminTokenUsageDto? TokenUsage { get; set; }

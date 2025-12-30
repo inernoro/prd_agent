@@ -10,6 +10,10 @@ export type AdminUser = {
   status: UserStatus;
   createdAt: string;
   lastLoginAt?: string;
+  /** 是否处于登录锁定期（后端动态计算） */
+  isLocked?: boolean;
+  /** 剩余锁定秒数（0/undefined 表示未锁定） */
+  lockoutRemainingSeconds?: number;
 };
 
 export type PagedResult<T> = {

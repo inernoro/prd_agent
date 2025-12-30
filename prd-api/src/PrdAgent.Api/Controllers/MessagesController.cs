@@ -15,13 +15,16 @@ namespace PrdAgent.Api.Controllers;
 public class MessagesController : ControllerBase
 {
     private readonly IChatService _chatService;
+    private readonly IMessageRepository _messageRepository;
     private readonly ILogger<MessagesController> _logger;
 
     public MessagesController(
         IChatService chatService,
+        IMessageRepository messageRepository,
         ILogger<MessagesController> logger)
     {
         _chatService = chatService;
+        _messageRepository = messageRepository;
         _logger = logger;
     }
 
@@ -109,9 +112,13 @@ public class MessagesController : ControllerBase
     /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<List<MessageResponse>>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetHistory(string sessionId, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetHistory(
+        string sessionId,
+        [FromQuery] int limit = 50,
+        [FromQuery] DateTime? before = null)
     {
-        var messages = await _chatService.GetHistoryAsync(sessionId, limit);
+        // 历史回放：走 MongoDB 分页（持久化），而不是 cache（cache 仅用于 LLM 上下文拼接）
+        var messages = await _messageRepository.FindBySessionAsync(sessionId, before, limit);
         
         var response = messages.Select(m => new MessageResponse
         {

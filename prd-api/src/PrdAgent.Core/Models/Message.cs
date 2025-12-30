@@ -23,6 +23,11 @@ public class Message
     /// <summary>消息内容</summary>
     public string Content { get; set; } = string.Empty;
     
+    /// <summary>
+    /// 关联的 LLM 请求 requestId（用于后台定位本次调用日志；可为空，兼容历史消息/非LLM消息）
+    /// </summary>
+    public string? LlmRequestId { get; set; }
+
     /// <summary>回答时的视角角色</summary>
     public UserRole? ViewRole { get; set; }
     

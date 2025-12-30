@@ -173,15 +173,20 @@ pub async fn get_session(session_id: String) -> Result<ApiResponse<SessionInfo>,
 pub async fn get_message_history(
     session_id: String,
     limit: Option<i32>,
+    before: Option<String>,
 ) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
     let client = ApiClient::new();
-    let limit = limit.unwrap_or(50);
-    client
-        .get(&format!(
-            "/sessions/{}/messages?limit={}",
-            session_id, limit
-        ))
-        .await
+    let limit = limit.unwrap_or(50).max(1).min(200);
+    let mut path = format!("/sessions/{}/messages?limit={}", session_id, limit);
+    if let Some(b) = before {
+        let bb = b.trim().to_string();
+        if !bb.is_empty() {
+            // before 参数建议由前端传 UTC ISO（toISOString，末尾 'Z'），避免 '+' 被 query 解析为空格
+            path.push_str("&before=");
+            path.push_str(&bb);
+        }
+    }
+    client.get(&path).await
 }
 
 #[command]
