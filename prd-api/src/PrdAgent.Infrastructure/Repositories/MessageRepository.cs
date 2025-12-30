@@ -40,7 +40,11 @@ public class MessageRepository : IMessageRepository
 
         var list = await _messages
             .Find(filter)
+            // 关键：二级排序保证 Timestamp 相同（同一毫秒）时顺序稳定
+            // - 先取 desc（配合 before + limit）
+            // - Role: Assistant(1) 在前，Reverse 后变为 User 在前（更符合“问 -> 答”的展示）
             .SortByDescending(x => x.Timestamp)
+            .ThenByDescending(x => x.Role)
             .Limit(take)
             .ToListAsync();
 
@@ -66,6 +70,7 @@ public class MessageRepository : IMessageRepository
         var list = await _messages
             .Find(filter)
             .SortByDescending(x => x.Timestamp)
+            .ThenByDescending(x => x.Role)
             .Limit(take)
             .ToListAsync();
 

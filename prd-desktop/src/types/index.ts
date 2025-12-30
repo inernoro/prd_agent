@@ -58,6 +58,13 @@ export interface Message {
   citations?: DocCitation[];
   viewRole?: UserRole;
   timestamp: Date;
+  // 服务端时间点（用于端到端统一与首字延迟）
+  serverRequestReceivedAtUtc?: Date;
+  serverStartAtUtc?: Date;
+  serverFirstTokenAtUtc?: Date;
+  serverDoneAtUtc?: Date;
+  ttftMs?: number;
+  totalMs?: number;
   senderId?: string;
   senderName?: string;
 }
@@ -97,6 +104,12 @@ export interface StreamEvent {
   content?: string;
   errorCode?: string;
   errorMessage?: string;
+  // 服务端时间点（ISO 字符串，UTC）
+  requestReceivedAtUtc?: string;
+  startAtUtc?: string;
+  firstTokenAtUtc?: string;
+  doneAtUtc?: string;
+  ttftMs?: number;
   blockId?: string;
   blockKind?: MessageBlockKind;
   blockLanguage?: string;

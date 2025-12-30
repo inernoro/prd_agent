@@ -36,6 +36,15 @@ public class ChatStreamEvent
     public string? ErrorMessage { get; set; }
     public SenderInfo? Sender { get; set; }
 
+    /// <summary>
+    /// 服务端时间点（UTC）：用于端到端对齐与首字延迟（TTFT）计算，避免前端本地时间误导。
+    /// </summary>
+    public DateTime? RequestReceivedAtUtc { get; set; }
+    public DateTime? StartAtUtc { get; set; }
+    public DateTime? FirstTokenAtUtc { get; set; }
+    public DateTime? DoneAtUtc { get; set; }
+    public int? TtftMs { get; set; }
+
     // Block Protocol（用于稳定的流式 Markdown 渲染）
     // type: blockStart / blockDelta / blockEnd
     public string? BlockId { get; set; }

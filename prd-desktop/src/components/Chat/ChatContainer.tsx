@@ -32,6 +32,7 @@ function ChatContainerInner() {
   const streamingPhase = useMessageStore((s) => s.streamingPhase);
   const setStreamingPhase = useMessageStore((s) => s.setStreamingPhase);
   const bindSession = useMessageStore((s) => s.bindSession);
+  const ackPendingUserMessageTimestamp = useMessageStore((s) => s.ackPendingUserMessageTimestamp);
 
   const showTopPhaseBanner =
     isStreaming &&
@@ -43,33 +44,133 @@ function ChatContainerInner() {
   useEffect(() => {
     // 监听消息流事件
     const unlistenMessage = listen<any>('message-chunk', (event) => {
-      const { type, content, messageId, errorMessage, phase, blockId, blockKind, blockLanguage, citations } = event.payload || {};
+      const {
+        type,
+        content,
+        messageId,
+        errorMessage,
+        phase,
+        blockId,
+        blockKind,
+        blockLanguage,
+        citations,
+        requestReceivedAtUtc,
+        startAtUtc,
+        firstTokenAtUtc,
+        doneAtUtc,
+        ttftMs,
+      } = event.payload || {};
+
+      const parseUtc = (v: any) => {
+        if (typeof v !== 'string' || !v) return null;
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? null : d;
+      };
       
       if (type === 'start') {
         // 真实 start 到达：移除本地“请求中”占位气泡
         clearPendingAssistant();
+        const dRecv = parseUtc(requestReceivedAtUtc);
+        const dStart = parseUtc(startAtUtc) || dRecv;
+        if (dRecv) {
+          // 用户消息发送时间：以服务端 requestReceivedAtUtc 为准（与 DB 保持一致）
+          ackPendingUserMessageTimestamp({ receivedAt: dRecv });
+        }
         startStreaming({
           id: messageId || `assistant-${Date.now()}`,
           role: 'Assistant',
           content: '',
-          timestamp: new Date(),
+          timestamp: dStart || new Date(),
+          serverRequestReceivedAtUtc: dRecv || undefined,
+          serverStartAtUtc: dStart || undefined,
           viewRole: currentRole,
           blocks: [],
         });
         // 交给 store：startStreaming 默认 phase=requesting；后续 phase 事件会更新；
         // 一旦进入 typing（收到首包 delta/blockDelta），将不再被 phase 覆盖（见 messageStore.setStreamingPhase）
       } else if (type === 'blockStart' && blockId && blockKind) {
+        // 首字延迟（TTFT）只在首次输出时下发一次：落到 streaming message 上
+        if (messageId && (typeof ttftMs === 'number' || firstTokenAtUtc)) {
+          const dFirst = parseUtc(firstTokenAtUtc);
+          const dRecv = parseUtc(requestReceivedAtUtc);
+          const dStart = parseUtc(startAtUtc);
+          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
+          if (existing) {
+            useMessageStore.getState().upsertMessage({
+              ...existing,
+              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
+              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
+              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
+              serverStartAtUtc: dStart || existing.serverStartAtUtc,
+              // 你的规约：assistant 时间=首字时间（与 DB 保持一致），因此首字一到就把 timestamp 回填为 firstTokenAtUtc
+              timestamp: dFirst || existing.timestamp,
+            } as any);
+          }
+        }
         startStreamingBlock({ id: blockId, kind: blockKind, language: blockLanguage ?? null });
       } else if (type === 'blockDelta' && blockId && content) {
+        if (messageId && (typeof ttftMs === 'number' || firstTokenAtUtc)) {
+          const dFirst = parseUtc(firstTokenAtUtc);
+          const dRecv = parseUtc(requestReceivedAtUtc);
+          const dStart = parseUtc(startAtUtc);
+          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
+          if (existing) {
+            useMessageStore.getState().upsertMessage({
+              ...existing,
+              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
+              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
+              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
+              serverStartAtUtc: dStart || existing.serverStartAtUtc,
+              timestamp: dFirst || existing.timestamp,
+            } as any);
+          }
+        }
         appendToStreamingBlock(blockId, content);
       } else if (type === 'blockEnd' && blockId) {
         endStreamingBlock(blockId);
       } else if (type === 'delta' && content) {
+        if (messageId && (typeof ttftMs === 'number' || firstTokenAtUtc)) {
+          const dFirst = parseUtc(firstTokenAtUtc);
+          const dRecv = parseUtc(requestReceivedAtUtc);
+          const dStart = parseUtc(startAtUtc);
+          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
+          if (existing) {
+            useMessageStore.getState().upsertMessage({
+              ...existing,
+              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
+              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
+              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
+              serverStartAtUtc: dStart || existing.serverStartAtUtc,
+              timestamp: dFirst || existing.timestamp,
+            } as any);
+          }
+        }
         // 兼容旧协议
         appendToStreamingMessage(content);
       } else if (type === 'citations' && messageId && Array.isArray(citations)) {
         setMessageCitations(messageId, citations);
       } else if (type === 'done') {
+        // done：不再覆盖 timestamp（你的规约：assistant 落库时间=首字时间），这里只记录 doneAt 以便计算耗时
+        if (messageId) {
+          const dDone = parseUtc(doneAtUtc);
+          const dRecv = parseUtc(requestReceivedAtUtc);
+          const dStart = parseUtc(startAtUtc);
+          const dFirst = parseUtc(firstTokenAtUtc);
+          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
+          if (existing && dDone) {
+            const base = (dRecv || dStart || existing.serverRequestReceivedAtUtc || existing.serverStartAtUtc) ?? null;
+            const totalMs = base ? Math.max(0, Math.round(dDone.getTime() - base.getTime())) : undefined;
+            useMessageStore.getState().upsertMessage({
+              ...existing,
+              serverDoneAtUtc: dDone,
+              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
+              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
+              serverStartAtUtc: dStart || existing.serverStartAtUtc,
+              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
+              totalMs: totalMs ?? (existing as any).totalMs,
+            } as any);
+          }
+        }
         clearPendingAssistant();
         stopStreaming();
       } else if (type === 'phase' && phase) {

@@ -15,6 +15,7 @@ interface MessageState {
   streamingMessageId: string | null;
   streamingPhase: StreamingPhase;
   pendingAssistantId: string | null;
+  pendingUserMessageId: string | null;
 
   // 上拉加载历史（向前分页）
   isLoadingOlder: boolean;
@@ -29,6 +30,7 @@ interface MessageState {
   addMessageAndScrollToBottom: (message: Message) => void;
   addUserMessageWithPendingAssistant: (args: { userMessage: Message }) => void;
   clearPendingAssistant: () => void;
+  ackPendingUserMessageTimestamp: (args: { receivedAt: Date }) => void;
   setMessages: (messages: Message[]) => void;
   initHistoryPaging: (pageSize: number) => void;
   prependMessages: (messages: Message[]) => number;
@@ -90,6 +92,7 @@ export const useMessageStore = create<MessageState>()(
       streamingMessageId: null,
       streamingPhase: null,
       pendingAssistantId: null,
+      pendingUserMessageId: null,
 
       isLoadingOlder: false,
       hasMoreOlder: true,
@@ -111,6 +114,7 @@ export const useMessageStore = create<MessageState>()(
         streamingMessageId: null,
         streamingPhase: null,
         pendingAssistantId: null,
+        pendingUserMessageId: null,
         isLoadingOlder: false,
         hasMoreOlder: true,
         oldestTimestamp: null,
@@ -125,6 +129,7 @@ export const useMessageStore = create<MessageState>()(
       streamingMessageId: null,
       streamingPhase: null,
       pendingAssistantId: null,
+      pendingUserMessageId: null,
       isLoadingOlder: false,
       hasMoreOlder: true,
       oldestTimestamp: null,
@@ -179,6 +184,7 @@ export const useMessageStore = create<MessageState>()(
         return {
           messages: next,
           pendingAssistantId: pendingId,
+          pendingUserMessageId: userMessage?.id ?? null,
           isPinnedToBottom: true,
           scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
         };
@@ -194,11 +200,29 @@ export const useMessageStore = create<MessageState>()(
         const pid = state.pendingAssistantId;
         return {
           pendingAssistantId: null,
+          pendingUserMessageId: state.pendingUserMessageId ?? null,
           messages: state.messages.filter((m) => m.id !== pid),
         };
       }),
+
+      // 服务端回填：把“用户发送时间”对齐到 DB（requestReceivedAtUtc）
+      // 注意：DB 不会返回 userMessageId，因此这里用“刚插入的那条 userMessage（pendingUserMessageId）”回填 timestamp
+      ackPendingUserMessageTimestamp: ({ receivedAt }) => set((state) => {
+        const id = state.pendingUserMessageId;
+        if (!id) return state;
+        const d = receivedAt instanceof Date ? receivedAt : new Date(receivedAt as any);
+        if (Number.isNaN(d.getTime())) return { pendingUserMessageId: null } as any;
+        const next = state.messages.map((m) => (m.id === id ? { ...m, timestamp: d } : m));
+        return { messages: next, pendingUserMessageId: null };
+      }),
   
-  setMessages: (messages) => set(() => ({ messages })),
+  setMessages: (messages) => {
+    // #region agent log
+    const summary = (messages || []).slice(0, 10).map((m: any, i: number) => ({ idx: i, id: m?.id?.slice?.(0, 8) || '', role: m?.role || '', contentLen: (m?.content || '').length, ts: m?.timestamp?.toISOString?.() || '' }));
+    fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'orderCheck',hypothesisId:'H23',location:'messageStore.ts:setMessages',message:'set_messages_order',data:{total:Array.isArray(messages)?messages.length:0,first10:summary},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    set(() => ({ messages }));
+  },
 
   // 初次加载/切换会话后：用当前已加载的 messages 初始化游标
   initHistoryPaging: (pageSize) => set((state) => {

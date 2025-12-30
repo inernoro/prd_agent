@@ -55,6 +55,12 @@ public class ChatService : IChatService
         List<string>? attachmentIds = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // 真实“用户输入时间”：以服务端收到请求并进入业务处理的时间为准（UTC）
+        var userInputAtUtc = DateTime.UtcNow;
+        var startAtUtc = DateTime.UtcNow;
+        DateTime? firstTokenAtUtc = null;
+        var firstTokenMetricsEmitted = false;
+
         // 获取会话
         var session = await _sessionService.GetByIdAsync(sessionId);
         if (session == null)
@@ -100,11 +106,14 @@ public class ChatService : IChatService
         // 生成消息ID
         var messageId = Guid.NewGuid().ToString();
 
+        startAtUtc = DateTime.UtcNow;
         yield return new ChatStreamEvent
         {
             Type = "start",
             MessageId = messageId,
-            Sender = senderInfo
+            Sender = senderInfo,
+            RequestReceivedAtUtc = userInputAtUtc,
+            StartAtUtc = startAtUtc
         };
 
         // 构建系统Prompt
@@ -192,10 +201,14 @@ public class ChatService : IChatService
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
+                if (!firstTokenAtUtc.HasValue)
+                {
+                    firstTokenAtUtc = DateTime.UtcNow;
+                }
                 fullResponse.Append(chunk.Content);
                 foreach (var bt in blockTokenizer.Push(chunk.Content))
                 {
-                    yield return new ChatStreamEvent
+                    var ev = new ChatStreamEvent
                     {
                         Type = bt.Type,
                         MessageId = messageId,
@@ -204,6 +217,17 @@ public class ChatService : IChatService
                         BlockKind = bt.BlockKind,
                         BlockLanguage = bt.Language
                     };
+                    if (!firstTokenMetricsEmitted && firstTokenAtUtc.HasValue)
+                    {
+                        // 只在“首个可见输出事件”上附带一次 TTFT 指标，便于前端直接消费
+                        var ttftMs = (int)Math.Max(0, Math.Round((firstTokenAtUtc.Value - userInputAtUtc).TotalMilliseconds));
+                        ev.RequestReceivedAtUtc = userInputAtUtc;
+                        ev.StartAtUtc = startAtUtc;
+                        ev.FirstTokenAtUtc = firstTokenAtUtc;
+                        ev.TtftMs = ttftMs;
+                        firstTokenMetricsEmitted = true;
+                    }
+                    yield return ev;
                 }
             }
             else if (chunk.Type == "done")
@@ -237,6 +261,21 @@ public class ChatService : IChatService
             };
         }
 
+        // 真实“AI 完成时间”：用于耗时统计/SSE doneAt（不用于落库 Timestamp）
+        var assistantDoneAtUtc = DateTime.UtcNow;
+        if (assistantDoneAtUtc <= userInputAtUtc)
+        {
+            assistantDoneAtUtc = userInputAtUtc.AddTicks(1);
+        }
+
+        // 你的规约：落库时间以“首字时间（TTFT 对齐的 firstTokenAtUtc）”为准，不使用最终完成时间。
+        // - 若模型未产出任何可见 token（firstTokenAtUtc=null），退化为 startAtUtc（仍保证 >= userInputAtUtc）。
+        var assistantStoreAtUtc = firstTokenAtUtc ?? startAtUtc;
+        if (assistantStoreAtUtc <= userInputAtUtc)
+        {
+            assistantStoreAtUtc = userInputAtUtc.AddTicks(1);
+        }
+
         // 保存用户消息
         var userMessage = new Message
         {
@@ -247,7 +286,8 @@ public class ChatService : IChatService
             Content = content,
             LlmRequestId = llmRequestId,
             ViewRole = session.CurrentRole,
-            AttachmentIds = attachmentIds ?? new List<string>()
+            AttachmentIds = attachmentIds ?? new List<string>(),
+            Timestamp = userInputAtUtc
         };
 
         // 保存AI回复
@@ -264,7 +304,8 @@ public class ChatService : IChatService
             {
                 Input = inputTokens,
                 Output = outputTokens
-            }
+            },
+            Timestamp = assistantStoreAtUtc
         };
 
         // 引用依据（SSE 事件，仅会话内下发；不落库）
@@ -286,7 +327,14 @@ public class ChatService : IChatService
             {
                 Type = "citations",
                 MessageId = messageId,
-                Citations = citations
+                Citations = citations,
+                RequestReceivedAtUtc = userInputAtUtc,
+                StartAtUtc = startAtUtc,
+                FirstTokenAtUtc = firstTokenAtUtc,
+                DoneAtUtc = assistantDoneAtUtc,
+                TtftMs = firstTokenAtUtc.HasValue
+                    ? (int)Math.Max(0, Math.Round((firstTokenAtUtc.Value - userInputAtUtc).TotalMilliseconds))
+                    : null
             };
         }
 
@@ -294,7 +342,14 @@ public class ChatService : IChatService
         {
             Type = "done",
             MessageId = messageId,
-            TokenUsage = assistantMessage.TokenUsage
+            TokenUsage = assistantMessage.TokenUsage,
+            RequestReceivedAtUtc = userInputAtUtc,
+            StartAtUtc = startAtUtc,
+            FirstTokenAtUtc = firstTokenAtUtc,
+            DoneAtUtc = assistantDoneAtUtc,
+            TtftMs = firstTokenAtUtc.HasValue
+                ? (int)Math.Max(0, Math.Round((firstTokenAtUtc.Value - userInputAtUtc).TotalMilliseconds))
+                : null
         };
     }
 

@@ -22,6 +22,25 @@ function ThinkingIndicator({ label }: { label?: string }) {
   );
 }
 
+function formatTsMs(ts: unknown): string {
+  const d =
+    ts instanceof Date
+      ? ts
+      : (typeof ts === 'string' || typeof ts === 'number')
+        ? new Date(ts)
+        : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  const pad = (n: number, w: number) => String(n).padStart(w, '0');
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1, 2)}.${pad(d.getDate(), 2)} ${pad(d.getHours(), 2)}:${pad(d.getMinutes(), 2)}:${pad(d.getSeconds(), 2)}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+function formatDurationMs(ms: unknown): string {
+  const n = typeof ms === 'number' ? ms : Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '';
+  // 统一用 ms，便于 debug；需要更友好展示再做 UI 调整
+  return `${Math.round(n)}ms`;
+}
+
 function unwrapMarkdownFences(text: string) {
   if (!text) return text;
   // 兼容：LLM 常用 ```markdown / ```md 包裹“本来就想渲染的 Markdown”，会被当作代码块显示
@@ -596,286 +615,324 @@ function MessageListInner() {
     openCitationDrawer: (args: any) => void;
     openWithCitations: (args: any) => void;
   }) {
-    const assistantCitations =
-      message.role === 'Assistant' && Array.isArray(message.citations) ? message.citations : [];
+    const tsText = formatTsMs((message as any)?.timestamp);
+    const ttftMs = (message as any)?.ttftMs;
+    const totalMs = (message as any)?.totalMs;
+    const ttftAtText = formatTsMs((message as any)?.serverFirstTokenAtUtc);
+    const isError = message.role === 'Assistant' && (
+      String(message.id || '').startsWith('error-') ||
+      String(message.content || '').startsWith('请求失败：') ||
+      String(message.content || '').includes('Unauthorized') ||
+      String(message.content || '').includes('HTTP ')
+    );
+        const assistantCitations =
+          message.role === 'Assistant' && Array.isArray(message.citations) ? message.citations : [];
 
-    const renderedAssistantContent = message.role === 'Assistant'
-      ? injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(message.content)))
-      : message.content;
+        const renderedAssistantContent = message.role === 'Assistant'
+          ? injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(message.content)))
+          : message.content;
 
-    const navNumbers = message.role === 'Assistant' ? extractNavNumbers(renderedAssistantContent) : [];
-    const citationsCount = Math.min(assistantCitations.length, 30);
-    const sourcesCount = citationsCount > 0 ? citationsCount : navNumbers.length;
-    const hasSources = message.role === 'Assistant' && sourcesCount > 0;
+        const navNumbers = message.role === 'Assistant' ? extractNavNumbers(renderedAssistantContent) : [];
+        const citationsCount = Math.min(assistantCitations.length, 30);
+        const sourcesCount = citationsCount > 0 ? citationsCount : navNumbers.length;
+        const hasSources = message.role === 'Assistant' && sourcesCount > 0;
 
-    return (
-      <div
+        return (
+          <div
         data-msg-id={message.id}
-        className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'}`}
-      >
-        <div
+            className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
           className={`max-w-[80%] p-4 rounded-2xl ${
             message.role === 'User'
               ? 'bg-primary-500 text-white rounded-br-md'
-              : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
+              : isError
+                ? 'bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 rounded-bl-md'
+                : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
           }`}
-        >
-        {message.role === 'User' ? (
-          <p className="whitespace-pre-wrap">{message.content}</p>
-        ) : (
-          <div>
+            >
+            {message.role === 'User' ? (
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            ) : (
+              <div>
             {showThinking ? (
-              <div className="mb-2">
+                  <div className="mb-2">
                 <ThinkingIndicator label={thinkingLabel} />
+                  </div>
+                ) : null}
+                {/* Block Protocol：按块渲染，流式期间也能稳定 Markdown 排版 */}
+                {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
+                  // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
+              !isMessageStreaming ? (
+                    <MarkdownRenderer
+                      className="prose prose-sm dark:prose-invert max-w-none"
+                      content={renderedAssistantContent}
+                      citations={assistantCitations ?? []}
+                      onOpenCitation={(idx) => {
+                    if (!activeGroupId || !prdDocumentId) return;
+                        const citations = assistantCitations ?? [];
+                        if (!citations.length) return;
+                        const safeIdx = Math.max(0, Math.min(citations.length - 1, idx));
+                        const c = citations[safeIdx];
+                        const targetHeadingId = (c?.headingId || '').trim();
+                        const targetHeadingTitle = (c?.headingTitle || '').trim();
+                        openWithCitations({
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                        openCitationDrawer({
+                      documentId: prdDocumentId,
+                          groupId: activeGroupId,
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                      }}
+                      onInternalLinkClick={(href) => {
+                        const idx = parseCitationIndexFromHref(href);
+                        const navTitle = parseNavTitleFromHref(href);
+                        if (idx == null && !navTitle) return;
+                        const citations = assistantCitations ?? [];
+                    if (!activeGroupId || !prdDocumentId) return true;
+                        if (idx != null && citations.length > 0) {
+                          const c = citations[Math.max(0, Math.min(citations.length - 1, idx))];
+                          const targetHeadingId = (c?.headingId || '').trim();
+                          const targetHeadingTitle = (c?.headingTitle || '').trim();
+                          openWithCitations({
+                            targetHeadingId: targetHeadingId || null,
+                            targetHeadingTitle: targetHeadingTitle || null,
+                            citations: citations ?? [],
+                            activeCitationIndex: idx,
+                          });
+                          openCitationDrawer({
+                        documentId: prdDocumentId,
+                            groupId: activeGroupId,
+                            targetHeadingId: targetHeadingId || null,
+                            targetHeadingTitle: targetHeadingTitle || null,
+                            citations: citations ?? [],
+                            activeCitationIndex: idx,
+                          });
+                          return true;
+                        }
+                        // 无 citations：按章节号/文本跳转
+                        openWithCitations({
+                          targetHeadingId: null,
+                          targetHeadingTitle: navTitle || null,
+                          citations: citations ?? [],
+                          activeCitationIndex: 0,
+                        });
+                        openCitationDrawer({
+                      documentId: prdDocumentId,
+                          groupId: activeGroupId,
+                          targetHeadingId: null,
+                          targetHeadingTitle: navTitle || null,
+                          citations: citations ?? [],
+                          activeCitationIndex: 0,
+                        });
+                        return true;
+                      }}
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {message.blocks.map((b: MessageBlock) => (
+                        <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
+                          {b.kind === 'codeBlock' ? (
+                            // 如果后端/模型标记为 markdown 代码块，用户通常期望“按 Markdown 渲染”而不是当代码展示
+                            (b.language === 'markdown' || b.language === 'md') ? (
+                              <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                            ) : (
+                              <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
+                                <code className="whitespace-pre">{b.content}</code>
+                              </pre>
+                            )
+                          ) : (
+                            // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式“缺一截”
+                            // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
+                            b.isComplete === false ? (
+                              <p className="whitespace-pre-wrap break-words">{b.content}</p>
+                            ) : (
+                              <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                            )
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
+              isMessageStreaming ? (
+                    <div>
+                      <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                    </div>
+                  ) : (
+                    <MarkdownRenderer
+                      className="prose prose-sm dark:prose-invert max-w-none"
+                      content={renderedAssistantContent}
+                      citations={assistantCitations ?? []}
+                      onOpenCitation={(idx) => {
+                    if (!activeGroupId || !prdDocumentId) return;
+                        const citations = assistantCitations ?? [];
+                        if (!citations.length) return;
+                        const safeIdx = Math.max(0, Math.min(citations.length - 1, idx));
+                        const c = citations[safeIdx];
+                        const targetHeadingId = (c?.headingId || '').trim();
+                        const targetHeadingTitle = (c?.headingTitle || '').trim();
+                        openWithCitations({
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                        openCitationDrawer({
+                      documentId: prdDocumentId,
+                          groupId: activeGroupId,
+                          targetHeadingId: targetHeadingId || null,
+                          targetHeadingTitle: targetHeadingTitle || null,
+                          citations,
+                          activeCitationIndex: safeIdx,
+                        });
+                      }}
+                      onInternalLinkClick={(href) => {
+                        const idx = parseCitationIndexFromHref(href);
+                        const navTitle = parseNavTitleFromHref(href);
+                        if (idx == null && !navTitle) return;
+                        const citations = assistantCitations ?? [];
+                    if (!activeGroupId || !prdDocumentId) return true;
+                        if (idx != null && citations.length > 0) {
+                          const c = citations[Math.max(0, Math.min(citations.length - 1, idx))];
+                          const targetHeadingId = (c?.headingId || '').trim();
+                          const targetHeadingTitle = (c?.headingTitle || '').trim();
+                          openWithCitations({
+                            targetHeadingId: targetHeadingId || null,
+                            targetHeadingTitle: targetHeadingTitle || null,
+                            citations: citations ?? [],
+                            activeCitationIndex: idx,
+                          });
+                          openCitationDrawer({
+                        documentId: prdDocumentId,
+                            groupId: activeGroupId,
+                            targetHeadingId: targetHeadingId || null,
+                            targetHeadingTitle: targetHeadingTitle || null,
+                            citations: citations ?? [],
+                            activeCitationIndex: idx,
+                          });
+                          return true;
+                        }
+                        // 无 citations：按章节号/文本跳转
+                        openWithCitations({
+                          targetHeadingId: null,
+                          targetHeadingTitle: navTitle || null,
+                          citations: citations ?? [],
+                          activeCitationIndex: 0,
+                        });
+                        openCitationDrawer({
+                      documentId: prdDocumentId,
+                          groupId: activeGroupId,
+                          targetHeadingId: null,
+                          targetHeadingTitle: navTitle || null,
+                          citations: citations ?? [],
+                          activeCitationIndex: 0,
+                        });
+                        return true;
+                      }}
+                    />
+                  )
+                )}
+              </div>
+            )}
+
+            {hasSources ? (
+              <div className="mt-3 pt-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                  title="查看本条回复的来源（右侧展开）"
+                  onClick={() => {
+                if (!activeGroupId || !prdDocumentId) return;
+                    const citations = assistantCitations ?? [];
+                    if (citations.length > 0) {
+                      const c0 = citations[0];
+                      const targetHeadingId = (c0?.headingId || '').trim();
+                      const targetHeadingTitle = (c0?.headingTitle || '').trim();
+                      openWithCitations({
+                        targetHeadingId: targetHeadingId || null,
+                        targetHeadingTitle: targetHeadingTitle || null,
+                        citations,
+                        activeCitationIndex: 0,
+                      });
+                      openCitationDrawer({
+                    documentId: prdDocumentId,
+                        groupId: activeGroupId,
+                        targetHeadingId: targetHeadingId || null,
+                        targetHeadingTitle: targetHeadingTitle || null,
+                        citations,
+                        activeCitationIndex: 0,
+                      });
+                      return;
+                    }
+                    const first = (navNumbers[0] || '').trim();
+                    if (!first) return;
+                    openWithCitations({
+                      targetHeadingId: null,
+                      targetHeadingTitle: first,
+                      citations: [],
+                      activeCitationIndex: 0,
+                    });
+                    openCitationDrawer({
+                  documentId: prdDocumentId,
+                      groupId: activeGroupId,
+                      targetHeadingId: null,
+                      targetHeadingTitle: first,
+                      citations: [],
+                      activeCitationIndex: 0,
+                    });
+                  }}
+                >
+                  来源（{sourcesCount}）
+                </button>
               </div>
             ) : null}
-            {/* Block Protocol：按块渲染，流式期间也能稳定 Markdown 排版 */}
-            {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
-              // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
-              !isMessageStreaming ? (
-                <MarkdownRenderer
-                  className="prose prose-sm dark:prose-invert max-w-none"
-                  content={renderedAssistantContent}
-                  citations={assistantCitations ?? []}
-                  onOpenCitation={(idx) => {
-                    if (!activeGroupId || !prdDocumentId) return;
-                    const citations = assistantCitations ?? [];
-                    if (!citations.length) return;
-                    const safeIdx = Math.max(0, Math.min(citations.length - 1, idx));
-                    const c = citations[safeIdx];
-                    const targetHeadingId = (c?.headingId || '').trim();
-                    const targetHeadingTitle = (c?.headingTitle || '').trim();
-                    openWithCitations({
-                      targetHeadingId: targetHeadingId || null,
-                      targetHeadingTitle: targetHeadingTitle || null,
-                      citations,
-                      activeCitationIndex: safeIdx,
-                    });
-                    openCitationDrawer({
-                      documentId: prdDocumentId,
-                      groupId: activeGroupId,
-                      targetHeadingId: targetHeadingId || null,
-                      targetHeadingTitle: targetHeadingTitle || null,
-                      citations,
-                      activeCitationIndex: safeIdx,
-                    });
-                  }}
-                  onInternalLinkClick={(href) => {
-                    const idx = parseCitationIndexFromHref(href);
-                    const navTitle = parseNavTitleFromHref(href);
-                    if (idx == null && !navTitle) return;
-                    const citations = assistantCitations ?? [];
-                    if (!activeGroupId || !prdDocumentId) return true;
-                    if (idx != null && citations.length > 0) {
-                      const c = citations[Math.max(0, Math.min(citations.length - 1, idx))];
-                      const targetHeadingId = (c?.headingId || '').trim();
-                      const targetHeadingTitle = (c?.headingTitle || '').trim();
-                      openWithCitations({
-                        targetHeadingId: targetHeadingId || null,
-                        targetHeadingTitle: targetHeadingTitle || null,
-                        citations: citations ?? [],
-                        activeCitationIndex: idx,
-                      });
-                      openCitationDrawer({
-                        documentId: prdDocumentId,
-                        groupId: activeGroupId,
-                        targetHeadingId: targetHeadingId || null,
-                        targetHeadingTitle: targetHeadingTitle || null,
-                        citations: citations ?? [],
-                        activeCitationIndex: idx,
-                      });
-                      return true;
-                    }
-                    // 无 citations：按章节号/文本跳转
-                    openWithCitations({
-                      targetHeadingId: null,
-                      targetHeadingTitle: navTitle || null,
-                      citations: citations ?? [],
-                      activeCitationIndex: 0,
-                    });
-                    openCitationDrawer({
-                      documentId: prdDocumentId,
-                      groupId: activeGroupId,
-                      targetHeadingId: null,
-                      targetHeadingTitle: navTitle || null,
-                      citations: citations ?? [],
-                      activeCitationIndex: 0,
-                    });
-                    return true;
-                  }}
-                />
-              ) : (
-                <div className="space-y-2">
-                  {message.blocks.map((b: MessageBlock) => (
-                    <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
-                      {b.kind === 'codeBlock' ? (
-                        // 如果后端/模型标记为 markdown 代码块，用户通常期望“按 Markdown 渲染”而不是当代码展示
-                        (b.language === 'markdown' || b.language === 'md') ? (
-                          <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
-                        ) : (
-                          <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
-                            <code className="whitespace-pre">{b.content}</code>
-                          </pre>
-                        )
-                      ) : (
-                        // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式“缺一截”
-                        // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
-                        b.isComplete === false ? (
-                          <p className="whitespace-pre-wrap break-words">{b.content}</p>
-                        ) : (
-                          <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
-                        )
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )
-            ) : (
-              // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
-              isMessageStreaming ? (
-                <div>
-                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                </div>
-              ) : (
-                <MarkdownRenderer
-                  className="prose prose-sm dark:prose-invert max-w-none"
-                  content={renderedAssistantContent}
-                  citations={assistantCitations ?? []}
-                  onOpenCitation={(idx) => {
-                    if (!activeGroupId || !prdDocumentId) return;
-                    const citations = assistantCitations ?? [];
-                    if (!citations.length) return;
-                    const safeIdx = Math.max(0, Math.min(citations.length - 1, idx));
-                    const c = citations[safeIdx];
-                    const targetHeadingId = (c?.headingId || '').trim();
-                    const targetHeadingTitle = (c?.headingTitle || '').trim();
-                    openWithCitations({
-                      targetHeadingId: targetHeadingId || null,
-                      targetHeadingTitle: targetHeadingTitle || null,
-                      citations,
-                      activeCitationIndex: safeIdx,
-                    });
-                    openCitationDrawer({
-                      documentId: prdDocumentId,
-                      groupId: activeGroupId,
-                      targetHeadingId: targetHeadingId || null,
-                      targetHeadingTitle: targetHeadingTitle || null,
-                      citations,
-                      activeCitationIndex: safeIdx,
-                    });
-                  }}
-                  onInternalLinkClick={(href) => {
-                    const idx = parseCitationIndexFromHref(href);
-                    const navTitle = parseNavTitleFromHref(href);
-                    if (idx == null && !navTitle) return;
-                    const citations = assistantCitations ?? [];
-                    if (!activeGroupId || !prdDocumentId) return true;
-                    if (idx != null && citations.length > 0) {
-                      const c = citations[Math.max(0, Math.min(citations.length - 1, idx))];
-                      const targetHeadingId = (c?.headingId || '').trim();
-                      const targetHeadingTitle = (c?.headingTitle || '').trim();
-                      openWithCitations({
-                        targetHeadingId: targetHeadingId || null,
-                        targetHeadingTitle: targetHeadingTitle || null,
-                        citations: citations ?? [],
-                        activeCitationIndex: idx,
-                      });
-                      openCitationDrawer({
-                        documentId: prdDocumentId,
-                        groupId: activeGroupId,
-                        targetHeadingId: targetHeadingId || null,
-                        targetHeadingTitle: targetHeadingTitle || null,
-                        citations: citations ?? [],
-                        activeCitationIndex: idx,
-                      });
-                      return true;
-                    }
-                    // 无 citations：按章节号/文本跳转
-                    openWithCitations({
-                      targetHeadingId: null,
-                      targetHeadingTitle: navTitle || null,
-                      citations: citations ?? [],
-                      activeCitationIndex: 0,
-                    });
-                    openCitationDrawer({
-                      documentId: prdDocumentId,
-                      groupId: activeGroupId,
-                      targetHeadingId: null,
-                      targetHeadingTitle: navTitle || null,
-                      citations: citations ?? [],
-                      activeCitationIndex: 0,
-                    });
-                    return true;
-                  }}
-                />
-              )
-            )}
-          </div>
-        )}
-
-        {hasSources ? (
-          <div className="mt-3 pt-2">
-            <button
-              type="button"
-              className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
-              title="查看本条回复的来源（右侧展开）"
-              onClick={() => {
-                if (!activeGroupId || !prdDocumentId) return;
-                const citations = assistantCitations ?? [];
-                if (citations.length > 0) {
-                  const c0 = citations[0];
-                  const targetHeadingId = (c0?.headingId || '').trim();
-                  const targetHeadingTitle = (c0?.headingTitle || '').trim();
-                  openWithCitations({
-                    targetHeadingId: targetHeadingId || null,
-                    targetHeadingTitle: targetHeadingTitle || null,
-                    citations,
-                    activeCitationIndex: 0,
-                  });
-                  openCitationDrawer({
-                    documentId: prdDocumentId,
-                    groupId: activeGroupId,
-                    targetHeadingId: targetHeadingId || null,
-                    targetHeadingTitle: targetHeadingTitle || null,
-                    citations,
-                    activeCitationIndex: 0,
-                  });
-                  return;
-                }
-                const first = (navNumbers[0] || '').trim();
-                if (!first) return;
-                openWithCitations({
-                  targetHeadingId: null,
-                  targetHeadingTitle: first,
-                  citations: [],
-                  activeCitationIndex: 0,
-                });
-                openCitationDrawer({
-                  documentId: prdDocumentId,
-                  groupId: activeGroupId,
-                  targetHeadingId: null,
-                  targetHeadingTitle: first,
-                  citations: [],
-                  activeCitationIndex: 0,
-                });
-              }}
-            >
-              来源（{sourcesCount}）
-            </button>
-          </div>
-        ) : null}
 
         {isMessageStreaming && (
-          <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />
-        )}
-        
-        {message.senderName && (
-          <p className="text-xs opacity-70 mt-2">
-            {message.senderName} · {message.viewRole}
-          </p>
-        )}
-        </div>
-      </div>
+              <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />
+            )}
+            
+            {message.senderName && (
+              <p className="text-xs opacity-70 mt-2">
+                {message.senderName} · {message.viewRole}
+              </p>
+            )}
+
+        {message.role === 'User' ? (
+          tsText ? (
+            <div className="mt-2 flex justify-end text-[11px] leading-4 select-none text-white/70">
+              {tsText}
+            </div>
+          ) : null
+        ) : (
+          // Assistant：
+          // - 历史消息必须显示时间：用 message.timestamp（与 DB 保持一致：首字时间）
+          // - 流式期间：只有拿到 firstTokenAtUtc/ttft 后才展示 TTFT 时间点
+          (tsText || ttftAtText || typeof ttftMs === 'number' || typeof totalMs === 'number') ? (
+            <div className="mt-2 flex justify-end text-[11px] leading-4 select-none text-text-secondary">
+              {/* 你的规约：TTFT 不展示耗时，展示“首字时间点（DateTime）” */}
+              {(ttftAtText || tsText) ? (
+                <span className="mr-2">TTFT {ttftAtText || tsText}</span>
+              ) : (typeof ttftMs === 'number' ? (
+                // 兜底：若历史消息/旧协议没有首字时间点，至少还能看到一个 TTFT ms
+                <span className="mr-2">TTFT {formatDurationMs(ttftMs)}</span>
+              ) : null)}
+              {typeof totalMs === 'number' ? (
+                <span>耗时 {formatDurationMs(totalMs)}</span>
+              ) : null}
+            </div>
+          ) : null
+            )}
+            </div>
+          </div>
     );
   }), []);
 
@@ -919,6 +976,13 @@ function MessageListInner() {
         </div>
       ) : null}
 
+      {/* #region agent log: 渲染前打印消息顺序 */}
+      {(() => {
+        const summary = visible.slice(0, 10).map((m, i) => ({ idx: i, id: m?.id?.slice?.(0, 8) || '', role: m?.role || '', contentLen: (m?.content || '').length }));
+        fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'orderCheck',hypothesisId:'H24',location:'MessageList.tsx:render:visible',message:'render_visible_order',data:{visibleLen:visible.length,first10:summary},timestamp:Date.now()})}).catch(()=>{});
+        return null;
+      })()}
+      {/* #endregion */}
       {visible.map((message: Message) => {
         // 请求中占位 assistant：单独渲染，避免影响其它消息气泡的 memo 化
         if (pendingAssistantId && message.id === pendingAssistantId && message.role === 'Assistant' && !message.content) {
