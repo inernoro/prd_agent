@@ -188,25 +188,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base="prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          base="src-tauri/target/${{ matrix.target }}/release/bundle"
           echo "bundle base: $base"
 
-          mapfile -t jsons < <(find "$base" -type f -name latest.json || true)
-          if [ "${#jsons[@]}" -lt 1 ]; then
+          if [ ! -d "$base" ]; then
+            echo "ERROR: bundle directory not found: $base" >&2
+            exit 1
+          fi
+
+          json="$(find "$base" -type f -name latest.json -print -quit)"
+          if [ -z "$json" ]; then
             echo "ERROR: latest.json not found under $base" >&2
             exit 1
           fi
-          json="${jsons[0]}"
           out_json="$base/latest-${{ matrix.target }}.json"
           cp "$json" "$out_json"
           echo "prepared: $out_json (from $json)"
 
-          mapfile -t sigs < <(find "$base" -type f -name 'latest.json.sig' || true)
-          if [ "${#sigs[@]}" -lt 1 ]; then
+          sig="$(find "$base" -type f -name 'latest.json.sig' -print -quit)"
+          if [ -z "$sig" ]; then
             echo "ERROR: latest.json.sig not found under $base" >&2
             exit 1
           fi
-          sig="${sigs[0]}"
           out_sig="$base/latest-${{ matrix.target }}.json.sig"
           cp "$sig" "$out_sig"
           echo "prepared: $out_sig (from $sig)"

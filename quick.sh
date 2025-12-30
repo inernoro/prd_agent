@@ -5,8 +5,8 @@
 #   ./quick.sh          - 启动后端服务
 #   ./quick.sh admin    - 启动Web管理后台
 #   ./quick.sh desktop  - 启动桌面客户端
-#   ./quick.sh all      - 同时启动前后端
-#   ./quick.sh check    - 桌面端本地CI等价检查（fmt/clippy/icons等）
+#   ./quick.sh all      - 同时启动后端 + Web管理后台 + 桌面端（统一输出到同一控制台）
+#   ./quick.sh check    - 桌面端本地 CI 等价检查（对齐 .github/workflows/ci.yml 的 desktop-check；不包含 tag/release 打包与签名）
 
 set -e
 
@@ -33,6 +33,140 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# all 模式运行时 PID（wrapper pid；停止时会递归停止其子进程）
+ALL_API_PID=""
+ALL_ADMIN_PID=""
+ALL_DESKTOP_PID=""
+ALL_STOPPING=0
+
+prefix_lines() {
+    local prefix="$1"
+    awk -v p="$prefix" '{ print p $0; fflush(); }'
+}
+
+get_children_pids() {
+    local ppid="$1"
+
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -P "$ppid" 2>/dev/null || true
+        return 0
+    fi
+
+    # fallback: 兼容无 pgrep 的环境
+    ps -axo pid=,ppid= 2>/dev/null | awk -v p="$ppid" '$2==p {print $1}'
+}
+
+kill_tree() {
+    local pid="$1"
+    local sig="${2:-TERM}"
+
+    if [ -z "$pid" ]; then
+        return 0
+    fi
+
+    local child
+    for child in $(get_children_pids "$pid"); do
+        kill_tree "$child" "$sig"
+    done
+
+    kill "-$sig" "$pid" 2>/dev/null || true
+}
+
+wait_pids_exit() {
+    local timeout_s="$1"
+    shift
+
+    local start now
+    start=$(date +%s)
+
+    while true; do
+        local any_alive=0
+        local pid
+
+        for pid in "$@"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                any_alive=1
+                break
+            fi
+        done
+
+        if [ "$any_alive" -eq 0 ]; then
+            return 0
+        fi
+
+        now=$(date +%s)
+        if [ $((now - start)) -ge "$timeout_s" ]; then
+            return 1
+        fi
+
+        sleep 0.2
+    done
+}
+
+stop_all_services() {
+    if [ "${ALL_STOPPING:-0}" = "1" ]; then
+        return 0
+    fi
+    ALL_STOPPING=1
+
+    set +e
+
+    log_info "Stopping all services..."
+
+    # 1) 尽量优雅：SIGINT（并行发送）
+    local stop_jobs=""
+    local pid
+    for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill_tree "$pid" INT &
+            stop_jobs="$stop_jobs $!"
+        fi
+    done
+    for pid in $stop_jobs; do
+        wait "$pid" 2>/dev/null
+    done
+
+    if ! wait_pids_exit 8 "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; then
+        # 2) 超时升级：SIGTERM（并行发送）
+        log_warn "Graceful stop timed out, sending SIGTERM..."
+        stop_jobs=""
+        for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                kill_tree "$pid" TERM &
+                stop_jobs="$stop_jobs $!"
+            fi
+        done
+        for pid in $stop_jobs; do
+            wait "$pid" 2>/dev/null
+        done
+    fi
+
+    if ! wait_pids_exit 5 "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; then
+        # 3) 继续超时：SIGKILL（并行发送）
+        log_warn "Force stop timed out, sending SIGKILL..."
+        stop_jobs=""
+        for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                kill_tree "$pid" KILL &
+                stop_jobs="$stop_jobs $!"
+            fi
+        done
+        for pid in $stop_jobs; do
+            wait "$pid" 2>/dev/null
+        done
+    fi
+
+    # 回收 wrapper
+    for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null
+        fi
+    done
+
+    log_success "All services stopped!"
+    exit 0
 }
 
 # 启动后端服务
@@ -91,35 +225,67 @@ check_desktop() {
     log_success "Desktop check passed!"
 }
 
-# 同时启动前后端
+# 同时启动后端 + Web管理后台 + 桌面端
 start_all() {
     log_info "Starting all services..."
-    
-    # 后台启动后端
+
+    ALL_STOPPING=0
+    ALL_API_PID=""
+    ALL_ADMIN_PID=""
+    ALL_DESKTOP_PID=""
+
+    # 捕获退出信号：同时停止三个进程（并递归清理子进程）
+    trap stop_all_services INT TERM
+
+    # 1) 并行启动后端（不等待启动完成）
     log_info "Starting backend server in background..."
-    cd "$SCRIPT_DIR/prd-api/src/PrdAgent.Api"
-    dotnet run &
-    BACKEND_PID=$!
-    
-    # 等待后端启动
-    sleep 3
-    
-    # 前台启动管理后台
-    log_info "Starting admin panel..."
-    cd "$SCRIPT_DIR/prd-admin"
-    pnpm dev &
-    ADMIN_PID=$!
-    
+    ( (
+        cd "$SCRIPT_DIR/prd-api/src/PrdAgent.Api" || { echo "cd failed: $SCRIPT_DIR/prd-api/src/PrdAgent.Api"; exit 1; }
+        dotnet run
+    ) 2>&1 | prefix_lines "[api] " ) &
+    ALL_API_PID=$!
+
+    # 2) 并行启动管理后台（不等待启动完成）
+    log_info "Starting admin panel in background..."
+    ( (
+        cd "$SCRIPT_DIR/prd-admin" || { echo "cd failed: $SCRIPT_DIR/prd-admin"; exit 1; }
+        if [ ! -d "node_modules" ]; then
+            echo "node_modules not found, running: pnpm install --frozen-lockfile"
+            pnpm install --frozen-lockfile
+        fi
+        pnpm dev
+    ) 2>&1 | prefix_lines "[admin] " ) &
+    ALL_ADMIN_PID=$!
+
+    # 3) 并行启动桌面端（不等待启动完成）
+    log_info "Starting desktop client in background..."
+    ( (
+        cd "$SCRIPT_DIR/prd-desktop" || { echo "cd failed: $SCRIPT_DIR/prd-desktop"; exit 1; }
+        NEED_INSTALL=0
+        if [ ! -d "node_modules" ]; then
+            NEED_INSTALL=1
+        fi
+        if [ ! -f "node_modules/@tauri-apps/plugin-shell/package.json" ]; then
+            NEED_INSTALL=1
+        fi
+        if [ "$NEED_INSTALL" -eq 1 ]; then
+            echo "node_modules incomplete, running: pnpm install --frozen-lockfile"
+            pnpm install --frozen-lockfile
+        fi
+        pnpm tauri:dev
+    ) 2>&1 | prefix_lines "[desktop] " ) &
+    ALL_DESKTOP_PID=$!
+
     log_success "All services started!"
-    log_info "Backend PID: $BACKEND_PID"
-    log_info "Admin Panel PID: $ADMIN_PID"
+    log_info "API PID: $ALL_API_PID"
+    log_info "Admin PID: $ALL_ADMIN_PID"
+    log_info "Desktop PID: $ALL_DESKTOP_PID"
     log_info "Press Ctrl+C to stop all services"
-    
-    # 捕获退出信号，清理进程
-    trap "kill $BACKEND_PID $ADMIN_PID 2>/dev/null; exit" SIGINT SIGTERM
-    
-    # 等待任意子进程退出
-    wait
+
+    # 等待三个 wrapper 退出（任一退出不影响其它继续运行）
+    wait "$ALL_API_PID" 2>/dev/null || true
+    wait "$ALL_ADMIN_PID" 2>/dev/null || true
+    wait "$ALL_DESKTOP_PID" 2>/dev/null || true
 }
 
 # 显示帮助信息
@@ -132,8 +298,8 @@ show_help() {
     echo "  (default)  Start backend server"
     echo "  admin      Start admin panel (prd-admin)"
     echo "  desktop    Start desktop client (prd-desktop)"
-    echo "  all        Start backend and web admin together"
-    echo "  check      Run desktop CI-equivalent checks"
+    echo "  all        Start backend + admin + desktop together (single console output)"
+    echo "  check      Run desktop CI-equivalent checks (same as ci.yml desktop-check; excludes desktop-release packaging/signing)"
     echo "  help       Show this help message"
     echo ""
 }
