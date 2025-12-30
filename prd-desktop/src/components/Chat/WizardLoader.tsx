@@ -22,7 +22,7 @@ export default function WizardLoader({ className, label, size = 120 }: WizardLoa
     // 注意：这里用 class 前缀隔离，避免影响其它组件
     return `
 .wizardLoader_root{display:flex;align-items:center;gap:12px;}
-.wizardLoader_scene{display:flex;align-items:center;justify-content:center;}
+.wizardLoader_scene{position:relative;display:flex;align-items:center;justify-content:center;}
 .wizardLoader_wizard{position:relative;width:95px;height:120px;transform-origin:center;}
 .wizardLoader_body{position:absolute;bottom:0;left:34px;height:50px;width:30px;background:#3f64ce;border-radius:10px;}
 .wizardLoader_body:after{content:"";position:absolute;bottom:0;left:10px;height:50px;width:30px;background:#3f64ce;transform:skewX(14deg);border-radius:10px;}
@@ -48,6 +48,7 @@ export default function WizardLoader({ className, label, size = 120 }: WizardLoa
 .wizardLoader_square{position:absolute;bottom:-5px;left:18px;width:16px;height:16px;background:rgba(154,179,245,.9);}
 .wizardLoader_triangle{position:absolute;bottom:28px;left:40px;width:0;height:0;border-style:solid;border-width:0 9px 16px 9px;border-color:transparent transparent rgba(197,97,131,.85) transparent;}
 .wizardLoader_label{font-size:12px;line-height:16px;color:var(--tw-prose-body,#6b7280);}
+.wizardLoader_labelInScene{position:absolute;left:6px;bottom:-14px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis;}
 
 @keyframes wizardLoader_head{0%{transform:rotate(-3deg)}10%{transform:translateX(6px) rotate(7deg)}50%{transform:translateX(0) rotate(0)}56%{transform:rotate(-3deg)}}
 @keyframes wizardLoader_rightArm{0%{transform:rotate(70deg)}10%{transform:rotate(8deg)}15%{transform:rotate(20deg)}20%{transform:rotate(10deg)}25%{transform:rotate(26deg)}30%{transform:rotate(10deg)}35%{transform:rotate(28deg)}40%{transform:rotate(9deg)}45%{transform:rotate(28deg)}50%{transform:rotate(8deg)}58%{transform:rotate(74deg)}62%{transform:rotate(70deg)}}
@@ -89,8 +90,8 @@ export default function WizardLoader({ className, label, size = 120 }: WizardLoa
             <div className="wizardLoader_hat" />
           </div>
         </div>
+        {label ? <div className="wizardLoader_label wizardLoader_labelInScene">{label}</div> : null}
       </div>
-      {label ? <div className="wizardLoader_label">{label}</div> : null}
     </div>
   );
 }

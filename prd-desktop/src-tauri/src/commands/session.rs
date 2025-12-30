@@ -176,7 +176,7 @@ pub async fn get_message_history(
     before: Option<String>,
 ) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
     let client = ApiClient::new();
-    let limit = limit.unwrap_or(50).max(1).min(200);
+    let limit = limit.unwrap_or(50).clamp(1, 200);
     let mut path = format!("/sessions/{}/messages?limit={}", session_id, limit);
     if let Some(b) = before {
         let bb = b.trim().to_string();
@@ -196,7 +196,7 @@ pub async fn get_group_message_history(
     before: Option<String>,
 ) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
     let client = ApiClient::new();
-    let limit = limit.unwrap_or(50).max(1).min(200);
+    let limit = limit.unwrap_or(50).clamp(1, 200);
     let mut path = format!("/groups/{}/messages?limit={}", group_id, limit);
     if let Some(b) = before {
         let bb = b.trim().to_string();
