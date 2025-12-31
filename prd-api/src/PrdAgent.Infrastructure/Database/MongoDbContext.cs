@@ -226,12 +226,9 @@ public class MongoDbContext
         ImageMasterMessages.Indexes.CreateOne(new CreateIndexModel<ImageMasterMessage>(
             Builders<ImageMasterMessage>.IndexKeys.Ascending(x => x.WorkspaceId).Ascending(x => x.CreatedAt)));
 
-        // ImageAssets：按 owner + createdAt；按 owner + sha256 去重
+        // ImageAssets：按 owner + createdAt
         ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
             Builders<ImageAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt)));
-        ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
-            Builders<ImageAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Sha256),
-            new CreateIndexOptions { Unique = true }));
 
         // ImageAssets（Workspace 场景）：按 workspace + createdAt；按 workspace + sha256 去重（仅对存在 workspaceId 的文档生效）
         ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
@@ -242,7 +239,12 @@ public class MongoDbContext
             {
                 Name = "uniq_image_assets_workspace_sha256",
                 Unique = true,
-                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
+                // 仅对 workspaceId 为“非空字符串”的文档生效（避免空字符串把所有 legacy 资产混到同一 bucket 里）
+                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument
+                {
+                    { "$type", "string" },
+                    { "$ne", "" }
+                })
             }));
 
         // ImageMasterCanvases：同一 owner + session 唯一；按 owner + updatedAt 排序

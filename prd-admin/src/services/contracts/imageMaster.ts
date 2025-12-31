@@ -48,6 +48,15 @@ export type ImageMasterWorkspace = {
   title: string;
   memberUserIds: string[];
   coverAssetId?: string | null;
+  coverAssetIds?: string[];
+  /** 列表封面拼贴资源（由后端 list/refresh 聚合返回） */
+  coverAssets?: Array<{ id: string; url: string; width: number; height: number }>;
+  canvasHash?: string | null;
+  assetsHash?: string | null;
+  contentHash?: string | null;
+  coverHash?: string | null;
+  coverStale?: boolean;
+  coverUpdatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string | null;
@@ -104,4 +113,7 @@ export type UploadImageMasterWorkspaceAssetContract = (input: {
 
 export type DeleteImageMasterWorkspaceAssetContract = (input: { id: string; assetId: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
+export type RefreshImageMasterWorkspaceCoverContract = (input: { id: string; limit?: number; idempotencyKey?: string }) => Promise<
+  ApiResponse<{ workspace: ImageMasterWorkspace }>
+>;
 

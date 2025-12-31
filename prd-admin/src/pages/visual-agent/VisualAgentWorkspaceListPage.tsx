@@ -7,12 +7,13 @@ import {
   deleteImageMasterWorkspace,
   getUsers,
   listImageMasterWorkspaces,
+  refreshImageMasterWorkspaceCover,
   updateImageMasterWorkspace,
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import { Plus, Users2, Pencil, Trash2, ArrowRight } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 function formatDate(iso: string | null | undefined) {
@@ -28,6 +29,8 @@ export default function VisualAgentWorkspaceListPage() {
   const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const refreshBusyRef = useRef<Set<string>>(new Set());
+  const lastRefreshHashRef = useRef<Map<string, string>>(new Map());
 
   const [shareOpen, setShareOpen] = useState(false);
   const [shareWs, setShareWs] = useState<ImageMasterWorkspace | null>(null);
@@ -56,6 +59,56 @@ export default function VisualAgentWorkspaceListPage() {
   useEffect(() => {
     void reload();
   }, []);
+
+  // 仅对“进入视口”的卡片做封面 refresh（无人观察就不刷新）
+  useEffect(() => {
+    if (items.length === 0) return;
+    const els = Array.from(document.querySelectorAll<HTMLElement>('[data-ws-card="1"][data-ws-id]'));
+    if (els.length === 0) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const ent of entries) {
+          if (!ent.isIntersecting) continue;
+          const el = ent.target as HTMLElement;
+          const wid = String(el.getAttribute('data-ws-id') || '').trim();
+          if (!wid) continue;
+
+          const ws = items.find((x) => x.id === wid);
+          if (!ws) continue;
+          if (!ws.coverStale) continue;
+
+          const contentHash = String(ws.contentHash ?? '').trim();
+          const last = lastRefreshHashRef.current.get(wid) ?? '';
+          if (contentHash && last === contentHash) continue;
+          if (refreshBusyRef.current.has(wid)) continue;
+
+          refreshBusyRef.current.add(wid);
+          lastRefreshHashRef.current.set(wid, contentHash);
+
+          void (async () => {
+            try {
+              const res = await refreshImageMasterWorkspaceCover({
+                id: wid,
+                limit: 6,
+                idempotencyKey: contentHash ? `ws_cover_${wid}_${contentHash}` : `ws_cover_${wid}_${Date.now()}`,
+              });
+              if (res.success && res.data?.workspace) {
+                const next = res.data.workspace;
+                setItems((prev) => prev.map((x) => (x.id === wid ? { ...x, ...next } : x)));
+              }
+            } finally {
+              refreshBusyRef.current.delete(wid);
+            }
+          })();
+        }
+      },
+      { root: null, threshold: 0.15 }
+    );
+
+    for (const el of els) io.observe(el);
+    return () => io.disconnect();
+  }, [items]);
 
   const onCreate = async () => {
     const title = await systemDialog.prompt({
@@ -178,13 +231,60 @@ export default function VisualAgentWorkspaceListPage() {
             title={ws.title || ws.id}
           >
             <div
-              className="h-[150px] w-full"
+              className="h-[150px] w-full relative overflow-hidden"
+              data-ws-card="1"
+              data-ws-id={ws.id}
               style={{
                 background:
                   'linear-gradient(135deg, rgba(250,204,21,0.10) 0%, rgba(255,255,255,0.03) 40%, rgba(0,0,0,0.05) 100%)',
                 borderBottom: '1px solid var(--border-subtle)',
               }}
-            />
+            >
+              {Array.isArray(ws.coverAssets) && ws.coverAssets.length > 0 ? (
+                ws.coverAssets.length === 1 ? (
+                  <img
+                    src={ws.coverAssets[0]?.url}
+                    alt={ws.title || 'workspace cover'}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div
+                    className="absolute inset-0 grid"
+                    style={{
+                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                      gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+                      gap: 1,
+                      background: 'var(--border-subtle)',
+                    }}
+                  >
+                    {Array.from({ length: 4 }).map((_, idx) => {
+                      const a = ws.coverAssets?.[idx];
+                      return a?.url ? (
+                        <img key={idx} src={a.url} alt="" className="h-full w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div
+                          key={idx}
+                          className="h-full w-full"
+                          style={{
+                            background:
+                              'linear-gradient(135deg, rgba(250,204,21,0.06) 0%, rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.05) 100%)',
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                )
+              ) : null}
+              {/* subtle overlay to keep text contrast consistent even with bright covers */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.20) 100%)',
+                }}
+              />
+            </div>
             <div className="p-3">
               <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {ws.title || '未命名'}

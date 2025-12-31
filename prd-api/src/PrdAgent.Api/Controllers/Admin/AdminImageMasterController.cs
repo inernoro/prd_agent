@@ -1,10 +1,12 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Servers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -25,6 +27,20 @@ public class AdminImageMasterController : ControllerBase
 
     private static readonly TimeSpan IdemExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    private static string Sha256Hex(string s)
+    {
+        var bytes = Encoding.UTF8.GetBytes(s ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string ComputeContentHash(string? canvasHash, string? assetsHash)
+    {
+        var ch = (canvasHash ?? string.Empty).Trim();
+        var ah = (assetsHash ?? string.Empty).Trim();
+        return Sha256Hex($"{ch}|{ah}");
+    }
 
     public AdminImageMasterController(
         MongoDbContext db,
@@ -140,7 +156,81 @@ public class AdminImageMasterController : ControllerBase
             .SortByDescending(x => x.UpdatedAt)
             .Limit(limit)
             .ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items }));
+
+        // Hydrate cover assets (avoid N+1 on client)
+        var coverIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var ws in items)
+        {
+            var single = (ws.CoverAssetId ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(single)) coverIds.Add(single);
+            if (ws.CoverAssetIds != null)
+            {
+                foreach (var cid in ws.CoverAssetIds)
+                {
+                    var s = (cid ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(s)) coverIds.Add(s);
+                }
+            }
+        }
+
+        Dictionary<string, ImageAsset> coverMap = new(StringComparer.Ordinal);
+        if (coverIds.Count > 0)
+        {
+            var covers = await _db.ImageAssets.Find(x => x.WorkspaceId != null && coverIds.Contains(x.Id)).ToListAsync(ct);
+            foreach (var a in covers)
+            {
+                if (!string.IsNullOrWhiteSpace(a.Id)) coverMap[a.Id] = a;
+            }
+        }
+
+        var dto = items.Select(ws =>
+        {
+            var coverAssets = new List<object>();
+            var coverIdsOrdered = (ws.CoverAssetIds ?? new List<string>())
+                .Select(x => (x ?? string.Empty).Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Take(6)
+                .ToList();
+            if (coverIdsOrdered.Count == 0)
+            {
+                var single = (ws.CoverAssetId ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(single)) coverIdsOrdered.Add(single);
+            }
+
+            foreach (var cid in coverIdsOrdered)
+            {
+                if (coverMap.TryGetValue(cid, out var a))
+                {
+                    coverAssets.Add(new { id = a.Id, url = a.Url, width = a.Width, height = a.Height });
+                }
+            }
+
+            var contentHash = (ws.ContentHash ?? string.Empty).Trim();
+            var coverHash = (ws.CoverHash ?? string.Empty).Trim();
+            var coverStale = !string.IsNullOrWhiteSpace(contentHash) && !string.Equals(contentHash, coverHash, StringComparison.Ordinal);
+
+            return new
+            {
+                id = ws.Id,
+                ownerUserId = ws.OwnerUserId,
+                title = ws.Title,
+                memberUserIds = ws.MemberUserIds ?? new List<string>(),
+                coverAssetId = ws.CoverAssetId,
+                coverAssetIds = ws.CoverAssetIds ?? new List<string>(),
+                coverAssets,
+                canvasHash = ws.CanvasHash,
+                assetsHash = ws.AssetsHash,
+                contentHash = ws.ContentHash,
+                coverHash = ws.CoverHash,
+                coverStale,
+                coverUpdatedAt = ws.CoverUpdatedAt,
+                createdAt = ws.CreatedAt,
+                updatedAt = ws.UpdatedAt,
+                lastOpenedAt = ws.LastOpenedAt
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items = dto }));
     }
 
     [HttpPost("workspaces")]
@@ -160,12 +250,18 @@ public class AdminImageMasterController : ControllerBase
         if (title.Length > 40) title = title[..40].Trim();
 
         var now = DateTime.UtcNow;
+        var assetsHash = Guid.NewGuid().ToString("N");
+        var canvasHash = string.Empty;
+        var contentHash = ComputeContentHash(canvasHash, assetsHash);
         var ws = new ImageMasterWorkspace
         {
             Id = Guid.NewGuid().ToString("N"),
             OwnerUserId = adminId,
             Title = title,
             MemberUserIds = new List<string>(),
+            AssetsHash = assetsHash,
+            CanvasHash = canvasHash,
+            ContentHash = contentHash,
             CreatedAt = now,
             UpdatedAt = now,
             LastOpenedAt = now
@@ -629,6 +725,16 @@ public class AdminImageMasterController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
+        var newCanvasHash = Sha256Hex(payloadJson);
+        var assetsHash = (ws.AssetsHash ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(assetsHash))
+        {
+            assetsHash = Guid.NewGuid().ToString("N");
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == wid,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.AssetsHash, assetsHash),
+                cancellationToken: ct);
+        }
         var update = Builders<ImageMasterCanvas>.Update
             .Set(x => x.SchemaVersion, schemaVersion)
             .Set(x => x.PayloadJson, payloadJson)
@@ -650,10 +756,16 @@ public class AdminImageMasterController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "保存画布失败（数据库未返回结果）"));
         }
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            x => x.Id == wid,
-            Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
+        // 真实画布变更才更新 contentHash（避免“无变化也刷新封面”）
+        var updateWs = Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, now);
+        if (!string.Equals((ws.CanvasHash ?? string.Empty).Trim(), newCanvasHash, StringComparison.Ordinal))
+        {
+            var newContentHash = ComputeContentHash(newCanvasHash, assetsHash);
+            updateWs = updateWs
+                .Set(x => x.CanvasHash, newCanvasHash)
+                .Set(x => x.ContentHash, newContentHash);
+        }
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, updateWs, cancellationToken: ct);
 
         var payload = new
         {
@@ -761,8 +873,42 @@ public class AdminImageMasterController : ControllerBase
         if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
         if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
 
-        await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+        try
+        {
+            await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 兜底：并发写入导致冲突；按 workspace+sha 回查并返回，避免前端看到 500
+            var again = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.Sha256 == stored.Sha256).FirstOrDefaultAsync(ct);
+            if (again != null)
+            {
+                return Ok(ApiResponse<object>.Ok(new { asset = again }));
+            }
+            throw;
+        }
+        // 资产变化：更新 assetsHash/contentHash（不改封面）
+        var now = DateTime.UtcNow;
+        var newAssetsHash = Guid.NewGuid().ToString("N");
+        var canvasHash = (ws.CanvasHash ?? string.Empty).Trim();
+        var newContentHash = ComputeContentHash(canvasHash, newAssetsHash);
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid,
+            Builders<ImageMasterWorkspace>.Update
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.AssetsHash, newAssetsHash)
+                .Set(x => x.ContentHash, newContentHash),
+            cancellationToken: ct);
+
+        // 初始封面：仅在完全没有封面时，设置第一张（避免空白；不会覆盖后续 refresh/手动选择）
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid && (x.CoverAssetId == null) && (x.CoverAssetIds == null || x.CoverAssetIds.Count == 0),
+            Builders<ImageMasterWorkspace>.Update
+                .Set(x => x.CoverAssetId, asset.Id)
+                .Set(x => x.CoverAssetIds, new List<string> { asset.Id })
+                .Set(x => x.CoverHash, newContentHash)
+                .Set(x => x.CoverUpdatedAt, now),
+            cancellationToken: ct);
 
         var payload = new { asset };
         if (!string.IsNullOrWhiteSpace(idemKey))
@@ -807,8 +953,122 @@ public class AdminImageMasterController : ControllerBase
             // ignore
         }
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+        // 资产变化：更新 assetsHash/contentHash；同时保证封面引用不指向已删除资产（不做“刷新”，仅做一致性修复）
+        var now = DateTime.UtcNow;
+        var newAssetsHash = Guid.NewGuid().ToString("N");
+        var canvasHash = (ws.CanvasHash ?? string.Empty).Trim();
+        var newContentHash = ComputeContentHash(canvasHash, newAssetsHash);
+
+        var nextCoverIds = (ws.CoverAssetIds ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x) && !string.Equals(x.Trim(), aid, StringComparison.Ordinal))
+            .Select(x => x.Trim())
+            .Take(6)
+            .ToList();
+        var nextCoverId = string.Equals((ws.CoverAssetId ?? string.Empty).Trim(), aid, StringComparison.Ordinal)
+            ? nextCoverIds.FirstOrDefault()
+            : ws.CoverAssetId;
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid,
+            Builders<ImageMasterWorkspace>.Update
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.AssetsHash, newAssetsHash)
+                .Set(x => x.ContentHash, newContentHash)
+                .Set(x => x.CoverAssetIds, nextCoverIds)
+                .Set(x => x.CoverAssetId, string.IsNullOrWhiteSpace(nextCoverId) ? null : nextCoverId),
+            cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    [HttpPost("workspaces/{id}/cover/refresh")]
+    public async Task<IActionResult> RefreshWorkspaceCover(string id, [FromQuery] int limit = 6, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        limit = Math.Clamp(limit, 1, 6);
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:cover:refresh:{adminId}:{wid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        var contentHash = (ws.ContentHash ?? string.Empty).Trim();
+        var coverHash = (ws.CoverHash ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(contentHash)
+            && string.Equals(contentHash, coverHash, StringComparison.Ordinal)
+            && ws.CoverAssetIds != null
+            && ws.CoverAssetIds.Count > 0)
+        {
+            var payloadNoop = new
+            {
+                workspace = new
+                {
+                    id = ws.Id,
+                    coverAssetId = ws.CoverAssetId,
+                    coverAssetIds = ws.CoverAssetIds ?? new List<string>(),
+                    contentHash = ws.ContentHash,
+                    coverHash = ws.CoverHash,
+                    coverStale = false,
+                    coverUpdatedAt = ws.CoverUpdatedAt
+                }
+            };
+            if (!string.IsNullOrWhiteSpace(idemKey))
+            {
+                var cacheKey = $"imageMaster:workspaces:cover:refresh:{adminId}:{wid}:{idemKey}";
+                await _cache.SetAsync(cacheKey, payloadNoop, IdemExpiry);
+            }
+            return Ok(ApiResponse<object>.Ok(payloadNoop));
+        }
+
+        var assets = await _db.ImageAssets
+            .Find(x => x.WorkspaceId == wid)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(limit)
+            .ToListAsync(ct);
+
+        var ids = assets.Select(x => x.Id).Where(x => !string.IsNullOrWhiteSpace(x)).Take(limit).ToList();
+        var now = DateTime.UtcNow;
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid,
+            Builders<ImageMasterWorkspace>.Update
+                .Set(x => x.CoverAssetIds, ids)
+                .Set(x => x.CoverAssetId, ids.FirstOrDefault())
+                .Set(x => x.CoverHash, string.IsNullOrWhiteSpace(contentHash) ? null : contentHash)
+                .Set(x => x.CoverUpdatedAt, now),
+            cancellationToken: ct);
+
+        var coverAssets = assets.Select(a => new { id = a.Id, url = a.Url, width = a.Width, height = a.Height }).ToList();
+        var payload = new
+        {
+            workspace = new
+            {
+                id = wid,
+                coverAssetId = ids.FirstOrDefault(),
+                coverAssetIds = ids,
+                coverAssets,
+                contentHash = ws.ContentHash,
+                coverHash = string.IsNullOrWhiteSpace(contentHash) ? null : contentHash,
+                coverStale = false,
+                coverUpdatedAt = now
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:cover:refresh:{adminId}:{wid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload));
     }
 
     [HttpPost("assets")]

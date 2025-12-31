@@ -179,6 +179,12 @@ bash scripts/sync-desktop-version.sh "${GITHUB_REF_NAME}"
 5. **群组协作** - 团队共享 PRD 解读会话
 6. **内容缺失检测** - AI 识别 PRD 中的遗漏点
 
+## 数据字典（所有持久化清单）
+
+任何会写入/可恢复的状态（**MongoDB 集合、Redis/内存缓存 key、COS 对象 key、Web/桌面端本地存储、桌面端落盘文件**）都必须在数据字典中维护：
+
+- `doc/7.data-dictionary.md`
+
 ## 许可证
 
 MIT

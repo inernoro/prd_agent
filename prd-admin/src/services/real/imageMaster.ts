@@ -17,6 +17,7 @@ import type {
   ListImageMasterSessionsContract,
   UploadImageMasterWorkspaceAssetContract,
   DeleteImageMasterWorkspaceAssetContract,
+  RefreshImageMasterWorkspaceCoverContract,
   UploadImageAssetContract,
   ImageAsset,
   ImageMasterCanvas,
@@ -198,6 +199,17 @@ export const deleteImageMasterWorkspaceAssetReal: DeleteImageMasterWorkspaceAsse
   return await apiRequest<{ deleted: boolean }>(
     `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/assets/${encodeURIComponent(input.assetId)}`,
     { method: 'DELETE' }
+  );
+};
+
+export const refreshImageMasterWorkspaceCoverReal: RefreshImageMasterWorkspaceCoverContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  const limit = input.limit ?? 6;
+  return await apiRequest<{ workspace: ImageMasterWorkspace }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/cover/refresh?limit=${encodeURIComponent(String(limit))}`,
+    { method: 'POST', headers }
   );
 };
 
