@@ -25,6 +25,18 @@ public class ExceptionMiddleware
         {
             await _next(context);
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // 请求被客户端中断 / 连接被取消（常见于 SSE 断开、页面切换、服务重启时的 in-flight 请求）
+            // 这不是服务端错误：不打 Error，避免噪音；也不强行写响应（通常客户端已断开）
+            _logger.LogInformation("Request canceled: {Method} {Path}", context.Request.Method, context.Request.Path);
+            return;
+        }
+        catch (TaskCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            _logger.LogInformation("Request canceled: {Method} {Path}", context.Request.Method, context.Request.Path);
+            return;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception occurred");

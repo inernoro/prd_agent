@@ -8,7 +8,7 @@ public class ImageAsset
     /// 归属的视觉创作 WorkspaceId（用于共享场景下的可见性与归档）。
     /// 为空表示历史数据或非 workspace 场景。
     /// </summary>
-    public string WorkspaceId { get; set; } = string.Empty;
+    public string? WorkspaceId { get; set; }
     public string Sha256 { get; set; } = string.Empty;
     public string Mime { get; set; } = "image/png";
     public int Width { get; set; } = 0;

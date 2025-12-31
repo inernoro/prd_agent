@@ -189,9 +189,10 @@ public class AdminUsersController : ControllerBase
         if (string.IsNullOrWhiteSpace(password))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "密码不能为空"));
 
-        var passwordError = PasswordValidator.Validate(password);
-        if (passwordError != null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.WEAK_PASSWORD, passwordError));
+        // 管理后台创建用户：不强制复杂度规则（避免与“用户名只能字母数字下划线”产生误导/冲突）
+        // 仅保留非空与最大长度保护
+        if (password.Length > 128)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "密码长度不能超过128位"));
 
         var existed = await _db.Users.Find(u => u.Username == username).Limit(1).FirstOrDefaultAsync(ct);
         if (existed != null)
@@ -328,10 +329,9 @@ public class AdminUsersController : ControllerBase
                 failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "密码不能为空" });
                 continue;
             }
-            var passwordError = PasswordValidator.Validate(password);
-            if (passwordError != null)
+            if (password.Length > 128)
             {
-                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.WEAK_PASSWORD, Message = passwordError });
+                failed.Add(new AdminBulkCreateUserError { Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "密码长度不能超过128位" });
                 continue;
             }
 

@@ -146,9 +146,8 @@ export default function UsersPage() {
     return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
   }, [createPwd]);
 
-  const createPwdAllOk = useMemo(() => {
-    if (!createPwd) return false;
-    return passwordRules.every((r) => r.test(createPwd));
+  const createPwdNonEmptyOk = useMemo(() => {
+    return (createPwd ?? '').trim().length > 0;
   }, [createPwd]);
 
   const createPwdMatchOk = useMemo(() => {
@@ -162,9 +161,8 @@ export default function UsersPage() {
     return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
   }, [bulkPwd]);
 
-  const bulkPwdAllOk = useMemo(() => {
-    if (!bulkPwd) return false;
-    return passwordRules.every((r) => r.test(bulkPwd));
+  const bulkPwdNonEmptyOk = useMemo(() => {
+    return (bulkPwd ?? '').trim().length > 0;
   }, [bulkPwd]);
 
   const bulkPwdMatchOk = useMemo(() => {
@@ -240,7 +238,7 @@ export default function UsersPage() {
 
   const submitCreateUser = async () => {
     if (!createUsernameOk) return;
-    if (!createPwdAllOk) return;
+    if (!createPwdNonEmptyOk) return;
     if (!createPwdMatchOk) return;
 
     setCreateSubmitting(true);
@@ -281,7 +279,7 @@ export default function UsersPage() {
       setBulkError('生成的用户名不合法（需 4-32 位，仅字母/数字/下划线）');
       return;
     }
-    if (!bulkPwdAllOk) return;
+    if (!bulkPwdNonEmptyOk) return;
     if (!bulkPwdMatchOk) return;
 
     setBulkSubmitting(true);
@@ -662,7 +660,7 @@ export default function UsersPage() {
                   type="password"
                   className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
                   style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="至少8位，含大小写、数字、特殊字符"
+                  placeholder="任意非空（强烈建议使用复杂密码）"
                   autoComplete="new-password"
                 />
               </div>
@@ -689,7 +687,7 @@ export default function UsersPage() {
               className="rounded-[16px] px-4 py-3"
               style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
             >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码建议（不影响创建）</div>
               <div className="mt-2 grid gap-1">
                 {createPwdChecks.map((r) => {
                   const ok = r.touched ? r.ok : false;
@@ -748,7 +746,7 @@ export default function UsersPage() {
                 variant="primary"
                 size="sm"
                 onClick={submitCreateUser}
-                disabled={createSubmitting || !createUsernameOk || !createPwdAllOk || !createPwdMatchOk}
+                disabled={createSubmitting || !createUsernameOk || !createPwdNonEmptyOk || !createPwdMatchOk}
               >
                 {createSubmitting ? '创建中...' : '确认创建'}
               </Button>
@@ -854,7 +852,7 @@ export default function UsersPage() {
                   type="password"
                   className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
                   style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="至少8位，含大小写、数字、特殊字符"
+                  placeholder="任意非空（强烈建议使用复杂密码）"
                   autoComplete="new-password"
                 />
               </div>
@@ -906,7 +904,7 @@ export default function UsersPage() {
               className="rounded-[16px] px-4 py-3"
               style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
             >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码建议（不影响创建）</div>
               <div className="mt-2 grid gap-1">
                 {bulkPwdChecks.map((r) => {
                   const ok2 = r.touched ? r.ok : false;
@@ -996,7 +994,7 @@ export default function UsersPage() {
                   variant="primary"
                   size="sm"
                   onClick={submitBulkCreate}
-                  disabled={bulkSubmitting || !bulkUsernamesOk || !bulkPwdAllOk || !bulkPwdMatchOk}
+                  disabled={bulkSubmitting || !bulkUsernamesOk || !bulkPwdNonEmptyOk || !bulkPwdMatchOk}
                 >
                   {bulkSubmitting ? '创建中...' : '确认创建'}
                 </Button>

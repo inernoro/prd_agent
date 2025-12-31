@@ -239,12 +239,9 @@ public class MongoDbContext
             {
                 Name = "uniq_image_assets_workspace_sha256",
                 Unique = true,
-                // 仅对 workspaceId 为“非空字符串”的文档生效（避免空字符串把所有 legacy 资产混到同一 bucket 里）
-                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument
-                {
-                    { "$type", "string" },
-                    { "$ne", "" }
-                })
+                // 兼容旧 Mongo：partial index 不支持 $ne（会被解析成 $not/$eq 导致 createIndexes 失败）
+                // 约束由业务保证：workspaceId 必须是非空字符串；legacy 数据应清空（你已选择清库）。
+                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
             }));
 
         // ImageMasterCanvases：同一 owner + session 唯一；按 owner + updatedAt 排序
