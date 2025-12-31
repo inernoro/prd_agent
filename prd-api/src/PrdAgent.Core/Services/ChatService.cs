@@ -189,6 +189,8 @@ public class ChatService : IChatService
         int inputTokens = 0;
         int outputTokens = 0;
         var blockTokenizer = new MarkdownBlockTokenizer();
+        var terminatedWithError = false;
+        string? terminatedErrorMessage = null;
 
         var llmRequestId = Guid.NewGuid().ToString();
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -203,68 +205,106 @@ public class ChatService : IChatService
             RequestType: "reasoning",
             RequestPurpose: "chat.sendMessage"));
 
-        await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
+        var enumerator = _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        try
         {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+            while (true)
             {
-                if (!firstTokenAtUtc.HasValue)
+                bool moved;
+                try
                 {
-                    firstTokenAtUtc = DateTime.UtcNow;
+                    moved = await enumerator.MoveNextAsync();
                 }
-                fullResponse.Append(chunk.Content);
-                foreach (var bt in blockTokenizer.Push(chunk.Content))
+                catch (OperationCanceledException)
                 {
-                    var ev = new ChatStreamEvent
+                    terminatedWithError = true;
+                    terminatedErrorMessage = "请求已取消";
+                    break;
+                }
+                catch
+                {
+                    terminatedWithError = true;
+                    terminatedErrorMessage = "LLM调用失败";
+                    break;
+                }
+
+                if (!moved) break;
+
+                var chunk = enumerator.Current;
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!firstTokenAtUtc.HasValue)
                     {
-                        Type = bt.Type,
-                        MessageId = messageId,
-                        Content = bt.Content,
-                        BlockId = bt.BlockId,
-                        BlockKind = bt.BlockKind,
-                        BlockLanguage = bt.Language
-                    };
-                    if (!firstTokenMetricsEmitted && firstTokenAtUtc.HasValue)
-                    {
-                        // 只在“首个可见输出事件”上附带一次 TTFT 指标，便于前端直接消费
-                        var ttftMs = (int)Math.Max(0, Math.Round((firstTokenAtUtc.Value - userInputAtUtc).TotalMilliseconds));
-                        ev.RequestReceivedAtUtc = userInputAtUtc;
-                        ev.StartAtUtc = startAtUtc;
-                        ev.FirstTokenAtUtc = firstTokenAtUtc;
-                        ev.TtftMs = ttftMs;
-                        firstTokenMetricsEmitted = true;
+                        firstTokenAtUtc = DateTime.UtcNow;
                     }
-                    yield return ev;
+                    fullResponse.Append(chunk.Content);
+                    foreach (var bt in blockTokenizer.Push(chunk.Content))
+                    {
+                        var ev = new ChatStreamEvent
+                        {
+                            Type = bt.Type,
+                            MessageId = messageId,
+                            Content = bt.Content,
+                            BlockId = bt.BlockId,
+                            BlockKind = bt.BlockKind,
+                            BlockLanguage = bt.Language
+                        };
+                        if (!firstTokenMetricsEmitted && firstTokenAtUtc.HasValue)
+                        {
+                            // 只在“首个可见输出事件”上附带一次 TTFT 指标，便于前端直接消费
+                            var ttftMs = (int)Math.Max(0, Math.Round((firstTokenAtUtc.Value - userInputAtUtc).TotalMilliseconds));
+                            ev.RequestReceivedAtUtc = userInputAtUtc;
+                            ev.StartAtUtc = startAtUtc;
+                            ev.FirstTokenAtUtc = firstTokenAtUtc;
+                            ev.TtftMs = ttftMs;
+                            firstTokenMetricsEmitted = true;
+                        }
+                        yield return ev;
+                    }
                 }
-            }
-            else if (chunk.Type == "done")
-            {
-                inputTokens = chunk.InputTokens ?? 0;
-                outputTokens = chunk.OutputTokens ?? 0;
-            }
-            else if (chunk.Type == "error")
-            {
-                yield return new ChatStreamEvent
+                else if (chunk.Type == "done")
                 {
-                    Type = "error",
-                    ErrorCode = ErrorCodes.LLM_ERROR,
-                    ErrorMessage = chunk.ErrorMessage ?? "LLM调用失败"
-                };
-                yield break;
+                    inputTokens = chunk.InputTokens ?? 0;
+                    outputTokens = chunk.OutputTokens ?? 0;
+                }
+                else if (chunk.Type == "error")
+                {
+                    terminatedWithError = true;
+                    terminatedErrorMessage = chunk.ErrorMessage ?? "LLM调用失败";
+                    break;
+                }
             }
         }
+        finally
+        {
+            await enumerator.DisposeAsync();
+        }
 
-        // 流结束：冲刷尾部（半行/未闭合段落/代码块）
-        foreach (var bt in blockTokenizer.Flush())
+        if (terminatedWithError)
         {
             yield return new ChatStreamEvent
             {
-                Type = bt.Type,
-                MessageId = messageId,
-                Content = bt.Content,
-                BlockId = bt.BlockId,
-                BlockKind = bt.BlockKind,
-                BlockLanguage = bt.Language
+                Type = "error",
+                ErrorCode = ErrorCodes.LLM_ERROR,
+                ErrorMessage = terminatedErrorMessage ?? "LLM调用失败"
             };
+        }
+
+        // 流结束：冲刷尾部（半行/未闭合段落/代码块）
+        if (!terminatedWithError)
+        {
+            foreach (var bt in blockTokenizer.Flush())
+            {
+                yield return new ChatStreamEvent
+                {
+                    Type = bt.Type,
+                    MessageId = messageId,
+                    Content = bt.Content,
+                    BlockId = bt.BlockId,
+                    BlockKind = bt.BlockKind,
+                    BlockLanguage = bt.Language
+                };
+            }
         }
 
         // 真实“AI 完成时间”：用于耗时统计/SSE doneAt（不用于落库 Timestamp）
@@ -303,7 +343,9 @@ public class ChatService : IChatService
             SessionId = sessionId,
             GroupId = session.GroupId ?? "",
             Role = MessageRole.Assistant,
-            Content = fullResponse.ToString(),
+            Content = terminatedWithError
+                ? (string.IsNullOrWhiteSpace(terminatedErrorMessage) ? "LLM调用失败" : $"请求失败：{terminatedErrorMessage}")
+                : fullResponse.ToString(),
             LlmRequestId = llmRequestId,
             ViewRole = session.CurrentRole,
             TokenUsage = new TokenUsage
@@ -327,8 +369,9 @@ public class ChatService : IChatService
         var gidForSeq = (session.GroupId ?? string.Empty).Trim();
         if (!string.IsNullOrEmpty(gidForSeq))
         {
-            userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
-            assistantMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+            var pair = await _groupMessageSeqService.AllocatePairAsync(gidForSeq, cancellationToken);
+            userMessage.GroupSeq = pair.UserSeq;
+            assistantMessage.GroupSeq = pair.AssistantSeq;
         }
 
         await _messageRepository.InsertManyAsync(new[] { userMessage, assistantMessage });
@@ -342,6 +385,12 @@ public class ChatService : IChatService
 
         // 刷新会话活跃时间
         await _sessionService.RefreshActivityAsync(sessionId);
+
+        // 失败也要占位：此处已完成 user+assistant（错误消息）落库与群广播；不再下发 citations/done
+        if (terminatedWithError)
+        {
+            yield break;
+        }
 
         if (citations.Count > 0)
         {

@@ -578,7 +578,8 @@ public class GroupsController : ControllerBase
     public async Task<IActionResult> GetGroupMessages(
         string groupId,
         [FromQuery] int limit = 50,
-        [FromQuery] DateTime? before = null)
+        [FromQuery] DateTime? before = null,
+        [FromQuery] long? afterSeq = null)
     {
         var userId = GetUserId(User);
         if (string.IsNullOrEmpty(userId))
@@ -600,11 +601,20 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
-        var messages = await _messageRepository.FindByGroupAsync(groupId, before, limit);
+        List<Message> messages;
+        if (afterSeq.HasValue && afterSeq.Value > 0)
+        {
+            messages = await _messageRepository.FindByGroupAfterSeqAsync(groupId, afterSeq.Value, limit);
+        }
+        else
+        {
+            messages = await _messageRepository.FindByGroupAsync(groupId, before, limit);
+        }
 
         var result = messages.Select(m => new MessageResponse
         {
             Id = m.Id,
+            GroupSeq = m.GroupSeq,
             Role = m.Role,
             Content = m.Content,
             ViewRole = m.ViewRole,

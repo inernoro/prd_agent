@@ -224,10 +224,18 @@ pub async fn get_group_message_history(
     group_id: String,
     limit: Option<i32>,
     before: Option<String>,
+    after_seq: Option<i64>,
 ) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
     let client = ApiClient::new();
     let limit = limit.unwrap_or(50).clamp(1, 200);
     let mut path = format!("/groups/{}/messages?limit={}", group_id, limit);
+    if let Some(a) = after_seq {
+        let aa = a.max(0);
+        if aa > 0 {
+            path.push_str("&afterSeq=");
+            path.push_str(&aa.to_string());
+        }
+    }
     if let Some(b) = before {
         let bb = b.trim().to_string();
         if !bb.is_empty() {

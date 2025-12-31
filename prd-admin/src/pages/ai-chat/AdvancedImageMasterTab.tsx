@@ -346,7 +346,8 @@ function persistedV1ToCanvas(
       });
     }
   }
-  return { canvas: out.slice(0, 120), missingAssets, localOnlyImages };
+  // 还原时不应无故少一张；用与持久化一致的上限（MAX_PERSIST_ELEMENTS）
+  return { canvas: out.slice(0, MAX_PERSIST_ELEMENTS), missingAssets, localOnlyImages };
 }
 
 type UiMsg = {
@@ -587,7 +588,10 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
   const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
-  const viewportKey = userId ? `prdAdmin.imageMaster.viewport.${userId}` : '';
+  // 视口（zoom/camera）需要“按 workspace 个性化”，同一账号不同画布应各自保存
+  const viewportKey = userId && workspaceId ? `prdAdmin.imageMaster.viewport.${userId}.${workspaceId}` : '';
+  // 兼容历史：曾经按 userId 存一份（会导致多个 workspace 互相覆盖）
+  const legacyViewportKey = userId ? `prdAdmin.imageMaster.viewport.${userId}` : '';
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 420;
 
@@ -981,7 +985,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
 
   const oneClickCleanLocalCache = useCallback(async () => {
-    const keys = Array.from(new Set([splitKey, modelPrefKey, directPromptKey, viewportKey].map((x) => String(x ?? '').trim()).filter(Boolean)));
+    const keys = Array.from(
+      new Set([splitKey, modelPrefKey, directPromptKey, viewportKey, legacyViewportKey].map((x) => String(x ?? '').trim()).filter(Boolean))
+    );
     if (keys.length === 0) {
       await systemDialog.alert('当前账号暂无可清理的本地缓存');
       return;
@@ -1014,13 +1020,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     setRightWidth(def);
 
     await systemDialog.alert('已清理本地缓存。若仍异常，建议刷新页面。');
-  }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, modelPrefKey, splitKey, viewportKey]);
+  }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, legacyViewportKey, modelPrefKey, splitKey, viewportKey]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [workspace, setWorkspace] = useState<ImageMasterWorkspace | null>(null);
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
+  // debug logs removed
 
   // 重要：pushMsg 需要稳定引用（供多个 useEffect 依赖），并且不能直接依赖 workspace state（否则每次 render 变更都触发 effect）
   const workspaceRef = useRef<ImageMasterWorkspace | null>(null);
@@ -1324,6 +1331,11 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
     return () => {
       cancelled = true;
+      // React 18 StrictMode(dev) 会在 mount 后立刻执行一次 cleanup 再执行 effect 第二次。
+      // 这里如果不重置 started，第二次 effect 会被守卫跳过，导致 workspace 永远不落地（表现为空白页）。
+      if (initWorkspaceRef.current.workspaceId === workspaceId) {
+        initWorkspaceRef.current.started = false;
+      }
     };
   }, [focusStage, pushMsg, workspaceId]);
 
@@ -1387,11 +1399,11 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     setRightWidth(next);
   }, [splitKey]);
 
-  // 读取视口（camera/zoom）：按账号持久化（不写 DB）
+  // 读取视口（camera/zoom）：按 workspace 个性化持久化（不写 DB）
   useEffect(() => {
     if (!viewportKey) return;
     try {
-      const raw = localStorage.getItem(viewportKey);
+      const raw = localStorage.getItem(viewportKey) || (legacyViewportKey ? localStorage.getItem(legacyViewportKey) : null);
       if (!raw) return;
       const parsed = JSON.parse(raw) as { z?: unknown; x?: unknown; y?: unknown };
       const z = typeof parsed.z === 'number' && Number.isFinite(parsed.z) ? parsed.z : NaN;
@@ -1399,6 +1411,15 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       const y = typeof parsed.y === 'number' && Number.isFinite(parsed.y) ? parsed.y : NaN;
       if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) return;
       setViewport(clampZoom(z), { x, y }, { syncUi: true });
+
+      // 若是从 legacyKey 读取，则迁移到新 key（避免多个 workspace 互相覆盖）
+      if (legacyViewportKey && !localStorage.getItem(viewportKey)) {
+        try {
+          localStorage.setItem(viewportKey, JSON.stringify({ z, x, y }));
+        } catch {
+          // ignore
+        }
+      }
     } catch {
       // ignore
     }
@@ -1417,7 +1438,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     viewportSaveTimerRef.current = window.setTimeout(() => {
       viewportSaveTimerRef.current = null;
       try {
-        localStorage.setItem(viewportKey, JSON.stringify({ z: zoomRef.current, x: cameraRef.current.x, y: cameraRef.current.y }));
+        const payload = { z: zoomRef.current, x: cameraRef.current.x, y: cameraRef.current.y };
+        localStorage.setItem(viewportKey, JSON.stringify(payload));
       } catch {
         // ignore
       }
@@ -1427,7 +1449,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       viewportSaveTimerRef.current = null;
     };
     // 依赖 zoom/camera state（低频同步后的值），避免每帧触发
-  }, [camera, viewportKey, zoom]);
+  }, [camera, viewportKey, workspaceId, zoom]);
 
   // 拖拽 splitter
   useEffect(() => {
@@ -1809,6 +1831,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     scheduleWorldTransform(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   const setActiveValue = (next: string) => {
     if (activeComposerRef.current === 'quick') setQuickInput(next);

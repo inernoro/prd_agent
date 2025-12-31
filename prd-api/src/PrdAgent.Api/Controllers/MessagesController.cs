@@ -123,6 +123,7 @@ public class MessagesController : ControllerBase
         var response = messages.Select(m => new MessageResponse
         {
             Id = m.Id,
+            GroupSeq = m.GroupSeq,
             Role = m.Role,
             Content = m.Content,
             ViewRole = m.ViewRole,
@@ -140,6 +141,7 @@ public class MessagesController : ControllerBase
 public class MessageResponse
 {
     public string Id { get; set; } = string.Empty;
+    public long? GroupSeq { get; set; }
     public MessageRole Role { get; set; }
     public string Content { get; set; } = string.Empty;
     public UserRole? ViewRole { get; set; }

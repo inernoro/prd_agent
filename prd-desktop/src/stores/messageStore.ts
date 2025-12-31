@@ -7,6 +7,9 @@ export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing'
 
 interface MessageState {
   boundSessionId: string | null;
+  // 本次运行是否已完成该 session 的“初次历史加载”（不持久化）。
+  // 用于解决：刷新/重启后 boundSessionId 持久化导致 ChatContainer 跳过历史加载，从而无法纠正顺序/补齐字段。
+  historyLoadedSessionId: string | null;
   isPinnedToBottom: boolean;
   scrollToBottomSeq: number;
 
@@ -23,6 +26,7 @@ interface MessageState {
   oldestTimestamp: string | null; // ISO string
   
   bindSession: (sessionId: string | null) => void;
+  markHistoryLoaded: (sessionId: string | null) => void;
   setPinnedToBottom: (pinned: boolean) => void;
   triggerScrollToBottom: () => void;
 
@@ -91,6 +95,7 @@ function maybeSortByGroupSeq(list: Message[]): Message[] {
 
 type MessageHistoryItem = {
   id: string;
+  groupSeq?: number;
   role: string;
   content: string;
   viewRole?: string;
@@ -101,6 +106,7 @@ export const useMessageStore = create<MessageState>()(
   persist(
     (set, get) => ({
       boundSessionId: null,
+      historyLoadedSessionId: null,
       isPinnedToBottom: true,
       scrollToBottomSeq: 0,
 
@@ -124,6 +130,7 @@ export const useMessageStore = create<MessageState>()(
     if (!next) {
       return {
         boundSessionId: null,
+        historyLoadedSessionId: null,
         isPinnedToBottom: true,
         scrollToBottomSeq: 0,
         messages: [],
@@ -139,6 +146,7 @@ export const useMessageStore = create<MessageState>()(
     }
     return {
       boundSessionId: next,
+      historyLoadedSessionId: null,
       isPinnedToBottom: true,
       scrollToBottomSeq: 0,
       messages: [],
@@ -151,6 +159,13 @@ export const useMessageStore = create<MessageState>()(
       hasMoreOlder: true,
       oldestTimestamp: null,
     };
+  }),
+
+  markHistoryLoaded: (sessionId) => set((state) => {
+    const next = sessionId ? String(sessionId).trim() : null;
+    if (!next) return { historyLoadedSessionId: null } as any;
+    if (state.historyLoadedSessionId === next) return state;
+    return { historyLoadedSessionId: next } as any;
   }),
 
   setPinnedToBottom: (pinned) => set((state) => {
@@ -184,9 +199,6 @@ export const useMessageStore = create<MessageState>()(
       // 提示词/发送：先插入一个“请求中”的占位 assistant 气泡，再滚到底
       // 这样用户不会觉得“点了没反应/页面卡住”，并且可与后续真实 start 事件无缝衔接
       addUserMessageWithPendingAssistant: ({ userMessage }) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H1',location:'messageStore.ts:addUserMessageWithPendingAssistant:beforeSet',message:'before_set',data:{msgCount:get().messages?.length||0},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         const t0 = (globalThis as any).performance?.now?.() ?? Date.now();
         set((state) => {
         const pendingId = `pending-assistant-${Date.now()}`;
@@ -207,9 +219,8 @@ export const useMessageStore = create<MessageState>()(
         };
         });
         const t1 = (globalThis as any).performance?.now?.() ?? Date.now();
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H1',location:'messageStore.ts:addUserMessageWithPendingAssistant:afterSet',message:'after_set',data:{dtMs:Number(t1)-Number(t0),msgCount:get().messages?.length||0,pendingId:get().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+        void t0;
+        void t1;
       },
 
       clearPendingAssistant: () => set((state) => {
@@ -234,11 +245,8 @@ export const useMessageStore = create<MessageState>()(
       }),
   
   setMessages: (messages) => {
-    // #region agent log
-    const summary = (messages || []).slice(0, 10).map((m: any, i: number) => ({ idx: i, id: m?.id?.slice?.(0, 8) || '', role: m?.role || '', contentLen: (m?.content || '').length, ts: m?.timestamp?.toISOString?.() || '' }));
-    fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'orderCheck',hypothesisId:'H23',location:'messageStore.ts:setMessages',message:'set_messages_order',data:{total:Array.isArray(messages)?messages.length:0,first10:summary},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    set(() => ({ messages }));
+    const list = Array.isArray(messages) ? messages : [];
+    set(() => ({ messages: maybeSortByGroupSeq(list) }));
   },
 
   // 初次加载/切换会话后：用当前已加载的 messages 初始化游标
@@ -264,9 +272,6 @@ export const useMessageStore = create<MessageState>()(
       added = toAdd.length;
       const next = [...toAdd, ...state.messages];
       const oldest = next.length > 0 ? next[0].timestamp : null;
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H22',location:'messageStore.ts:prependMessages',message:'prepend_messages',data:{toAddLen:toAdd.length,beforeLen:state.messages.length,afterLen:next.length,oldestTs:oldest?oldest.toISOString():null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return {
         messages: next,
         oldestTimestamp: oldest ? oldest.toISOString() : null,
@@ -288,9 +293,6 @@ export const useMessageStore = create<MessageState>()(
 
     set({ isLoadingOlder: true });
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H21',location:'messageStore.ts:loadOlderMessages:beforeInvoke',message:'load_older_before_invoke',data:{groupId:gid,take:Number(take),before:before?String(before):null,existingLen:get().messages?.length||0},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       const resp = await invoke<ApiResponse<MessageHistoryItem[]>>('get_group_message_history', {
         groupId: gid,
         limit: take,
@@ -307,15 +309,13 @@ export const useMessageStore = create<MessageState>()(
         content: m.content,
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
+        groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
       }));
 
       const added = get().prependMessages(mapped);
       // 当返回不足一页时，认为没有更多
       const hasMoreOlder = resp.data.length >= take;
       set({ isLoadingOlder: false, hasMoreOlder });
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H21',location:'messageStore.ts:loadOlderMessages:afterInvoke',message:'load_older_after_invoke',data:{respLen:Array.isArray(resp.data)?resp.data.length:0,added:Number(added),hasMoreOlder:Boolean(hasMoreOlder),nowLen:get().messages?.length||0},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return { added };
     } catch {
       set({ isLoadingOlder: false });
@@ -528,12 +528,14 @@ export const useMessageStore = create<MessageState>()(
           ...p,
         };
         const revived = reviveMessages(p.messages);
-        next.messages = revived;
+        // 刷新/重启后：对持久化消息做一次稳定纠序（若含 groupSeq 则按 groupSeq，其次 timestamp）
+        next.messages = maybeSortByGroupSeq(revived);
         // 非持久化字段：基于已持久化的 messages 进行重建
         next.isLoadingOlder = false;
         next.hasMoreOlder = true;
         next.oldestTimestamp = revived.length > 0 ? revived[0].timestamp.toISOString() : null;
         next.pendingAssistantId = null;
+        next.historyLoadedSessionId = null;
         return next as MessageState;
       },
     }

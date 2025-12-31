@@ -3,6 +3,13 @@ import { useMemo } from 'react';
 export type WizardLoaderProps = {
   className?: string;
   label?: string;
+  /**
+   * label 展示模式：
+   * - inline：在动画右侧以“输入框同款基线”展示（默认）
+   * - below：在动画下方左侧展示（用于消息气泡内，占据下方空白区）
+   * - overlay：覆盖在动画下方（旧行为）
+   */
+  labelMode?: 'inline' | 'below' | 'overlay';
   /** 控制整体大小（px） */
   size?: number;
 };
@@ -12,7 +19,12 @@ export type WizardLoaderProps = {
  * - 去掉噪点/base64，避免污染样式与体积膨胀
  * - 样式完全 scoped 到 .wizardLoader_*，方便随时删除
  */
-export default function WizardLoader({ className, label, size = 120 }: WizardLoaderProps) {
+export default function WizardLoader({
+  className,
+  label,
+  labelMode = 'inline',
+  size = 120,
+}: WizardLoaderProps) {
   const reduceMotion =
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
@@ -22,6 +34,10 @@ export default function WizardLoader({ className, label, size = 120 }: WizardLoa
     // 注意：这里用 class 前缀隔离，避免影响其它组件
     return `
 .wizardLoader_root{display:flex;align-items:center;gap:12px;}
+.wizardLoader_rootCol{flex-direction:column;align-items:flex-start;justify-content:space-between;gap:0;}
+.wizardLoader_row{display:flex;align-items:center;gap:12px;}
+.wizardLoader_labelInline{display:flex;align-items:center;height:36px;padding:0 12px;border:none;border-radius:12px;background:rgba(148,163,184,.10);}
+.wizardLoader_labelText{font-size:14px;line-height:20px;color:var(--tw-prose-body,#6b7280);}
 .wizardLoader_scene{position:relative;display:flex;align-items:center;justify-content:center;}
 .wizardLoader_wizard{position:relative;width:95px;height:120px;transform-origin:center;}
 .wizardLoader_body{position:absolute;bottom:0;left:34px;height:50px;width:30px;background:#3f64ce;border-radius:10px;}
@@ -63,35 +79,57 @@ export default function WizardLoader({ className, label, size = 120 }: WizardLoa
   }, []);
 
   const scale = Math.max(72, Math.min(220, Number(size) || 120)) / 120;
-  const rootClass = `wizardLoader_root ${reduceMotion ? '' : 'wizardLoader_animate'} ${className || ''}`.trim();
+  // below 模式：需要给一个稳定的最小高度，让“动画在上、文案贴底”成立
+  // 经验值：动画高度(≈120*scale) + label(36) + 28（空白/缓冲）
+  const belowMinHeightPx = Math.round(120 * scale + 64);
+  const rootClass = `wizardLoader_root ${labelMode === 'below' ? 'wizardLoader_rootCol' : ''} ${reduceMotion ? '' : 'wizardLoader_animate'} ${className || ''}`.trim();
 
   return (
-    <div className={rootClass} aria-label={label || '处理中'} title={label || '处理中'}>
+    <div
+      className={rootClass}
+      style={labelMode === 'below' ? { minHeight: `${belowMinHeightPx}px` } : undefined}
+      aria-label={label || '处理中'}
+      title={label || '处理中'}
+    >
       <style>{styleText}</style>
-      <div className="wizardLoader_scene" style={{ transform: `scale(${scale})` }}>
-        <div className="wizardLoader_objects" aria-hidden="true">
-          <div className="wizardLoader_circle" />
-          <div className="wizardLoader_square" />
-          <div className="wizardLoader_triangle" />
-        </div>
-        <div className="wizardLoader_wizard" aria-hidden="true">
-          <div className="wizardLoader_body" />
-          <div className="wizardLoader_rightArm">
-            <div className="wizardLoader_rightHand" />
+      <div className={labelMode === 'below' ? 'wizardLoader_row' : ''}>
+        <div className="wizardLoader_scene" style={{ transform: `scale(${scale})` }}>
+          <div className="wizardLoader_objects" aria-hidden="true">
+            <div className="wizardLoader_circle" />
+            <div className="wizardLoader_square" />
+            <div className="wizardLoader_triangle" />
           </div>
-          <div className="wizardLoader_leftArm">
-            <div className="wizardLoader_leftHand" />
-          </div>
-          <div className="wizardLoader_head">
-            <div className="wizardLoader_beard" />
-            <div className="wizardLoader_face">
-              <div className="wizardLoader_adds" />
+          <div className="wizardLoader_wizard" aria-hidden="true">
+            <div className="wizardLoader_body" />
+            <div className="wizardLoader_rightArm">
+              <div className="wizardLoader_rightHand" />
             </div>
-            <div className="wizardLoader_hat" />
+            <div className="wizardLoader_leftArm">
+              <div className="wizardLoader_leftHand" />
+            </div>
+            <div className="wizardLoader_head">
+              <div className="wizardLoader_beard" />
+              <div className="wizardLoader_face">
+                <div className="wizardLoader_adds" />
+              </div>
+              <div className="wizardLoader_hat" />
+            </div>
           </div>
+          {label && labelMode === 'overlay' ? (
+            <div className="wizardLoader_label wizardLoader_labelInScene">{label}</div>
+          ) : null}
         </div>
-        {label ? <div className="wizardLoader_label wizardLoader_labelInScene">{label}</div> : null}
+        {label && labelMode === 'inline' ? (
+          <div className="wizardLoader_labelInline">
+            <span className="wizardLoader_labelText">{label}</span>
+          </div>
+        ) : null}
       </div>
+      {label && labelMode === 'below' ? (
+        <div className="wizardLoader_labelInline">
+          <span className="wizardLoader_labelText">{label}</span>
+        </div>
+      ) : null}
     </div>
   );
 }

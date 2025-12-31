@@ -17,7 +17,8 @@ namespace PrdAgent.Api.Json;
 /// </summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true)]
 // API 响应类型
 [JsonSerializable(typeof(ApiResponse<object>))]
 [JsonSerializable(typeof(ApiResponse<LoginResponse>))]

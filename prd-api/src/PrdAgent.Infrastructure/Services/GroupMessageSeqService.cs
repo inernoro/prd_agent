@@ -41,6 +41,23 @@ public class GroupMessageSeqService : IGroupMessageSeqService
         if (doc == null) return 1;
         return doc.Seq <= 0 ? 1 : doc.Seq;
     }
+
+    public async Task<(long UserSeq, long AssistantSeq)> AllocatePairAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        // Mongo 版本不保证“成对原子”与奇偶规则，仅作为兼容/兜底实现。
+        // 生产环境应使用 RedisGroupMessageSeqService 以确保并发下奇偶严格对应。
+        var first = await NextAsync(groupId, cancellationToken);
+        var second = await NextAsync(groupId, cancellationToken);
+        // 纠正为 (odd, even)
+        var odd = first;
+        var even = second;
+        if ((odd & 1) == 0) odd -= 1;
+        if ((even & 1) == 1) even += 1;
+        if (even != odd + 1) even = odd + 1;
+        return (odd, even);
+    }
 }
 
 

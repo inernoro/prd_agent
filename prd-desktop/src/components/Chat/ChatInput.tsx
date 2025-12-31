@@ -132,18 +132,9 @@ export default function ChatInput() {
   const handlePromptExplain = async (p: PromptItem) => {
     if (!sessionId || isStreaming || isSubmitting) return;
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H2',location:'ChatInput.tsx:handlePromptExplain:start',message:'prompt_click_start',data:{promptKey:p?.promptKey||null,titleLen:(p?.title||'').length,msgCount:useMessageStore.getState().messages?.length||0,isStreaming:useMessageStore.getState().isStreaming,isPinnedToBottom:useMessageStore.getState().isPinnedToBottom},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setIsSubmitting(true);
       const text = `【讲解】${p.title}`;
       const userMessage = pushSimulatedUserMessage(text);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H2',location:'ChatInput.tsx:handlePromptExplain:afterInsert',message:'after_insert_user_and_pending',data:{msgCount:useMessageStore.getState().messages?.length||0,pendingId:useMessageStore.getState().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      // #region agent log
-      requestAnimationFrame(()=>{fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H4',location:'ChatInput.tsx:handlePromptExplain:raf1',message:'raf_after_click',data:{pendingId:useMessageStore.getState().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});});
-      // #endregion
 
       // 演示模式：走本地模拟
       if (isDemoMode) {
@@ -153,9 +144,6 @@ export default function ChatInput() {
       }
 
       await waitForUiPaint();
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'promptLag-pre',hypothesisId:'H5',location:'ChatInput.tsx:handlePromptExplain:beforeInvoke',message:'before_invoke_send_message',data:{pendingId:useMessageStore.getState().pendingAssistantId||null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       await invoke('send_message', {
         sessionId,
         content: userMessage.content,

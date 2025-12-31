@@ -136,6 +136,8 @@ pub struct TokenUsage {
 #[serde(rename_all = "camelCase")]
 pub struct MessageHistoryItem {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_seq: Option<i64>,
     pub role: String,
     pub content: String,
     pub view_role: Option<String>,

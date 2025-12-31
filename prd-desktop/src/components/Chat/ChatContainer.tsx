@@ -1,4 +1,4 @@
-import { memo, useEffect } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -26,6 +26,7 @@ function ChatContainerInner() {
   const setMessageCitations = useMessageStore((s) => s.setMessageCitations);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
   const setMessages = useMessageStore((s) => s.setMessages);
+  const markHistoryLoaded = useMessageStore((s) => s.markHistoryLoaded);
   const initHistoryPaging = useMessageStore((s) => s.initHistoryPaging);
   const addMessage = useMessageStore((s) => s.addMessage);
   const clearPendingAssistant = useMessageStore((s) => s.clearPendingAssistant);
@@ -38,6 +39,7 @@ function ChatContainerInner() {
   const ingestGroupBroadcastMessage = useMessageStore((s) => s.ingestGroupBroadcastMessage);
   const getLastGroupSeq = useSessionStore((s) => s.getLastGroupSeq);
   const setLastGroupSeq = useSessionStore((s) => s.setLastGroupSeq);
+  const gapFillInFlightRef = useRef(false);
 
   const showTopPhaseBanner =
     isStreaming &&
@@ -237,6 +239,48 @@ function ChatContainerInner() {
       const m = p.message;
       const gid = String(m.groupId || '').trim();
       const seq = Number(m.groupSeq || 0);
+      const prevSeq = gid ? getLastGroupSeq(gid) : 0;
+
+      // 检测跳号：收到 seq 远大于 last+1，说明本地缺消息（中间缺/异地登录/断线重连等）
+      // 触发一次补洞：拉取 (lastSeq, currentSeq] 区间内缺失的消息并合并。
+      if (
+        gid &&
+        Number.isFinite(seq) &&
+        seq > 0 &&
+        Number.isFinite(prevSeq) &&
+        prevSeq > 0 &&
+        seq > prevSeq + 1 &&
+        !gapFillInFlightRef.current
+      ) {
+        gapFillInFlightRef.current = true;
+        const take = Math.min(200, Math.max(1, seq - prevSeq));
+        invoke<{ success: boolean; data?: Array<{ id: string; groupSeq?: number; role: string; content: string; viewRole?: string; timestamp: string }>; error?: { message?: string } }>(
+          'get_group_message_history',
+          { groupId: gid, limit: take, afterSeq: prevSeq }
+        )
+          .then((resp) => {
+            if (resp?.success && Array.isArray(resp.data)) {
+              for (const x of resp.data) {
+                const s = typeof x.groupSeq === 'number' ? x.groupSeq : undefined;
+                if (gid && typeof s === 'number' && Number.isFinite(s) && s > 0) setLastGroupSeq(gid, s);
+                ingestGroupBroadcastMessage({
+                  currentUserId,
+                  message: {
+                    id: String(x.id || ''),
+                    role: (x.role === 'User' ? 'User' : 'Assistant'),
+                    content: String(x.content || ''),
+                    timestamp: new Date(x.timestamp || Date.now()),
+                    viewRole: (x.viewRole as any) || undefined,
+                    groupSeq: typeof s === 'number' && Number.isFinite(s) && s > 0 ? s : undefined,
+                  } as any,
+                });
+              }
+            }
+          })
+          .finally(() => {
+            gapFillInFlightRef.current = false;
+          });
+      }
       if (gid && Number.isFinite(seq) && seq > 0) {
         setLastGroupSeq(gid, seq);
       }
@@ -258,7 +302,7 @@ function ChatContainerInner() {
     return () => {
       unlisten.then((fn) => fn()).catch(() => {});
     };
-  }, [addMessage, currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq]);
+  }, [addMessage, currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq]);
 
   // 会话切换时加载历史消息（改用 groupId 加载群组所有消息，而非仅当前 session 消息）
   useEffect(() => {
@@ -267,19 +311,17 @@ function ChatContainerInner() {
       return;
     }
 
-    const prevBound = useMessageStore.getState().boundSessionId;
     bindSession(sessionId);
-    // 同一 session：不要重复加载/清空（包括"切到预览页再返回"的重挂载场景）
-    if (prevBound === sessionId) return;
+    // 同一 session：避免重复拉历史（包括"切到预览页再返回"的重挂载场景）
+    // 但要允许“冷启动/刷新后”至少拉一次：因为 boundSessionId 是持久化的，prevBound 判断会导致永远不拉历史。
+    const loadedSid = useMessageStore.getState().historyLoadedSessionId;
+    if (loadedSid === sessionId) return;
 
     // 必须有 groupId 才能加载群组消息历史
     if (!activeGroupId) return;
 
     const INITIAL_HISTORY_LIMIT = 6; // 最近 3 轮（User+Assistant）
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H30',location:'ChatContainer.tsx:loadHistory:beforeInvoke',message:'history_initial_before_invoke',data:{groupId:String(activeGroupId||''),limit:Number(INITIAL_HISTORY_LIMIT)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    invoke<{ success: boolean; data?: Array<{ id: string; role: string; content: string; viewRole?: string; timestamp: string }>; error?: { message: string } }>(
+    invoke<{ success: boolean; data?: Array<{ id: string; groupSeq?: number; role: string; content: string; viewRole?: string; timestamp: string }>; error?: { message: string } }>(
       'get_group_message_history',
       { groupId: activeGroupId, limit: INITIAL_HISTORY_LIMIT }
     )
@@ -291,19 +333,18 @@ function ChatContainerInner() {
             content: m.content,
             timestamp: new Date(m.timestamp),
             viewRole: (m.viewRole as any) || undefined,
+            groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
           }));
           setMessages(mapped);
+          markHistoryLoaded(sessionId);
           // 初次载入：用于"向上瀑布加载"游标初始化
           initHistoryPaging(INITIAL_HISTORY_LIMIT);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/f6540f77-1082-4fdd-952b-071b289fee0c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'whiteScreen-topLoad',hypothesisId:'H30',location:'ChatContainer.tsx:loadHistory:afterSet',message:'history_initial_after_set',data:{loadedLen:Array.isArray(resp.data)?resp.data.length:0},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
         }
       })
       .catch((err) => {
         console.error('Failed to load message history:', err);
       });
-  }, [sessionId, activeGroupId, bindSession, setMessages, initHistoryPaging]);
+  }, [sessionId, activeGroupId, bindSession, setMessages, initHistoryPaging, markHistoryLoaded]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">

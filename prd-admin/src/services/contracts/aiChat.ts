@@ -21,6 +21,7 @@ export type AiChatTokenUsage = {
 
 export type AiChatHistoryMessage = {
   id: string;
+  groupSeq?: number | null;
   role: 'User' | 'Assistant';
   content: string;
   viewRole?: string | null;

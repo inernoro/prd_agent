@@ -201,7 +201,14 @@ export default function VisualAgentWorkspaceListPage() {
   };
 
   const grid = (
-    <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+    <div
+      className="grid gap-4"
+      style={{
+        // 屏幕越大列越多会导致单卡片更窄，按钮文字被压缩后发生“字内换行/折叠”
+        // 用更合理的最小卡片宽度，并用 min(,100%) 避免小屏溢出
+        gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
+      }}
+    >
       <Card className="p-0 overflow-hidden">
         <button
           type="button"
@@ -295,17 +302,22 @@ export default function VisualAgentWorkspaceListPage() {
             </div>
           </button>
 
-          <div className="px-3 pb-3 flex items-center gap-2">
-            <Button size="xs" variant="secondary" onClick={() => void onRename(ws)}>
+          <div className="px-3 pb-3 flex flex-wrap items-center gap-2">
+            <Button size="xs" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => void onRename(ws)}>
               <Pencil size={14} />
               重命名
             </Button>
-            <Button size="xs" variant="secondary" onClick={() => void openShare(ws)} title="共享（添加/移除成员）">
+            <Button
+              size="xs"
+              variant="secondary"
+              className="shrink-0 whitespace-nowrap"
+              onClick={() => void openShare(ws)}
+              title="共享（添加/移除成员）"
+            >
               <Users2 size={14} />
               共享
             </Button>
-            <div className="flex-1" />
-            <Button size="xs" variant="danger" onClick={() => void onDelete(ws)}>
+            <Button size="xs" variant="danger" className="ml-auto shrink-0 whitespace-nowrap" onClick={() => void onDelete(ws)}>
               <Trash2 size={14} />
               删除
             </Button>

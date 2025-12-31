@@ -30,6 +30,7 @@ type UiMessage = {
   id: string;
   role: 'User' | 'Assistant';
   content: string;
+  groupSeq?: number;
   timestamp: number;
   citations?: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>;
 };
@@ -401,6 +402,7 @@ export default function AiChatPage() {
           id: m.id,
           role: m.role,
           content: m.content ?? '',
+          groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
           timestamp: new Date(m.timestamp).getTime(),
         }));
         setMessages(mapped);
@@ -984,6 +986,11 @@ export default function AiChatPage() {
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || ''}</ReactMarkdown>
                       </div>
                     )}
+                    {typeof m.groupSeq === 'number' && m.groupSeq > 0 ? (
+                      <div className="mt-2 text-[11px] leading-4 select-none opacity-60" style={{ color: 'var(--text-muted)' }}>
+                        #{m.groupSeq}
+                      </div>
+                    ) : null}
                     {Array.isArray(m.citations) && m.citations.length > 0 ? (
                       <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                         <div className="flex items-center justify-between gap-2">

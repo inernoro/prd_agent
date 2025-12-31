@@ -24,6 +24,14 @@ public interface IMessageRepository
     /// <param name="before">可选：仅返回 Timestamp &lt; before 的更早消息</param>
     /// <param name="limit">返回条数（服务端会做保护）</param>
     Task<List<Message>> FindByGroupAsync(string groupId, DateTime? before, int limit);
+
+    /// <summary>
+    /// 按群组顺序号回放消息（严格按 GroupSeq 递增返回）：用于补洞/断线补拉。
+    /// </summary>
+    /// <param name="groupId">群组ID</param>
+    /// <param name="afterSeq">仅返回 GroupSeq &gt; afterSeq 的消息</param>
+    /// <param name="limit">返回条数（服务端会做保护）</param>
+    Task<List<Message>> FindByGroupAfterSeqAsync(string groupId, long afterSeq, int limit);
 }
 
 

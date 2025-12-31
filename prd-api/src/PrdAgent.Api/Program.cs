@@ -621,8 +621,12 @@ builder.Services.AddScoped<IMessageRepository>(sp =>
 
 builder.Services.AddScoped<IGroupMessageSeqService>(sp =>
 {
+    // 生产：使用 Redis INCRBY 2 原子分配一问一答的 (odd, even) seq，保证并发下奇偶严格对应
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var redis = cfg["Redis:ConnectionString"] ?? "localhost:6379";
+    // 兼容历史数据：用 Mongo 查询该群最大 groupSeq，对齐 Redis key，避免重复 seq 触发唯一索引冲突
     var db = sp.GetRequiredService<MongoDbContext>();
-    return new GroupMessageSeqService(db.GroupMessageCounters);
+    return new RedisGroupMessageSeqService(redis, db.Messages);
 });
 
 builder.Services.AddSingleton<IGroupMessageStreamHub, GroupMessageStreamHub>();

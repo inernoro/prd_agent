@@ -38,13 +38,18 @@ public class MessageRepository : IMessageRepository
             filter &= fb.Lt(x => x.Timestamp, before.Value);
         }
 
+        // 注意：历史消息在“刷新加载”时必须保持与 SSE 回放一致的顺序。
+        // 过去用 Role 作为二级排序，会在 Timestamp 大量相同（同一批写入/同一秒）时导致“按角色聚类”。
+        // 因此优先使用 GroupSeq（若存在），否则退化为 Timestamp；并用 Id 作为最后兜底保证稳定性。
+        //
+        // Mongo LINQ3 不支持在 Sort 中使用 `x.GroupSeq.HasValue`，所以这里仅使用字段本身排序：
+        // - Desc 排序下 null 会排在最后；Reverse 后 null 会出现在最前（与前端“缺失 groupSeq 放最前”的兼容策略一致）
         var list = await _messages
             .Find(filter)
-            // 关键：二级排序保证 Timestamp 相同（同一毫秒）时顺序稳定
-            // - 先取 desc（配合 before + limit）
-            // - Role: Assistant(1) 在前，Reverse 后变为 User 在前（更符合“问 -> 答”的展示）
-            .SortByDescending(x => x.Timestamp)
-            .ThenByDescending(x => x.Role)
+            // 先取 desc（配合 before + limit），最后 Reverse 变为升序返回
+            .SortByDescending(x => x.GroupSeq)
+            .ThenByDescending(x => x.Timestamp)
+            .ThenByDescending(x => x.Id)
             .Limit(take)
             .ToListAsync();
 
@@ -67,15 +72,37 @@ public class MessageRepository : IMessageRepository
             filter &= fb.Lt(x => x.Timestamp, before.Value);
         }
 
+        // 优先用 groupSeq 保证“严格时序”（与 SSE 回放一致），避免 Timestamp 相同导致的角色聚类。
+        // Mongo LINQ3 不支持在 Sort 中使用 `x.GroupSeq.HasValue`，所以这里只使用字段本身排序。
         var list = await _messages
             .Find(filter)
-            .SortByDescending(x => x.Timestamp)
-            .ThenByDescending(x => x.Role)
+            // 先取 desc（配合 before + limit），最后 Reverse 变为升序返回
+            .SortByDescending(x => x.GroupSeq)
+            .ThenByDescending(x => x.Timestamp)
+            .ThenByDescending(x => x.Id)
             .Limit(take)
             .ToListAsync();
 
         list.Reverse();
         return list;
+    }
+
+    public async Task<List<Message>> FindByGroupAfterSeqAsync(string groupId, long afterSeq, int limit)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid)) return new List<Message>();
+
+        var take = Math.Clamp(limit, 1, 200);
+        var seq = Math.Max(0, afterSeq);
+
+        var fb = Builders<Message>.Filter;
+        var filter = fb.Eq(x => x.GroupId, gid) & fb.Ne(x => x.GroupSeq, null) & fb.Gt(x => x.GroupSeq, seq);
+
+        return await _messages
+            .Find(filter)
+            .SortBy(x => x.GroupSeq)
+            .Limit(take)
+            .ToListAsync();
     }
 }
 
