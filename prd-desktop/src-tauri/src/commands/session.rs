@@ -14,22 +14,41 @@ use crate::services::{api_client, ApiClient};
 pub struct StreamCancelState {
     message: Mutex<CancellationToken>,
     preview: Mutex<CancellationToken>,
+    group: Mutex<CancellationToken>,
 }
 
 impl StreamCancelState {
     fn new_message_token(&self) -> CancellationToken {
         let mut guard = self.message.lock().unwrap();
+        guard.cancel();
         *guard = CancellationToken::new();
         guard.clone()
     }
     fn new_preview_token(&self) -> CancellationToken {
         let mut guard = self.preview.lock().unwrap();
+        guard.cancel();
+        *guard = CancellationToken::new();
+        guard.clone()
+    }
+    fn new_group_token(&self) -> CancellationToken {
+        let mut guard = self.group.lock().unwrap();
+        guard.cancel();
         *guard = CancellationToken::new();
         guard.clone()
     }
     fn cancel_all(&self) {
         self.message.lock().unwrap().cancel();
         self.preview.lock().unwrap().cancel();
+        self.group.lock().unwrap().cancel();
+    }
+    fn cancel_message(&self) {
+        self.message.lock().unwrap().cancel();
+    }
+    fn cancel_preview(&self) {
+        self.preview.lock().unwrap().cancel();
+    }
+    fn cancel_group(&self) {
+        self.group.lock().unwrap().cancel();
     }
 }
 
@@ -40,9 +59,20 @@ pub async fn cancel_stream(
 ) -> Result<(), String> {
     let k = kind.unwrap_or_else(|| "all".to_string()).to_lowercase();
     match k.as_str() {
-        "all" | "message" | "preview" => {
-            // 当前实现统一取消（避免前端判断困难）
+        "all" => {
             cancel.cancel_all();
+            Ok(())
+        }
+        "message" => {
+            cancel.cancel_message();
+            Ok(())
+        }
+        "preview" => {
+            cancel.cancel_preview();
+            Ok(())
+        }
+        "group" => {
+            cancel.cancel_group();
             Ok(())
         }
         _ => Ok(()),
@@ -206,6 +236,107 @@ pub async fn get_group_message_history(
         }
     }
     client.get(&path).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GroupStreamQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after_seq: Option<i64>,
+}
+
+#[command]
+pub async fn subscribe_group_messages(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    group_id: String,
+    after_seq: Option<i64>,
+) -> Result<(), String> {
+    let gid = group_id.trim().to_string();
+    if gid.is_empty() {
+        return Ok(());
+    }
+
+    let base_url = api_client::get_api_base_url();
+    let url = format!(
+        "{}/api/v1/groups/{}/messages/stream?afterSeq={}",
+        base_url,
+        gid,
+        after_seq.unwrap_or(0).max(0)
+    );
+
+    let client = api_client::build_streaming_client(&base_url);
+    let token = cancel.new_group_token();
+
+    tauri::async_runtime::spawn(async move {
+        let mut req = client.get(&url).header("Accept", "text/event-stream");
+        if let Some(token) = api_client::get_auth_token() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let mut response = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                emit_stream_error(&app, "group-message", format!("Request failed: {}", e));
+                return;
+            }
+        };
+
+        // access 过期：尝试 refresh 后重试一次
+        if response.status() == StatusCode::UNAUTHORIZED {
+            let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+            if ok {
+                let mut retry = client.get(&url).header("Accept", "text/event-stream");
+                if let Some(token) = api_client::get_auth_token() {
+                    retry = retry.header("Authorization", format!("Bearer {}", token));
+                }
+                response = match retry.send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        emit_stream_error(&app, "group-message", format!("Request failed: {}", e));
+                        return;
+                    }
+                };
+            } else {
+                emit_auth_expired(&app);
+            }
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            emit_stream_error(&app, "group-message", format!("HTTP {}: {}", status, body));
+            return;
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut sse_buf = String::new();
+        let mut saw_any_data = false;
+
+        while let Some(chunk) = stream.next().await {
+            if token.is_cancelled() {
+                break;
+            }
+            match chunk {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    handle_sse_text(
+                        &app,
+                        "group-message",
+                        &mut sse_buf,
+                        &text,
+                        &mut saw_any_data,
+                    );
+                }
+                Err(e) => {
+                    emit_stream_error(&app, "group-message", format!("Stream error: {}", e));
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(())
 }
 
 #[command]

@@ -12,10 +12,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import ImageGenPanel from '@/pages/ai-chat/ImageGenPanel';
-import AdvancedImageMasterTab from '@/pages/ai-chat/AdvancedImageMasterTab';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { systemDialog } from '@/lib/systemDialog';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getAdminPrompts } from '@/services';
 
 type LocalSession = {
@@ -268,6 +267,7 @@ function formatTime(ts: number) {
 
 export default function AiChatPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const authUser = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
@@ -1283,7 +1283,31 @@ export default function AiChatPage() {
       ) : null}
 
       <div className="flex-1 min-h-0 flex flex-col">
-        {tab === 'chat' ? chatPanel : tab === 'imageGen' ? <ImageGenPanel /> : <AdvancedImageMasterTab />}
+        {tab === 'chat' ? (
+          chatPanel
+        ) : tab === 'imageGen' ? (
+          <ImageGenPanel />
+        ) : (
+          <Card className="flex-1 min-h-0">
+            <div className="h-full min-h-0 flex flex-col gap-3">
+              <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
+                高级视觉创作已迁移到 Workspace
+              </div>
+              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                现在请在「视觉创作 Agent」中创建/选择一个 Workspace 进入编辑器（支持自动保存与共享）。
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="primary" onClick={() => navigate('/visual-agent')}>
+                  <Sparkles size={16} />
+                  前往视觉创作 Agent
+                </Button>
+                <Button variant="secondary" onClick={() => navigate('/visual-agent')}>
+                  打开 Workspace 列表
+                </Button>
+              </div>
+            </div>
+          </Card>
+        )}
       </div>
     </div>
   );

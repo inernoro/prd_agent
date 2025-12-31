@@ -11,6 +11,8 @@ import LabPage from '@/pages/LabPage';
 import AiChatPage from '@/pages/AiChatPage';
 import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
+import VisualAgentWorkspaceListPage from '@/pages/visual-agent/VisualAgentWorkspaceListPage';
+import VisualAgentWorkspaceEditorPage from '@/pages/visual-agent/VisualAgentWorkspaceEditorPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -57,6 +59,8 @@ export default function App() {
         <Route path="groups" element={<GroupsPage />} />
         <Route path="model-manage" element={<ModelManagePage />} />
         <Route path="ai-chat" element={<AiChatPage />} />
+        <Route path="visual-agent" element={<VisualAgentWorkspaceListPage />} />
+        <Route path="visual-agent/:workspaceId" element={<VisualAgentWorkspaceEditorPage />} />
         <Route path="llm-logs" element={<LlmLogsPage />} />
         <Route path="data" element={<DataManagePage />} />
         <Route path="prompts" element={<PromptStagesPage />} />

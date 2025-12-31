@@ -121,6 +121,8 @@ export default function ChatInput() {
       content: text,
       timestamp: new Date(),
       viewRole: currentRole,
+      senderId: user?.userId ?? undefined,
+      senderName: user?.displayName ?? undefined,
     };
     // 插入占位 assistant + 滚到底：避免“点了没反应/卡住”的体感
     addUserMessageWithPendingAssistant({ userMessage });
@@ -175,6 +177,8 @@ export default function ChatInput() {
       content: content.trim(),
       timestamp: new Date(),
       viewRole: currentRole,
+      senderId: user?.userId ?? undefined,
+      senderName: user?.displayName ?? undefined,
     };
 
     setIsSubmitting(true);

@@ -25,6 +25,7 @@ public static class BsonClassMapRegistration
             RegisterGroup();
             RegisterGroupMember();
             RegisterMessage();
+            RegisterGroupMessageCounter();
             RegisterSession();
             RegisterContentGap();
             RegisterAttachment();
@@ -119,6 +120,20 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(m => m.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterGroupMessageCounter()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(GroupMessageCounter))) return;
+
+        BsonClassMap.RegisterClassMap<GroupMessageCounter>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.GroupId)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 

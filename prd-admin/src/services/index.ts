@@ -59,11 +59,23 @@ import type {
 } from '@/services/contracts/promptOverrides';
 import type {
   AddImageMasterMessageContract,
+  AddImageMasterWorkspaceMessageContract,
   CreateImageMasterSessionContract,
+  CreateImageMasterWorkspaceContract,
   DeleteImageMasterAssetContract,
+  DeleteImageMasterWorkspaceContract,
+  GetImageMasterCanvasContract,
   GetImageMasterSessionContract,
+  GetImageMasterWorkspaceCanvasContract,
+  GetImageMasterWorkspaceDetailContract,
   ListImageMasterSessionsContract,
+  ListImageMasterWorkspacesContract,
+  SaveImageMasterCanvasContract,
+  SaveImageMasterWorkspaceCanvasContract,
   UploadImageAssetContract,
+  UploadImageMasterWorkspaceAssetContract,
+  DeleteImageMasterWorkspaceAssetContract,
+  UpdateImageMasterWorkspaceContract,
 } from '@/services/contracts/imageMaster';
 import type {
   DeleteAdminGroupContract,
@@ -126,11 +138,23 @@ import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/
 import { suggestGroupNameReal } from '@/services/real/intent';
 import {
   addImageMasterMessageReal,
+  addImageMasterWorkspaceMessageReal,
   createImageMasterSessionReal,
+  createImageMasterWorkspaceReal,
   deleteImageMasterAssetReal,
+  deleteImageMasterWorkspaceReal,
+  getImageMasterCanvasReal,
   getImageMasterSessionReal,
+  getImageMasterWorkspaceCanvasReal,
+  getImageMasterWorkspaceDetailReal,
   listImageMasterSessionsReal,
+  listImageMasterWorkspacesReal,
+  saveImageMasterCanvasReal,
+  saveImageMasterWorkspaceCanvasReal,
   uploadImageAssetReal,
+  uploadImageMasterWorkspaceAssetReal,
+  deleteImageMasterWorkspaceAssetReal,
+  updateImageMasterWorkspaceReal,
 } from '@/services/real/imageMaster';
 import { exportConfigReal, getDataSummaryReal, importConfigReal, previewImportConfigReal, purgeDataReal } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
@@ -279,6 +303,19 @@ export const getImageMasterSession: GetImageMasterSessionContract = withAuth(get
 export const addImageMasterMessage: AddImageMasterMessageContract = withAuth(addImageMasterMessageReal);
 export const uploadImageAsset: UploadImageAssetContract = withAuth(uploadImageAssetReal);
 export const deleteImageMasterAsset: DeleteImageMasterAssetContract = withAuth(deleteImageMasterAssetReal);
+export const getImageMasterCanvas: GetImageMasterCanvasContract = withAuth(getImageMasterCanvasReal);
+export const saveImageMasterCanvas: SaveImageMasterCanvasContract = withAuth(saveImageMasterCanvasReal);
+
+export const listImageMasterWorkspaces: ListImageMasterWorkspacesContract = withAuth(listImageMasterWorkspacesReal);
+export const createImageMasterWorkspace: CreateImageMasterWorkspaceContract = withAuth(createImageMasterWorkspaceReal);
+export const updateImageMasterWorkspace: UpdateImageMasterWorkspaceContract = withAuth(updateImageMasterWorkspaceReal);
+export const deleteImageMasterWorkspace: DeleteImageMasterWorkspaceContract = withAuth(deleteImageMasterWorkspaceReal);
+export const getImageMasterWorkspaceDetail: GetImageMasterWorkspaceDetailContract = withAuth(getImageMasterWorkspaceDetailReal);
+export const addImageMasterWorkspaceMessage: AddImageMasterWorkspaceMessageContract = withAuth(addImageMasterWorkspaceMessageReal);
+export const getImageMasterWorkspaceCanvas: GetImageMasterWorkspaceCanvasContract = withAuth(getImageMasterWorkspaceCanvasReal);
+export const saveImageMasterWorkspaceCanvas: SaveImageMasterWorkspaceCanvasContract = withAuth(saveImageMasterWorkspaceCanvasReal);
+export const uploadImageMasterWorkspaceAsset: UploadImageMasterWorkspaceAssetContract = withAuth(uploadImageMasterWorkspaceAssetReal);
+export const deleteImageMasterWorkspaceAsset: DeleteImageMasterWorkspaceAssetContract = withAuth(deleteImageMasterWorkspaceAssetReal);
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);

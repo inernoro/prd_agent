@@ -29,6 +29,7 @@ public class MongoDbContext
     // PRD 文档长期存储（原文 + 解析结构）
     public IMongoCollection<ParsedPrd> Documents => _database.GetCollection<ParsedPrd>("documents");
     public IMongoCollection<Message> Messages => _database.GetCollection<Message>("messages");
+    public IMongoCollection<GroupMessageCounter> GroupMessageCounters => _database.GetCollection<GroupMessageCounter>("group_message_counters");
     public IMongoCollection<ContentGap> ContentGaps => _database.GetCollection<ContentGap>("contentgaps");
     public IMongoCollection<Attachment> Attachments => _database.GetCollection<Attachment>("attachments");
     public IMongoCollection<LLMConfig> LLMConfigs => _database.GetCollection<LLMConfig>("llmconfigs");
@@ -59,6 +60,8 @@ public class MongoDbContext
     public IMongoCollection<ImageMasterSession> ImageMasterSessions => _database.GetCollection<ImageMasterSession>("image_master_sessions");
     public IMongoCollection<ImageMasterMessage> ImageMasterMessages => _database.GetCollection<ImageMasterMessage>("image_master_messages");
     public IMongoCollection<ImageAsset> ImageAssets => _database.GetCollection<ImageAsset>("image_assets");
+    public IMongoCollection<ImageMasterCanvas> ImageMasterCanvases => _database.GetCollection<ImageMasterCanvas>("image_master_canvases");
+    public IMongoCollection<ImageMasterWorkspace> ImageMasterWorkspaces => _database.GetCollection<ImageMasterWorkspace>("image_master_workspaces");
     public IMongoCollection<ImageGenSizeCaps> ImageGenSizeCaps => _database.GetCollection<ImageGenSizeCaps>("image_gen_size_caps");
     public IMongoCollection<ImageGenRun> ImageGenRuns => _database.GetCollection<ImageGenRun>("image_gen_runs");
     public IMongoCollection<ImageGenRunItem> ImageGenRunItems => _database.GetCollection<ImageGenRunItem>("image_gen_run_items");
@@ -102,6 +105,19 @@ public class MongoDbContext
             Builders<Message>.IndexKeys.Ascending(m => m.GroupId)));
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
             Builders<Message>.IndexKeys.Ascending(m => m.SessionId)));
+        // groupId + groupSeq 唯一：用于群消息顺序键（SSE 断线续传/严格有序）。
+        // 注意：历史/非群消息 groupSeq 可能为空；若不加 partial filter，Unique 会导致同群多个 null 冲突。
+        Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
+            Builders<Message>.IndexKeys
+                .Ascending(m => m.GroupId)
+                .Ascending(m => m.GroupSeq),
+            new CreateIndexOptions<Message>
+            {
+                Name = "uniq_messages_group_seq",
+                Unique = true,
+                // 仅对存在且为 long 的 groupSeq 建唯一约束；避免 null / 缺失字段冲突
+                PartialFilterExpression = new BsonDocument("GroupSeq", new BsonDocument("$type", "long"))
+            }));
         // 用于按 sessionId + 时间游标分页（before）
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
             Builders<Message>.IndexKeys
@@ -206,6 +222,9 @@ public class MongoDbContext
         // ImageMasterMessages：按 session + createdAt
         ImageMasterMessages.Indexes.CreateOne(new CreateIndexModel<ImageMasterMessage>(
             Builders<ImageMasterMessage>.IndexKeys.Ascending(x => x.SessionId).Ascending(x => x.CreatedAt)));
+        // ImageMasterMessages（Workspace 场景）：按 workspace + createdAt
+        ImageMasterMessages.Indexes.CreateOne(new CreateIndexModel<ImageMasterMessage>(
+            Builders<ImageMasterMessage>.IndexKeys.Ascending(x => x.WorkspaceId).Ascending(x => x.CreatedAt)));
 
         // ImageAssets：按 owner + createdAt；按 owner + sha256 去重
         ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
@@ -213,6 +232,40 @@ public class MongoDbContext
         ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
             Builders<ImageAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Sha256),
             new CreateIndexOptions { Unique = true }));
+
+        // ImageAssets（Workspace 场景）：按 workspace + createdAt；按 workspace + sha256 去重（仅对存在 workspaceId 的文档生效）
+        ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
+            Builders<ImageAsset>.IndexKeys.Ascending(x => x.WorkspaceId).Descending(x => x.CreatedAt)));
+        ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
+            Builders<ImageAsset>.IndexKeys.Ascending(x => x.WorkspaceId).Ascending(x => x.Sha256),
+            new CreateIndexOptions<ImageAsset>
+            {
+                Name = "uniq_image_assets_workspace_sha256",
+                Unique = true,
+                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
+            }));
+
+        // ImageMasterCanvases：同一 owner + session 唯一；按 owner + updatedAt 排序
+        ImageMasterCanvases.Indexes.CreateOne(new CreateIndexModel<ImageMasterCanvas>(
+            Builders<ImageMasterCanvas>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.SessionId),
+            new CreateIndexOptions<ImageMasterCanvas> { Name = "uniq_image_master_canvases_owner_session", Unique = true }));
+        ImageMasterCanvases.Indexes.CreateOne(new CreateIndexModel<ImageMasterCanvas>(
+            Builders<ImageMasterCanvas>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt)));
+        // ImageMasterCanvases（Workspace 场景）：同一 workspace 唯一（仅对存在 workspaceId 的文档生效）
+        ImageMasterCanvases.Indexes.CreateOne(new CreateIndexModel<ImageMasterCanvas>(
+            Builders<ImageMasterCanvas>.IndexKeys.Ascending(x => x.WorkspaceId),
+            new CreateIndexOptions<ImageMasterCanvas>
+            {
+                Name = "uniq_image_master_canvases_workspace",
+                Unique = true,
+                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
+            }));
+
+        // ImageMasterWorkspaces：按 owner + updatedAt；按 memberUserIds（multi-key）便于共享可见性查询
+        ImageMasterWorkspaces.Indexes.CreateOne(new CreateIndexModel<ImageMasterWorkspace>(
+            Builders<ImageMasterWorkspace>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt)));
+        ImageMasterWorkspaces.Indexes.CreateOne(new CreateIndexModel<ImageMasterWorkspace>(
+            Builders<ImageMasterWorkspace>.IndexKeys.Ascending(x => x.MemberUserIds)));
 
         // ImageGenSizeCaps：为兼容更多 Mongo 版本，拆成两个 unique partial index，避免 partial filter 中出现 $not/$ne null
         // 1) modelId 唯一：仅对存在 ModelId 字段的文档生效（upsert 插入时未设置 ModelId 的字段将不存在）

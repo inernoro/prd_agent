@@ -5,19 +5,18 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
-  addImageMasterMessage,
-  createImageMasterSession,
-  deleteImageMasterAsset,
+  addImageMasterWorkspaceMessage,
+  deleteImageMasterWorkspaceAsset,
   generateImageGen,
-  getImageMasterSession,
+  getImageMasterWorkspaceDetail,
   getModels,
-  listImageMasterSessions,
   planImageGen,
-  uploadImageAsset,
+  saveImageMasterWorkspaceCanvas,
+  uploadImageMasterWorkspaceAsset,
 } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
-import type { ImageAsset, ImageMasterMessage, ImageMasterSession } from '@/services/contracts/imageMaster';
+import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
 import {
   ArrowUp,
@@ -83,6 +82,272 @@ type CanvasImageItem = {
   fontSize?: number;
   textColor?: string;
 };
+
+type PersistedCanvasStateV1 = {
+  schemaVersion: 1;
+  meta?: Record<string, unknown>;
+  elements: PersistedCanvasElementV1[];
+};
+
+type PersistedCanvasElementV1 =
+  | {
+      id: string;
+      kind: 'image';
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      z?: number;
+      name?: string;
+      assetId?: string;
+      src?: string;
+      sha256?: string;
+      naturalW?: number;
+      naturalH?: number;
+      locked?: boolean;
+      hidden?: boolean;
+      ext?: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: 'generator';
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      z?: number;
+      name?: string;
+      prompt?: string;
+      requestedSize?: string | null;
+      effectiveSize?: string | null;
+      sizeAdjusted?: boolean;
+      ratioAdjusted?: boolean;
+      locked?: boolean;
+      hidden?: boolean;
+      ext?: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: 'shape';
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      z?: number;
+      shapeType?: 'rect' | 'circle' | 'triangle' | 'star';
+      fill?: string;
+      stroke?: string;
+      locked?: boolean;
+      hidden?: boolean;
+      ext?: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: 'text';
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      z?: number;
+      text?: string;
+      fontSize?: number;
+      textColor?: string;
+      fill?: string;
+      stroke?: string;
+      locked?: boolean;
+      hidden?: boolean;
+      ext?: Record<string, unknown>;
+    };
+
+const PERSIST_SCHEMA_VERSION = 1 as const;
+const MAX_PERSIST_ELEMENTS = 200;
+
+function safeJsonParse<T>(s: string): T | null {
+  const raw = String(s ?? '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function isRemoteImageSrc(src: string): boolean {
+  const s = String(src ?? '').trim();
+  if (!s) return false;
+  if (s.startsWith('data:')) return false;
+  if (s.startsWith('/api/')) return true;
+  return /^https?:\/\//i.test(s);
+}
+
+function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvasStateV1; skippedLocalOnlyImages: number } {
+  const els: PersistedCanvasElementV1[] = [];
+  let skippedLocalOnlyImages = 0;
+  const src = Array.isArray(items) ? items : [];
+  for (let i = 0; i < src.length && els.length < MAX_PERSIST_ELEMENTS; i++) {
+    const it = src[i]!;
+    const kind = (it.kind ?? 'image') as PersistedCanvasElementV1['kind'];
+    const base = {
+      id: String(it.key ?? '').trim() || `el_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      kind,
+      x: it.x,
+      y: it.y,
+      w: it.w,
+      h: it.h,
+      z: i,
+      name: String(it.prompt ?? '').trim() || undefined,
+    };
+    if (kind === 'image') {
+      const assetId = String(it.assetId ?? '').trim();
+      const srcOk = isRemoteImageSrc(it.src);
+      if (!assetId && !srcOk) {
+        skippedLocalOnlyImages += 1;
+        continue;
+      }
+      els.push({
+        ...base,
+        kind: 'image',
+        assetId: assetId || undefined,
+        src: srcOk ? it.src : undefined,
+        sha256: String(it.sha256 ?? '').trim() || undefined,
+        naturalW: it.naturalW,
+        naturalH: it.naturalH,
+        ext: {},
+      });
+    } else if (kind === 'generator') {
+      els.push({
+        ...base,
+        kind: 'generator',
+        prompt: String(it.prompt ?? '').trim() || undefined,
+        requestedSize: it.requestedSize ?? null,
+        effectiveSize: it.effectiveSize ?? null,
+        sizeAdjusted: Boolean(it.sizeAdjusted),
+        ratioAdjusted: Boolean(it.ratioAdjusted),
+        ext: {},
+      });
+    } else if (kind === 'shape') {
+      els.push({
+        ...base,
+        kind: 'shape',
+        shapeType: it.shapeType,
+        fill: it.fill,
+        stroke: it.stroke,
+        ext: {},
+      });
+    } else if (kind === 'text') {
+      els.push({
+        ...base,
+        kind: 'text',
+        text: it.text,
+        fontSize: it.fontSize,
+        textColor: it.textColor,
+        fill: it.fill,
+        stroke: it.stroke,
+        ext: {},
+      });
+    }
+  }
+  return { state: { schemaVersion: 1, meta: { skippedLocalOnlyImages }, elements: els }, skippedLocalOnlyImages };
+}
+
+function persistedV1ToCanvas(
+  state: PersistedCanvasStateV1,
+  assets: ImageAsset[]
+): { canvas: CanvasImageItem[]; missingAssets: number; localOnlyImages: number } {
+  const byId = new Map<string, ImageAsset>();
+  for (const a of assets ?? []) {
+    if (a?.id) byId.set(String(a.id), a);
+  }
+  const out: CanvasImageItem[] = [];
+  let missingAssets = 0;
+  let localOnlyImages = 0;
+  const sorted = [...(state.elements ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+  for (const el of sorted) {
+    const id = String(el.id ?? '').trim();
+    if (!id) continue;
+    if (el.kind === 'image') {
+      const aid = String(el.assetId ?? '').trim();
+      const a = aid ? byId.get(aid) : undefined;
+      const src = a?.url || (isRemoteImageSrc(String(el.src ?? '')) ? String(el.src) : '');
+      if (!src) {
+        if (!aid && !el.src) localOnlyImages += 1;
+        else missingAssets += 1;
+        continue;
+      }
+      const prompt = String(el.name ?? a?.prompt ?? '').trim();
+      out.push({
+        key: id,
+        assetId: aid || a?.id,
+        sha256: String(el.sha256 ?? a?.sha256 ?? '').trim() || undefined,
+        createdAt: Date.now(),
+        prompt,
+        src,
+        status: 'done',
+        kind: 'image',
+        syncStatus: src.startsWith('/api/v1/admin/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
+        syncError: null,
+        x: el.x,
+        y: el.y,
+        w: typeof el.w === 'number' && el.w > 0 ? el.w : a?.width || undefined,
+        h: typeof el.h === 'number' && el.h > 0 ? el.h : a?.height || undefined,
+        naturalW: typeof el.naturalW === 'number' && el.naturalW > 0 ? el.naturalW : a?.width || undefined,
+        naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
+      });
+    } else if (el.kind === 'generator') {
+      out.push({
+        key: id,
+        createdAt: Date.now(),
+        prompt: String(el.prompt ?? el.name ?? 'Image Generator'),
+        src: '',
+        status: 'done',
+        kind: 'generator',
+        x: el.x,
+        y: el.y,
+        w: el.w,
+        h: el.h,
+        requestedSize: el.requestedSize ?? null,
+        effectiveSize: el.effectiveSize ?? null,
+        sizeAdjusted: Boolean(el.sizeAdjusted),
+        ratioAdjusted: Boolean(el.ratioAdjusted),
+      });
+    } else if (el.kind === 'shape') {
+      out.push({
+        key: id,
+        createdAt: Date.now(),
+        prompt: '',
+        src: '',
+        status: 'done',
+        kind: 'shape',
+        x: el.x,
+        y: el.y,
+        w: el.w,
+        h: el.h,
+        shapeType: el.shapeType,
+        fill: el.fill,
+        stroke: el.stroke,
+      });
+    } else if (el.kind === 'text') {
+      out.push({
+        key: id,
+        createdAt: Date.now(),
+        prompt: '',
+        src: '',
+        status: 'done',
+        kind: 'text',
+        x: el.x,
+        y: el.y,
+        w: el.w,
+        h: el.h,
+        text: el.text,
+        fontSize: el.fontSize,
+        textColor: el.textColor,
+        fill: el.fill,
+        stroke: el.stroke,
+      });
+    }
+  }
+  return { canvas: out.slice(0, 120), missingAssets, localOnlyImages };
+}
 
 type UiMsg = {
   id: string;
@@ -307,7 +572,9 @@ function buildTemplate(name: string) {
   return '';
 }
 
-export default function AdvancedImageMasterTab() {
+export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
+  // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
+  const workspaceId = String(props.workspaceId ?? '').trim();
   // 固定默认参数：用户不需要选择
   const DEFAULT_RESPONSE_FORMAT = 'b64_json' as const;
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
@@ -320,6 +587,7 @@ export default function AdvancedImageMasterTab() {
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
   const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
+  const viewportKey = userId ? `prdAdmin.imageMaster.viewport.${userId}` : '';
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 420;
 
@@ -713,7 +981,7 @@ export default function AdvancedImageMasterTab() {
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
 
   const oneClickCleanLocalCache = useCallback(async () => {
-    const keys = Array.from(new Set([splitKey, modelPrefKey, directPromptKey].map((x) => String(x ?? '').trim()).filter(Boolean)));
+    const keys = Array.from(new Set([splitKey, modelPrefKey, directPromptKey, viewportKey].map((x) => String(x ?? '').trim()).filter(Boolean)));
     if (keys.length === 0) {
       await systemDialog.alert('当前账号暂无可清理的本地缓存');
       return;
@@ -746,13 +1014,29 @@ export default function AdvancedImageMasterTab() {
     setRightWidth(def);
 
     await systemDialog.alert('已清理本地缓存。若仍异常，建议刷新页面。');
-  }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, modelPrefKey, splitKey]);
+  }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, modelPrefKey, splitKey, viewportKey]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
-  const [masterSession, setMasterSession] = useState<ImageMasterSession | null>(null);
+  const [workspace, setWorkspace] = useState<ImageMasterWorkspace | null>(null);
   const [, setBooting] = useState(false);
-  const initSessionRef = useRef<{ userId: string; started: boolean }>({ userId: '', started: false });
+  const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
+
+  // 重要：pushMsg 需要稳定引用（供多个 useEffect 依赖），并且不能直接依赖 workspace state（否则每次 render 变更都触发 effect）
+  const workspaceRef = useRef<ImageMasterWorkspace | null>(null);
+  useEffect(() => {
+    workspaceRef.current = workspace;
+  }, [workspace]);
+
+  const pushMsg = useCallback((role: UiMsg['role'], content: string) => {
+    const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
+    setMessages((prev) => prev.concat(msg));
+    const ws = workspaceRef.current;
+    if (ws?.id) {
+      const backendRole: ImageMasterMessage['role'] = role === 'User' ? 'User' : 'Assistant';
+      void addImageMasterWorkspaceMessage({ id: ws.id, role: backendRole, content });
+    }
+  }, []);
 
   const MAX_GEN_CONCURRENCY = 3;
   type GenJob = {
@@ -774,34 +1058,45 @@ export default function AdvancedImageMasterTab() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const reloadMasterSession = useCallback(async () => {
-    const sid = masterSession?.id;
-    if (!sid) return;
-    const detail = await getImageMasterSession({ id: sid, messageLimit: 200, assetLimit: 80 });
+  const canvasBootedRef = useRef(false);
+  const canvasSaveTimerRef = useRef<number | null>(null);
+  const lastSavedJsonRef = useRef<string>('');
+  const lastSaveAtRef = useRef<number>(0);
+  const pendingLocalOnlyWarnRef = useRef<number>(0);
+
+  const reloadWorkspace = useCallback(async () => {
+    if (!workspaceId) return;
+    const detail = await getImageMasterWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
     if (!detail.success) return;
-    setMasterSession(detail.data.session);
+    setWorkspace(detail.data.workspace);
+
+    const ms = Array.isArray(detail.data.messages) ? detail.data.messages : [];
+    if (ms.length > 0) {
+      setMessages(
+        ms.map((m) => ({
+          id: m.id,
+          role: m.role === 'Assistant' ? 'Assistant' : 'User',
+          content: String(m.content ?? ''),
+          ts: Number.isFinite(Date.parse(m.createdAt)) ? Date.parse(m.createdAt) : Date.now(),
+        }))
+      );
+    }
+
     const assets = Array.isArray(detail.data.assets) ? detail.data.assets : [];
-    const items: CanvasImageItem[] = (assets as ImageAsset[])
-      .map((a) => ({
-        key: a.id,
-        assetId: a.id,
-        sha256: a.sha256,
-        createdAt: Number.isFinite(Date.parse(a.createdAt)) ? Date.parse(a.createdAt) : Date.now(),
-        prompt: a.prompt ?? '',
-        src: a.url || '',
-        status: 'done' as const,
-        syncStatus: 'synced' as const,
-        syncError: null,
-        w: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
-        h: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
-        naturalW: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
-        naturalH: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
-      }))
-      .filter((x) => !!x.src)
-      .slice(0, 60);
-    setCanvas(items);
+    const assetsList = assets as ImageAsset[];
+    const canvasObj = detail.data.canvas;
+    if (canvasObj?.payloadJson) {
+      const parsed = safeJsonParse<PersistedCanvasStateV1>(canvasObj.payloadJson);
+      if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
+        const restored = persistedV1ToCanvas(parsed, assetsList);
+        setCanvas(restored.canvas);
+        setSelectedKeys([]);
+        return;
+      }
+    }
+    setCanvas([]);
     setSelectedKeys([]);
-  }, [masterSession?.id]);
+  }, [workspaceId]);
 
   const confirmAndDeleteSelectedKeys = useCallback(
     async (keysArg?: string[]) => {
@@ -833,14 +1128,14 @@ export default function AdvancedImageMasterTab() {
       setSelectedKeys([]);
 
       if (assetIds.length === 0) return;
-      const results = await Promise.all(assetIds.map((id) => deleteImageMasterAsset({ id })));
+      const results = await Promise.all(assetIds.map((id) => deleteImageMasterWorkspaceAsset({ id: workspaceId, assetId: id })));
       const failed = results.find((r) => !r.success) ?? null;
       if (failed) {
         await systemDialog.alert(failed.error?.message || '删除失败');
-        await reloadMasterSession();
+        await reloadWorkspace();
       }
     },
-    [reloadMasterSession]
+    [reloadWorkspace, workspaceId]
   );
 
   useEffect(() => {
@@ -921,37 +1216,22 @@ export default function AdvancedImageMasterTab() {
     }
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId]);
 
-  // 启动时：按账号持久化加载/创建会话，并回放历史消息+画板资产
+  // 启动时：加载 workspace 并回放历史消息+画布（workspaceId 为稳定主键）
   useEffect(() => {
-    if (!userId) return;
-    // 关键：只初始化一次；否则 setBooting(false) 会触发依赖变化导致死循环请求
-    if (initSessionRef.current.userId === userId && initSessionRef.current.started) return;
-    initSessionRef.current = { userId, started: true };
+    if (!workspaceId) return;
+    if (initWorkspaceRef.current.workspaceId === workspaceId && initWorkspaceRef.current.started) return;
+    initWorkspaceRef.current = { workspaceId, started: true };
 
     let cancelled = false;
     setBooting(true);
     (async () => {
-      const list = await listImageMasterSessions({ limit: 10 });
-      let sid = '';
-      if (list.success && Array.isArray(list.data?.items) && list.data!.items.length > 0) {
-        sid = list.data!.items[0].id;
-      } else {
-        const created = await createImageMasterSession({ title: '高级视觉创作' });
-        if (created.success) sid = created.data.session.id;
-      }
-      if (!sid) {
-        // 不自动重试，避免触发后端限流（429）
-        if (!cancelled) setError(list.success ? '创建会话失败' : (list.error?.message || '加载会话失败'));
-        return;
-      }
-
-      const detail = await getImageMasterSession({ id: sid, messageLimit: 200, assetLimit: 80 });
+      const detail = await getImageMasterWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
       if (!detail.success) {
-        if (!cancelled) setError(detail.error?.message || '加载会话详情失败');
+        if (!cancelled) setError(detail.error?.message || '加载 Workspace 失败');
         return;
       }
       if (cancelled) return;
-      setMasterSession(detail.data.session);
+      setWorkspace(detail.data.workspace);
 
       const ms = Array.isArray(detail.data.messages) ? detail.data.messages : [];
       if (ms.length > 0) {
@@ -966,28 +1246,13 @@ export default function AdvancedImageMasterTab() {
       }
 
       const assets = Array.isArray(detail.data.assets) ? detail.data.assets : [];
-      if (assets.length > 0) {
-        const items: CanvasImageItem[] = (assets as ImageAsset[])
-          .map((a) => ({
-            key: a.id,
-            assetId: a.id,
-            sha256: a.sha256,
-            createdAt: Number.isFinite(Date.parse(a.createdAt)) ? Date.parse(a.createdAt) : Date.now(),
-            prompt: a.prompt ?? '',
-            src: a.url || '',
-            status: 'done' as const,
-            // 规则：若后端记录了像素尺寸，则画布直接按原始尺寸展示
-            w: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
-            h: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
-            naturalW: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
-            naturalH: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
-          }))
-          .filter((x) => !!x.src)
-          .slice(0, 60);
+      const assetsList = assets as ImageAsset[];
+
+      const applyCanvasFocus = (items: CanvasImageItem[]) => {
         setCanvas(items);
+        canvasBootedRef.current = true;
         if (items.length > 0) {
           setSelectedKeys((cur) => (cur.length > 0 ? cur : [items[0].key]));
-          // 进入页面后：默认把焦点给画布，确保 Delete/Backspace 等快捷键可立即生效
           requestAnimationFrame(() => {
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
@@ -999,12 +1264,59 @@ export default function AdvancedImageMasterTab() {
             if (isEditable) return;
             focusStage();
           });
+        } else {
+          setSelectedKeys([]);
         }
+      };
+
+      const canvasObj: ImageMasterCanvas | null = detail.data.canvas ?? null;
+      if (canvasObj && String(canvasObj.payloadJson ?? '').trim()) {
+        const parsed = safeJsonParse<PersistedCanvasStateV1>(String(canvasObj.payloadJson ?? ''));
+        if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
+          const restored = persistedV1ToCanvas(parsed, assetsList);
+          applyCanvasFocus(restored.canvas);
+          if (restored.missingAssets > 0 || restored.localOnlyImages > 0) {
+            pushMsg(
+              'Assistant',
+              `画布已恢复。${restored.missingAssets > 0 ? `有 ${restored.missingAssets} 个图片资产缺失已跳过。` : ''}${restored.localOnlyImages > 0 ? `有 ${restored.localOnlyImages} 张本地未持久化图片无法恢复。` : ''}`
+            );
+          }
+          lastSavedJsonRef.current = canvasObj.payloadJson;
+          pendingLocalOnlyWarnRef.current = Number((parsed.meta as { skippedLocalOnlyImages?: unknown } | undefined)?.skippedLocalOnlyImages ?? 0) || 0;
+          return;
+        }
+        pushMsg('Assistant', '检测到画布数据格式异常，已回退到资产列表并重新建立画布。');
       }
+
+      const fallbackItems: CanvasImageItem[] = (assetsList ?? [])
+        .map((a) => ({
+          key: a.id,
+          assetId: a.id,
+          sha256: a.sha256,
+          createdAt: Number.isFinite(Date.parse(a.createdAt)) ? Date.parse(a.createdAt) : Date.now(),
+          prompt: a.prompt ?? '',
+          src: a.url || '',
+          status: 'done' as const,
+          kind: 'image' as const,
+          syncStatus: 'synced' as const,
+          syncError: null,
+          w: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
+          h: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
+          naturalW: typeof a.width === 'number' && a.width > 0 ? a.width : undefined,
+          naturalH: typeof a.height === 'number' && a.height > 0 ? a.height : undefined,
+        }))
+        .filter((x) => !!x.src)
+        .slice(0, 60);
+
+      applyCanvasFocus(fallbackItems);
+      const built = canvasToPersistedV1(fallbackItems);
+      const json = JSON.stringify(built.state);
+      lastSavedJsonRef.current = json;
+      void saveImageMasterWorkspaceCanvas({ id: workspaceId, schemaVersion: PERSIST_SCHEMA_VERSION, payloadJson: json, idempotencyKey: `boot_${Date.now()}` });
     })()
       .catch((e) => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : '加载会话失败');
+        setError(e instanceof Error ? e.message : '加载 Workspace 失败');
       })
       .finally(() => {
         if (!cancelled) setBooting(false);
@@ -1013,7 +1325,52 @@ export default function AdvancedImageMasterTab() {
     return () => {
       cancelled = true;
     };
-  }, [focusStage, userId]);
+  }, [focusStage, pushMsg, workspaceId]);
+
+  // 自动保存画布（debounce）
+  useEffect(() => {
+    if (!workspaceId) return;
+    if (!canvasBootedRef.current) return;
+
+    if (canvasSaveTimerRef.current != null) {
+      window.clearTimeout(canvasSaveTimerRef.current);
+      canvasSaveTimerRef.current = null;
+    }
+
+    canvasSaveTimerRef.current = window.setTimeout(() => {
+      canvasSaveTimerRef.current = null;
+      const built = canvasToPersistedV1(canvasRef.current ?? []);
+      const json = JSON.stringify(built.state);
+      if (json === lastSavedJsonRef.current) return;
+
+      const now = Date.now();
+      if (now - lastSaveAtRef.current < 800) return;
+      lastSaveAtRef.current = now;
+      lastSavedJsonRef.current = json;
+
+      if (built.skippedLocalOnlyImages > 0 && pendingLocalOnlyWarnRef.current !== built.skippedLocalOnlyImages) {
+        pendingLocalOnlyWarnRef.current = built.skippedLocalOnlyImages;
+        pushMsg(
+          'Assistant',
+          `提示：有 ${built.skippedLocalOnlyImages} 张图片仍是本地临时内容（未持久化），不会被保存到画布。等待“同步中”完成后会自动纳入保存。`
+        );
+      }
+
+      void saveImageMasterWorkspaceCanvas({
+        id: workspaceId,
+        schemaVersion: PERSIST_SCHEMA_VERSION,
+        payloadJson: json,
+        idempotencyKey: `autosave_${Math.floor(now / 1000)}`,
+      });
+    }, 1200);
+
+    return () => {
+      if (canvasSaveTimerRef.current != null) {
+        window.clearTimeout(canvasSaveTimerRef.current);
+        canvasSaveTimerRef.current = null;
+      }
+    };
+  }, [canvas, pushMsg, workspaceId]);
 
   // 初始化右侧宽度：localStorage 优先，否则默认 20%
   useEffect(() => {
@@ -1029,6 +1386,48 @@ export default function AdvancedImageMasterTab() {
     }
     setRightWidth(next);
   }, [splitKey]);
+
+  // 读取视口（camera/zoom）：按账号持久化（不写 DB）
+  useEffect(() => {
+    if (!viewportKey) return;
+    try {
+      const raw = localStorage.getItem(viewportKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { z?: unknown; x?: unknown; y?: unknown };
+      const z = typeof parsed.z === 'number' && Number.isFinite(parsed.z) ? parsed.z : NaN;
+      const x = typeof parsed.x === 'number' && Number.isFinite(parsed.x) ? parsed.x : NaN;
+      const y = typeof parsed.y === 'number' && Number.isFinite(parsed.y) ? parsed.y : NaN;
+      if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+      setViewport(clampZoom(z), { x, y }, { syncUi: true });
+    } catch {
+      // ignore
+    }
+    // 仅在 mount & key 变化时读一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewportKey]);
+
+  // 写入视口（debounce）：避免高频写 localStorage
+  const viewportSaveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!viewportKey) return;
+    if (viewportSaveTimerRef.current != null) {
+      window.clearTimeout(viewportSaveTimerRef.current);
+      viewportSaveTimerRef.current = null;
+    }
+    viewportSaveTimerRef.current = window.setTimeout(() => {
+      viewportSaveTimerRef.current = null;
+      try {
+        localStorage.setItem(viewportKey, JSON.stringify({ z: zoomRef.current, x: cameraRef.current.x, y: cameraRef.current.y }));
+      } catch {
+        // ignore
+      }
+    }, 500);
+    return () => {
+      if (viewportSaveTimerRef.current != null) window.clearTimeout(viewportSaveTimerRef.current);
+      viewportSaveTimerRef.current = null;
+    };
+    // 依赖 zoom/camera state（低频同步后的值），避免每帧触发
+  }, [camera, viewportKey, zoom]);
 
   // 拖拽 splitter
   useEffect(() => {
@@ -1410,15 +1809,6 @@ export default function AdvancedImageMasterTab() {
     scheduleWorldTransform(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const pushMsg = (role: UiMsg['role'], content: string) => {
-    const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
-    setMessages((prev) => prev.concat(msg));
-    if (masterSession?.id) {
-      const backendRole: ImageMasterMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      void addImageMasterMessage({ sessionId: masterSession.id, role: backendRole, content });
-    }
-  };
 
   const setActiveValue = (next: string) => {
     if (activeComposerRef.current === 'quick') setQuickInput(next);
@@ -1847,7 +2237,8 @@ export default function AdvancedImageMasterTab() {
       const height = parsed?.h;
       const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
       if (!isAlreadyHosted) {
-        const up = await uploadImageAsset({
+        const up = await uploadImageMasterWorkspaceAsset({
+          id: workspaceId,
           data: src.startsWith('data:') ? src : undefined,
           sourceUrl: src.startsWith('http') ? src : undefined,
           prompt: firstPrompt,
@@ -2102,7 +2493,7 @@ export default function AdvancedImageMasterTab() {
       pushMsg('Assistant', '已替换当前选中图片。');
 
       // 持久化替换后的图片
-      const up = await uploadImageAsset({ data: src, prompt: file.name || 'uploaded' });
+      const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: src, prompt: file.name || 'uploaded' });
       if (up.success) {
         const a = up.data.asset;
         setCanvas((prev) =>
@@ -2224,7 +2615,7 @@ export default function AdvancedImageMasterTab() {
       let failedCount = 0;
       for (const it of added) {
         if (!it.src || !it.src.startsWith('data:')) continue;
-        const up = await uploadImageAsset({ data: it.src, prompt: it.prompt });
+        const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: it.src, prompt: it.prompt });
         if (!up.success) {
           failedCount += 1;
           const msg = up.error?.message || '图片持久化失败';
@@ -3176,6 +3567,67 @@ export default function AdvancedImageMasterTab() {
                       </div>
                     );
                   })}
+
+                {/* 普通图片：选中时也显示“名字 + 尺寸”（智能图片已有固定 UI） */}
+                {selectedKeys.length === 1
+                  ? canvas
+                      .filter((it) => (it.kind ?? 'image') === 'image' && isSelectedKey(it.key))
+                      .map((it) => {
+                        const x = it.x ?? 0;
+                        const y = it.y ?? 0;
+                        const w = it.w ?? 320;
+                        const h = it.h ?? 220;
+                        const nameRaw = String(it.prompt ?? '').trim();
+                        const name = nameRaw || '图片';
+                        const pxW = typeof it.naturalW === 'number' ? it.naturalW : 0;
+                        const pxH = typeof it.naturalH === 'number' ? it.naturalH : 0;
+                        const hasPixel = pxW > 0 && pxH > 0;
+                        const sizeText = hasPixel ? `${Math.round(pxW)} × ${Math.round(pxH)}` : `${Math.round(w)} × ${Math.round(h)}`;
+                        return (
+                          <div
+                            key={`ui_sel_${it.key}`}
+                            className="absolute"
+                            style={{ left: Math.round(x), top: Math.round(y), width: Math.round(w), height: Math.round(h) }}
+                          >
+                            <div
+                              className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                              style={{
+                                left: 0,
+                                top: 0,
+                                transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
+                                transformOrigin: 'left bottom',
+                                background: 'rgba(255,255,255,0.80)',
+                                border: '1px solid rgba(0,0,0,0.10)',
+                                color: 'rgba(0,0,0,0.55)',
+                                boxShadow: '0 10px 24px rgba(0,0,0,0.10)',
+                                maxWidth: 360,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title={name}
+                            >
+                              {name}
+                            </div>
+                            <div
+                              className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                              style={{
+                                right: 0,
+                                top: 0,
+                                transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
+                                transformOrigin: 'right bottom',
+                                background: 'rgba(255,255,255,0.72)',
+                                border: '1px solid rgba(0,0,0,0.10)',
+                                color: 'rgba(0,0,0,0.45)',
+                              }}
+                              title={hasPixel ? '图片像素尺寸（natural）' : '图片尺寸（未解析到像素，暂用画布占位）'}
+                            >
+                              {sizeText}
+                            </div>
+                          </div>
+                        );
+                      })
+                  : null}
               </div>
             </div>
 

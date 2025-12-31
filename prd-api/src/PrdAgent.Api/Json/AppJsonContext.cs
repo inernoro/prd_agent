@@ -48,6 +48,9 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminRegenerateInviteResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminMessageDto>>))]
 [JsonSerializable(typeof(ApiResponse<HealthCheckResponse>))]
+// 群消息 SSE
+[JsonSerializable(typeof(GroupMessageStreamEventDto))]
+[JsonSerializable(typeof(GroupMessageStreamMessageDto))]
 // Admin Data（配置导入导出 / 数据管理）
 [JsonSerializable(typeof(ApiResponse<ExportedConfigV1>))]
 [JsonSerializable(typeof(ApiResponse<DataConfigImportResponse>))]

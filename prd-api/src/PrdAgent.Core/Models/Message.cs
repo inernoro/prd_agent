@@ -10,6 +10,12 @@ public class Message
     
     /// <summary>所属群组ID</summary>
     public string GroupId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 群内顺序号（单调递增，仅群消息使用；用于 SSE 断线续传与严格有序回放）。
+    /// - 非群消息/历史消息可为空
+    /// </summary>
+    public long? GroupSeq { get; set; }
     
     /// <summary>会话ID</summary>
     public string SessionId { get; set; } = string.Empty;

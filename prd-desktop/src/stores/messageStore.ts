@@ -36,6 +36,7 @@ interface MessageState {
   prependMessages: (messages: Message[]) => number;
   loadOlderMessages: (args: { groupId: string; limit?: number }) => Promise<{ added: number }>;
   upsertMessage: (message: Message) => void;
+  ingestGroupBroadcastMessage: (args: { message: Message; currentUserId?: string | null }) => void;
   startStreaming: (message: Message) => void;
   appendToStreamingMessage: (content: string) => void;
   startStreamingBlock: (block: { id: string; kind: MessageBlockKind; language?: string | null }) => void;
@@ -62,6 +63,7 @@ function reviveMessage(m: any): Message {
     citations,
     viewRole: m?.viewRole ?? undefined,
     timestamp: t,
+    groupSeq: typeof m?.groupSeq === 'number' ? m.groupSeq : undefined,
     senderId: m?.senderId ?? undefined,
     senderName: m?.senderName ?? undefined,
   };
@@ -70,6 +72,21 @@ function reviveMessage(m: any): Message {
 function reviveMessages(list: any): Message[] {
   if (!Array.isArray(list)) return [];
   return list.map(reviveMessage).filter((x) => x.id);
+}
+
+function maybeSortByGroupSeq(list: Message[]): Message[] {
+  const hasSeq = list.some((m) => typeof (m as any)?.groupSeq === 'number');
+  if (!hasSeq) return list;
+  // groupSeq 优先，其次 timestamp；缺失 groupSeq 的消息放到最前（历史兼容）
+  return [...list].sort((a, b) => {
+    const sa = typeof a.groupSeq === 'number' ? a.groupSeq : null;
+    const sb = typeof b.groupSeq === 'number' ? b.groupSeq : null;
+    if (sa == null && sb == null) return a.timestamp.getTime() - b.timestamp.getTime();
+    if (sa == null) return -1;
+    if (sb == null) return 1;
+    if (sa !== sb) return sa - sb;
+    return a.timestamp.getTime() - b.timestamp.getTime();
+  });
 }
 
 type MessageHistoryItem = {
@@ -315,6 +332,49 @@ export const useMessageStore = create<MessageState>()(
     const next = [...state.messages];
     next[idx] = message;
     return { messages: next };
+  }),
+
+  // 群广播消息注入：
+  // - 解决“发送者本地 user message id 与服务端落库 id 不一致”导致的重复
+  // - 尽量保持按 groupSeq 有序（若缺失 groupSeq 则退化按 timestamp）
+  ingestGroupBroadcastMessage: ({ message, currentUserId }) => set((state) => {
+    const incoming = message;
+    if (!incoming?.id) return state;
+
+    // 1) 发送者 user message 去重：用 (senderId + content) 在尾部做一次轻量 reconcile
+    if (
+      incoming.role === 'User' &&
+      currentUserId &&
+      incoming.senderId &&
+      incoming.senderId === currentUserId
+    ) {
+      const idxFromEnd = [...state.messages]
+        .reverse()
+        .findIndex((m) =>
+          m.role === 'User' &&
+          (m.senderId ? m.senderId === currentUserId : true) &&
+          (m.content ?? '') === (incoming.content ?? '') &&
+          Math.abs((m.timestamp?.getTime?.() ?? 0) - (incoming.timestamp?.getTime?.() ?? 0)) <= 30_000
+        );
+      if (idxFromEnd !== -1) {
+        const idx = state.messages.length - 1 - idxFromEnd;
+        const next = [...state.messages];
+        next[idx] = { ...next[idx], ...incoming };
+        return { messages: maybeSortByGroupSeq(next) };
+      }
+    }
+
+    // 2) 常规 upsert by id
+    const existingIdx = state.messages.findIndex((m) => m.id === incoming.id);
+    if (existingIdx !== -1) {
+      const next = [...state.messages];
+      next[existingIdx] = { ...next[existingIdx], ...incoming };
+      return { messages: maybeSortByGroupSeq(next) };
+    }
+
+    // 3) 新消息：追加并按需排序
+    const next = [...state.messages, incoming];
+    return { messages: maybeSortByGroupSeq(next) };
   }),
 
   startStreaming: (message) => set((state) => {

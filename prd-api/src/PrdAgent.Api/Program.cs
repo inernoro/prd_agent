@@ -619,6 +619,14 @@ builder.Services.AddScoped<IMessageRepository>(sp =>
     return new MessageRepository(db.Messages);
 });
 
+builder.Services.AddScoped<IGroupMessageSeqService>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new GroupMessageSeqService(db.GroupMessageCounters);
+});
+
+builder.Services.AddSingleton<IGroupMessageStreamHub, GroupMessageStreamHub>();
+
 builder.Services.AddScoped<IPrdCommentRepository>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();
@@ -685,8 +693,10 @@ builder.Services.AddScoped<IChatService>(sp =>
     var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
+    var groupSeq = sp.GetRequiredService<IGroupMessageSeqService>();
+    var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, llmCtx);
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>

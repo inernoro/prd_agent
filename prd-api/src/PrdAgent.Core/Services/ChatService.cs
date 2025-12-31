@@ -20,6 +20,8 @@ public class ChatService : IChatService
     private readonly ISystemPromptService _systemPromptService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
+    private readonly IGroupMessageSeqService _groupMessageSeqService;
+    private readonly IGroupMessageStreamHub _groupMessageStreamHub;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private static readonly TimeSpan ChatHistoryExpiry = TimeSpan.FromMinutes(30);
 
@@ -33,6 +35,8 @@ public class ChatService : IChatService
         ISystemPromptService systemPromptService,
         IUserService userService,
         IMessageRepository messageRepository,
+        IGroupMessageSeqService groupMessageSeqService,
+        IGroupMessageStreamHub groupMessageStreamHub,
         ILLMRequestContextAccessor llmRequestContext)
     {
         _llmClient = llmClient;
@@ -44,6 +48,8 @@ public class ChatService : IChatService
         _systemPromptService = systemPromptService;
         _userService = userService;
         _messageRepository = messageRepository;
+        _groupMessageSeqService = groupMessageSeqService;
+        _groupMessageStreamHub = groupMessageStreamHub;
         _llmRequestContext = llmRequestContext;
     }
 
@@ -316,7 +322,23 @@ public class ChatService : IChatService
 
         // 写入 MongoDB（用于后台追溯与统计）
         // 注意：日志中不得打印消息原文；仓储层不记录日志，这里也不记录 content
+
+        // 群消息顺序键：仅对 groupId 非空的群会话生成
+        var gidForSeq = (session.GroupId ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(gidForSeq))
+        {
+            userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+            assistantMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+        }
+
         await _messageRepository.InsertManyAsync(new[] { userMessage, assistantMessage });
+
+        // 群广播：只广播“消息级别”事件（user + assistant final），token/delta 不广播
+        if (!string.IsNullOrEmpty(gidForSeq))
+        {
+            _groupMessageStreamHub.Publish(userMessage);
+            _groupMessageStreamHub.Publish(assistantMessage);
+        }
 
         // 刷新会话活跃时间
         await _sessionService.RefreshActivityAsync(sessionId);
@@ -362,25 +384,52 @@ public class ChatService : IChatService
 
     public async Task<List<Message>> GetHistoryAsync(string sessionId, int limit = 50)
     {
-        var session = await _sessionService.GetByIdAsync(sessionId);
+        var sid = (sessionId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(sid)) return new List<Message>();
+
+        var take = Math.Clamp(limit, 1, 200);
+
+        var session = await _sessionService.GetByIdAsync(sid);
         if (session == null)
         {
-            return new List<Message>();
+            // 兼容：session 元数据可能因 TTL/重启丢失，但消息已持久化在 Mongo。
+            // 这里尽最大努力返回 session 维度历史（用于回放/诊断/后台工具），避免“数据看似丢失”。
+            return await _messageRepository.FindBySessionAsync(sid, before: null, limit: take);
         }
 
         // 读取历史也视为“活跃”：用户可能长时间阅读/回看聊天记录，首次再提问不应因为纯阅读而过期。
-        await _sessionService.RefreshActivityAsync(sessionId);
+        await _sessionService.RefreshActivityAsync(sid);
 
         var key = !string.IsNullOrEmpty(session.GroupId)
             ? CacheKeys.ForGroupChatHistory(session.GroupId)
-            : CacheKeys.ForChatHistory(sessionId);
+            : CacheKeys.ForChatHistory(sid);
 
         var history = await _cache.GetAsync<List<Message>>(key);
-        
-        if (history == null)
-            return new List<Message>();
+        if (history != null && history.Count > 0)
+        {
+            return history.TakeLast(take).ToList();
+        }
 
-        return history.TakeLast(limit).ToList();
+        // cache miss：回源 Mongo，避免 Redis flush/服务重启/会话重建导致“上下文断链”
+        List<Message> persisted;
+        if (!string.IsNullOrEmpty(session.GroupId))
+        {
+            persisted = await _messageRepository.FindByGroupAsync(session.GroupId, before: null, limit: Math.Max(take, 50));
+        }
+        else
+        {
+            // 个人会话：按 sessionId 回放
+            persisted = await _messageRepository.FindBySessionAsync(sid, before: null, limit: Math.Max(take, 50));
+        }
+
+        // 回填 cache（仅用于 LLM 上下文拼接；历史回放仍走 Mongo API）
+        if (persisted.Count > 0)
+        {
+            var capped = persisted.Count > 100 ? persisted.TakeLast(100).ToList() : persisted;
+            await _cache.SetAsync(key, capped, ChatHistoryExpiry);
+        }
+
+        return persisted.TakeLast(take).ToList();
     }
 
     public async Task<List<Message>> GetGroupHistoryAsync(string groupId, int limit = 100)

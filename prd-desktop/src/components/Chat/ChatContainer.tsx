@@ -2,6 +2,7 @@ import { memo, useEffect } from 'react';
 import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useAuthStore } from '../../stores/authStore';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import WizardLoader from './WizardLoader';
@@ -15,6 +16,7 @@ const phaseText: Record<string, string> = {
 
 function ChatContainerInner() {
   const { sessionId, activeGroupId, currentRole } = useSessionStore();
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const messages = useMessageStore((s) => s.messages);
   const startStreaming = useMessageStore((s) => s.startStreaming);
   const appendToStreamingMessage = useMessageStore((s) => s.appendToStreamingMessage);
@@ -33,6 +35,9 @@ function ChatContainerInner() {
   const setStreamingPhase = useMessageStore((s) => s.setStreamingPhase);
   const bindSession = useMessageStore((s) => s.bindSession);
   const ackPendingUserMessageTimestamp = useMessageStore((s) => s.ackPendingUserMessageTimestamp);
+  const ingestGroupBroadcastMessage = useMessageStore((s) => s.ingestGroupBroadcastMessage);
+  const getLastGroupSeq = useSessionStore((s) => s.getLastGroupSeq);
+  const setLastGroupSeq = useSessionStore((s) => s.setLastGroupSeq);
 
   const showTopPhaseBanner =
     isStreaming &&
@@ -199,6 +204,61 @@ function ChatContainerInner() {
       });
     };
   }, [currentRole, clearPendingAssistant, startStreaming, appendToStreamingMessage, startStreamingBlock, appendToStreamingBlock, endStreamingBlock, stopStreaming, addMessage, setStreamingPhase, setMessageCitations]);
+
+  // 订阅群消息广播（SSE 由 Rust 消费并 emit 为 group-message）
+  useEffect(() => {
+    if (!activeGroupId) {
+      // 退出群上下文：停止订阅，避免后台残留连接
+      invoke('cancel_stream', { kind: 'group' }).catch(() => {});
+      return;
+    }
+
+    const afterSeq = getLastGroupSeq(activeGroupId);
+    invoke('subscribe_group_messages', { groupId: activeGroupId, afterSeq }).catch(() => {});
+  }, [activeGroupId, getLastGroupSeq]);
+
+  useEffect(() => {
+    const unlisten = listen<any>('group-message', (event) => {
+      const p = event.payload || {};
+      if (p?.type === 'error') {
+        if (p?.errorMessage) {
+          addMessage({
+            id: `group-stream-error-${Date.now()}`,
+            role: 'Assistant',
+            content: `群消息订阅失败：${String(p.errorMessage)}`,
+            timestamp: new Date(),
+            viewRole: currentRole,
+          });
+        }
+        return;
+      }
+      if (p?.type !== 'message' || !p?.message) return;
+
+      const m = p.message;
+      const gid = String(m.groupId || '').trim();
+      const seq = Number(m.groupSeq || 0);
+      if (gid && Number.isFinite(seq) && seq > 0) {
+        setLastGroupSeq(gid, seq);
+      }
+
+      ingestGroupBroadcastMessage({
+        currentUserId,
+        message: {
+          id: String(m.id || ''),
+          role: (m.role === 'User' ? 'User' : 'Assistant'),
+          content: String(m.content || ''),
+          timestamp: new Date(m.timestamp || Date.now()),
+          viewRole: (m.viewRole as any) || undefined,
+          senderId: m.senderId ? String(m.senderId) : undefined,
+          groupSeq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
+        } as any,
+      });
+    }).catch(() => Promise.resolve(() => {} as any));
+
+    return () => {
+      unlisten.then((fn) => fn()).catch(() => {});
+    };
+  }, [addMessage, currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq]);
 
   // 会话切换时加载历史消息（改用 groupId 加载群组所有消息，而非仅当前 session 消息）
   useEffect(() => {

@@ -1,14 +1,28 @@
 import { apiRequest } from './apiClient';
 import type {
   AddImageMasterMessageContract,
+  AddImageMasterWorkspaceMessageContract,
   CreateImageMasterSessionContract,
+  CreateImageMasterWorkspaceContract,
   DeleteImageMasterAssetContract,
+  DeleteImageMasterWorkspaceContract,
+  GetImageMasterCanvasContract,
   GetImageMasterSessionContract,
+  GetImageMasterWorkspaceCanvasContract,
+  GetImageMasterWorkspaceDetailContract,
+  ListImageMasterWorkspacesContract,
+  SaveImageMasterCanvasContract,
+  SaveImageMasterWorkspaceCanvasContract,
+  UpdateImageMasterWorkspaceContract,
   ListImageMasterSessionsContract,
+  UploadImageMasterWorkspaceAssetContract,
+  DeleteImageMasterWorkspaceAssetContract,
   UploadImageAssetContract,
   ImageAsset,
+  ImageMasterCanvas,
   ImageMasterMessage,
   ImageMasterSession,
+  ImageMasterWorkspace,
 } from '../contracts/imageMaster';
 
 export const createImageMasterSessionReal: CreateImageMasterSessionContract = async (input) => {
@@ -62,6 +76,129 @@ export const deleteImageMasterAssetReal: DeleteImageMasterAssetContract = async 
   return await apiRequest<{ deleted: boolean }>(`/api/v1/admin/image-master/assets/${encodeURIComponent(input.id)}`, {
     method: 'DELETE',
   });
+};
+
+export const getImageMasterCanvasReal: GetImageMasterCanvasContract = async (input) => {
+  return await apiRequest<{ canvas: ImageMasterCanvas | null }>(`/api/v1/admin/image-master/sessions/${encodeURIComponent(input.id)}/canvas`, {
+    method: 'GET',
+  });
+};
+
+export const saveImageMasterCanvasReal: SaveImageMasterCanvasContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ canvas: ImageMasterCanvas }>(`/api/v1/admin/image-master/sessions/${encodeURIComponent(input.id)}/canvas`, {
+    method: 'PUT',
+    headers,
+    body: {
+      schemaVersion: input.schemaVersion ?? 1,
+      payloadJson: input.payloadJson,
+    },
+  });
+};
+
+export const listImageMasterWorkspacesReal: ListImageMasterWorkspacesContract = async (input) => {
+  const limit = input?.limit ?? 20;
+  return await apiRequest<{ items: ImageMasterWorkspace[] }>(
+    `/api/v1/admin/image-master/workspaces?limit=${encodeURIComponent(String(limit))}`,
+    { method: 'GET' }
+  );
+};
+
+export const createImageMasterWorkspaceReal: CreateImageMasterWorkspaceContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ workspace: ImageMasterWorkspace }>('/api/v1/admin/image-master/workspaces', {
+    method: 'POST',
+    headers,
+    body: { title: input.title },
+  });
+};
+
+export const updateImageMasterWorkspaceReal: UpdateImageMasterWorkspaceContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ workspace: ImageMasterWorkspace }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}`, {
+    method: 'PUT',
+    headers,
+    body: {
+      title: input.title,
+      memberUserIds: input.memberUserIds,
+      coverAssetId: input.coverAssetId ?? null,
+    },
+  });
+};
+
+export const deleteImageMasterWorkspaceReal: DeleteImageMasterWorkspaceContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ deleted: boolean }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}`, {
+    method: 'DELETE',
+    headers,
+  });
+};
+
+export const getImageMasterWorkspaceDetailReal: GetImageMasterWorkspaceDetailContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.messageLimit != null) qs.set('messageLimit', String(input.messageLimit));
+  if (input.assetLimit != null) qs.set('assetLimit', String(input.assetLimit));
+  const q = qs.toString();
+  return await apiRequest<{ workspace: ImageMasterWorkspace; messages: ImageMasterMessage[]; assets: ImageAsset[]; canvas: ImageMasterCanvas | null }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/detail${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const addImageMasterWorkspaceMessageReal: AddImageMasterWorkspaceMessageContract = async (input) => {
+  return await apiRequest<{ message: ImageMasterMessage }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/messages`, {
+    method: 'POST',
+    body: { role: input.role, content: input.content },
+  });
+};
+
+export const getImageMasterWorkspaceCanvasReal: GetImageMasterWorkspaceCanvasContract = async (input) => {
+  return await apiRequest<{ canvas: ImageMasterCanvas | null }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/canvas`, {
+    method: 'GET',
+  });
+};
+
+export const saveImageMasterWorkspaceCanvasReal: SaveImageMasterWorkspaceCanvasContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ canvas: ImageMasterCanvas }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/canvas`, {
+    method: 'PUT',
+    headers,
+    body: { schemaVersion: input.schemaVersion ?? 1, payloadJson: input.payloadJson },
+  });
+};
+
+export const uploadImageMasterWorkspaceAssetReal: UploadImageMasterWorkspaceAssetContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ asset: ImageAsset }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/assets`, {
+    method: 'POST',
+    headers,
+    body: {
+      data: input.data,
+      sourceUrl: input.sourceUrl,
+      prompt: input.prompt,
+      width: input.width,
+      height: input.height,
+    },
+  });
+};
+
+export const deleteImageMasterWorkspaceAssetReal: DeleteImageMasterWorkspaceAssetContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/assets/${encodeURIComponent(input.assetId)}`,
+    { method: 'DELETE' }
+  );
 };
 
 

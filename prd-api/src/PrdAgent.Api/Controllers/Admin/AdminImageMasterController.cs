@@ -45,6 +45,46 @@ public class AdminImageMasterController : ControllerBase
         ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? "unknown";
 
+    private async Task<ImageMasterWorkspace?> GetWorkspaceIfAllowedAsync(string workspaceId, string adminId, CancellationToken ct)
+    {
+        var wid = (workspaceId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return null;
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return null;
+        if (ws.OwnerUserId == adminId) return ws;
+        if (ws.MemberUserIds != null && ws.MemberUserIds.Contains(adminId)) return ws;
+        return new ImageMasterWorkspace { Id = ws.Id, OwnerUserId = "__FORBIDDEN__" };
+    }
+
+    private static List<string> NormalizeMemberIds(IEnumerable<string>? raw, string ownerId)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (raw != null)
+        {
+            foreach (var x in raw)
+            {
+                var s = (x ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(s)) continue;
+                if (s == ownerId) continue;
+                set.Add(s);
+            }
+        }
+        return set.ToList();
+    }
+
+    private async Task<(bool ok, string? message)> ValidateAdminUsersAsync(IEnumerable<string> userIds, CancellationToken ct)
+    {
+        var ids = userIds.Distinct().ToList();
+        if (ids.Count == 0) return (true, null);
+        var users = await _db.Users.Find(x => ids.Contains(x.UserId)).ToListAsync(ct);
+        var found = users.Select(x => x.UserId).ToHashSet();
+        var missing = ids.Where(x => !found.Contains(x)).ToList();
+        if (missing.Count > 0) return (false, $"成员不存在：{string.Join(",", missing.Take(5))}");
+        var nonAdmin = users.Where(x => x.Role != UserRole.ADMIN).Select(x => x.UserId).ToList();
+        if (nonAdmin.Count > 0) return (false, $"成员不是 ADMIN：{string.Join(",", nonAdmin.Take(5))}");
+        return (true, null);
+    }
+
     [HttpPost("sessions")]
     public async Task<IActionResult> CreateSession([FromBody] CreateSessionRequest request, CancellationToken ct)
     {
@@ -79,6 +119,166 @@ public class AdminImageMasterController : ControllerBase
             await _cache.SetAsync(cacheKey, payload, IdemExpiry);
         }
 
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    // ---------------------------
+    // Workspace（视觉创作 Agent）
+    // ---------------------------
+
+    [HttpGet("workspaces")]
+    public async Task<IActionResult> ListWorkspaces([FromQuery] int limit = 20, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        limit = Math.Clamp(limit, 1, 50);
+        var filter = Builders<ImageMasterWorkspace>.Filter.Or(
+            Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, adminId),
+            Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, adminId)
+        );
+        var items = await _db.ImageMasterWorkspaces
+            .Find(filter)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(limit)
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpPost("workspaces")]
+    public async Task<IActionResult> CreateWorkspace([FromBody] CreateWorkspaceRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:create:{adminId}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        var title = (request?.Title ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(title)) title = "未命名";
+        if (title.Length > 40) title = title[..40].Trim();
+
+        var now = DateTime.UtcNow;
+        var ws = new ImageMasterWorkspace
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            OwnerUserId = adminId,
+            Title = title,
+            MemberUserIds = new List<string>(),
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastOpenedAt = now
+        };
+        await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: ct);
+        var payload = new { workspace = ws };
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:create:{adminId}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    [HttpPut("workspaces/{id}")]
+    public async Task<IActionResult> UpdateWorkspace(string id, [FromBody] UpdateWorkspaceRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId != adminId) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:update:{adminId}:{wid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        var title = (request?.Title ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(title) && title.Length > 40) title = title[..40].Trim();
+        var memberIds = request?.MemberUserIds != null ? NormalizeMemberIds(request.MemberUserIds, ws.OwnerUserId) : ws.MemberUserIds ?? new List<string>();
+        if (request?.MemberUserIds != null)
+        {
+            var chk = await ValidateAdminUsersAsync(memberIds, ct);
+            if (!chk.ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, chk.message ?? "成员无效"));
+        }
+        var coverAssetId = (request?.CoverAssetId ?? string.Empty).Trim();
+        if (coverAssetId.Length > 0 && coverAssetId.Length > 64) coverAssetId = coverAssetId[..64];
+
+        var now = DateTime.UtcNow;
+        var update = Builders<ImageMasterWorkspace>.Update
+            .Set(x => x.UpdatedAt, now)
+            .Set(x => x.MemberUserIds, memberIds);
+        if (!string.IsNullOrWhiteSpace(title)) update = update.Set(x => x.Title, title);
+        if (request?.CoverAssetId != null) update = update.Set(x => x.CoverAssetId, string.IsNullOrWhiteSpace(coverAssetId) ? null : coverAssetId);
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+        var next = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        var payload = new { workspace = next };
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:update:{adminId}:{wid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    [HttpDelete("workspaces/{id}")]
+    public async Task<IActionResult> DeleteWorkspace(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId != adminId) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:delete:{adminId}:{wid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        // 1) 删除画布
+        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
+        // 2) 删除消息（workspace 维度）
+        await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
+        // 3) 删除资产记录（workspace 维度），底层文件按 sha 全库引用计数决定是否删除
+        var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid).ToListAsync(ct);
+        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
+        foreach (var a in assets)
+        {
+            try
+            {
+                var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
+                if (remain <= 0)
+                {
+                    await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                }
+            }
+            catch
+            {
+                // ignore: best-effort
+            }
+        }
+
+        // 4) 删除 workspace
+        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
+
+        var payload = new { deleted = true };
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:delete:{adminId}:{wid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
         return Ok(ApiResponse<object>.Ok(payload));
     }
 
@@ -155,6 +355,460 @@ public class AdminImageMasterController : ControllerBase
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { message = m }));
+    }
+
+    [HttpGet("sessions/{id}/canvas")]
+    public async Task<IActionResult> GetCanvas(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var sid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var session = await _db.ImageMasterSessions.Find(x => x.Id == sid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
+        if (session == null) return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
+
+        var canvas = await _db.ImageMasterCanvases.Find(x => x.SessionId == sid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
+        if (canvas == null)
+        {
+            return Ok(ApiResponse<object>.Ok(new { canvas = (object?)null }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            canvas = new
+            {
+                id = canvas.Id,
+                sessionId = canvas.SessionId,
+                schemaVersion = canvas.SchemaVersion,
+                payloadJson = canvas.PayloadJson,
+                createdAt = canvas.CreatedAt,
+                updatedAt = canvas.UpdatedAt
+            }
+        }));
+    }
+
+    [HttpPut("sessions/{id}/canvas")]
+    public async Task<IActionResult> SaveCanvas(string id, [FromBody] SaveCanvasRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var sid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var session = await _db.ImageMasterSessions.Find(x => x.Id == sid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
+        if (session == null) return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:sessions:canvas:save:{adminId}:{sid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        var schemaVersion = request?.SchemaVersion ?? 1;
+        if (schemaVersion < 1 || schemaVersion > 1000) schemaVersion = 1;
+
+        var payloadJson = (request?.PayloadJson ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "payloadJson 不能为空"));
+        }
+        // 保护：避免异常大 JSON 打爆 Mongo（画布状态应远小于图片）
+        if (Encoding.UTF8.GetByteCount(payloadJson) > 512 * 1024)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "画布数据过大（上限 512KB）"));
+        }
+
+        // 基础校验：必须是合法 JSON
+        try
+        {
+            _ = JsonDocument.Parse(payloadJson);
+        }
+        catch
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "payloadJson 必须是合法 JSON"));
+        }
+
+        var now = DateTime.UtcNow;
+        var update = Builders<ImageMasterCanvas>.Update
+            .Set(x => x.SchemaVersion, schemaVersion)
+            .Set(x => x.PayloadJson, payloadJson)
+            .Set(x => x.UpdatedAt, now)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.OwnerUserId, adminId)
+            .SetOnInsert(x => x.SessionId, sid)
+            .SetOnInsert(x => x.CreatedAt, now);
+
+        var res = await _db.ImageMasterCanvases.FindOneAndUpdateAsync<ImageMasterCanvas, ImageMasterCanvas>(
+            x => x.OwnerUserId == adminId && x.SessionId == sid,
+            update,
+            new FindOneAndUpdateOptions<ImageMasterCanvas, ImageMasterCanvas>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After
+            },
+            ct);
+
+        if (res == null)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "保存画布失败（数据库未返回结果）"));
+        }
+
+        // 更新会话更新时间，便于列表排序
+        await _db.ImageMasterSessions.UpdateOneAsync(
+            x => x.Id == sid && x.OwnerUserId == adminId,
+            Builders<ImageMasterSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        var payload = new
+        {
+            canvas = new
+            {
+                id = res.Id,
+                sessionId = res.SessionId,
+                schemaVersion = res.SchemaVersion,
+                payloadJson = res.PayloadJson,
+                createdAt = res.CreatedAt,
+                updatedAt = res.UpdatedAt
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:sessions:canvas:save:{adminId}:{sid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    [HttpGet("workspaces/{id}/detail")]
+    public async Task<IActionResult> GetWorkspaceDetail(string id, [FromQuery] int messageLimit = 200, [FromQuery] int assetLimit = 80, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        messageLimit = Math.Clamp(messageLimit, 1, 500);
+        assetLimit = Math.Clamp(assetLimit, 1, 200);
+
+        var messages = await _db.ImageMasterMessages
+            .Find(x => x.WorkspaceId == wid)
+            .SortBy(x => x.CreatedAt)
+            .Limit(messageLimit)
+            .ToListAsync(ct);
+
+        var assets = await _db.ImageAssets
+            .Find(x => x.WorkspaceId == wid)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(assetLimit)
+            .ToListAsync(ct);
+
+        var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+
+        // best-effort：更新 lastOpenedAt
+        try
+        {
+            var now = DateTime.UtcNow;
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, Builders<ImageMasterWorkspace>.Update.Set(x => x.LastOpenedAt, now), cancellationToken: ct);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas }));
+    }
+
+    [HttpPost("workspaces/{id}/messages")]
+    public async Task<IActionResult> AddWorkspaceMessage(string id, [FromBody] AddMessageRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var role = (request?.Role ?? "User").Trim();
+        if (role != "User" && role != "Assistant") role = "User";
+        var content = (request?.Content ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(content)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "content 不能为空"));
+        if (content.Length > 64 * 1024) content = content[..(64 * 1024)];
+
+        var m = new ImageMasterMessage
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            WorkspaceId = wid,
+            OwnerUserId = adminId,
+            Role = role,
+            Content = content,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.ImageMasterMessages.InsertOneAsync(m, cancellationToken: ct);
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid,
+            Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { message = m }));
+    }
+
+    [HttpGet("workspaces/{id}/canvas")]
+    public async Task<IActionResult> GetWorkspaceCanvas(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+        if (canvas == null) return Ok(ApiResponse<object>.Ok(new { canvas = (object?)null }));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            canvas = new
+            {
+                id = canvas.Id,
+                workspaceId = canvas.WorkspaceId,
+                schemaVersion = canvas.SchemaVersion,
+                payloadJson = canvas.PayloadJson,
+                createdAt = canvas.CreatedAt,
+                updatedAt = canvas.UpdatedAt
+            }
+        }));
+    }
+
+    [HttpPut("workspaces/{id}/canvas")]
+    public async Task<IActionResult> SaveWorkspaceCanvas(string id, [FromBody] SaveCanvasRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:canvas:save:{adminId}:{wid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        var schemaVersion = request?.SchemaVersion ?? 1;
+        if (schemaVersion < 1 || schemaVersion > 1000) schemaVersion = 1;
+
+        var payloadJson = (request?.PayloadJson ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "payloadJson 不能为空"));
+        }
+        if (Encoding.UTF8.GetByteCount(payloadJson) > 512 * 1024)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "画布数据过大（上限 512KB）"));
+        }
+        try
+        {
+            _ = JsonDocument.Parse(payloadJson);
+        }
+        catch
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "payloadJson 必须是合法 JSON"));
+        }
+
+        var now = DateTime.UtcNow;
+        var update = Builders<ImageMasterCanvas>.Update
+            .Set(x => x.SchemaVersion, schemaVersion)
+            .Set(x => x.PayloadJson, payloadJson)
+            .Set(x => x.UpdatedAt, now)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.OwnerUserId, ws.OwnerUserId)
+            .SetOnInsert(x => x.WorkspaceId, wid)
+            .SetOnInsert(x => x.CreatedAt, now);
+
+        var res = await _db.ImageMasterCanvases.FindOneAndUpdateAsync<ImageMasterCanvas, ImageMasterCanvas>(
+            x => x.WorkspaceId == wid,
+            update,
+            new FindOneAndUpdateOptions<ImageMasterCanvas, ImageMasterCanvas> { IsUpsert = true, ReturnDocument = ReturnDocument.After },
+            ct);
+
+        if (res == null)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "保存画布失败（数据库未返回结果）"));
+        }
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid,
+            Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        var payload = new
+        {
+            canvas = new
+            {
+                id = res.Id,
+                workspaceId = res.WorkspaceId,
+                schemaVersion = res.SchemaVersion,
+                payloadJson = res.PayloadJson,
+                createdAt = res.CreatedAt,
+                updatedAt = res.UpdatedAt
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:canvas:save:{adminId}:{wid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    [HttpPost("workspaces/{id}/assets")]
+    public async Task<IActionResult> UploadWorkspaceAsset(string id, [FromBody] UploadAssetRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:assets:upload:{adminId}:{wid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        // 复用原 UploadAsset 逻辑
+        byte[] bytes;
+        string mime;
+        if (!string.IsNullOrWhiteSpace(request?.SourceUrl))
+        {
+            var src = request!.SourceUrl!.Trim();
+            if (!TryValidateExternalImageUrl(src, out var uri))
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "sourceUrl 无效或不安全"));
+            }
+            (bytes, mime) = await DownloadExternalAsync(uri!, ct);
+        }
+        else
+        {
+            var raw = (request?.Data ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "data/sourceUrl 不能为空"));
+            }
+            if (!TryDecodeDataUrlOrBase64(raw, out mime, out bytes))
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "data 格式无效"));
+            }
+        }
+
+        if (bytes.LongLength > 15 * 1024 * 1024)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "图片过大（上限 15MB）"));
+        }
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片"));
+        }
+
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+
+        // workspace+sha unique：复用已存在记录（允许不同 owner 上传同一 sha，但同 workspace 只保留一条）
+        var existing = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.Sha256 == stored.Sha256).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            var payloadExisting = new { asset = existing };
+            if (!string.IsNullOrWhiteSpace(idemKey))
+            {
+                var cacheKey = $"imageMaster:workspaces:assets:upload:{adminId}:{wid}:{idemKey}";
+                await _cache.SetAsync(cacheKey, payloadExisting, IdemExpiry);
+            }
+            return Ok(ApiResponse<object>.Ok(payloadExisting));
+        }
+
+        var asset = new ImageAsset
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            OwnerUserId = adminId,
+            WorkspaceId = wid,
+            Sha256 = stored.Sha256,
+            Mime = stored.Mime,
+            SizeBytes = stored.SizeBytes,
+            Url = stored.Url,
+            Prompt = (request?.Prompt ?? string.Empty).Trim(),
+            CreatedAt = DateTime.UtcNow
+        };
+        if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
+        if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
+        if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
+
+        await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+
+        var payload = new { asset };
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:assets:upload:{adminId}:{wid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    [HttpDelete("workspaces/{id}/assets/{assetId}")]
+    public async Task<IActionResult> DeleteWorkspaceAsset(string id, string assetId, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        var aid = (assetId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(aid))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id/assetId 不能为空"));
+        }
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var asset = await _db.ImageAssets.Find(x => x.Id == aid && x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+        if (asset == null) return NotFound(ApiResponse<object>.Fail("ASSET_NOT_FOUND", "资产不存在"));
+
+        await _db.ImageAssets.DeleteOneAsync(x => x.Id == aid && x.WorkspaceId == wid, ct);
+
+        // 当 sha 在全库不再被任何 ImageAssets 引用时才删除底层文件
+        try
+        {
+            var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
+            if (remain <= 0)
+            {
+                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     [HttpPost("assets")]
@@ -384,6 +1038,18 @@ public class AddMessageRequest
     public string? Content { get; set; }
 }
 
+public class CreateWorkspaceRequest
+{
+    public string? Title { get; set; }
+}
+
+public class UpdateWorkspaceRequest
+{
+    public string? Title { get; set; }
+    public List<string>? MemberUserIds { get; set; }
+    public string? CoverAssetId { get; set; }
+}
+
 public class UploadAssetRequest
 {
     public string? Data { get; set; } // dataURL/base64
@@ -391,6 +1057,12 @@ public class UploadAssetRequest
     public string? Prompt { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }
+}
+
+public class SaveCanvasRequest
+{
+    public int? SchemaVersion { get; set; }
+    public string? PayloadJson { get; set; }
 }
 
 

@@ -1,0 +1,329 @@
+import { Card } from '@/components/design/Card';
+import { Button } from '@/components/design/Button';
+import { Dialog } from '@/components/ui/Dialog';
+import { systemDialog } from '@/lib/systemDialog';
+import {
+  createImageMasterWorkspace,
+  deleteImageMasterWorkspace,
+  getUsers,
+  listImageMasterWorkspaces,
+  updateImageMasterWorkspace,
+} from '@/services';
+import type { AdminUser } from '@/types/admin';
+import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
+import { Plus, Users2, Pencil, Trash2, ArrowRight } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+function formatDate(iso: string | null | undefined) {
+  const s = String(iso ?? '').trim();
+  if (!s) return '';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString();
+}
+
+export default function VisualAgentWorkspaceListPage() {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>('');
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareWs, setShareWs] = useState<ImageMasterWorkspace | null>(null);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [memberSet, setMemberSet] = useState<Set<string>>(new Set());
+
+  const memberIds = useMemo(() => Array.from(memberSet), [memberSet]);
+
+  const reload = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await listImageMasterWorkspaces({ limit: 30 });
+      if (!res.success) {
+        setError(res.error?.message || '加载 workspace 失败');
+        return;
+      }
+      const list = Array.isArray(res.data?.items) ? res.data.items : [];
+      setItems(list);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  const onCreate = async () => {
+    const title = await systemDialog.prompt({
+      title: '新建 Workspace',
+      message: '请输入项目名称',
+      defaultValue: '未命名',
+      confirmText: '创建',
+      cancelText: '取消',
+    });
+    if (title == null) return;
+    const res = await createImageMasterWorkspace({ title: title.trim() || '未命名', idempotencyKey: `ws_create_${Date.now()}` });
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '创建失败');
+      return;
+    }
+    const ws = res.data.workspace;
+    navigate(`/visual-agent/${encodeURIComponent(ws.id)}`);
+  };
+
+  const onRename = async (ws: ImageMasterWorkspace) => {
+    const title = await systemDialog.prompt({
+      title: '重命名',
+      message: '请输入新名称',
+      defaultValue: ws.title || '',
+      confirmText: '保存',
+      cancelText: '取消',
+    });
+    if (title == null) return;
+    const res = await updateImageMasterWorkspace({
+      id: ws.id,
+      title: title.trim() || '未命名',
+      idempotencyKey: `ws_rename_${Date.now()}`,
+    });
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '重命名失败');
+      return;
+    }
+    await reload();
+  };
+
+  const onDelete = async (ws: ImageMasterWorkspace) => {
+    const ok = await systemDialog.confirm({
+      title: '确认删除',
+      message: `确认删除「${ws.title || '未命名'}」？（将删除画布与消息，资产记录会被清理）`,
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    const res = await deleteImageMasterWorkspace({ id: ws.id, idempotencyKey: `ws_del_${Date.now()}` });
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '删除失败');
+      return;
+    }
+    await reload();
+  };
+
+  const openShare = async (ws: ImageMasterWorkspace) => {
+    setShareWs(ws);
+    setMemberSet(new Set((ws.memberUserIds ?? []).filter(Boolean)));
+    setShareOpen(true);
+    if (users.length === 0 && !usersLoading) {
+      setUsersLoading(true);
+      try {
+        const res = await getUsers({ page: 1, pageSize: 200, role: 'ADMIN' });
+        if (res.success) {
+          setUsers(Array.isArray(res.data?.items) ? res.data.items : []);
+        }
+      } finally {
+        setUsersLoading(false);
+      }
+    }
+  };
+
+  const saveShare = async () => {
+    const ws = shareWs;
+    if (!ws) return;
+    const res = await updateImageMasterWorkspace({
+      id: ws.id,
+      memberUserIds: memberIds,
+      idempotencyKey: `ws_share_${Date.now()}`,
+    });
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '保存共享失败');
+      return;
+    }
+    setShareOpen(false);
+    setShareWs(null);
+    await reload();
+  };
+
+  const grid = (
+    <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+      <Card className="p-0 overflow-hidden">
+        <button
+          type="button"
+          className="w-full h-full min-h-[180px] flex flex-col items-center justify-center gap-2"
+          onClick={() => void onCreate()}
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          <div
+            className="h-12 w-12 rounded-[16px] flex items-center justify-center"
+            style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+          >
+            <Plus size={22} />
+          </div>
+          <div className="text-sm font-semibold">新建项目</div>
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            Workspace
+          </div>
+        </button>
+      </Card>
+
+      {items.map((ws) => (
+        <Card key={ws.id} className="p-0 overflow-hidden">
+          <button
+            type="button"
+            className="w-full text-left"
+            onClick={() => navigate(`/visual-agent/${encodeURIComponent(ws.id)}`)}
+            title={ws.title || ws.id}
+          >
+            <div
+              className="h-[150px] w-full"
+              style={{
+                background:
+                  'linear-gradient(135deg, rgba(250,204,21,0.10) 0%, rgba(255,255,255,0.03) 40%, rgba(0,0,0,0.05) 100%)',
+                borderBottom: '1px solid var(--border-subtle)',
+              }}
+            />
+            <div className="p-3">
+              <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                {ws.title || '未命名'}
+              </div>
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                更新于 {formatDate(ws.updatedAt)}
+              </div>
+            </div>
+          </button>
+
+          <div className="px-3 pb-3 flex items-center gap-2">
+            <Button size="xs" variant="secondary" onClick={() => void onRename(ws)}>
+              <Pencil size={14} />
+              重命名
+            </Button>
+            <Button size="xs" variant="secondary" onClick={() => void openShare(ws)} title="共享（添加/移除成员）">
+              <Users2 size={14} />
+              共享
+            </Button>
+            <div className="flex-1" />
+            <Button size="xs" variant="danger" onClick={() => void onDelete(ws)}>
+              <Trash2 size={14} />
+              删除
+            </Button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <Card>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
+              视觉创作 Agent
+            </div>
+            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+              Workspace 列表：创建、共享与继续编辑（自动保存）
+            </div>
+          </div>
+          <Button variant="primary" onClick={() => void onCreate()} disabled={loading}>
+            <Plus size={16} />
+            新建 Workspace
+          </Button>
+        </div>
+      </Card>
+
+      {error ? (
+        <Card>
+          <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
+            {error}
+          </div>
+        </Card>
+      ) : null}
+
+      {loading ? (
+        <Card>
+          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            加载中...
+          </div>
+        </Card>
+      ) : (
+        grid
+      )}
+
+      <Dialog
+        open={shareOpen}
+        onOpenChange={(o) => {
+          setShareOpen(o);
+          if (!o) setShareWs(null);
+        }}
+        title="共享 Workspace"
+        description="选择可访问该 Workspace 的管理员账号（最小共享：成员可编辑）。"
+        maxWidth={720}
+        content={
+          <div className="h-full min-h-0 flex flex-col gap-3">
+            <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              当前项目：{shareWs?.title || '未命名'}
+            </div>
+            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              已选成员：{memberIds.length} 个
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto rounded-[12px]" style={{ border: '1px solid var(--border-subtle)' }}>
+              {usersLoading ? (
+                <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  加载管理员列表中...
+                </div>
+              ) : users.length === 0 ? (
+                <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  未加载到管理员用户
+                </div>
+              ) : (
+                <div className="p-2 space-y-1">
+                  {users.map((u) => {
+                    const checked = memberSet.has(u.userId);
+                    return (
+                      <button
+                        key={u.userId}
+                        type="button"
+                        className="w-full flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-white/5"
+                        style={{ border: '1px solid transparent', color: 'var(--text-primary)' }}
+                        onClick={() => {
+                          setMemberSet((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(u.userId)) next.delete(u.userId);
+                            else next.add(u.userId);
+                            return next;
+                          });
+                        }}
+                      >
+                        <input type="checkbox" checked={checked} readOnly />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold truncate">{u.displayName || u.username}</div>
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            {u.userId}
+                          </div>
+                        </div>
+                        <ArrowRight size={16} style={{ opacity: 0.6 }} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShareOpen(false)}>
+                取消
+              </Button>
+              <Button variant="primary" onClick={() => void saveShare()} disabled={!shareWs}>
+                保存
+              </Button>
+            </div>
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+

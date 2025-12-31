@@ -1,11 +1,15 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
+using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -24,6 +28,8 @@ public class GroupsController : ControllerBase
     private readonly IMessageRepository _messageRepository;
     private readonly ICacheManager _cache;
     private readonly ILogger<GroupsController> _logger;
+    private readonly MongoDbContext _db;
+    private readonly IGroupMessageStreamHub _groupMessageStreamHub;
 
     private static readonly TimeSpan GroupSessionExpiry = TimeSpan.FromMinutes(30);
 
@@ -43,7 +49,9 @@ public class GroupsController : ControllerBase
         ISessionService sessionService,
         IMessageRepository messageRepository,
         ICacheManager cache,
-        ILogger<GroupsController> logger)
+        ILogger<GroupsController> logger,
+        MongoDbContext db,
+        IGroupMessageStreamHub groupMessageStreamHub)
     {
         _groupService = groupService;
         _documentService = documentService;
@@ -52,6 +60,8 @@ public class GroupsController : ControllerBase
         _messageRepository = messageRepository;
         _cache = cache;
         _logger = logger;
+        _db = db;
+        _groupMessageStreamHub = groupMessageStreamHub;
     }
 
     /// <summary>
@@ -579,5 +589,157 @@ public class GroupsController : ControllerBase
         }).ToList();
 
         return Ok(ApiResponse<List<MessageResponse>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 订阅群消息事件（SSE）：支持 afterSeq / Last-Event-ID 断线续传
+    /// </summary>
+    [HttpGet("{groupId}/messages/stream")]
+    [Produces("text/event-stream")]
+    public async Task GroupMessagesStream(
+        string groupId,
+        [FromQuery] long afterSeq = 0,
+        CancellationToken cancellationToken = default)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            await WriteSseAsync(
+                id: null,
+                eventName: "message",
+                dataJson: JsonSerializer.Serialize(new StreamErrorEvent { Type = "error", ErrorCode = ErrorCodes.UNAUTHORIZED, ErrorMessage = "未授权" }, AppJsonContext.Default.StreamErrorEvent),
+                ct: cancellationToken);
+            return;
+        }
+
+        groupId = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            await WriteSseAsync(
+                id: null,
+                eventName: "message",
+                dataJson: JsonSerializer.Serialize(new StreamErrorEvent { Type = "error", ErrorCode = ErrorCodes.INVALID_FORMAT, ErrorMessage = "groupId 不能为空" }, AppJsonContext.Default.StreamErrorEvent),
+                ct: cancellationToken);
+            return;
+        }
+
+        // 兼容 EventSource 的 Last-Event-ID（未传 afterSeq 时才读）
+        if (afterSeq <= 0)
+        {
+            var last = (Request.Headers["Last-Event-ID"].FirstOrDefault() ?? string.Empty).Trim();
+            if (long.TryParse(last, out var parsed) && parsed > 0) afterSeq = parsed;
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            await WriteSseAsync(
+                id: null,
+                eventName: "message",
+                dataJson: JsonSerializer.Serialize(new StreamErrorEvent { Type = "error", ErrorCode = ErrorCodes.GROUP_NOT_FOUND, ErrorMessage = "群组不存在" }, AppJsonContext.Default.StreamErrorEvent),
+                ct: cancellationToken);
+            return;
+        }
+
+        var isMember = await _groupService.IsMemberAsync(groupId, userId);
+        if (!isMember)
+        {
+            await WriteSseAsync(
+                id: null,
+                eventName: "message",
+                dataJson: JsonSerializer.Serialize(new StreamErrorEvent { Type = "error", ErrorCode = ErrorCodes.PERMISSION_DENIED, ErrorMessage = "您不是该群组成员" }, AppJsonContext.Default.StreamErrorEvent),
+                ct: cancellationToken);
+            return;
+        }
+
+        // 1) 回放 Mongo：按 groupSeq 递增
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var batch = await _db.Messages
+                .Find(x => x.GroupId == groupId && x.GroupSeq != null && x.GroupSeq > afterSeq)
+                .SortBy(x => x.GroupSeq)
+                .Limit(200)
+                .ToListAsync(cancellationToken);
+
+            if (batch.Count == 0) break;
+
+            foreach (var m in batch)
+            {
+                if (!m.GroupSeq.HasValue) continue;
+                var seq = m.GroupSeq.Value;
+                var payload = ToStreamEvent(m);
+                var json = JsonSerializer.Serialize(payload, AppJsonContext.Default.GroupMessageStreamEventDto);
+                await WriteSseAsync(id: seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
+                afterSeq = seq;
+            }
+        }
+
+        // 2) 实时订阅：进程内广播（断线续传靠上面的 Mongo 回放）
+        using var sub = _groupMessageStreamHub.Subscribe(groupId);
+        var reader = sub.Reader;
+        var lastKeepAliveAt = DateTime.UtcNow;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            // keepalive：避免代理/客户端超时关闭
+            if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+            {
+                await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+
+            // 等待一会儿（短轮询），让 keepalive 有机会写出；同时避免 WaitToReadAsync 一直阻塞导致 keepalive 缺失
+            var waitTask = reader.WaitToReadAsync(cancellationToken).AsTask();
+            var tick = Task.Delay(650, cancellationToken);
+            var done = await Task.WhenAny(waitTask, tick);
+            if (done != waitTask) continue;
+            if (!await waitTask) break;
+
+            while (reader.TryRead(out var ev))
+            {
+                if (ev.Seq <= afterSeq) continue;
+                var json = JsonSerializer.Serialize(ToStreamEvent(ev.Message), AppJsonContext.Default.GroupMessageStreamEventDto);
+                await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
+                afterSeq = ev.Seq;
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+        }
+    }
+
+    private static GroupMessageStreamEventDto ToStreamEvent(Message m)
+    {
+        return new GroupMessageStreamEventDto
+        {
+            Type = "message",
+            Message = new GroupMessageStreamMessageDto
+            {
+                Id = m.Id,
+                GroupId = m.GroupId,
+                GroupSeq = m.GroupSeq ?? 0,
+                SessionId = m.SessionId,
+                SenderId = m.SenderId,
+                Role = m.Role,
+                Content = m.Content,
+                ViewRole = m.ViewRole,
+                Timestamp = m.Timestamp,
+                TokenUsage = m.TokenUsage
+            }
+        };
+    }
+
+    private async Task WriteSseAsync(string? id, string eventName, string dataJson, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            await Response.WriteAsync($"id: {id}\n", ct);
+        }
+        await Response.WriteAsync($"event: {eventName}\n", ct);
+        await Response.WriteAsync($"data: {dataJson}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
     }
 }

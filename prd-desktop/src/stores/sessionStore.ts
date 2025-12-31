@@ -5,6 +5,7 @@ import { Document, InteractionMode, PromptItem, PromptsClientResponse, Session, 
 interface SessionState {
   sessionId: string | null;
   activeGroupId: string | null;
+  lastGroupSeqByGroup: Record<string, number>;
   documentLoaded: boolean;
   document: Document | null;
   currentRole: UserRole;
@@ -16,6 +17,8 @@ interface SessionState {
   setSession: (session: Session, doc: Document) => void;
   setActiveGroupId: (groupId: string | null) => void;
   setActiveGroupContext: (groupId: string) => void;
+  getLastGroupSeq: (groupId: string) => number;
+  setLastGroupSeq: (groupId: string, seq: number) => void;
   setRole: (role: UserRole) => void;
   setMode: (mode: InteractionMode) => void;
   openPrdPreviewPage: () => void;
@@ -27,9 +30,10 @@ interface SessionState {
 
 export const useSessionStore = create<SessionState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       sessionId: null,
       activeGroupId: null,
+      lastGroupSeqByGroup: {},
       documentLoaded: false,
       document: null,
       currentRole: 'PM',
@@ -59,6 +63,24 @@ export const useSessionStore = create<SessionState>()(
         mode: 'QA',
         previousMode: null,
       })),
+
+      getLastGroupSeq: (groupId) => {
+        const gid = String(groupId || '').trim();
+        if (!gid) return 0;
+        const map = get().lastGroupSeqByGroup as Record<string, number> | undefined;
+        const v = map?.[gid];
+        return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+      },
+
+      setLastGroupSeq: (groupId, seq) => set((state) => {
+        const gid = String(groupId || '').trim();
+        const s = Number(seq);
+        if (!gid) return state;
+        if (!Number.isFinite(s) || s <= 0) return state;
+        const prev = state.lastGroupSeqByGroup?.[gid] ?? 0;
+        if (s <= prev) return state;
+        return { lastGroupSeqByGroup: { ...(state.lastGroupSeqByGroup || {}), [gid]: Math.floor(s) } };
+      }),
 
       setRole: (role) => set({ currentRole: role }),
 
@@ -102,6 +124,7 @@ export const useSessionStore = create<SessionState>()(
       clearSession: () => set({
         sessionId: null,
         activeGroupId: null,
+        lastGroupSeqByGroup: {},
         documentLoaded: false,
         document: null,
         currentRole: 'PM',
@@ -117,6 +140,7 @@ export const useSessionStore = create<SessionState>()(
       partialize: (s) => ({
         sessionId: s.sessionId,
         activeGroupId: s.activeGroupId,
+        lastGroupSeqByGroup: s.lastGroupSeqByGroup,
         documentLoaded: s.documentLoaded,
         document: s.document,
         currentRole: s.currentRole,

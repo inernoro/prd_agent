@@ -38,6 +38,7 @@ pub fn run() {
             commands::session::get_session,
             commands::session::get_message_history,
             commands::session::get_group_message_history,
+            commands::session::subscribe_group_messages,
             commands::session::switch_role,
             commands::session::send_message,
             commands::session::get_prompts,

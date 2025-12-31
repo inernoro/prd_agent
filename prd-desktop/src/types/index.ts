@@ -58,6 +58,8 @@ export interface Message {
   citations?: DocCitation[];
   viewRole?: UserRole;
   timestamp: Date;
+  // 群内顺序键（用于断线续收/严格有序）
+  groupSeq?: number;
   // 服务端时间点（用于端到端统一与首字延迟）
   serverRequestReceivedAtUtc?: Date;
   serverStartAtUtc?: Date;
