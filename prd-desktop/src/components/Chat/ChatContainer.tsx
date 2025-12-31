@@ -253,7 +253,7 @@ function ChatContainerInner() {
           groupSeq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
         } as any,
       });
-    }).catch(() => Promise.resolve(() => {} as any));
+    }).catch(() => Promise.resolve((() => {}) as any));
 
     return () => {
       unlisten.then((fn) => fn()).catch(() => {});

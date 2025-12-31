@@ -238,13 +238,6 @@ pub async fn get_group_message_history(
     client.get(&path).await
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GroupStreamQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    after_seq: Option<i64>,
-}
-
 #[command]
 pub async fn subscribe_group_messages(
     app: AppHandle,
