@@ -4,6 +4,7 @@ import { isSystemErrorCode } from '../../lib/systemError';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
+import { useMessageStore } from '../../stores/messageStore';
 import type { ApiResponse, Document, Session, UserRole } from '../../types';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -13,6 +14,8 @@ export default function Sidebar() {
   const { user, logout } = useAuthStore();
   const { setSession, activeGroupId, documentLoaded, document: prdDocument, mode, sessionId, setMode, openPrdPreviewPage } = useSessionStore();
   const { loadGroups } = useGroupListStore();
+  const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
+  const stopStreaming = useMessageStore((s) => s.stopStreaming);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const isDemoMode = user?.userId === 'demo-user-001';
   const [joinOpen, setJoinOpen] = useState(false);
@@ -118,6 +121,53 @@ export default function Sidebar() {
 
     setSession(session, docResp.data);
   };
+
+  type GroupMemberInfo = { userId: string; isOwner: boolean };
+  const [activeOwner, setActiveOwner] = useState<boolean>(false);
+  const [activeOwnerLoading, setActiveOwnerLoading] = useState<boolean>(false);
+  const isAdmin = user?.role === 'ADMIN';
+
+  const refreshActiveOwner = useCallback(async () => {
+    if (isDemoMode) return;
+    const gid = String(activeGroupId || '').trim();
+    if (!gid) {
+      setActiveOwner(false);
+      return;
+    }
+    if (isAdmin) {
+      setActiveOwner(true);
+      return;
+    }
+    if (!user?.userId) {
+      setActiveOwner(false);
+      return;
+    }
+    if (activeOwnerLoading) return;
+    try {
+      setActiveOwnerLoading(true);
+      const resp = await invoke<ApiResponse<GroupMemberInfo[]>>('get_group_members', { groupId: gid });
+      if (!resp.success || !resp.data) {
+        setActiveOwner(false);
+        return;
+      }
+      const ok = resp.data.some((m) => m.userId === user.userId && m.isOwner);
+      setActiveOwner(ok);
+    } catch {
+      setActiveOwner(false);
+    } finally {
+      setActiveOwnerLoading(false);
+    }
+  }, [activeGroupId, activeOwnerLoading, invoke, isAdmin, isDemoMode, user?.userId]);
+
+  useEffect(() => {
+    void refreshActiveOwner();
+  }, [refreshActiveOwner]);
+
+  const canReplacePrd = useMemo(() => {
+    if (!activeGroupId) return false;
+    if (isDemoMode) return false;
+    return Boolean(isAdmin || activeOwner);
+  }, [activeGroupId, activeOwner, isAdmin, isDemoMode]);
 
   const handleJoinGroup = async () => {
     if (isDemoMode) {
@@ -315,6 +365,9 @@ export default function Sidebar() {
 
     try {
       setBusy('upload');
+      // 本地先停流并清理“当前对话上下文”，避免替换 PRD 时 UI 串话
+      try { stopStreaming(); } catch {}
+      try { clearCurrentContext(null); } catch {}
       const uploadResp = await invoke<ApiResponse<{ sessionId: string; document: Document }>>('upload_document', {
         content,
       });
@@ -360,8 +413,12 @@ export default function Sidebar() {
       alert('请先选择一个群组');
       return;
     }
+    if (!canReplacePrd) {
+      alert('仅群主/管理员可更换 PRD');
+      return;
+    }
     fileInputRef.current?.click();
-  }, [activeGroupId, isDemoMode]);
+  }, [activeGroupId, isDemoMode, canReplacePrd]);
 
   const handleFileSelectForBind = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
@@ -497,6 +554,21 @@ export default function Sidebar() {
                       >
                         加入群组
                       </DropdownMenu.Item>
+                      <DropdownMenu.Item
+                        className={`px-2 py-1.5 text-sm rounded outline-none ${
+                          activeGroupId
+                            ? (canReplacePrd ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50' : 'opacity-50 cursor-not-allowed')
+                            : 'opacity-50 cursor-not-allowed'
+                        }`}
+                        onSelect={(e) => {
+                          // Radix：disabled 场景下仍会触发 onSelect，因此这里做一次显式保护
+                          e.preventDefault();
+                          if (!activeGroupId || !canReplacePrd) return;
+                          openBindPrdPicker();
+                        }}
+                      >
+                        更换 PRD
+                      </DropdownMenu.Item>
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
@@ -586,22 +658,44 @@ export default function Sidebar() {
                     <span className="truncate">{prdDocument?.title || '待上传'}</span>
                   </div>
                   {documentLoaded && prdDocument ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openPrdPreview();
-                      }}
-                      className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors shrink-0"
-                      title="预览 PRD"
-                      aria-label="预览 PRD"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openPrdPreview();
+                        }}
+                        className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors"
+                        title="预览 PRD"
+                        aria-label="预览 PRD"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openBindPrdPicker();
+                        }}
+                        className={`h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors ${
+                          canReplacePrd
+                            ? 'text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10'
+                            : 'opacity-50 cursor-not-allowed text-text-secondary'
+                        }`}
+                        title={canReplacePrd ? '更换 PRD' : '仅群主/管理员可更换 PRD'}
+                        aria-label="更换 PRD"
+                        disabled={!canReplacePrd}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 00-14.9-2M4 16a8 8 0 0014.9 2" />
+                        </svg>
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               </div>

@@ -395,6 +395,19 @@ public class GroupsController : ControllerBase
             document.TokenEstimate,
             document.CharCount);
 
+        // PRD 变更：必须让所有成员重新建立 group->session 映射，否则桌面端会继续复用旧 sessionId，导致“串 PRD/串上下文”。
+        // - group session 映射 key：group:session:{groupId}:{userId}
+        // - LLM 上下文缓存 key：chat:history:group:{groupId}
+        try
+        {
+            await _cache.RemoveByPatternAsync($"group:session:{groupId}:*");
+            await _cache.RemoveAsync(CacheKeys.ForGroupChatHistory(groupId));
+        }
+        catch
+        {
+            // cache 失效失败不应影响主流程；最坏情况是等 TTL 到期
+        }
+
         // 重新读取群组（避免返回旧值）
         group = await _groupService.GetByIdAsync(groupId);
         var members = await _groupService.GetMembersAsync(groupId);
@@ -445,6 +458,17 @@ public class GroupsController : ControllerBase
         }
 
         await _groupService.UnbindPrdAsync(groupId);
+
+        // PRD 解绑同样需要失效 group session 映射与上下文缓存
+        try
+        {
+            await _cache.RemoveByPatternAsync($"group:session:{groupId}:*");
+            await _cache.RemoveAsync(CacheKeys.ForGroupChatHistory(groupId));
+        }
+        catch
+        {
+            // ignore
+        }
 
         group = await _groupService.GetByIdAsync(groupId);
         var members = await _groupService.GetMembersAsync(groupId);
