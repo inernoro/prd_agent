@@ -45,6 +45,8 @@ public static class BsonClassMapRegistration
             RegisterImageMasterSession();
             RegisterImageMasterMessage();
             RegisterImageAsset();
+            RegisterImageMasterWorkspace();
+            RegisterImageMasterViewport();
             RegisterImageGenRun();
             RegisterImageGenRunItem();
             RegisterImageGenRunEvent();
@@ -185,6 +187,33 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(x => x.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterImageMasterWorkspace()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ImageMasterWorkspace))) return;
+        BsonClassMap.RegisterClassMap<ImageMasterWorkspace>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            // 注意：ImageMasterWorkspace 历史写入字段名存在大小写差异。
+            // 这里显式绑定为 camelCase，兼容已写入的数据（如 viewportByUserId）。
+            cm.MapMember(x => x.ViewportByUserId).SetElementName("viewportByUserId");
+            // 兼容历史字段/逐步演进：避免出现“新增字段导致反序列化崩溃”
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterImageMasterViewport()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ImageMasterViewport))) return;
+        BsonClassMap.RegisterClassMap<ImageMasterViewport>(cm =>
+        {
+            cm.AutoMap();
             cm.SetIgnoreExtraElements(true);
         });
     }

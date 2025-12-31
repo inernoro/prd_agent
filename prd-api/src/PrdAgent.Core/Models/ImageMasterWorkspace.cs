@@ -1,5 +1,7 @@
 namespace PrdAgent.Core.Models;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// 视觉创作 Workspace（用于“视觉创作 Agent”项目列表）。
 /// - workspaceId 是该业务域稳定主键，用于替代易漂移的 sessionId。
@@ -49,6 +51,14 @@ public class ImageMasterWorkspace
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? LastOpenedAt { get; set; }
+
+    /// <summary>
+    /// 视口偏好（按 ADMIN userId 存储）：用于保存“缩放比例/画布视角”等 UI 状态。
+    /// - 注意：这是用户 UI 偏好，不应影响 workspace 的 UpdatedAt（避免列表排序抖动）。
+    /// - 该字段不应直接下发给前端（会泄露共享成员的 UI 偏好）；由接口按当前登录用户挑选并返回。
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<string, ImageMasterViewport> ViewportByUserId { get; set; } = new();
 }
 
 

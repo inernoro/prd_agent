@@ -618,7 +618,71 @@ public class AdminImageMasterController : ControllerBase
             // ignore
         }
 
-        return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas }));
+        ImageMasterViewport? viewport = null;
+        try
+        {
+            if (ws.ViewportByUserId != null && ws.ViewportByUserId.TryGetValue(adminId, out var v))
+            {
+                viewport = v;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas, viewport }));
+    }
+
+    [HttpPut("workspaces/{id}/viewport")]
+    public async Task<IActionResult> SaveWorkspaceViewport(string id, [FromBody] SaveViewportRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:viewport:save:{adminId}:{wid}:{idemKey}";
+            var cached = await _cache.GetAsync<object>(cacheKey);
+            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+        }
+
+        // validate
+        var z = request?.Z ?? double.NaN;
+        var x = request?.X ?? double.NaN;
+        var y = request?.Y ?? double.NaN;
+        if (!double.IsFinite(z) || !double.IsFinite(x) || !double.IsFinite(y))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "viewport 参数无效"));
+        }
+        // 同前端 clamp：0.05 ~ 3
+        if (z < 0.05) z = 0.05;
+        if (z > 3) z = 3;
+
+        var now = DateTime.UtcNow;
+        var vp = new ImageMasterViewport { Z = z, X = x, Y = y, UpdatedAt = now };
+
+        // 仅写入 UI 偏好：不更新 workspace.UpdatedAt，避免列表排序抖动
+        var update = Builders<ImageMasterWorkspace>.Update
+            .Set($"viewportByUserId.{adminId}", vp)
+            .Set(x => x.LastOpenedAt, now);
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+
+        var payload = new { viewport = vp };
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"imageMaster:workspaces:viewport:save:{adminId}:{wid}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, IdemExpiry);
+        }
+
+        return Ok(ApiResponse<object>.Ok(payload));
     }
 
     [HttpPost("workspaces/{id}/messages")]
@@ -1323,6 +1387,13 @@ public class SaveCanvasRequest
 {
     public int? SchemaVersion { get; set; }
     public string? PayloadJson { get; set; }
+}
+
+public class SaveViewportRequest
+{
+    public double? Z { get; set; }
+    public double? X { get; set; }
+    public double? Y { get; set; }
 }
 
 

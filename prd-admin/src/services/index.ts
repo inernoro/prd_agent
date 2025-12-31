@@ -73,6 +73,7 @@ import type {
   ListImageMasterWorkspacesContract,
   SaveImageMasterCanvasContract,
   SaveImageMasterWorkspaceCanvasContract,
+  SaveImageMasterWorkspaceViewportContract,
   UploadImageAssetContract,
   UploadImageMasterWorkspaceAssetContract,
   DeleteImageMasterWorkspaceAssetContract,
@@ -153,6 +154,7 @@ import {
   listImageMasterWorkspacesReal,
   saveImageMasterCanvasReal,
   saveImageMasterWorkspaceCanvasReal,
+  saveImageMasterWorkspaceViewportReal,
   uploadImageAssetReal,
   uploadImageMasterWorkspaceAssetReal,
   deleteImageMasterWorkspaceAssetReal,
@@ -316,6 +318,7 @@ export const getImageMasterWorkspaceDetail: GetImageMasterWorkspaceDetailContrac
 export const addImageMasterWorkspaceMessage: AddImageMasterWorkspaceMessageContract = withAuth(addImageMasterWorkspaceMessageReal);
 export const getImageMasterWorkspaceCanvas: GetImageMasterWorkspaceCanvasContract = withAuth(getImageMasterWorkspaceCanvasReal);
 export const saveImageMasterWorkspaceCanvas: SaveImageMasterWorkspaceCanvasContract = withAuth(saveImageMasterWorkspaceCanvasReal);
+export const saveImageMasterWorkspaceViewport: SaveImageMasterWorkspaceViewportContract = withAuth(saveImageMasterWorkspaceViewportReal);
 export const uploadImageMasterWorkspaceAsset: UploadImageMasterWorkspaceAssetContract = withAuth(uploadImageMasterWorkspaceAssetReal);
 export const deleteImageMasterWorkspaceAsset: DeleteImageMasterWorkspaceAssetContract = withAuth(deleteImageMasterWorkspaceAssetReal);
 export const refreshImageMasterWorkspaceCover: RefreshImageMasterWorkspaceCoverContract = withAuth(refreshImageMasterWorkspaceCoverReal);

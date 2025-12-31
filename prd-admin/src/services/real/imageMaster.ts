@@ -13,6 +13,7 @@ import type {
   ListImageMasterWorkspacesContract,
   SaveImageMasterCanvasContract,
   SaveImageMasterWorkspaceCanvasContract,
+  SaveImageMasterWorkspaceViewportContract,
   UpdateImageMasterWorkspaceContract,
   ListImageMasterSessionsContract,
   UploadImageMasterWorkspaceAssetContract,
@@ -148,9 +149,29 @@ export const getImageMasterWorkspaceDetailReal: GetImageMasterWorkspaceDetailCon
   if (input.messageLimit != null) qs.set('messageLimit', String(input.messageLimit));
   if (input.assetLimit != null) qs.set('assetLimit', String(input.assetLimit));
   const q = qs.toString();
-  return await apiRequest<{ workspace: ImageMasterWorkspace; messages: ImageMasterMessage[]; assets: ImageAsset[]; canvas: ImageMasterCanvas | null }>(
+  return await apiRequest<{
+    workspace: ImageMasterWorkspace;
+    messages: ImageMasterMessage[];
+    assets: ImageAsset[];
+    canvas: ImageMasterCanvas | null;
+    viewport?: { z: number; x: number; y: number; updatedAt?: string } | null;
+  }>(
     `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/detail${q ? `?${q}` : ''}`,
     { method: 'GET' }
+  );
+};
+
+export const saveImageMasterWorkspaceViewportReal: SaveImageMasterWorkspaceViewportContract = async (input) => {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ viewport: { z: number; x: number; y: number; updatedAt?: string } }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/viewport`,
+    {
+      method: 'PUT',
+      headers,
+      body: { z: input.z, x: input.x, y: input.y },
+    }
   );
 };
 

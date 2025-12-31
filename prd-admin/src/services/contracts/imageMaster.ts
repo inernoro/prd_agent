@@ -62,6 +62,13 @@ export type ImageMasterWorkspace = {
   lastOpenedAt?: string | null;
 };
 
+export type ImageMasterViewport = {
+  z: number;
+  x: number;
+  y: number;
+  updatedAt?: string;
+};
+
 export type CreateImageMasterSessionContract = (input: { title?: string }) => Promise<ApiResponse<{ session: ImageMasterSession }>>;
 export type ListImageMasterSessionsContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: ImageMasterSession[] }>>;
 export type GetImageMasterSessionContract = (input: { id: string; messageLimit?: number; assetLimit?: number }) => Promise<ApiResponse<{ session: ImageMasterSession; messages: ImageMasterMessage[]; assets: ImageAsset[] }>>;
@@ -89,8 +96,17 @@ export type GetImageMasterWorkspaceDetailContract = (input: { id: string; messag
     messages: ImageMasterMessage[];
     assets: ImageAsset[];
     canvas: ImageMasterCanvas | null;
+    viewport?: ImageMasterViewport | null;
   }>
 >;
+
+export type SaveImageMasterWorkspaceViewportContract = (input: {
+  id: string;
+  z: number;
+  x: number;
+  y: number;
+  idempotencyKey?: string;
+}) => Promise<ApiResponse<{ viewport: ImageMasterViewport }>>;
 export type AddImageMasterWorkspaceMessageContract = (input: { id: string; role: 'User' | 'Assistant'; content: string }) => Promise<
   ApiResponse<{ message: ImageMasterMessage }>
 >;

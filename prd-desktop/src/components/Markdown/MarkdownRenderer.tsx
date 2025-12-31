@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -6,6 +6,57 @@ import MermaidBlock from './MermaidBlock';
 import GithubSlugger from 'github-slugger';
 import type { DocCitation } from '../../types';
 import CitationChip from '../Chat/CitationChip';
+import AsyncIconButton from '../ui/AsyncIconButton';
+import { copyImageFromUrl, copyText, tableElementToMarkdown } from '../../lib/clipboard';
+
+function CopySvg({ className }: { className?: string }) {
+  return (
+    <svg className={className || 'w-4 h-4'} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
+    </svg>
+  );
+}
+
+function TableWithCopy({ children, ...props }: any) {
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  return (
+    <div className="relative group overflow-x-auto">
+      <AsyncIconButton
+        title="复制表格"
+        onAction={async () => {
+          const el = tableRef.current;
+          const md = el ? tableElementToMarkdown(el) : '';
+          if (!md) return;
+          await copyText(md);
+        }}
+        icon={<CopySvg />}
+        className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md border border-border bg-background-light/70 dark:bg-background-dark/60 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+      />
+      <table ref={tableRef} {...props}>
+        {children}
+      </table>
+    </div>
+  );
+}
+
+function ImageWithCopy({ src, alt, ...props }: any) {
+  const safeSrc = String(src || '').trim();
+  return (
+    <span className="relative inline-block max-w-full group">
+      {safeSrc ? (
+        <AsyncIconButton
+          title="复制图片"
+          onAction={async () => {
+            await copyImageFromUrl(safeSrc);
+          }}
+          icon={<CopySvg />}
+          className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md border border-border bg-background-light/70 dark:bg-background-dark/60 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+        />
+      ) : null}
+      <img src={src} alt={alt} {...props} className={`max-w-full ${props?.className || ''}`.trim()} />
+    </span>
+  );
+}
 
 function childrenToText(children: any): string {
   if (children == null) return '';
@@ -231,8 +282,18 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
               const text = childrenToText(child?.props?.children);
               return <MermaidBlock chart={text} />;
             }
+            const codeText = childrenToText(child?.props?.children);
             return (
-              <div className="not-prose">
+              <div className="not-prose relative group">
+                <AsyncIconButton
+                  title="复制代码"
+                  onAction={async () => {
+                    if (!codeText) return;
+                    await copyText(codeText);
+                  }}
+                  icon={<CopySvg />}
+                  className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md border border-border bg-background-light/70 dark:bg-background-dark/60 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                />
                 <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 p-3">
                   {children}
                 </pre>
@@ -255,6 +316,12 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
                 {text}
               </code>
             );
+          },
+          table({ children, ...props }: any) {
+            return <TableWithCopy {...props}>{children}</TableWithCopy>;
+          },
+          img({ src, alt, ...props }: any) {
+            return <ImageWithCopy src={src} alt={alt} {...props} />;
           },
         }}
       >

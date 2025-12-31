@@ -5,6 +5,8 @@ import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import type { Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
+import AsyncIconButton from '../ui/AsyncIconButton';
+import { copyText } from '../../lib/clipboard';
 import WizardLoader from './WizardLoader';
 
 type MsgStoreState = ReturnType<typeof useMessageStore.getState>;
@@ -523,7 +525,7 @@ function MessageListInner() {
             className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-          className={`max-w-[80%] p-4 rounded-2xl ${
+          className={`relative group max-w-[80%] p-4 rounded-2xl ${
             message.role === 'User'
               ? 'bg-primary-500 text-white rounded-br-md'
               : isError
@@ -723,6 +725,25 @@ function MessageListInner() {
                 )}
               </div>
             )}
+
+            {message.role === 'Assistant' && String(message.content || '').trim() ? (
+              <div className="pointer-events-none absolute -bottom-4 left-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg border border-border bg-background-light/80 dark:bg-background-dark/70 shadow-lg px-1 py-1">
+                  <AsyncIconButton
+                    title="复制回复（Markdown）"
+                    onAction={async () => {
+                      await copyText(message.content);
+                    }}
+                    icon={(
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
+                      </svg>
+                    )}
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                  />
+                </div>
+              </div>
+            ) : null}
 
             {hasSources ? (
               <div className="mt-3 pt-2">
