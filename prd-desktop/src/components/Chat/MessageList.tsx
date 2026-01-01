@@ -522,21 +522,26 @@ function MessageListInner() {
         return (
           <div
         data-msg-id={message.id}
-            className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'} ${
+              message.role === 'Assistant' && String(message.content || '').trim() ? 'pb-12' : ''
+            }`}
           >
             <div
-          className={`relative group max-w-[80%] p-4 rounded-2xl ${
-            message.role === 'User'
-              ? 'bg-primary-500 text-white rounded-br-md'
-              : isError
-                ? 'bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 rounded-bl-md'
-                : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
-          }`}
+              className="relative group/message max-w-[80%]"
             >
-            {message.role === 'User' ? (
-              <p className="whitespace-pre-wrap">{message.content}</p>
-            ) : (
-              <div>
+              <div
+                className={`p-4 rounded-2xl ${
+                  message.role === 'User'
+                    ? 'bg-primary-500 text-white rounded-br-md'
+                    : isError
+                      ? 'bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 rounded-bl-md'
+                      : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
+                }`}
+              >
+              {message.role === 'User' ? (
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              ) : (
+                <div>
             {showThinking ? (
                   <div className="mb-2">
                 <ThinkingIndicator label={thinkingLabel} />
@@ -726,25 +731,6 @@ function MessageListInner() {
               </div>
             )}
 
-            {message.role === 'Assistant' && String(message.content || '').trim() ? (
-              <div className="pointer-events-none absolute -bottom-4 left-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg border border-border bg-background-light/80 dark:bg-background-dark/70 shadow-lg px-1 py-1">
-                  <AsyncIconButton
-                    title="复制回复（Markdown）"
-                    onAction={async () => {
-                      await copyText(message.content);
-                    }}
-                    icon={(
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
-                      </svg>
-                    )}
-                    className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
-                  />
-                </div>
-              </div>
-            ) : null}
-
             {hasSources ? (
               <div className="mt-3 pt-2">
                 <button
@@ -836,7 +822,27 @@ function MessageListInner() {
               </span>
             </div>
           ) : null
-            )}
+        )}
+              </div>
+
+              {message.role === 'Assistant' && String(message.content || '').trim() ? (
+                <div className="pointer-events-none absolute top-full right-2 mt-1 z-20 opacity-0 group-hover/message:opacity-100 transition-opacity">
+                  <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg border border-border bg-background-light/80 dark:bg-background-dark/70 shadow-lg px-1 py-1">
+                    <AsyncIconButton
+                      title="复制回复（Markdown）"
+                      onAction={async () => {
+                        await copyText(message.content);
+                      }}
+                      icon={(
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
+                        </svg>
+                      )}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
     );

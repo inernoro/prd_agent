@@ -29,6 +29,8 @@ import {
   Hand,
   ImagePlus,
   MapPin,
+  Maximize2,
+  Minimize2,
   MousePointer2,
   Paperclip,
   SlidersHorizontal,
@@ -41,6 +43,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useAuthStore } from '@/stores/authStore';
+import { useLayoutStore } from '@/stores/layoutStore';
 
 type CanvasImageItem = {
   key: string;
@@ -588,6 +591,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const serverDefaultModel = useMemo(() => firstEnabledImageModel(models), [models]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
+  const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
+  const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
+  // 专注模式属于临时态：离开页面必须恢复，避免影响其他页面布局
+  useEffect(() => {
+    return () => setFullBleedMain(false);
+  }, [setFullBleedMain]);
   const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 420;
@@ -1056,6 +1065,45 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const [runningCount, setRunningCount] = useState(0);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const openImageFilePicker = useCallback(() => {
+    const input = fileRef.current;
+    if (!input) return;
+
+    // Chrome/Edge 在 overflow 容器内打开 file picker 后，可能会把最近一次触发的元素滚动到可视区，
+    // 在专注模式（full-bleed）下表现为“整页上移”。这里在文件选择器关闭后恢复 main 的 scrollTop。
+    const mainEl = document.querySelector('main') as HTMLElement | null;
+    const prevTop = mainEl?.scrollTop ?? 0;
+    const restore = () => {
+      if (!mainEl) return;
+      mainEl.scrollTop = prevTop;
+    };
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      window.removeEventListener('focus', onWindowFocus, true);
+      input.removeEventListener('change', onInputChange);
+    };
+
+    const onWindowFocus = () => {
+      // 文件选择器关闭后 window 会重新获得焦点
+      requestAnimationFrame(restore);
+      window.setTimeout(restore, 0);
+      cleanup();
+    };
+
+    const onInputChange = () => {
+      // 选择文件后 change 触发（有些浏览器先触发 change 再 focus）
+      requestAnimationFrame(restore);
+      window.setTimeout(restore, 0);
+      cleanup();
+    };
+
+    window.addEventListener('focus', onWindowFocus, true);
+    input.addEventListener('change', onInputChange);
+    input.click();
+  }, []);
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string }>({ open: false, src: '', prompt: '' });
 
@@ -3866,6 +3914,32 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
             ) : null}
           </div>
 
+          {/* 右上：专注模式（主区全宽 + 隐藏侧栏） */}
+          <div className="absolute top-4 right-4 z-30">
+            <button
+              type="button"
+              className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: fullBleedMain ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.06)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
+                color: 'var(--text-secondary)',
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFullBleedMain(!fullBleedMain);
+              }}
+              aria-label={fullBleedMain ? '还原布局' : '最大化'}
+              title={fullBleedMain ? '还原布局' : '最大化'}
+            >
+              {fullBleedMain ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
+          </div>
+
           {/* 顶部居中：缩放浮层 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
             <div
@@ -4152,7 +4226,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                           className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
                           onClick={() => {
                             setAddMenuOpen(false);
-                            fileRef.current?.click();
+                            openImageFilePicker();
                           }}
                         >
                           <ImagePlus size={18} color="#0b0b0f" />
@@ -4796,7 +4870,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     }}
                     aria-label="附件"
                     title="附件"
-                    onClick={() => fileRef.current?.click()}
+                    onClick={() => openImageFilePicker()}
                   >
                     <Paperclip size={18} />
                   </button>
