@@ -56,6 +56,7 @@ public class ChatService : IChatService
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
         string sessionId,
         string content,
+        string? resendOfMessageId = null,
         string? promptKey = null,
         string? userId = null,
         List<string>? attachmentIds = null,
@@ -333,6 +334,7 @@ public class ChatService : IChatService
             LlmRequestId = llmRequestId,
             ViewRole = session.CurrentRole,
             AttachmentIds = attachmentIds ?? new List<string>(),
+            ResendOfMessageId = string.IsNullOrWhiteSpace(resendOfMessageId) ? null : resendOfMessageId!.Trim(),
             Timestamp = userInputAtUtc
         };
 
@@ -347,6 +349,7 @@ public class ChatService : IChatService
                 ? (string.IsNullOrWhiteSpace(terminatedErrorMessage) ? "LLM调用失败" : $"请求失败：{terminatedErrorMessage}")
                 : fullResponse.ToString(),
             LlmRequestId = llmRequestId,
+            ReplyToMessageId = userMessage.Id,
             ViewRole = session.CurrentRole,
             TokenUsage = new TokenUsage
             {

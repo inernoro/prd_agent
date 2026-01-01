@@ -31,6 +31,8 @@ type UiMessage = {
   role: 'User' | 'Assistant';
   content: string;
   groupSeq?: number;
+  replyToMessageId?: string;
+  resendOfMessageId?: string;
   timestamp: number;
   citations?: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>;
 };
@@ -293,6 +295,8 @@ export default function AiChatPage() {
 
   const [composer, setComposer] = useState('');
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const [resendTargetMessageId, setResendTargetMessageId] = useState<string>('');
+  const [debugMode, setDebugMode] = useState(false);
 
   // 新建会话（上传 PRD）
   const [createOpen, setCreateOpen] = useState(false);
@@ -403,6 +407,8 @@ export default function AiChatPage() {
           role: m.role,
           content: m.content ?? '',
           groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
+          replyToMessageId: (m as any).replyToMessageId ? String((m as any).replyToMessageId) : undefined,
+          resendOfMessageId: (m as any).resendOfMessageId ? String((m as any).resendOfMessageId) : undefined,
           timestamp: new Date(m.timestamp).getTime(),
         }));
         setMessages(mapped);
@@ -416,6 +422,28 @@ export default function AiChatPage() {
     saveMessages(userId, activeSessionId, messages);
   }, [userId, activeSessionId, messages]);
 
+  const refreshHistory = useCallback(async (sid: string) => {
+    const sessionId = String(sid || '').trim();
+    if (!sessionId) return;
+    try {
+      const res = await getAiChatHistory({ sessionId, limit: 80 });
+      if (!res.success) return;
+      const mapped: UiMessage[] = (res.data ?? []).map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content ?? '',
+        groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
+        replyToMessageId: (m as any).replyToMessageId ? String((m as any).replyToMessageId) : undefined,
+        resendOfMessageId: (m as any).resendOfMessageId ? String((m as any).resendOfMessageId) : undefined,
+        timestamp: new Date(m.timestamp).getTime(),
+      }));
+      setMessages(mapped);
+      if (userId && sessionId) saveMessages(userId, sessionId, mapped);
+    } catch {
+      // ignore
+    }
+  }, [userId]);
+
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -427,6 +455,17 @@ export default function AiChatPage() {
     abortRef.current = null;
     setIsStreaming(false);
   };
+
+  const removeRoundByUserMessageId = useCallback((list: UiMessage[], targetUserMessageId: string) => {
+    const tid = String(targetUserMessageId || '').trim();
+    if (!tid) return list;
+    const idx = list.findIndex((x) => x.id === tid);
+    if (idx < 0) return list;
+    // 删除该 User 消息，以及其后直到下一个 User 的所有消息（旧轮次默认不展示）
+    let end = idx + 1;
+    while (end < list.length && list[end].role !== 'User') end += 1;
+    return list.slice(0, idx).concat(list.slice(end));
+  }, []);
 
   const switchRole = async (sid: string, role: RoleEnum) => {
     if (!token) {
@@ -579,6 +618,11 @@ export default function AiChatPage() {
 
     if (t === 'done') {
       stopStreaming();
+      if (activeSessionId) {
+        // 关键：刷新一次历史，把本地临时 user id 替换成服务端落库 id，
+        // 这样“刚发送的消息”也可以立即使用“重发”。
+        void refreshHistory(activeSessionId);
+      }
       return;
     }
 
@@ -622,12 +666,13 @@ export default function AiChatPage() {
       void systemDialog.alert('附件内容过长，已自动截断后发送');
     }
     const finalText = limited.finalText;
+    const resendId = resendTargetMessageId ? String(resendTargetMessageId) : '';
 
     setPendingAttachmentText('');
     setPendingAttachmentName('');
 
     setMessages((prev) =>
-      prev.concat({
+      (resendId ? removeRoundByUserMessageId(prev, resendId) : prev).concat({
         id: `user-${Date.now()}`,
         role: 'User',
         content: finalText,
@@ -635,6 +680,7 @@ export default function AiChatPage() {
       })
     );
     setComposer('');
+    if (resendId) setResendTargetMessageId('');
     requestAnimationFrame(() => adjustComposerHeight());
 
     const ac = new AbortController();
@@ -643,7 +689,9 @@ export default function AiChatPage() {
 
     let res: Response;
     try {
-      const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(activeSessionId)}/messages`);
+      const url = resendId
+        ? joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(activeSessionId)}/messages/${encodeURIComponent(resendId)}/resend`)
+        : joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(activeSessionId)}/messages`);
       res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -945,6 +993,9 @@ export default function AiChatPage() {
             </div>
           </div>
           <div className="flex gap-2 shrink-0">
+            <Button size="sm" variant={debugMode ? 'primary' : 'ghost'} onClick={() => setDebugMode((v) => !v)}>
+              调试
+            </Button>
             {isStreaming ? (
               <Button variant="danger" size="sm" onClick={() => stopStreaming()}>
                 <Square size={16} />
@@ -970,7 +1021,7 @@ export default function AiChatPage() {
               return (
                 <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className="max-w-[82%] rounded-[16px] px-4 py-3"
+                    className="max-w-[82%] rounded-[16px] px-4 py-3 relative group"
                     style={{
                       background: isUser ? 'color-mix(in srgb, var(--accent-gold) 28%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.04)',
                       border: '1px solid var(--border-subtle)',
@@ -979,6 +1030,28 @@ export default function AiChatPage() {
                       wordBreak: 'break-word',
                     }}
                   >
+                    {isUser && !isStreaming ? (
+                      <div className="pointer-events-none absolute -top-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="pointer-events-auto flex gap-1">
+                          <button
+                            type="button"
+                            className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)' }}
+                            onClick={() => {
+                              setComposer(m.content || '');
+                              setResendTargetMessageId(m.id);
+                              requestAnimationFrame(() => {
+                                adjustComposerHeight();
+                                composerRef.current?.focus();
+                              });
+                            }}
+                            title="重发：软删除旧轮次，并以当前内容重新发起一次请求"
+                          >
+                            重发
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                     {isUser ? (
                       <div className="text-sm whitespace-pre-wrap">{m.content}</div>
                     ) : (
@@ -989,6 +1062,13 @@ export default function AiChatPage() {
                     {typeof m.groupSeq === 'number' && m.groupSeq > 0 ? (
                       <div className="mt-2 text-[11px] leading-4 select-none opacity-60" style={{ color: 'var(--text-muted)' }}>
                         #{m.groupSeq}
+                      </div>
+                    ) : null}
+                    {debugMode ? (
+                      <div className="mt-2 text-[11px] leading-4 opacity-70" style={{ color: 'var(--text-muted)' }}>
+                        <div>id: {m.id}</div>
+                        {m.replyToMessageId ? <div>replyTo: {m.replyToMessageId}</div> : null}
+                        {m.resendOfMessageId ? <div>resendOf: {m.resendOfMessageId}</div> : null}
                       </div>
                     ) : null}
                     {Array.isArray(m.citations) && m.citations.length > 0 ? (

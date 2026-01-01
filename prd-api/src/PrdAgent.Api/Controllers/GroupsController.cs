@@ -569,8 +569,13 @@ public class GroupsController : ControllerBase
     }
 
     /// <summary>
-    /// 获取群组消息历史（分页，按时间升序返回）
+    /// 获取群组消息历史（分页，按 GroupSeq 升序返回）
     /// </summary>
+    /// <param name="groupId">群组ID</param>
+    /// <param name="limit">返回条数（默认50，最大200）</param>
+    /// <param name="before">可选：仅返回 Timestamp &lt; before 的更早消息（兼容旧客户端）</param>
+    /// <param name="afterSeq">可选：仅返回 GroupSeq &gt; afterSeq 的消息（增量同步）</param>
+    /// <param name="beforeSeq">可选：仅返回 GroupSeq &lt; beforeSeq 的消息（历史分页）</param>
     [HttpGet("{groupId}/messages")]
     [ProducesResponseType(typeof(ApiResponse<List<MessageResponse>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
@@ -579,7 +584,8 @@ public class GroupsController : ControllerBase
         string groupId,
         [FromQuery] int limit = 50,
         [FromQuery] DateTime? before = null,
-        [FromQuery] long? afterSeq = null)
+        [FromQuery] long? afterSeq = null,
+        [FromQuery] long? beforeSeq = null)
     {
         var userId = GetUserId(User);
         if (string.IsNullOrEmpty(userId))
@@ -601,22 +607,63 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
+        // 优先级：afterSeq > beforeSeq > before（timestamp）
+        // - afterSeq：增量同步（拉取新消息）
+        // - beforeSeq：历史分页（向前加载）
+        // - before：兼容旧客户端
         List<Message> messages;
         if (afterSeq.HasValue && afterSeq.Value > 0)
         {
             messages = await _messageRepository.FindByGroupAfterSeqAsync(groupId, afterSeq.Value, limit);
+        }
+        else if (beforeSeq.HasValue && beforeSeq.Value > 0)
+        {
+            messages = await _messageRepository.FindByGroupBeforeSeqAsync(groupId, beforeSeq.Value, limit);
         }
         else
         {
             messages = await _messageRepository.FindByGroupAsync(groupId, before, limit);
         }
 
+        // 批量补齐 senderName/senderRole（避免 N+1）
+        var senderIds = messages
+            .Select(m => m.SenderId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+        var senderNameMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var senderRoleMap = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+        if (senderIds.Count > 0)
+        {
+            var users = await _db.Users
+                .Find(u => senderIds.Contains(u.UserId))
+                .Project(u => new { u.UserId, u.DisplayName, u.Username, u.Role })
+                .ToListAsync();
+            foreach (var u in users)
+            {
+                var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(u.UserId) && !string.IsNullOrWhiteSpace(name))
+                {
+                    senderNameMap[u.UserId] = name;
+                }
+                if (!string.IsNullOrWhiteSpace(u.UserId))
+                {
+                    senderRoleMap[u.UserId] = u.Role;
+                }
+            }
+        }
+
         var result = messages.Select(m => new MessageResponse
         {
             Id = m.Id,
             GroupSeq = m.GroupSeq,
+            SenderId = m.SenderId,
+            SenderName = m.SenderId != null && senderNameMap.TryGetValue(m.SenderId, out var nm) ? nm : null,
+            SenderRole = m.SenderId != null && senderRoleMap.TryGetValue(m.SenderId, out var rr) ? rr : null,
             Role = m.Role,
             Content = m.Content,
+            ReplyToMessageId = m.ReplyToMessageId,
+            ResendOfMessageId = m.ResendOfMessageId,
             ViewRole = m.ViewRole,
             Timestamp = m.Timestamp,
             TokenUsage = m.TokenUsage
@@ -690,22 +737,52 @@ public class GroupsController : ControllerBase
             return;
         }
 
-        // 1) 回放 Mongo：按 groupSeq 递增
+        // 1) 回放 Mongo：按 groupSeq 递增（仅回放用户态可见消息，过滤已删除）
         while (!cancellationToken.IsCancellationRequested)
         {
             var batch = await _db.Messages
-                .Find(x => x.GroupId == groupId && x.GroupSeq != null && x.GroupSeq > afterSeq)
+                .Find(x => x.GroupId == groupId && x.GroupSeq != null && x.GroupSeq > afterSeq && x.IsDeleted != true)
                 .SortBy(x => x.GroupSeq)
                 .Limit(200)
                 .ToListAsync(cancellationToken);
 
             if (batch.Count == 0) break;
 
+            // 本批次 senderName/senderRole 预取
+            var batchSenderIds = batch
+                .Select(x => x.SenderId)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct()
+                .ToList();
+            var batchSenderNameMap = new Dictionary<string, string>(StringComparer.Ordinal);
+            var batchSenderRoleMap = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+            if (batchSenderIds.Count > 0)
+            {
+                var users = await _db.Users
+                    .Find(u => batchSenderIds.Contains(u.UserId))
+                    .Project(u => new { u.UserId, u.DisplayName, u.Username, u.Role })
+                    .ToListAsync(cancellationToken);
+                foreach (var u in users)
+                {
+                    var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(u.UserId) && !string.IsNullOrWhiteSpace(name))
+                    {
+                        batchSenderNameMap[u.UserId] = name;
+                    }
+                    if (!string.IsNullOrWhiteSpace(u.UserId))
+                    {
+                        batchSenderRoleMap[u.UserId] = u.Role;
+                    }
+                }
+            }
+
             foreach (var m in batch)
             {
                 if (!m.GroupSeq.HasValue) continue;
                 var seq = m.GroupSeq.Value;
-                var payload = ToStreamEvent(m);
+                var senderName = m.SenderId != null && batchSenderNameMap.TryGetValue(m.SenderId, out var nm) ? nm : null;
+                var senderRole = m.SenderId != null && batchSenderRoleMap.TryGetValue(m.SenderId, out var rr) ? (UserRole?)rr : null;
+                var payload = ToStreamEvent(m, "message", senderName, senderRole);
                 var json = JsonSerializer.Serialize(payload, AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
                 afterSeq = seq;
@@ -716,6 +793,37 @@ public class GroupsController : ControllerBase
         using var sub = _groupMessageStreamHub.Subscribe(groupId);
         var reader = sub.Reader;
         var lastKeepAliveAt = DateTime.UtcNow;
+        var senderNameCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        var senderRoleCache = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+
+        async Task<string?> ResolveSenderNameAsync(string? senderId)
+        {
+            if (string.IsNullOrWhiteSpace(senderId)) return null;
+            if (senderNameCache.TryGetValue(senderId, out var cached)) return cached;
+            var u = await _db.Users
+                .Find(x => x.UserId == senderId)
+                .Project(x => new { x.UserId, x.DisplayName, x.Username, x.Role })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (u == null) return null;
+            var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            senderNameCache[senderId] = name;
+            senderRoleCache[senderId] = u.Role;
+            return name;
+        }
+
+        async Task<UserRole?> ResolveSenderRoleAsync(string? senderId)
+        {
+            if (string.IsNullOrWhiteSpace(senderId)) return null;
+            if (senderRoleCache.TryGetValue(senderId, out var cached)) return cached;
+            var u = await _db.Users
+                .Find(x => x.UserId == senderId)
+                .Project(x => new { x.UserId, x.Role })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (u == null) return null;
+            senderRoleCache[senderId] = u.Role;
+            return u.Role;
+        }
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -736,29 +844,50 @@ public class GroupsController : ControllerBase
 
             while (reader.TryRead(out var ev))
             {
+                // message：严格按 afterSeq 去重/推进
+                // messageUpdated：用于在线通知（例如软删除），不依赖 afterSeq 递增
+                if (string.Equals(ev.Type, "messageUpdated", StringComparison.OrdinalIgnoreCase))
+                {
+                    var senderName = await ResolveSenderNameAsync(ev.Message.SenderId);
+                    var senderRole = await ResolveSenderRoleAsync(ev.Message.SenderId);
+                    var json = JsonSerializer.Serialize(ToStreamEvent(ev.Message, "messageUpdated", senderName, senderRole), AppJsonContext.Default.GroupMessageStreamEventDto);
+                    await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                    continue;
+                }
+
                 if (ev.Seq <= afterSeq) continue;
-                var json = JsonSerializer.Serialize(ToStreamEvent(ev.Message), AppJsonContext.Default.GroupMessageStreamEventDto);
-                await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
+                var senderName2 = await ResolveSenderNameAsync(ev.Message.SenderId);
+                var senderRole2 = await ResolveSenderRoleAsync(ev.Message.SenderId);
+                var json2 = JsonSerializer.Serialize(ToStreamEvent(ev.Message, "message", senderName2, senderRole2), AppJsonContext.Default.GroupMessageStreamEventDto);
+                await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json2, ct: cancellationToken);
                 afterSeq = ev.Seq;
                 lastKeepAliveAt = DateTime.UtcNow;
             }
         }
     }
 
-    private static GroupMessageStreamEventDto ToStreamEvent(Message m)
+    private static GroupMessageStreamEventDto ToStreamEvent(Message m, string type, string? senderName, UserRole? senderRole)
     {
+        var isUpdate = string.Equals(type, "messageUpdated", StringComparison.OrdinalIgnoreCase);
+        var shouldHideContent = isUpdate || m.IsDeleted;
         return new GroupMessageStreamEventDto
         {
-            Type = "message",
+            Type = type,
             Message = new GroupMessageStreamMessageDto
             {
                 Id = m.Id,
                 GroupId = m.GroupId,
                 GroupSeq = m.GroupSeq ?? 0,
+                IsDeleted = m.IsDeleted,
                 SessionId = m.SessionId,
                 SenderId = m.SenderId,
+                SenderName = senderName,
+                SenderRole = senderRole,
                 Role = m.Role,
-                Content = m.Content,
+                Content = shouldHideContent ? string.Empty : m.Content,
+                ReplyToMessageId = m.ReplyToMessageId,
+                ResendOfMessageId = m.ResendOfMessageId,
                 ViewRole = m.ViewRole,
                 Timestamp = m.Timestamp,
                 TokenUsage = m.TokenUsage

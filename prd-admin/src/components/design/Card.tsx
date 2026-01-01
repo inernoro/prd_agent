@@ -12,10 +12,9 @@ export function Card({
   return (
     <div
       className={cn(
-        // 更紧凑、更扁平：默认 padding 更小，去掉上浮，靠描边/底色变化营造 hover
-        'rounded-[16px] p-4 transition-colors duration-150',
-        // 不再用“透背景”的 hover，避免动态背景下元素显乱
-        'hover:brightness-[1.02]',
+        // 更紧凑、更扁平：默认 padding 更小
+        // 注：移除 hover:brightness 滤镜，该滤镜会导致 Windows 下字体渲染闪烁（hover 时变细，移开后变粗/模糊）
+        'rounded-[16px] p-4',
         className
       )}
       style={{

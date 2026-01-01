@@ -19,6 +19,9 @@ import type {
   UpdateAdminGroupInput,
   DeleteAdminGroupContract,
   GenerateAdminGapSummaryContract,
+  SimulateMessageContract,
+  SimulateMessageInput,
+  SimulateMessageResponse,
 } from '@/services/contracts/adminGroups';
 
 export const getAdminGroupsReal: GetAdminGroupsContract = async (params: GetAdminGroupsParams) => {
@@ -104,4 +107,10 @@ export const getAdminGroupMessagesReal: GetAdminGroupMessagesContract = async (g
   return await apiRequest<PagedResult<AdminMessage>>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/messages?${q.toString()}`);
 };
 
+export const simulateMessageReal: SimulateMessageContract = async (input: SimulateMessageInput) => {
+  return await apiRequest<SimulateMessageResponse>('/api/v1/admin/lab/simulate-message', {
+    method: 'POST',
+    body: input,
+  });
+};
 

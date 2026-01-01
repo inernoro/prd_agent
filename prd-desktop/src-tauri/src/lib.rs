@@ -41,6 +41,7 @@ pub fn run() {
             commands::session::subscribe_group_messages,
             commands::session::switch_role,
             commands::session::send_message,
+            commands::session::resend_message,
             commands::session::get_prompts,
             commands::session::cancel_stream,
             commands::session::preview_ask_in_section,

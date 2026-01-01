@@ -60,6 +60,12 @@ export interface Message {
   timestamp: Date;
   // 群内顺序键（用于断线续收/严格有序）
   groupSeq?: number;
+  // 关联：assistant 回答哪条 user 消息（用于排错/一问多答）
+  replyToMessageId?: string;
+  // 关联：本条 user 消息是否为重发自旧消息（仅用于排错/溯源）
+  resendOfMessageId?: string;
+  // 软删除标记（用户态收到 messageUpdated 时用于移除；正常历史/回放默认不应包含 deleted）
+  isDeleted?: boolean;
   // 服务端时间点（用于端到端统一与首字延迟）
   serverRequestReceivedAtUtc?: Date;
   serverStartAtUtc?: Date;
@@ -69,6 +75,7 @@ export interface Message {
   totalMs?: number;
   senderId?: string;
   senderName?: string;
+  senderRole?: UserRole;
 }
 
 export type MessageBlockKind = 'paragraph' | 'heading' | 'listItem' | 'codeBlock';

@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect } from 'react';
 import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -25,9 +25,6 @@ function ChatContainerInner() {
   const endStreamingBlock = useMessageStore((s) => s.endStreamingBlock);
   const setMessageCitations = useMessageStore((s) => s.setMessageCitations);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
-  const setMessages = useMessageStore((s) => s.setMessages);
-  const markHistoryLoaded = useMessageStore((s) => s.markHistoryLoaded);
-  const initHistoryPaging = useMessageStore((s) => s.initHistoryPaging);
   const addMessage = useMessageStore((s) => s.addMessage);
   const clearPendingAssistant = useMessageStore((s) => s.clearPendingAssistant);
   const isStreaming = useMessageStore((s) => s.isStreaming);
@@ -35,11 +32,13 @@ function ChatContainerInner() {
   const streamingPhase = useMessageStore((s) => s.streamingPhase);
   const setStreamingPhase = useMessageStore((s) => s.setStreamingPhase);
   const bindSession = useMessageStore((s) => s.bindSession);
+  const syncFromServer = useMessageStore((s) => s.syncFromServer);
   const ackPendingUserMessageTimestamp = useMessageStore((s) => s.ackPendingUserMessageTimestamp);
   const ingestGroupBroadcastMessage = useMessageStore((s) => s.ingestGroupBroadcastMessage);
+  const removeMessageById = useMessageStore((s) => s.removeMessageById);
+  const localMaxSeq = useMessageStore((s) => s.localMaxSeq);
   const getLastGroupSeq = useSessionStore((s) => s.getLastGroupSeq);
   const setLastGroupSeq = useSessionStore((s) => s.setLastGroupSeq);
-  const gapFillInFlightRef = useRef(false);
 
   const showTopPhaseBanner =
     isStreaming &&
@@ -208,6 +207,7 @@ function ChatContainerInner() {
   }, [currentRole, clearPendingAssistant, startStreaming, appendToStreamingMessage, startStreamingBlock, appendToStreamingBlock, endStreamingBlock, stopStreaming, addMessage, setStreamingPhase, setMessageCitations]);
 
   // 订阅群消息广播（SSE 由 Rust 消费并 emit 为 group-message）
+  // 使用 localMaxSeq 作为断点续传游标
   useEffect(() => {
     if (!activeGroupId) {
       // 退出群上下文：停止订阅，避免后台残留连接
@@ -215,9 +215,10 @@ function ChatContainerInner() {
       return;
     }
 
-    const afterSeq = getLastGroupSeq(activeGroupId);
+    // 优先使用本地 seq 边界，其次使用 sessionStore 的记录（兼容过渡）
+    const afterSeq = localMaxSeq ?? getLastGroupSeq(activeGroupId) ?? 0;
     invoke('subscribe_group_messages', { groupId: activeGroupId, afterSeq }).catch(() => {});
-  }, [activeGroupId, getLastGroupSeq]);
+  }, [activeGroupId, localMaxSeq, getLastGroupSeq]);
 
   useEffect(() => {
     const unlisten = listen<any>('group-message', (event) => {
@@ -234,53 +235,22 @@ function ChatContainerInner() {
         }
         return;
       }
+      if (p?.type === 'messageUpdated' && p?.message?.id) {
+        // 用户态：软删除后应立刻从 UI 移除（不展示 tombstone）
+        const m = p.message;
+        if (m?.isDeleted === true || m?.IsDeleted === true) {
+          removeMessageById(String(m.id));
+        }
+        return;
+      }
       if (p?.type !== 'message' || !p?.message) return;
 
       const m = p.message;
       const gid = String(m.groupId || '').trim();
       const seq = Number(m.groupSeq || 0);
-      const prevSeq = gid ? getLastGroupSeq(gid) : 0;
 
-      // 检测跳号：收到 seq 远大于 last+1，说明本地缺消息（中间缺/异地登录/断线重连等）
-      // 触发一次补洞：拉取 (lastSeq, currentSeq] 区间内缺失的消息并合并。
-      if (
-        gid &&
-        Number.isFinite(seq) &&
-        seq > 0 &&
-        Number.isFinite(prevSeq) &&
-        prevSeq > 0 &&
-        seq > prevSeq + 1 &&
-        !gapFillInFlightRef.current
-      ) {
-        gapFillInFlightRef.current = true;
-        const take = Math.min(200, Math.max(1, seq - prevSeq));
-        invoke<{ success: boolean; data?: Array<{ id: string; groupSeq?: number; role: string; content: string; viewRole?: string; timestamp: string }>; error?: { message?: string } }>(
-          'get_group_message_history',
-          { groupId: gid, limit: take, afterSeq: prevSeq }
-        )
-          .then((resp) => {
-            if (resp?.success && Array.isArray(resp.data)) {
-              for (const x of resp.data) {
-                const s = typeof x.groupSeq === 'number' ? x.groupSeq : undefined;
-                if (gid && typeof s === 'number' && Number.isFinite(s) && s > 0) setLastGroupSeq(gid, s);
-                ingestGroupBroadcastMessage({
-                  currentUserId,
-                  message: {
-                    id: String(x.id || ''),
-                    role: (x.role === 'User' ? 'User' : 'Assistant'),
-                    content: String(x.content || ''),
-                    timestamp: new Date(x.timestamp || Date.now()),
-                    viewRole: (x.viewRole as any) || undefined,
-                    groupSeq: typeof s === 'number' && Number.isFinite(s) && s > 0 ? s : undefined,
-                  } as any,
-                });
-              }
-            }
-          })
-          .finally(() => {
-            gapFillInFlightRef.current = false;
-          });
-      }
+      // 不再做“跳号补洞”：群组 seq 仅表示顺序，不保证连续可见（删除/软删会产生空洞），
+      // 离线/重连一致性通过“订阅后快照校准 + 历史拉取”来保证。
       if (gid && Number.isFinite(seq) && seq > 0) {
         setLastGroupSeq(gid, seq);
       }
@@ -294,7 +264,11 @@ function ChatContainerInner() {
           timestamp: new Date(m.timestamp || Date.now()),
           viewRole: (m.viewRole as any) || undefined,
           senderId: m.senderId ? String(m.senderId) : undefined,
+          senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
+          senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
           groupSeq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
+          replyToMessageId: m.replyToMessageId ? String(m.replyToMessageId) : undefined,
+          resendOfMessageId: m.resendOfMessageId ? String(m.resendOfMessageId) : undefined,
         } as any,
       });
     }).catch(() => Promise.resolve((() => {}) as any));
@@ -302,49 +276,31 @@ function ChatContainerInner() {
     return () => {
       unlisten.then((fn) => fn()).catch(() => {});
     };
-  }, [addMessage, currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq]);
+  }, [addMessage, currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById]);
 
-  // 会话切换时加载历史消息（改用 groupId 加载群组所有消息，而非仅当前 session 消息）
+  // 会话/群组切换时：绑定会话并执行增量同步
+  // 每次进入群组都会与服务端同步（本地是线上的缓存，服务端主导）
   useEffect(() => {
     if (!sessionId) {
       bindSession(null);
       return;
     }
 
-    bindSession(sessionId);
-    // 同一 session：避免重复拉历史（包括"切到预览页再返回"的重挂载场景）
-    // 但要允许“冷启动/刷新后”至少拉一次：因为 boundSessionId 是持久化的，prevBound 判断会导致永远不拉历史。
-    const loadedSid = useMessageStore.getState().historyLoadedSessionId;
-    if (loadedSid === sessionId) return;
+    // 绑定会话和群组（同一群组内切换会话不会清空消息）
+    bindSession(sessionId, activeGroupId);
 
-    // 必须有 groupId 才能加载群组消息历史
+    // 必须有 groupId 才能执行同步
     if (!activeGroupId) return;
 
-    const INITIAL_HISTORY_LIMIT = 6; // 最近 3 轮（User+Assistant）
-    invoke<{ success: boolean; data?: Array<{ id: string; groupSeq?: number; role: string; content: string; viewRole?: string; timestamp: string }>; error?: { message: string } }>(
-      'get_group_message_history',
-      { groupId: activeGroupId, limit: INITIAL_HISTORY_LIMIT }
-    )
-      .then((resp) => {
-        if (resp.success && resp.data) {
-          const mapped = resp.data.map((m) => ({
-            id: m.id,
-            role: (m.role === 'User' ? 'User' : 'Assistant') as 'User' | 'Assistant',
-            content: m.content,
-            timestamp: new Date(m.timestamp),
-            viewRole: (m.viewRole as any) || undefined,
-            groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
-          }));
-          setMessages(mapped);
-          markHistoryLoaded(sessionId);
-          // 初次载入：用于"向上瀑布加载"游标初始化
-          initHistoryPaging(INITIAL_HISTORY_LIMIT);
-        }
-      })
+    // 执行增量同步：
+    // - 冷启动（本地无缓存）：拉取最新 N 条
+    // - 热启动（本地有缓存）：拉取 afterSeq > localMaxSeq 的增量
+    const SYNC_LIMIT = 100;
+    syncFromServer({ groupId: activeGroupId, limit: SYNC_LIMIT })
       .catch((err) => {
-        console.error('Failed to load message history:', err);
+        console.error('Failed to sync messages from server:', err);
       });
-  }, [sessionId, activeGroupId, bindSession, setMessages, initHistoryPaging, markHistoryLoaded]);
+  }, [sessionId, activeGroupId, bindSession, syncFromServer]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">

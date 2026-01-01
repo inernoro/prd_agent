@@ -88,6 +88,7 @@ import type {
   GetAdminGroupsContract,
   RegenerateAdminGroupInviteContract,
   RemoveAdminGroupMemberContract,
+  SimulateMessageContract,
   UpdateAdminGapStatusContract,
   UpdateAdminGroupContract,
 } from '@/services/contracts/adminGroups';
@@ -178,6 +179,7 @@ import {
   getAdminGroupsReal,
   regenerateAdminGroupInviteReal,
   removeAdminGroupMemberReal,
+  simulateMessageReal,
   updateAdminGapStatusReal,
   updateAdminGroupReal,
 } from '@/services/real/adminGroups';
@@ -223,6 +225,7 @@ export const updateAdminGapStatus: UpdateAdminGapStatusContract = withAuth(updat
 export const generateAdminGapSummary: GenerateAdminGapSummaryContract = withAuth(generateAdminGapSummaryReal);
 
 export const getAdminGroupMessages: GetAdminGroupMessagesContract = withAuth(getAdminGroupMessagesReal);
+export const simulateMessage: SimulateMessageContract = withAuth(simulateMessageReal);
 
 export const getPlatforms: GetPlatformsContract = withAuth(getPlatformsReal);
 export const createPlatform: CreatePlatformContract = withAuth(createPlatformReal);

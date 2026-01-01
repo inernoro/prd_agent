@@ -225,18 +225,25 @@ pub async fn get_group_message_history(
     limit: Option<i32>,
     before: Option<String>,
     after_seq: Option<i64>,
+    before_seq: Option<i64>,
 ) -> Result<ApiResponse<Vec<MessageHistoryItem>>, String> {
     let client = ApiClient::new();
     let limit = limit.unwrap_or(50).clamp(1, 200);
     let mut path = format!("/groups/{}/messages?limit={}", group_id, limit);
+    // 优先级：afterSeq > beforeSeq > before（timestamp）
     if let Some(a) = after_seq {
         let aa = a.max(0);
         if aa > 0 {
             path.push_str("&afterSeq=");
             path.push_str(&aa.to_string());
         }
-    }
-    if let Some(b) = before {
+    } else if let Some(bs) = before_seq {
+        let bbs = bs.max(1);
+        if bbs > 0 {
+            path.push_str("&beforeSeq=");
+            path.push_str(&bbs.to_string());
+        }
+    } else if let Some(b) = before {
         let bb = b.trim().to_string();
         if !bb.is_empty() {
             path.push_str("&before=");
@@ -365,6 +372,110 @@ pub async fn send_message(
 ) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
     let url = format!("{}/api/v1/sessions/{}/messages", base_url, session_id);
+
+    let client = api_client::build_streaming_client(&base_url);
+    let request = SendMessageRequest {
+        content,
+        role,
+        prompt_key,
+        attachment_ids,
+    };
+
+    let token = cancel.new_message_token();
+    emit_stream_phase(&app, "message-chunk", "requesting");
+    let mut req = client
+        .post(&url)
+        .header("Accept", "text/event-stream")
+        .header("Content-Type", "application/json")
+        .json(&request);
+
+    if let Some(token) = api_client::get_auth_token() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let mut response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    // access 过期：尝试 refresh 后重试一次
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+        if ok {
+            let mut retry = client
+                .post(&url)
+                .header("Accept", "text/event-stream")
+                .header("Content-Type", "application/json")
+                .json(&request);
+            if let Some(token) = api_client::get_auth_token() {
+                retry = retry.header("Authorization", format!("Bearer {}", token));
+            }
+            response = retry
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+        } else {
+            emit_auth_expired(&app);
+        }
+    }
+    emit_stream_phase(&app, "message-chunk", "connected");
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        emit_stream_error(&app, "message-chunk", format!("HTTP {}: {}", status, body));
+        return Ok(());
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut sse_buf = String::new();
+    let mut saw_any_data = false;
+
+    while let Some(chunk) = stream.next().await {
+        if token.is_cancelled() {
+            let _ = app.emit("message-chunk", serde_json::json!({ "type": "done" }));
+            break;
+        }
+        match chunk {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                handle_sse_text(
+                    &app,
+                    "message-chunk",
+                    &mut sse_buf,
+                    &text,
+                    &mut saw_any_data,
+                );
+            }
+            Err(e) => {
+                emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[command]
+pub async fn resend_message(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    session_id: String,
+    message_id: String,
+    content: String,
+    role: Option<String>,
+    prompt_key: Option<String>,
+    attachment_ids: Option<Vec<String>>,
+) -> Result<(), String> {
+    let base_url = api_client::get_api_base_url();
+    let mid = message_id.trim().to_string();
+    if mid.is_empty() {
+        return Ok(());
+    }
+    let url = format!(
+        "{}/api/v1/sessions/{}/messages/{}/resend",
+        base_url, session_id, mid
+    );
 
     let client = api_client::build_streaming_client(&base_url);
     let request = SendMessageRequest {

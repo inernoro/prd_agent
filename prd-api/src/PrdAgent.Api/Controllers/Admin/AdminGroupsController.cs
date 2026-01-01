@@ -384,6 +384,34 @@ public class AdminGroupsController : ControllerBase
             .Limit(pageSize)
             .ToListAsync();
 
+        // 批量补齐 senderName/senderRole（避免 N+1）
+        var senderIds = msgs
+            .Select(m => m.SenderId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+        var senderNameMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var senderRoleMap = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+        if (senderIds.Count > 0)
+        {
+            var users = await _db.Users
+                .Find(u => senderIds.Contains(u.UserId))
+                .Project(u => new { u.UserId, u.DisplayName, u.Username, u.Role })
+                .ToListAsync();
+            foreach (var u in users)
+            {
+                var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(u.UserId) && !string.IsNullOrWhiteSpace(name))
+                {
+                    senderNameMap[u.UserId] = name;
+                }
+                if (!string.IsNullOrWhiteSpace(u.UserId))
+                {
+                    senderRoleMap[u.UserId] = u.Role;
+                }
+            }
+        }
+
         // 从新到旧返回；前端可自行反转展示
         var items = msgs.Select(m => new AdminMessageDto
         {
@@ -391,6 +419,8 @@ public class AdminGroupsController : ControllerBase
             GroupId = m.GroupId,
             SessionId = m.SessionId,
             SenderId = m.SenderId,
+            SenderName = m.SenderId != null && senderNameMap.TryGetValue(m.SenderId, out var nm) ? nm : null,
+            SenderRole = m.SenderId != null && senderRoleMap.TryGetValue(m.SenderId, out var rr) ? rr.ToString() : null,
             Role = m.Role.ToString(),
             Content = m.Content,
             LlmRequestId = m.LlmRequestId,
@@ -513,6 +543,8 @@ public class AdminMessageDto
     public string GroupId { get; set; } = string.Empty;
     public string SessionId { get; set; } = string.Empty;
     public string? SenderId { get; set; }
+    public string? SenderName { get; set; }
+    public string? SenderRole { get; set; }
     public string Role { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string? LlmRequestId { get; set; }

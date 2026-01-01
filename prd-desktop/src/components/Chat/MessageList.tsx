@@ -3,6 +3,7 @@ import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
+import { useAuthStore } from '../../stores/authStore';
 import type { Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import AsyncIconButton from '../ui/AsyncIconButton';
@@ -17,6 +18,36 @@ const phaseText: Record<string, string> = {
   receiving: '正在接收信息…',
   typing: '开始输出…',
 };
+
+const roleZh: Record<string, string> = {
+  ADMIN: '超级管理员',
+  PM: '产品经理',
+  DEV: '开发者',
+  QA: '测试',
+};
+
+function roleTheme(role?: string | null): { badgeClass: string; avatarBgClass: string } {
+  const r = String(role || '').trim().toUpperCase();
+  switch (r) {
+    case 'ADMIN':
+      return { badgeClass: 'bg-amber-500/15 text-amber-200 border-amber-400/30', avatarBgClass: 'bg-gradient-to-br from-amber-500/70 to-orange-500/70' };
+    case 'DEV':
+      return { badgeClass: 'bg-sky-500/15 text-sky-200 border-sky-400/30', avatarBgClass: 'bg-gradient-to-br from-sky-500/70 to-cyan-500/70' };
+    case 'QA':
+      return { badgeClass: 'bg-violet-500/15 text-violet-200 border-violet-400/30', avatarBgClass: 'bg-gradient-to-br from-violet-500/70 to-fuchsia-500/70' };
+    case 'PM':
+      return { badgeClass: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/30', avatarBgClass: 'bg-gradient-to-br from-emerald-500/70 to-teal-500/70' };
+    default:
+      return { badgeClass: 'bg-white/8 text-white/70 border-white/15', avatarBgClass: 'bg-gradient-to-br from-white/25 to-white/10' };
+  }
+}
+
+function initials(name?: string | null): string {
+  const t = String(name || '').trim();
+  if (!t) return '?';
+  // 中文/英文统一取首字符（避免复杂分词）
+  return t.slice(0, 1).toUpperCase();
+}
 
 function ThinkingIndicator({ label }: { label?: string }) {
   return (
@@ -483,11 +514,13 @@ function MessageListInner() {
     openCitationDrawer: (args: any) => void;
     openWithCitations: (args: any) => void;
   }) {
+    const currentUser = useAuthStore((s) => s.user ?? null);
+    const currentUserId = currentUser?.userId ?? null;
     const tsText = formatTsMs((message as any)?.timestamp);
     const ttftMs = (message as any)?.ttftMs;
     const totalMs = (message as any)?.totalMs;
     const ttftAtText = formatTsMs((message as any)?.serverFirstTokenAtUtc);
-    const doneAtText = formatTsMs((message as any)?.serverDoneAtUtc);
+    // const doneAtText = formatTsMs((message as any)?.serverDoneAtUtc); // 保留：若未来需要展示 doneAt 再启用
     const doneMinusFirstTokenMs = (() => {
       const done = (message as any)?.serverDoneAtUtc;
       const first = (message as any)?.serverFirstTokenAtUtc;
@@ -518,28 +551,95 @@ function MessageListInner() {
         const citationsCount = Math.min(assistantCitations.length, 30);
         const sourcesCount = citationsCount > 0 ? citationsCount : navNumbers.length;
         const hasSources = message.role === 'Assistant' && sourcesCount > 0;
+        const hasHoverToolbar = (
+          (message.role === 'Assistant' && String(message.content || '').trim()) ||
+          (message.role === 'User' && String(message.content || '').trim())
+        );
+        const isMine =
+          message.role === 'User' &&
+          !!currentUserId &&
+          !!message.senderId &&
+          String(message.senderId) === String(currentUserId);
+
+        const metaSeq = typeof (message as any)?.groupSeq === 'number' && (message as any).groupSeq > 0
+          ? `#${(message as any).groupSeq}`
+          : '';
+
+        const metaRightText = (() => {
+          if (message.role === 'User') return tsText || '';
+          if (!firstTokenDisplay) return '';
+          const dur = typeof doneMinusFirstTokenMs === 'number' ? ` (${formatDurationMs(doneMinusFirstTokenMs)})` : '';
+          return `${firstTokenDisplay}${dur}`;
+        })();
+
+        const showMeta = !!(metaSeq || metaRightText);
+
+        const senderDisplayName = (() => {
+          if (message.role === 'Assistant') return 'PRD Agent';
+          if (isMine) return (currentUser?.displayName || (currentUser as any)?.username || '我') as string;
+          return String(message.senderName || message.senderId || '用户');
+        })();
+
+        const badgeText = (() => {
+          if (message.role === 'Assistant') {
+            const vr = String(message.viewRole || '').trim();
+            return vr ? (roleZh[vr] || vr) : '';
+          }
+          const sr = String((message as any).senderRole || '').trim();
+          return sr ? (roleZh[sr] || sr) : '';
+        })();
+
+        const theme = roleTheme(message.role === 'Assistant' ? String(message.viewRole || '') : String((message as any).senderRole || ''));
 
         return (
           <div
         data-msg-id={message.id}
-            className={`flex ${message.role === 'User' ? 'justify-end' : 'justify-start'} ${
-              message.role === 'Assistant' && String(message.content || '').trim() ? 'pb-12' : ''
+            className={`flex ${
+              message.role === 'User'
+                ? (isMine ? 'justify-end' : 'justify-start')
+                : 'justify-start'
+            } ${
+              hasHoverToolbar ? 'pb-12' : ''
             }`}
           >
-            <div
-              className="relative group/message max-w-[80%]"
-            >
+            {/* 头像（左/右） */}
+            {(!isMine || message.role === 'Assistant') ? (
+              <div className="shrink-0 mr-3 mt-1">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white ${theme.avatarBgClass} border border-white/15 shadow-sm`}>
+                  {message.role === 'Assistant' ? 'AI' : initials(senderDisplayName)}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="min-w-0 max-w-[80%]">
+              {/* 名字 + 角色 */}
+              <div className={`mb-1 flex items-center gap-2 ${isMine ? 'justify-end' : 'justify-start'} select-none`}>
+                <span className="text-[12px] leading-5 text-white/70">
+                  {senderDisplayName}
+                </span>
+                {badgeText ? (
+                  <span className={`text-[11px] leading-5 px-2 rounded-full border ${theme.badgeClass}`}>
+                    {badgeText}
+                  </span>
+                ) : null}
+              </div>
+
               <div
-                className={`p-4 rounded-2xl ${
+                className="relative group/message"
+              >
+              <div
+                className={`${showMeta ? 'relative px-4 pt-3 pb-7' : 'p-4'} rounded-2xl ${
                   message.role === 'User'
-                    ? 'bg-primary-500 text-white rounded-br-md'
+                    ? (isMine
+                      ? 'bg-primary-500 text-white rounded-br-md shadow-sm'
+                      : 'bg-surface-light/85 dark:bg-surface-dark/75 border border-border rounded-bl-md shadow-sm')
                     : isError
                       ? 'bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 rounded-bl-md'
-                      : 'bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md'
+                      : 'bg-surface-light/85 dark:bg-surface-dark/75 border border-border rounded-bl-md shadow-sm'
                 }`}
               >
               {message.role === 'User' ? (
-                <p className="whitespace-pre-wrap">{message.content}</p>
+                <p className={`whitespace-pre-wrap ${isMine ? '' : 'text-text-primary'}`}>{message.content}</p>
               ) : (
                 <div>
             {showThinking ? (
@@ -783,47 +883,60 @@ function MessageListInner() {
               </div>
             ) : null}
 
+            {/* 时间 + seq：贴近气泡底部（气泡内固定一行） */}
+            {showMeta ? (
+              <div
+                className={`absolute left-4 right-4 bottom-2 flex items-center justify-between text-[11px] leading-4 select-none ${
+                  message.role === 'User'
+                    ? (isMine ? 'text-white/70' : 'text-text-secondary')
+                    : 'text-text-secondary'
+                }`}
+              >
+                <span className="opacity-60">{metaSeq}</span>
+                <span>{metaRightText}</span>
+              </div>
+            ) : null}
+
         {/* 非 typing 阶段已经有“接收/请求”提示，不要再渲染光标块占位（会挡住文案的目标位置） */}
         {isMessageStreaming && !showThinking && (
               <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />
             )}
             
-            {message.senderName && (
-              <p className="text-xs opacity-70 mt-2">
-                {message.senderName} · {message.viewRole}
-              </p>
-            )}
-
-        {message.role === 'User' ? (
-          (tsText || (typeof (message as any)?.groupSeq === 'number' && (message as any).groupSeq > 0)) ? (
-            <div className="mt-2 flex items-center justify-between text-[11px] leading-4 select-none text-white/70">
-              <span className="opacity-60">
-                {typeof (message as any)?.groupSeq === 'number' && (message as any).groupSeq > 0 ? `#${(message as any).groupSeq}` : ''}
-              </span>
-              <span>{tsText || ''}</span>
-            </div>
-          ) : null
-        ) : (
-          // Assistant：
-          // - 历史消息必须显示时间：用 message.timestamp（与 DB 保持一致：首字时间）
-          // - 流式期间：优先展示 firstTokenAtUtc（没有则回退 timestamp）
-          (firstTokenDisplay || doneAtText || typeof doneMinusFirstTokenMs === 'number' || (typeof (message as any)?.groupSeq === 'number' && (message as any).groupSeq > 0)) ? (
-            <div className="mt-2 flex items-center justify-between text-[11px] leading-4 select-none text-text-secondary">
-              <span className="opacity-60">
-                {typeof (message as any)?.groupSeq === 'number' && (message as any).groupSeq > 0 ? `#${(message as any).groupSeq}` : ''}
-              </span>
-              <span>
-                {firstTokenDisplay ? (
-                  <>
-                    {firstTokenDisplay}
-                    {typeof doneMinusFirstTokenMs === 'number' ? ` (${formatDurationMs(doneMinusFirstTokenMs)})` : ''}
-                  </>
-                ) : null}
-              </span>
-            </div>
-          ) : null
-        )}
               </div>
+
+              {message.role === 'User' && String(message.content || '').trim() ? (
+                <div className={`pointer-events-none absolute top-full ${isMine ? 'right-2' : 'left-2'} mt-1 z-20 opacity-0 group-hover/message:opacity-100 transition-opacity`}>
+                  <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg border border-border bg-background-light/80 dark:bg-background-dark/70 shadow-lg px-1 py-1">
+                    <AsyncIconButton
+                      title="重发（在输入框中编辑后重新发送）"
+                      onAction={async () => {
+                        window.dispatchEvent(new CustomEvent('prdAgent:prefillChatInput', {
+                          detail: { content: message.content, resendMessageId: message.id },
+                        }));
+                      }}
+                      icon={(
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 11l6.232-6.232a2.5 2.5 0 013.536 3.536L12.536 14.536A4 4 0 0110 15H7v-3a4 4 0 011-2.5z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 21H7a2 2 0 01-2-2V8" />
+                        </svg>
+                      )}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                    />
+                    <AsyncIconButton
+                      title="复制消息"
+                      onAction={async () => {
+                        await copyText(message.content);
+                      }}
+                      icon={(
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
+                        </svg>
+                      )}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                    />
+                  </div>
+                </div>
+              ) : null}
 
               {message.role === 'Assistant' && String(message.content || '').trim() ? (
                 <div className="pointer-events-none absolute top-full right-2 mt-1 z-20 opacity-0 group-hover/message:opacity-100 transition-opacity">
@@ -843,7 +956,17 @@ function MessageListInner() {
                   </div>
                 </div>
               ) : null}
+              </div>
             </div>
+
+            {/* 自己的头像放右侧（更像聊天软件） */}
+            {isMine ? (
+              <div className="shrink-0 ml-3 mt-1">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white bg-gradient-to-br from-primary-500/80 to-sky-500/70 border border-white/15 shadow-sm">
+                  {initials(senderDisplayName)}
+                </div>
+              </div>
+            ) : null}
           </div>
     );
   }), []);

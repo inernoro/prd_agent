@@ -24,6 +24,8 @@ export type AiChatHistoryMessage = {
   groupSeq?: number | null;
   role: 'User' | 'Assistant';
   content: string;
+  replyToMessageId?: string | null;
+  resendOfMessageId?: string | null;
   viewRole?: string | null;
   timestamp: string;
   tokenUsage?: AiChatTokenUsage | null;

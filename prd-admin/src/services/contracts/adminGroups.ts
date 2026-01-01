@@ -92,6 +92,8 @@ export type AdminMessage = {
   groupId: string;
   sessionId: string;
   senderId?: string | null;
+  senderName?: string | null;
+  senderRole?: 'PM' | 'DEV' | 'QA' | 'ADMIN' | null;
   role: 'User' | 'Assistant';
   content: string;
   llmRequestId?: string | null;
@@ -108,4 +110,16 @@ export type GetAdminGroupMessagesParams = {
 
 export type GetAdminGroupMessagesContract = (groupId: string, params: GetAdminGroupMessagesParams) => Promise<ApiResponse<PagedResult<AdminMessage>>>;
 
+// 模拟发送消息
+export type SimulateMessageInput = {
+  groupId: string;
+  content: string;
+  triggerAiReply: boolean;
+};
+export type SimulateMessageResponse = {
+  messageId: string;
+  groupSeq: number;
+  triggerAiReply: boolean;
+};
+export type SimulateMessageContract = (input: SimulateMessageInput) => Promise<ApiResponse<SimulateMessageResponse>>;
 

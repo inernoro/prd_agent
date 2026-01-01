@@ -16,6 +16,20 @@ public class Message
     /// - 非群消息/历史消息可为空
     /// </summary>
     public long? GroupSeq { get; set; }
+
+    /// <summary>
+    /// 是否已软删除（用户态不可见；后台/日志仍可用于排障与追溯）。
+    /// </summary>
+    public bool IsDeleted { get; set; } = false;
+
+    /// <summary>删除时间（UTC）</summary>
+    public DateTime? DeletedAtUtc { get; set; }
+
+    /// <summary>删除人用户ID（软删除时记录；AI 消息可能为空）</summary>
+    public string? DeletedByUserId { get; set; }
+
+    /// <summary>删除原因（可选：例如 resend/user_delete 等）</summary>
+    public string? DeleteReason { get; set; }
     
     /// <summary>会话ID</summary>
     public string SessionId { get; set; } = string.Empty;
@@ -28,6 +42,16 @@ public class Message
     
     /// <summary>消息内容</summary>
     public string Content { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Assistant 消息所回答的 User 消息 ID（用于“一问多答”与排障关联）。
+    /// </summary>
+    public string? ReplyToMessageId { get; set; }
+
+    /// <summary>
+    /// 新 User 消息“重发自”的旧 User 消息 ID（仅用于排障/溯源；用户态不展示）。
+    /// </summary>
+    public string? ResendOfMessageId { get; set; }
     
     /// <summary>
     /// 关联的 LLM 请求 requestId（用于后台定位本次调用日志；可为空，兼容历史消息/非LLM消息）

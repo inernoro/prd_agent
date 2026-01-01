@@ -138,8 +138,18 @@ pub struct MessageHistoryItem {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_seq: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_role: Option<String>,
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resend_of_message_id: Option<String>,
     pub view_role: Option<String>,
     pub timestamp: String,
     pub token_usage: Option<TokenUsage>,

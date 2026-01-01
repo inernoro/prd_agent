@@ -13,10 +13,15 @@ public class GroupMessageStreamMessageDto
     public string Id { get; set; } = string.Empty;
     public string GroupId { get; set; } = string.Empty;
     public long GroupSeq { get; set; }
+    public bool IsDeleted { get; set; }
     public string SessionId { get; set; } = string.Empty;
     public string? SenderId { get; set; }
+    public string? SenderName { get; set; }
+    public UserRole? SenderRole { get; set; }
     public MessageRole Role { get; set; }
     public string Content { get; set; } = string.Empty;
+    public string? ReplyToMessageId { get; set; }
+    public string? ResendOfMessageId { get; set; }
     public UserRole? ViewRole { get; set; }
     public DateTime Timestamp { get; set; }
     public TokenUsage? TokenUsage { get; set; }

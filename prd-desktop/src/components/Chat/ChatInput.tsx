@@ -62,6 +62,7 @@ export default function ChatInput() {
   const { addUserMessageWithPendingAssistant, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
   const [content, setContent] = useState('');
+  const [resendTargetMessageId, setResendTargetMessageId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [inputHeight, setInputHeight] = useState(36);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -82,6 +83,29 @@ export default function ChatInput() {
   useEffect(() => {
     if (isStreaming && isSubmitting) setIsSubmitting(false);
   }, [isStreaming, isSubmitting]);
+
+  // 外部触发：预填输入框（用于“重发”）
+  useEffect(() => {
+    const onPrefill = (e: Event) => {
+      const ce = e as CustomEvent<{ content?: string; resendMessageId?: string | null }>;
+      const next = String(ce?.detail?.content ?? '').trim();
+      const mid = ce?.detail?.resendMessageId ? String(ce.detail.resendMessageId) : null;
+      if (!next) return;
+      setContent(next);
+      setResendTargetMessageId(mid);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        // 光标放末尾
+        const ta = textareaRef.current;
+        if (ta) {
+          const len = ta.value.length;
+          try { ta.setSelectionRange(len, len); } catch { /* ignore */ }
+        }
+      });
+    };
+    window.addEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
+    return () => window.removeEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
+  }, []);
 
   // 演示模式下的模拟流式回复
   const simulateStreamingResponse = async (question: string) => {
@@ -184,11 +208,22 @@ export default function ChatInput() {
     try {
       // 先让“用户消息 + loading 气泡 + 滚到底”完成渲染，再开始请求
       await waitForUiPaint();
-      await invoke('send_message', {
-        sessionId,
-        content: userMessage.content,
-        role: currentRole.toLowerCase(),
-      });
+      if (resendTargetMessageId) {
+        const target = resendTargetMessageId;
+        setResendTargetMessageId(null);
+        await invoke('resend_message', {
+          sessionId,
+          messageId: target,
+          content: userMessage.content,
+          role: currentRole.toLowerCase(),
+        });
+      } else {
+        await invoke('send_message', {
+          sessionId,
+          content: userMessage.content,
+          role: currentRole.toLowerCase(),
+        });
+      }
     } catch (err) {
       console.error('Failed to send message:', err);
       setIsSubmitting(false);

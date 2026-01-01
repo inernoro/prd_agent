@@ -7,9 +7,7 @@ export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing'
 
 interface MessageState {
   boundSessionId: string | null;
-  // 本次运行是否已完成该 session 的“初次历史加载”（不持久化）。
-  // 用于解决：刷新/重启后 boundSessionId 持久化导致 ChatContainer 跳过历史加载，从而无法纠正顺序/补齐字段。
-  historyLoadedSessionId: string | null;
+  boundGroupId: string | null; // 当前绑定的群组 ID（用于 seq 增量同步）
   isPinnedToBottom: boolean;
   scrollToBottomSeq: number;
 
@@ -20,13 +18,14 @@ interface MessageState {
   pendingAssistantId: string | null;
   pendingUserMessageId: string | null;
 
-  // 上拉加载历史（向前分页）
+  // 基于 groupSeq 的分页/增量同步
   isLoadingOlder: boolean;
   hasMoreOlder: boolean;
-  oldestTimestamp: string | null; // ISO string
+  localMinSeq: number | null;  // 本地缓存的最小 groupSeq（历史分页游标）
+  localMaxSeq: number | null;  // 本地缓存的最大 groupSeq（增量同步游标）
+  isSyncing: boolean;          // 是否正在执行增量同步
   
-  bindSession: (sessionId: string | null) => void;
-  markHistoryLoaded: (sessionId: string | null) => void;
+  bindSession: (sessionId: string | null, groupId?: string | null) => void;
   setPinnedToBottom: (pinned: boolean) => void;
   triggerScrollToBottom: () => void;
 
@@ -36,10 +35,12 @@ interface MessageState {
   clearPendingAssistant: () => void;
   ackPendingUserMessageTimestamp: (args: { receivedAt: Date }) => void;
   setMessages: (messages: Message[]) => void;
-  initHistoryPaging: (pageSize: number) => void;
+  mergeMessages: (messages: Message[]) => number; // 增量合并（不覆盖）
   prependMessages: (messages: Message[]) => number;
   loadOlderMessages: (args: { groupId: string; limit?: number }) => Promise<{ added: number }>;
+  syncFromServer: (args: { groupId: string; limit?: number }) => Promise<{ added: number; replaced: boolean }>;
   upsertMessage: (message: Message) => void;
+  removeMessageById: (messageId: string) => void;
   ingestGroupBroadcastMessage: (args: { message: Message; currentUserId?: string | null }) => void;
   startStreaming: (message: Message) => void;
   appendToStreamingMessage: (content: string) => void;
@@ -68,6 +69,9 @@ function reviveMessage(m: any): Message {
     viewRole: m?.viewRole ?? undefined,
     timestamp: t,
     groupSeq: typeof m?.groupSeq === 'number' ? m.groupSeq : undefined,
+    replyToMessageId: typeof m?.replyToMessageId === 'string' ? m.replyToMessageId : undefined,
+    resendOfMessageId: typeof m?.resendOfMessageId === 'string' ? m.resendOfMessageId : undefined,
+    isDeleted: typeof m?.isDeleted === 'boolean' ? m.isDeleted : undefined,
     senderId: m?.senderId ?? undefined,
     senderName: m?.senderName ?? undefined,
   };
@@ -93,11 +97,27 @@ function maybeSortByGroupSeq(list: Message[]): Message[] {
   });
 }
 
+/** 从消息列表中计算 seq 边界 */
+function computeSeqBounds(messages: Message[]): { minSeq: number | null; maxSeq: number | null } {
+  let minSeq: number | null = null;
+  let maxSeq: number | null = null;
+  for (const m of messages) {
+    const seq = m.groupSeq;
+    if (typeof seq !== 'number' || !Number.isFinite(seq) || seq <= 0) continue;
+    if (minSeq === null || seq < minSeq) minSeq = seq;
+    if (maxSeq === null || seq > maxSeq) maxSeq = seq;
+  }
+  return { minSeq, maxSeq };
+}
+
 type MessageHistoryItem = {
   id: string;
   groupSeq?: number;
   role: string;
   content: string;
+  senderId?: string;
+  senderName?: string;
+  senderRole?: string;
   viewRole?: string;
   timestamp: string;
 };
@@ -106,7 +126,7 @@ export const useMessageStore = create<MessageState>()(
   persist(
     (set, get) => ({
       boundSessionId: null,
-      historyLoadedSessionId: null,
+      boundGroupId: null,
       isPinnedToBottom: true,
       scrollToBottomSeq: 0,
 
@@ -119,18 +139,21 @@ export const useMessageStore = create<MessageState>()(
 
       isLoadingOlder: false,
       hasMoreOlder: true,
-      oldestTimestamp: null,
+      localMinSeq: null,
+      localMaxSeq: null,
+      isSyncing: false,
 
-  // 绑定“当前消息所属的 sessionId”，用于：
-  // - 避免 ChatContainer 因卸载/重挂载而误清空同一会话的对话（看起来像“不持久化”）
-  // - 在切换群组/会话时，确保不会把旧会话消息串到新会话
-  bindSession: (sessionId) => set((state) => {
-    const next = sessionId ? String(sessionId).trim() : null;
-    if (state.boundSessionId === next) return state;
-    if (!next) {
+  // 绑定"当前消息所属的 sessionId 和 groupId"
+  // 切换群组时会清空消息，但同一群组内切换会话不清空
+  bindSession: (sessionId, groupId) => set((state) => {
+    const nextSessionId = sessionId ? String(sessionId).trim() : null;
+    const nextGroupId = groupId ? String(groupId).trim() : null;
+
+    // 完全解绑
+    if (!nextSessionId) {
       return {
         boundSessionId: null,
-        historyLoadedSessionId: null,
+        boundGroupId: null,
         isPinnedToBottom: true,
         scrollToBottomSeq: 0,
         messages: [],
@@ -141,12 +164,22 @@ export const useMessageStore = create<MessageState>()(
         pendingUserMessageId: null,
         isLoadingOlder: false,
         hasMoreOlder: true,
-        oldestTimestamp: null,
+        localMinSeq: null,
+        localMaxSeq: null,
+        isSyncing: false,
       };
     }
+
+    // 同一群组：仅更新 sessionId，保留消息
+    if (state.boundGroupId === nextGroupId && nextGroupId) {
+      if (state.boundSessionId === nextSessionId) return state;
+      return { boundSessionId: nextSessionId };
+    }
+
+    // 切换群组：清空消息
     return {
-      boundSessionId: next,
-      historyLoadedSessionId: null,
+      boundSessionId: nextSessionId,
+      boundGroupId: nextGroupId,
       isPinnedToBottom: true,
       scrollToBottomSeq: 0,
       messages: [],
@@ -157,15 +190,10 @@ export const useMessageStore = create<MessageState>()(
       pendingUserMessageId: null,
       isLoadingOlder: false,
       hasMoreOlder: true,
-      oldestTimestamp: null,
+      localMinSeq: null,
+      localMaxSeq: null,
+      isSyncing: false,
     };
-  }),
-
-  markHistoryLoaded: (sessionId) => set((state) => {
-    const next = sessionId ? String(sessionId).trim() : null;
-    if (!next) return { historyLoadedSessionId: null } as any;
-    if (state.historyLoadedSessionId === next) return state;
-    return { historyLoadedSessionId: next } as any;
   }),
 
   setPinnedToBottom: (pinned) => set((state) => {
@@ -246,20 +274,46 @@ export const useMessageStore = create<MessageState>()(
   
   setMessages: (messages) => {
     const list = Array.isArray(messages) ? messages : [];
-    set(() => ({ messages: maybeSortByGroupSeq(list) }));
+    const sorted = maybeSortByGroupSeq(list);
+    const { minSeq, maxSeq } = computeSeqBounds(sorted);
+    set(() => ({
+      messages: sorted,
+      localMinSeq: minSeq,
+      localMaxSeq: maxSeq,
+      hasMoreOlder: sorted.length > 0, // 有消息就认为可能有更多历史
+    }));
   },
 
-  // 初次加载/切换会话后：用当前已加载的 messages 初始化游标
-  initHistoryPaging: (pageSize) => set((state) => {
-    const ps = Math.max(1, Math.min(200, Number(pageSize) || 50));
-    const list = Array.isArray(state.messages) ? state.messages : [];
-    const oldest = list.length > 0 ? list[0].timestamp : null;
-    return {
-      oldestTimestamp: oldest ? oldest.toISOString() : null,
-      hasMoreOlder: list.length >= ps,
-      isLoadingOlder: false,
-    };
-  }),
+  // 增量合并消息（不覆盖，用于增量同步）
+  mergeMessages: (messages) => {
+    let added = 0;
+    set((state) => {
+      const list = Array.isArray(messages) ? messages : [];
+      if (list.length === 0) return state;
+      const existing = new Map(state.messages.map((m) => [m.id, m]));
+      const toAdd: Message[] = [];
+      for (const m of list) {
+        if (!m?.id) continue;
+        if (existing.has(m.id)) {
+          // 已存在：更新（服务端为准）
+          existing.set(m.id, { ...existing.get(m.id), ...m });
+        } else {
+          toAdd.push(m);
+        }
+      }
+      if (toAdd.length === 0 && list.length === state.messages.length) return state;
+      added = toAdd.length;
+      const merged = [...Array.from(existing.values()), ...toAdd];
+      const sorted = maybeSortByGroupSeq(merged);
+      const { minSeq, maxSeq } = computeSeqBounds(sorted);
+      return {
+        messages: sorted,
+        localMinSeq: minSeq,
+        localMaxSeq: maxSeq,
+      };
+    });
+    return added;
+  },
 
   prependMessages: (messages) => {
     let added = 0;
@@ -271,15 +325,18 @@ export const useMessageStore = create<MessageState>()(
       if (toAdd.length === 0) return state;
       added = toAdd.length;
       const next = [...toAdd, ...state.messages];
-      const oldest = next.length > 0 ? next[0].timestamp : null;
+      const sorted = maybeSortByGroupSeq(next);
+      const { minSeq, maxSeq } = computeSeqBounds(sorted);
       return {
-        messages: next,
-        oldestTimestamp: oldest ? oldest.toISOString() : null,
+        messages: sorted,
+        localMinSeq: minSeq,
+        localMaxSeq: maxSeq,
       };
     });
     return added;
   },
 
+  // 向前加载历史（使用 beforeSeq 分页）
   loadOlderMessages: async ({ groupId, limit }) => {
     const gid = String(groupId || '').trim();
     if (!gid) return { added: 0 };
@@ -289,14 +346,14 @@ export const useMessageStore = create<MessageState>()(
     if (!state.hasMoreOlder) return { added: 0 };
 
     const take = Math.max(1, Math.min(200, Number(limit) || 50));
-    const before = state.oldestTimestamp ? new Date(state.oldestTimestamp).toISOString() : null;
+    const beforeSeq = state.localMinSeq;
 
     set({ isLoadingOlder: true });
     try {
       const resp = await invoke<ApiResponse<MessageHistoryItem[]>>('get_group_message_history', {
         groupId: gid,
         limit: take,
-        before,
+        beforeSeq: beforeSeq && beforeSeq > 0 ? beforeSeq : undefined,
       });
       if (!resp?.success || !Array.isArray(resp.data)) {
         set({ isLoadingOlder: false });
@@ -310,6 +367,9 @@ export const useMessageStore = create<MessageState>()(
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
+        senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
+        senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
+        senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
       }));
 
       const added = get().prependMessages(mapped);
@@ -320,6 +380,62 @@ export const useMessageStore = create<MessageState>()(
     } catch {
       set({ isLoadingOlder: false });
       return { added: 0 };
+    }
+  },
+
+  // 增量同步：从服务端拉取 afterSeq > localMaxSeq 的新消息
+  syncFromServer: async ({ groupId, limit }) => {
+    const gid = String(groupId || '').trim();
+    if (!gid) return { added: 0, replaced: false };
+
+    const state = get();
+    if (state.isSyncing) return { added: 0, replaced: false };
+
+    const take = Math.max(1, Math.min(200, Number(limit) || 100));
+    const afterSeq = state.localMaxSeq;
+    const hasLocalMessages = state.messages.length > 0;
+
+    set({ isSyncing: true });
+    try {
+      // 如果本地有缓存且有 maxSeq，使用增量同步
+      // 否则拉取最新 N 条（冷启动）
+      const resp = await invoke<ApiResponse<MessageHistoryItem[]>>('get_group_message_history', {
+        groupId: gid,
+        limit: take,
+        afterSeq: hasLocalMessages && afterSeq && afterSeq > 0 ? afterSeq : undefined,
+      });
+
+      if (!resp?.success || !Array.isArray(resp.data)) {
+        set({ isSyncing: false });
+        return { added: 0, replaced: false };
+      }
+
+      const mapped: Message[] = resp.data.map((m) => ({
+        id: m.id,
+        role: (m.role === 'User' ? 'User' : 'Assistant') as any,
+        content: m.content,
+        timestamp: new Date(m.timestamp),
+        viewRole: (m.viewRole as any) || undefined,
+        groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
+        senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
+        senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
+        senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
+      }));
+
+      // 冷启动（本地无缓存）：直接设置
+      if (!hasLocalMessages || !afterSeq) {
+        get().setMessages(mapped);
+        set({ isSyncing: false });
+        return { added: mapped.length, replaced: true };
+      }
+
+      // 热启动：增量合并
+      const added = get().mergeMessages(mapped);
+      set({ isSyncing: false });
+      return { added, replaced: false };
+    } catch {
+      set({ isSyncing: false });
+      return { added: 0, replaced: false };
     }
   },
 
@@ -334,12 +450,32 @@ export const useMessageStore = create<MessageState>()(
     return { messages: next };
   }),
 
+  removeMessageById: (messageId) => set((state) => {
+    const id = String(messageId || '').trim();
+    if (!id) return state;
+    const next = state.messages.filter((m) => m.id !== id);
+    if (next.length === state.messages.length) return state;
+    // 若删除的是 streaming message，顺带停止流式状态，避免 UI 残留
+    const wasStreaming = state.streamingMessageId === id;
+    return {
+      messages: next,
+      ...(wasStreaming ? { isStreaming: false, streamingMessageId: null, streamingPhase: null } : null),
+    } as any;
+  }),
+
   // 群广播消息注入：
-  // - 解决“发送者本地 user message id 与服务端落库 id 不一致”导致的重复
+  // - 解决"发送者本地 user message id 与服务端落库 id 不一致"导致的重复
   // - 尽量保持按 groupSeq 有序（若缺失 groupSeq 则退化按 timestamp）
+  // - 更新 localMaxSeq（实时同步时推进游标）
   ingestGroupBroadcastMessage: ({ message, currentUserId }) => set((state) => {
     const incoming = message;
     if (!incoming?.id) return state;
+
+    // 更新 maxSeq
+    const incomingSeq = typeof incoming.groupSeq === 'number' ? incoming.groupSeq : null;
+    const newMaxSeq = incomingSeq && (state.localMaxSeq === null || incomingSeq > state.localMaxSeq)
+      ? incomingSeq
+      : state.localMaxSeq;
 
     // 1) 发送者 user message 去重：用 (senderId + content) 在尾部做一次轻量 reconcile
     if (
@@ -352,7 +488,7 @@ export const useMessageStore = create<MessageState>()(
         .reverse()
         .findIndex((m) =>
           m.role === 'User' &&
-          (m.senderId ? m.senderId === currentUserId : true) &&
+          m.senderId === currentUserId &&
           (m.content ?? '') === (incoming.content ?? '') &&
           Math.abs((m.timestamp?.getTime?.() ?? 0) - (incoming.timestamp?.getTime?.() ?? 0)) <= 30_000
         );
@@ -360,7 +496,7 @@ export const useMessageStore = create<MessageState>()(
         const idx = state.messages.length - 1 - idxFromEnd;
         const next = [...state.messages];
         next[idx] = { ...next[idx], ...incoming };
-        return { messages: maybeSortByGroupSeq(next) };
+        return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq };
       }
     }
 
@@ -369,12 +505,12 @@ export const useMessageStore = create<MessageState>()(
     if (existingIdx !== -1) {
       const next = [...state.messages];
       next[existingIdx] = { ...next[existingIdx], ...incoming };
-      return { messages: maybeSortByGroupSeq(next) };
+      return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq };
     }
 
     // 3) 新消息：追加并按需排序
     const next = [...state.messages, incoming];
-    return { messages: maybeSortByGroupSeq(next) };
+    return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq };
   }),
 
   startStreaming: (message) => set((state) => {
@@ -482,11 +618,12 @@ export const useMessageStore = create<MessageState>()(
   
   stopStreaming: () => set({ isStreaming: false, streamingMessageId: null, streamingPhase: null }),
 
-  // 清理“当前对话上下文”（但保留 boundSessionId=sessionId），用于：
-  // - 清空本地消息，不回填服务端历史（否则用户点“清理”会立刻又出现历史消息）
+  // 清理"当前对话上下文"（但保留 boundSessionId/boundGroupId），用于：
+  // - 清空本地消息，不回填服务端历史（否则用户点"清理"会立刻又出现历史消息）
   // - 不影响 session/document（由 sessionStore 管），用户可继续在当前 PRD 上提问
-  clearCurrentContext: (sessionId) => set(() => ({
+  clearCurrentContext: (sessionId) => set((state) => ({
     boundSessionId: sessionId ? String(sessionId).trim() : null,
+    boundGroupId: state.boundGroupId, // 保留群组绑定
     isPinnedToBottom: true,
     scrollToBottomSeq: 0,
     messages: [],
@@ -496,11 +633,14 @@ export const useMessageStore = create<MessageState>()(
     pendingAssistantId: null,
     isLoadingOlder: false,
     hasMoreOlder: true,
-    oldestTimestamp: null,
+    localMinSeq: null,
+    localMaxSeq: null,
+    isSyncing: false,
   })),
   
       clearMessages: () => set({
         boundSessionId: null,
+        boundGroupId: null,
         isPinnedToBottom: true,
         scrollToBottomSeq: 0,
         messages: [],
@@ -510,16 +650,21 @@ export const useMessageStore = create<MessageState>()(
         pendingAssistantId: null,
         isLoadingOlder: false,
         hasMoreOlder: true,
-        oldestTimestamp: null,
+        localMinSeq: null,
+        localMaxSeq: null,
+        isSyncing: false,
       }),
     }),
     {
       name: 'message-storage',
-      version: 1,
+      version: 2, // 版本升级：新增 seq 字段
       partialize: (s) => ({
         boundSessionId: s.boundSessionId,
+        boundGroupId: s.boundGroupId,
         isPinnedToBottom: s.isPinnedToBottom,
         messages: s.messages,
+        localMinSeq: s.localMinSeq,
+        localMaxSeq: s.localMaxSeq,
       }),
       merge: (persisted: any, current) => {
         const p = (persisted as any) || {};
@@ -528,14 +673,17 @@ export const useMessageStore = create<MessageState>()(
           ...p,
         };
         const revived = reviveMessages(p.messages);
-        // 刷新/重启后：对持久化消息做一次稳定纠序（若含 groupSeq 则按 groupSeq，其次 timestamp）
+        // 刷新/重启后：对持久化消息做一次稳定纠序
         next.messages = maybeSortByGroupSeq(revived);
-        // 非持久化字段：基于已持久化的 messages 进行重建
+        // 重建 seq 边界（以实际消息为准，防止脏数据）
+        const { minSeq, maxSeq } = computeSeqBounds(revived);
+        next.localMinSeq = minSeq;
+        next.localMaxSeq = maxSeq;
+        // 非持久化字段重置
         next.isLoadingOlder = false;
-        next.hasMoreOlder = true;
-        next.oldestTimestamp = revived.length > 0 ? revived[0].timestamp.toISOString() : null;
+        next.hasMoreOlder = revived.length > 0;
         next.pendingAssistantId = null;
-        next.historyLoadedSessionId = null;
+        next.isSyncing = false;
         return next as MessageState;
       },
     }

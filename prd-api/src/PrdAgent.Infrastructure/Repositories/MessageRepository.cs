@@ -23,6 +23,69 @@ public class MessageRepository : IMessageRepository
         await _messages.InsertManyAsync(list);
     }
 
+    public async Task<Message?> FindByIdAsync(string messageId, bool includeDeleted = false)
+    {
+        var id = (messageId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(id)) return null;
+
+        var fb = Builders<Message>.Filter;
+        var filter = fb.Eq(x => x.Id, id);
+        if (!includeDeleted)
+        {
+            filter &= fb.Ne(x => x.IsDeleted, true);
+        }
+
+        return await _messages.Find(filter).FirstOrDefaultAsync();
+    }
+
+    public async Task<List<Message>> FindByReplyToMessageIdAsync(string replyToMessageId, bool includeDeleted = false)
+    {
+        var rid = (replyToMessageId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(rid)) return new List<Message>();
+
+        var fb = Builders<Message>.Filter;
+        var filter = fb.Eq(x => x.ReplyToMessageId, rid);
+        if (!includeDeleted)
+        {
+            filter &= fb.Ne(x => x.IsDeleted, true);
+        }
+
+        return await _messages
+            .Find(filter)
+            .SortBy(x => x.GroupSeq)
+            .ThenBy(x => x.Timestamp)
+            .ThenBy(x => x.Id)
+            .ToListAsync();
+    }
+
+    public async Task<Message?> SoftDeleteAsync(string messageId, string deletedByUserId, string? reason, DateTime deletedAtUtc)
+    {
+        var id = (messageId ?? string.Empty).Trim();
+        var by = (deletedByUserId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(by)) return null;
+
+        var now = deletedAtUtc.Kind == DateTimeKind.Utc ? deletedAtUtc : deletedAtUtc.ToUniversalTime();
+
+        var fb = Builders<Message>.Filter;
+        var filter = fb.Eq(x => x.Id, id) & fb.Ne(x => x.IsDeleted, true);
+
+        var ub = Builders<Message>.Update;
+        var update = ub
+            .Set(x => x.IsDeleted, true)
+            .Set(x => x.DeletedAtUtc, now)
+            .Set(x => x.DeletedByUserId, by)
+            .Set(x => x.DeleteReason, string.IsNullOrWhiteSpace(reason) ? null : reason!.Trim());
+
+        return await _messages.FindOneAndUpdateAsync(
+            filter,
+            update,
+            new FindOneAndUpdateOptions<Message>
+            {
+                IsUpsert = false,
+                ReturnDocument = ReturnDocument.After
+            });
+    }
+
     public async Task<List<Message>> FindBySessionAsync(string sessionId, DateTime? before, int limit)
     {
         var sid = (sessionId ?? string.Empty).Trim();
@@ -32,7 +95,7 @@ public class MessageRepository : IMessageRepository
         var take = Math.Clamp(limit, 1, 200);
 
         var fb = Builders<Message>.Filter;
-        var filter = fb.Eq(x => x.SessionId, sid);
+        var filter = fb.Eq(x => x.SessionId, sid) & fb.Ne(x => x.IsDeleted, true);
         if (before.HasValue)
         {
             filter &= fb.Lt(x => x.Timestamp, before.Value);
@@ -66,7 +129,7 @@ public class MessageRepository : IMessageRepository
         var take = Math.Clamp(limit, 1, 200);
 
         var fb = Builders<Message>.Filter;
-        var filter = fb.Eq(x => x.GroupId, gid);
+        var filter = fb.Eq(x => x.GroupId, gid) & fb.Ne(x => x.IsDeleted, true);
         if (before.HasValue)
         {
             filter &= fb.Lt(x => x.Timestamp, before.Value);
@@ -96,13 +159,43 @@ public class MessageRepository : IMessageRepository
         var seq = Math.Max(0, afterSeq);
 
         var fb = Builders<Message>.Filter;
-        var filter = fb.Eq(x => x.GroupId, gid) & fb.Ne(x => x.GroupSeq, null) & fb.Gt(x => x.GroupSeq, seq);
+        var filter =
+            fb.Eq(x => x.GroupId, gid) &
+            fb.Ne(x => x.IsDeleted, true) &
+            fb.Ne(x => x.GroupSeq, null) &
+            fb.Gt(x => x.GroupSeq, seq);
 
         return await _messages
             .Find(filter)
             .SortBy(x => x.GroupSeq)
             .Limit(take)
             .ToListAsync();
+    }
+
+    public async Task<List<Message>> FindByGroupBeforeSeqAsync(string groupId, long beforeSeq, int limit)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid)) return new List<Message>();
+
+        var take = Math.Clamp(limit, 1, 200);
+        var seq = Math.Max(1, beforeSeq); // beforeSeq <= 0 没有意义
+
+        var fb = Builders<Message>.Filter;
+        var filter =
+            fb.Eq(x => x.GroupId, gid) &
+            fb.Ne(x => x.IsDeleted, true) &
+            fb.Ne(x => x.GroupSeq, null) &
+            fb.Lt(x => x.GroupSeq, seq);
+
+        // 先 desc 取 limit 条（最新的 N 条历史），再 reverse 成升序返回
+        var list = await _messages
+            .Find(filter)
+            .SortByDescending(x => x.GroupSeq)
+            .Limit(take)
+            .ToListAsync();
+
+        list.Reverse();
+        return list;
     }
 }
 

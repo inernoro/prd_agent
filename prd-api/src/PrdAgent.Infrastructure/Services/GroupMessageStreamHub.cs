@@ -61,6 +61,31 @@ public class GroupMessageStreamHub : IGroupMessageStreamHub
         {
             GroupId = gid,
             Seq = message.GroupSeq.Value,
+            Type = "message",
+            Message = message
+        };
+
+        foreach (var kv in map)
+        {
+            var ch = kv.Value;
+            ch.Writer.TryWrite(payload);
+        }
+    }
+
+    public void PublishUpdated(Message message)
+    {
+        if (message == null) return;
+        var gid = (message.GroupId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid)) return;
+        if (!message.GroupSeq.HasValue || message.GroupSeq.Value <= 0) return;
+
+        if (!_subs.TryGetValue(gid, out var map) || map.IsEmpty) return;
+
+        var payload = new GroupMessageBroadcast
+        {
+            GroupId = gid,
+            Seq = message.GroupSeq.Value,
+            Type = "messageUpdated",
             Message = message
         };
 

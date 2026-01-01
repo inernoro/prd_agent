@@ -12,9 +12,10 @@ import {
   getAdminGroups,
   regenerateAdminGroupInvite,
   removeAdminGroupMember,
+  simulateMessage,
   updateAdminGapStatus,
 } from '@/services';
-import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle } from 'lucide-react';
+import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -59,6 +60,8 @@ type MessageRow = {
   sessionId: string;
   role: 'User' | 'Assistant';
   senderId?: string | null;
+  senderName?: string | null;
+  senderRole?: 'PM' | 'DEV' | 'QA' | 'ADMIN' | null;
   content: string;
   llmRequestId?: string | null;
   timestamp: string;
@@ -110,6 +113,12 @@ export default function GroupsPage() {
 
   const [llmDetailOpen, setLlmDetailOpen] = useState(false);
   const [llmDetailRequestId, setLlmDetailRequestId] = useState<string | null>(null);
+
+  // 模拟发送消息
+  const [simulateDialogOpen, setSimulateDialogOpen] = useState(false);
+  const [simulateContent, setSimulateContent] = useState('');
+  const [simulateTriggerAi, setSimulateTriggerAi] = useState(false);
+  const [simulateBusy, setSimulateBusy] = useState(false);
 
   const query = useMemo(
     () => ({ page, pageSize: 20, search: search.trim() || undefined, inviteStatus }),
@@ -193,6 +202,8 @@ export default function GroupsPage() {
           sessionId: m.sessionId,
           role: m.role,
           senderId: m.senderId ?? null,
+          senderName: (m as any).senderName ?? null,
+          senderRole: (m as any).senderRole ?? null,
           content: m.content,
           llmRequestId: m.llmRequestId ?? null,
           timestamp: m.timestamp,
@@ -372,6 +383,16 @@ export default function GroupsPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setSimulateDialogOpen(true)}
+                    title="模拟发送消息（测试推送）"
+                    aria-label="模拟发送消息"
+                  >
+                    <Send size={16} />
+                    模拟发送
+                  </Button>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -649,6 +670,19 @@ export default function GroupsPage() {
                           ? { background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.18)' }
                           : { background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.18)' };
                         const rid = (m.llmRequestId ?? '').trim();
+                        const senderLabel = (() => {
+                          if (isAi) return 'AI';
+                          const name = String(m.senderName ?? '').trim();
+                          const id = String(m.senderId ?? '').trim();
+                          const role = String(m.senderRole ?? '').trim();
+                          const roleZh =
+                            role === 'ADMIN' ? '超级管理员' :
+                            role === 'PM' ? '产品经理' :
+                            role === 'DEV' ? '开发者' :
+                            role === 'QA' ? '测试' : '';
+                          const who = name || id;
+                          return who ? `用户（${who}${roleZh ? ` · ${roleZh}` : ''}）` : '用户';
+                        })();
                         return (
                       <div
                         key={m.id}
@@ -658,7 +692,7 @@ export default function GroupsPage() {
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold" style={{ color: titleColor }}>
-                              {m.role === 'Assistant' ? 'AI' : '用户'} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>{fmtDate(m.timestamp)}</span>
+                              {senderLabel} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>{fmtDate(m.timestamp)}</span>
                             </div>
                             <div className="mt-2 text-sm break-words">
                               <MessageMarkdown content={m.content} />
@@ -714,6 +748,99 @@ export default function GroupsPage() {
         }}
         requestId={llmDetailRequestId}
         jumpToLogsHref={llmDetailRequestId ? `/llm-logs?tab=llm&requestId=${encodeURIComponent(llmDetailRequestId)}` : undefined}
+      />
+
+      <Dialog
+        open={simulateDialogOpen}
+        onOpenChange={(v) => {
+          setSimulateDialogOpen(v);
+          if (!v) {
+            setSimulateContent('');
+            setSimulateTriggerAi(false);
+          }
+        }}
+        title="模拟发送消息"
+        description={selected ? `向群组「${selected.groupName}」发送测试消息` : '发送测试消息'}
+        maxWidth={480}
+        content={
+          <div className="flex flex-col gap-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block" style={{ color: 'var(--text-secondary)' }}>
+                消息内容
+              </label>
+              <textarea
+                className="w-full px-3 py-2 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  minHeight: 120,
+                }}
+                placeholder="输入测试消息内容..."
+                value={simulateContent}
+                onChange={(e) => setSimulateContent(e.target.value)}
+                disabled={simulateBusy}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="triggerAi"
+                checked={simulateTriggerAi}
+                onChange={(e) => setSimulateTriggerAi(e.target.checked)}
+                disabled={simulateBusy}
+                className="w-4 h-4 rounded cursor-pointer"
+              />
+              <label htmlFor="triggerAi" className="text-sm cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                触发 AI 回复
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 mt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSimulateDialogOpen(false)}
+                disabled={simulateBusy}
+              >
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={simulateBusy || !simulateContent.trim()}
+                onClick={async () => {
+                  if (!selected || !simulateContent.trim()) return;
+                  setSimulateBusy(true);
+                  try {
+                    const res = await simulateMessage({
+                      groupId: selected.groupId,
+                      content: simulateContent.trim(),
+                      triggerAiReply: simulateTriggerAi,
+                    });
+                    if (res.success) {
+                      systemDialog.alert({
+                        title: '发送成功',
+                        message: `消息已发送，seq=${res.data.groupSeq}${res.data.triggerAiReply ? '，AI 回复已触发（异步）' : ''}`,
+                      });
+                      setSimulateDialogOpen(false);
+                      setSimulateContent('');
+                      setSimulateTriggerAi(false);
+                    } else {
+                      systemDialog.alert({
+                        title: '发送失败',
+                        message: res.error?.message || '未知错误',
+                      });
+                    }
+                  } finally {
+                    setSimulateBusy(false);
+                  }
+                }}
+              >
+                {simulateBusy ? '发送中...' : '发送'}
+              </Button>
+            </div>
+          </div>
+        }
       />
     </div>
   );

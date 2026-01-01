@@ -11,6 +11,7 @@ public interface IChatService
     IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
         string sessionId, 
         string content, 
+        string? resendOfMessageId = null,
         string? promptKey = null,
         string? userId = null,
         List<string>? attachmentIds = null,

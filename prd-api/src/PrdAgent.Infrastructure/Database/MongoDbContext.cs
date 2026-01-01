@@ -105,6 +105,10 @@ public class MongoDbContext
             Builders<Message>.IndexKeys.Ascending(m => m.GroupId)));
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
             Builders<Message>.IndexKeys.Ascending(m => m.SessionId)));
+        // replyToMessageId：用于级联删除/一问多答关联
+        Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
+            Builders<Message>.IndexKeys.Ascending(m => m.ReplyToMessageId),
+            new CreateIndexOptions { Name = "idx_messages_reply_to" }));
         // groupId + groupSeq 唯一：用于群消息顺序键（SSE 断线续传/严格有序）。
         // 注意：历史/非群消息 groupSeq 可能为空；若不加 partial filter，Unique 会导致同群多个 null 冲突。
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(

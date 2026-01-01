@@ -34,6 +34,7 @@ import {
   MousePointer2,
   Paperclip,
   SlidersHorizontal,
+  Sparkles,
   Square,
   Type,
   Trash,
@@ -86,6 +87,43 @@ type CanvasImageItem = {
   fontSize?: number;
   textColor?: string;
 };
+
+function computeObjectFitContainRect(containerW: number, containerH: number, contentW: number, contentH: number) {
+  const cw = Number.isFinite(containerW) ? Math.max(0, containerW) : 0;
+  const ch = Number.isFinite(containerH) ? Math.max(0, containerH) : 0;
+  const iw = Number.isFinite(contentW) ? Math.max(0, contentW) : 0;
+  const ih = Number.isFinite(contentH) ? Math.max(0, contentH) : 0;
+  if (!cw || !ch || !iw || !ih) return { x: 0, y: 0, w: cw, h: ch };
+  const scale = Math.min(cw / iw, ch / ih);
+  const w = Math.max(0, iw * scale);
+  const h = Math.max(0, ih * scale);
+  const x = (cw - w) / 2;
+  const y = (ch - h) / 2;
+  return { x, y, w, h };
+}
+
+function clampRadius(r: number, w: number, h: number) {
+  const rr = Number.isFinite(r) ? Math.max(0, r) : 0;
+  const ww = Number.isFinite(w) ? Math.max(0, w) : 0;
+  const hh = Number.isFinite(h) ? Math.max(0, h) : 0;
+  return Math.min(rr, ww / 2, hh / 2);
+}
+
+function normalize2(x: number, y: number) {
+  const xx = Number.isFinite(x) ? x : 0;
+  const yy = Number.isFinite(y) ? y : 0;
+  const len = Math.hypot(xx, yy);
+  if (len < 1e-6) return { x: 0, y: 0, len: 0 };
+  return { x: xx / len, y: yy / len, len };
+}
+
+function shrinkDirForCorner(corner: 'nw' | 'ne' | 'sw' | 'se') {
+  // “缩小”方向：从当前角点指向对角（对角线）
+  if (corner === 'se') return { x: -1, y: -1 };
+  if (corner === 'nw') return { x: 1, y: 1 };
+  if (corner === 'ne') return { x: -1, y: 1 };
+  return { x: 1, y: -1 }; // sw
+}
 
 type PersistedCanvasStateV1 = {
   schemaVersion: 1;
@@ -599,7 +637,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   }, [setFullBleedMain]);
   const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
   const SPLIT_MIN = 240;
-  const SPLIT_MAX = 420;
+  const SPLIT_MAX = 360;
 
   // 模型偏好：按账号持久化（不写 DB）
   const modelPrefKey = userId ? `prdAdmin.imageMaster.modelPref.${userId}` : '';
@@ -786,6 +824,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     pointerId: number;
     key: string;
     corner: ResizeCorner;
+    lockAspect?: boolean;
+    aspectRatio?: number;
     startClientX: number;
     startClientY: number;
     baseX: number;
@@ -797,6 +837,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     pointerId: -1,
     key: '',
     corner: 'se',
+    lockAspect: false,
+    aspectRatio: undefined,
     startClientX: 0,
     startClientY: 0,
     baseX: 0,
@@ -846,15 +888,82 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     const nextW = Math.max(minSize, right - left);
     const nextH = Math.max(minSize, bottom - top);
 
+    let outLeft = left;
+    let outTop = top;
+    let outW = nextW;
+    let outH = nextH;
+
+    // 对图片/生成器默认锁定比例（避免 object-fit: contain 产生“留白幽灵框”）
+    if (rz.lockAspect && typeof rz.aspectRatio === 'number' && Number.isFinite(rz.aspectRatio) && rz.aspectRatio > 0) {
+      const ratio = rz.aspectRatio;
+      // 选择更“贴手”的维度作为主导：变化更大的那个
+      const dw = Math.abs(nextW - rz.baseW);
+      const dh = Math.abs(nextH - rz.baseH);
+
+      let w2: number;
+      let h2: number;
+      if (dw >= dh) {
+        w2 = nextW;
+        h2 = w2 / ratio;
+      } else {
+        h2 = nextH;
+        w2 = h2 * ratio;
+      }
+
+      // 双边最小尺寸约束
+      const scaleUp = Math.max(minSize / Math.max(0.0001, w2), minSize / Math.max(0.0001, h2), 1);
+      w2 *= scaleUp;
+      h2 *= scaleUp;
+
+      // 以“对角固定点”为 anchor 重算 left/top（角点拖拽）
+      if (rz.corner === 'se') {
+        outLeft = baseLeft;
+        outTop = baseTop;
+      } else if (rz.corner === 'nw') {
+        outLeft = baseRight - w2;
+        outTop = baseBottom - h2;
+      } else if (rz.corner === 'ne') {
+        outLeft = baseLeft;
+        outTop = baseBottom - h2;
+      } else if (rz.corner === 'sw') {
+        outLeft = baseRight - w2;
+        outTop = baseTop;
+      }
+      outW = w2;
+      outH = h2;
+    }
+
+    // 角点缩放的“对角线锥形约束”（cone constraint）：只在接近对角线方向时允许缩小，避免手抖导致跳变
+    // - 仅对“锁比例”的图片/生成器启用
+    // - enlarge 不限制（用户手不直也能放大），shrink 需要接近对角线
+    if (rz.lockAspect) {
+      const eps = 0.5;
+      const isShrinking = outW < (rz.baseW - eps) || outH < (rz.baseH - eps);
+      if (isShrinking) {
+        const v = normalize2(dx, dy);
+        const d0 = shrinkDirForCorner(rz.corner);
+        const d = normalize2(d0.x, d0.y);
+        // 角度阈值：越小越“只允许对角线”，常见体验是 20-30 度
+        const COS_TH = Math.cos((25 * Math.PI) / 180);
+        const cos = v.len > 0 && d.len > 0 ? v.x * d.x + v.y * d.y : -1;
+        if (!(cos >= COS_TH)) {
+          outLeft = baseLeft;
+          outTop = baseTop;
+          outW = rz.baseW;
+          outH = rz.baseH;
+        }
+      }
+    }
+
     setCanvas((prev) =>
       prev.map((it) =>
         it.key === rz.key
           ? {
               ...it,
-              x: left,
-              y: top,
-              w: nextW,
-              h: nextH,
+              x: outLeft,
+              y: outTop,
+              w: outW,
+              h: outH,
               userResized: true,
             }
           : it
@@ -955,12 +1064,21 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       const y = it.y ?? 0;
       const w = Math.max(1, it.w ?? 1);
       const h = Math.max(1, it.h ?? 1);
+      const kind = it.kind ?? 'image';
+      const nw = typeof it.naturalW === 'number' ? it.naturalW : 0;
+      const nh = typeof it.naturalH === 'number' ? it.naturalH : 0;
+      const ratio =
+        nw > 0 && nh > 0 ? nw / nh : w > 0 && h > 0 ? w / h : 0;
+      // 简化交互：图片/生成器默认锁比例；按住 Shift 临时解锁（便于特殊需求）
+      const lockAspect = (kind === 'image' || kind === 'generator') && ratio > 0 && !e.shiftKey;
 
       resizeRef.current = {
         active: true,
         pointerId: e.pointerId,
         key: it.key,
         corner,
+        lockAspect,
+        aspectRatio: ratio > 0 ? ratio : undefined,
         startClientX: e.clientX,
         startClientY: e.clientY,
         baseX: x,
@@ -1240,18 +1358,18 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     if (!directPromptKey) return;
     try {
       setDirectPromptReady(false);
-      const raw = localStorage.getItem(directPromptKey);
-      if (raw == null) {
-        // 首次：默认开启
-        setDirectPrompt(true);
-        setDirectPromptReady(true);
-        return;
-      }
-      if (raw === '1' || raw === 'true') setDirectPrompt(true);
-      if (raw === '0' || raw === 'false') setDirectPrompt(false);
+      // 需求变更：直连应始终开启（避免解析接口不稳定/误关导致体验抖动）。
+      // 历史上用户可能关闭过（localStorage 存了 0），这里统一纠正为开启，并写回。
+      setDirectPrompt(true);
       setDirectPromptReady(true);
+      try {
+        localStorage.setItem(directPromptKey, '1');
+      } catch {
+        // ignore
+      }
     } catch {
       // ignore
+      setDirectPrompt(true);
       setDirectPromptReady(true);
     }
   }, [directPromptKey]);
@@ -2231,6 +2349,13 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
       return [...prev, placeholder].slice(-60);
     });
+    // 体验：像“上传图片”一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
+    setSelectedKeys([key]);
+    requestAnimationFrame(() => {
+      const f = focusKeyRef.current;
+      if (!f || f.key !== key) return;
+      animateCameraToWorldCenter(f.cx, f.cy);
+    });
 
     try {
       const refForInit = (primaryRef ?? selected) as CanvasImageItem | null;
@@ -3158,18 +3283,30 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 const w = it.w ?? 320;
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
-                  const showSelectOverlay = activeTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
-                  const showHandles = showSelectOverlay && selectedKeys.length === 1;
-                  const vbW = Math.max(1, Math.round(w));
-                  const vbH = Math.max(1, Math.round(h));
-                  const handleBase: React.CSSProperties = {
-                    width: 12,
-                    height: 12,
-                    borderRadius: 999,
-                    background: 'rgba(255,255,255,0.92)',
-                    border: '2px solid rgba(96,165,250,0.95)',
-                    boxShadow: '0 10px 22px rgba(0,0,0,0.28)',
-                  };
+                const showSelectOverlay = activeTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
+                const showHandles = showSelectOverlay && selectedKeys.length === 1;
+                const boxW = Math.max(40, Math.round(w));
+                const boxH = Math.max(40, Math.round(h));
+                const nw = typeof it.naturalW === 'number' ? it.naturalW : 0;
+                const nh = typeof it.naturalH === 'number' ? it.naturalH : 0;
+                const hasNatural = nw > 0 && nh > 0;
+                // 仅在“实际有图且可显示”的情况下，把选中框贴合 object-fit: contain 的图片本体（排除留白区域）
+                const fitToImage =
+                  (kind === 'image' || kind === 'generator') && it.status === 'done' && Boolean(it.src) && hasNatural;
+                const inner = fitToImage ? computeObjectFitContainRect(boxW, boxH, nw, nh) : { x: 0, y: 0, w: boxW, h: boxH };
+                const selX = inner.x;
+                const selY = inner.y;
+                const selW = Math.max(1, inner.w);
+                const selH = Math.max(1, inner.h);
+                const selRadius = clampRadius(fitToImage ? 14 : 16, selW, selH);
+                const handleBase: React.CSSProperties = {
+                  width: 12,
+                  height: 12,
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.92)',
+                  border: '2px solid rgba(96,165,250,0.95)',
+                  boxShadow: '0 10px 22px rgba(0,0,0,0.28)',
+                };
                 return (
                   <div
                     key={it.key}
@@ -3177,8 +3314,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     style={{
                       left: Math.round(x),
                       top: Math.round(y),
-                      width: Math.max(40, Math.round(w)),
-                      height: Math.max(40, Math.round(h)),
+                      width: boxW,
+                      height: boxH,
                       // 外层容器仅负责布局/拖拽命中；边框应贴合图片本体，因此容器不画边框
                       border: '1px solid transparent',
                       // 根因：这里的 background/boxShadow 会永远渲染一个“长方形卡片”
@@ -3341,6 +3478,15 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                               alt={it.prompt}
                               className="w-full h-full block"
                               style={{ objectFit: 'contain', borderRadius: 14 }}
+                              onLoad={(e) => {
+                                const img = e.currentTarget;
+                                const nw = img.naturalWidth || 0;
+                                const nh = img.naturalHeight || 0;
+                                if (!nw || !nh) return;
+                                setCanvas((prev) =>
+                                  prev.map((x) => (x.key === it.key ? { ...x, naturalW: nw, naturalH: nh } : x))
+                                );
+                              }}
                             />
                           </div>
                         ) : (
@@ -3517,25 +3663,41 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
                     {/* 选中覆盖层：蓝色描边 + 四角圆点（单选可 resize） */}
                     {showSelectOverlay ? (
-                      <div className="absolute inset-0" style={{ pointerEvents: 'none', zIndex: 40 }}>
+                      <div
+                        className="absolute"
+                        style={{ left: selX, top: selY, width: selW, height: selH, pointerEvents: 'none', zIndex: 40 }}
+                      >
                         <svg
                           width="100%"
                           height="100%"
-                          viewBox={`0 0 ${vbW} ${vbH}`}
+                          viewBox={`0 0 ${selW} ${selH}`}
                           preserveAspectRatio="none"
                           overflow="visible"
                           style={{ position: 'absolute', inset: 0 }}
                         >
+                          {/* 外描边：深色更粗，提升在大图/复杂背景下的可见性（保持屏幕像素恒定） */}
                           <rect
                             x="0"
                             y="0"
-                            width={vbW}
-                            height={vbH}
-                            rx="16"
-                            ry="16"
+                            width={selW}
+                            height={selH}
+                            rx={selRadius}
+                            ry={selRadius}
+                            fill="none"
+                            stroke="rgba(0,0,0,0.45)"
+                            strokeWidth="5"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <rect
+                            x="0"
+                            y="0"
+                            width={selW}
+                            height={selH}
+                            rx={selRadius}
+                            ry={selRadius}
                             fill="none"
                             stroke="rgba(96,165,250,0.95)"
-                            strokeWidth="2"
+                            strokeWidth="2.5"
                             vectorEffect="non-scaling-stroke"
                           />
                         </svg>
@@ -3672,11 +3834,23 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         const pxH = typeof it.naturalH === 'number' ? it.naturalH : 0;
                         const hasPixel = pxW > 0 && pxH > 0;
                         const sizeText = hasPixel ? `${Math.round(pxW)} × ${Math.round(pxH)}` : `${Math.round(w)} × ${Math.round(h)}`;
+                        const boxW = Math.max(40, Math.round(w));
+                        const boxH = Math.max(40, Math.round(h));
+                        const inner = hasPixel ? computeObjectFitContainRect(boxW, boxH, pxW, pxH) : { x: 0, y: 0, w: boxW, h: boxH };
+                        const selX = Math.round(inner.x);
+                        const selY = Math.round(inner.y);
+                        const selW = Math.max(1, Math.round(inner.w));
+                        const selH = Math.max(1, Math.round(inner.h));
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
                             className="absolute"
-                            style={{ left: Math.round(x), top: Math.round(y), width: Math.round(w), height: Math.round(h) }}
+                            style={{
+                              left: Math.round(x) + selX,
+                              top: Math.round(y) + selY,
+                              width: selW,
+                              height: selH,
+                            }}
                           >
                             <div
                               className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
@@ -4592,7 +4766,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="max-w-[92%] rounded-[14px] px-3 py-2.5 text-sm"
+                      className="max-w-[92%] rounded-[14px] px-3 py-2.5 text-xs"
                       style={{
                         background: isUser ? 'color-mix(in srgb, var(--accent-gold) 28%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.04)',
                         border: '1px solid var(--border-subtle)',
@@ -4618,8 +4792,30 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
             <div
               ref={inputPanelRef}
               className="mt-3 rounded-[18px] p-3 relative"
-              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(0,0,0,0.14)' }}
+              style={{
+                border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
+                background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
+              }}
             >
+              {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为“直连默认开启” */}
+              {!directPrompt ? (
+                <div
+                  className="absolute z-30 inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-extrabold tracking-wide"
+                  style={{
+                    left: 12,
+                    top: -10,
+                    background: 'rgba(251,146,60,0.16)',
+                    border: '1px solid rgba(251,146,60,0.42)',
+                    color: 'rgba(251,146,60,0.95)',
+                    boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <Sparkles size={12} className="shrink-0" />
+                  AUTO
+                </div>
+              ) : null}
+
               {/* 图6 控制条（v1：先作为输入条上方的一行） */}
               {/* 已移除：输入框上方 4 个控制按钮（模型/参考/大小/比例）与其右侧“生成”按钮；保持输入区极简 */}
 
@@ -4862,7 +5058,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: 'rgba(255,255,255,0.04)',
@@ -4872,12 +5068,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     title="附件"
                     onClick={() => openImageFilePicker()}
                   >
-                    <Paperclip size={18} />
+                    <Paperclip size={16} />
                   </button>
 
                   <button
                     type="button"
-                    className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: 'rgba(255,255,255,0.04)',
@@ -4887,7 +5083,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     title="@"
                     onClick={() => insertTextAtCursor('@', { openMention: true })}
                   >
-                    <AtSign size={18} />
+                    <AtSign size={16} />
                   </button>
                 </div>
 
@@ -4895,7 +5091,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: 'rgba(255,255,255,0.04)',
@@ -4905,7 +5101,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     title="一键清理（清理本页本地缓存）"
                     onClick={() => void oneClickCleanLocalCache()}
                   >
-                    <Eraser size={18} />
+                    <Eraser size={16} />
                   </button>
 
                   {/* 图2：发送左边的按钮是“模型偏好” */}
@@ -4913,7 +5109,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+                        className="h-9 w-9 rounded-full inline-flex items-center justify-center"
                         style={{
                           border: '1px solid rgba(255,255,255,0.10)',
                           background: 'rgba(255,255,255,0.04)',
@@ -4922,7 +5118,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         aria-label="模型偏好"
                         title="模型偏好"
                       >
-                        <SlidersHorizontal size={18} />
+                        <SlidersHorizontal size={16} />
                       </button>
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
@@ -4930,10 +5126,10 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         side="top"
                         align="end"
                         sideOffset={10}
-                        className="z-50 rounded-[18px] p-4"
+                        className="z-50 rounded-[16px] p-3"
                         style={{
-                          width: 420,
-                          maxWidth: 'min(92vw, 420px)',
+                          width: 360,
+                          maxWidth: 'min(92vw, 360px)',
                           background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
                           border: '1px solid var(--border-default)',
                           boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
@@ -4970,7 +5166,15 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                             <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
                               直连
                             </span>
-                            <Switch checked={directPrompt} onCheckedChange={(v) => setDirectPrompt(v)} ariaLabel="直连模式（不解析）" />
+                            <Switch
+                              checked={directPrompt}
+                              onCheckedChange={() => {
+                                // 需求变更：固定开启（若未来需要恢复可配置，再改回可切换）
+                                setDirectPrompt(true);
+                              }}
+                              disabled
+                              ariaLabel="直连模式（固定开启）"
+                            />
                           </div>
                         </div>
 

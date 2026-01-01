@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -78,13 +79,33 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
 
           <div className="flex items-center gap-2">
             <span className="text-sm text-text-secondary">{user?.displayName}</span>
-            <button
-              onClick={handleClearCurrentContext}
-              className="text-sm text-text-secondary hover:text-text-primary"
-              title="清理当前上下文"
-            >
-              清理
-            </button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="text-sm text-text-secondary hover:text-text-primary flex items-center gap-1"
+                  title="功能菜单"
+                >
+                  功能
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  sideOffset={6}
+                  align="end"
+                  className="z-50 min-w-[120px] rounded-md border border-border bg-surface-light dark:bg-surface-dark shadow-lg p-1"
+                >
+                  <DropdownMenu.Item
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 outline-none text-text-secondary hover:text-text-primary"
+                    onSelect={handleClearCurrentContext}
+                  >
+                    清理上下文
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
             <button
               onClick={logout}
               className="text-sm text-primary-500 hover:text-primary-600"
