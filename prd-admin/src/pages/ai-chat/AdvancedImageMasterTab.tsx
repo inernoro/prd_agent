@@ -42,7 +42,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 
@@ -748,6 +748,55 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const stageSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   const canvasOpLockRef = useRef<Promise<void>>(Promise.resolve());
 
+  // 用于精确计算“文件名/尺寸”标签的文本宽度（避免窗口缩放时裁剪不准）
+  const labelMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const labelFontRef = useRef<{ font: string; letterSpacingPx: number } | null>(null);
+  useLayoutEffect(() => {
+    try {
+      const span = document.createElement('span');
+      span.className = 'text-[11px] font-semibold';
+      span.style.position = 'fixed';
+      span.style.left = '-9999px';
+      span.style.top = '-9999px';
+      span.style.visibility = 'hidden';
+      span.style.whiteSpace = 'nowrap';
+      span.textContent = 'X';
+      document.body.appendChild(span);
+      const cs = window.getComputedStyle(span);
+      const font = cs.font || `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const ls = cs.letterSpacing;
+      let letterSpacingPx = 0;
+      if (ls && ls !== 'normal') {
+        const n = Number.parseFloat(ls);
+        if (Number.isFinite(n)) letterSpacingPx = n;
+      }
+      labelFontRef.current = { font, letterSpacingPx };
+      document.body.removeChild(span);
+    } catch {
+      // ignore：回退到粗略估算
+      labelFontRef.current = { font: '600 11px system-ui', letterSpacingPx: 0 };
+    }
+  }, []);
+
+  const measureLabelTextPx = useCallback((text: string): number => {
+    const t = String(text ?? '');
+    if (!t) return 0;
+    const info = labelFontRef.current;
+    const font = info?.font || '600 11px system-ui';
+    const letterSpacingPx = info?.letterSpacingPx || 0;
+    let canvas = labelMeasureCanvasRef.current;
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      labelMeasureCanvasRef.current = canvas;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return Math.ceil(t.length * 7);
+    ctx.font = font;
+    const w = ctx.measureText(t).width;
+    const w2 = w + Math.max(0, t.length - 1) * letterSpacingPx;
+    return Math.ceil(w2);
+  }, []);
+
   useEffect(() => {
     canvasRef.current = canvas;
   }, [canvas]);
@@ -800,6 +849,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
   // Space 平移 + 框选
   const [spacePressed, setSpacePressed] = useState(false);
+  const [panning, setPanning] = useState(false);
+  const effectiveTool: CanvasTool = spacePressed ? 'hand' : activeTool;
+  const tempHand = spacePressed && activeTool !== 'hand';
   const panRef = useRef<{ active: boolean; pointerId: number; startX: number; startY: number; baseCamX: number; baseCamY: number }>({
     active: false,
     pointerId: -1,
@@ -1056,7 +1108,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
-      if (activeTool === 'hand') return;
+      if (effectiveTool === 'hand') return;
       // 仅在单选时允许 resize（避免多选整体 resize 的复杂交互）
       if (selectedKeysRef.current.length !== 1 || selectedKeysRef.current[0] !== it.key) return;
 
@@ -1099,7 +1151,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       e.stopPropagation();
       e.preventDefault();
     },
-    [activeTool]
+    [effectiveTool]
   );
 
 
@@ -1691,6 +1743,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       if (e.key === ' ' || e.code === 'Space') {
+        // 输入控件内不拦截 Space，避免无法输入空格
+        const ae = document.activeElement as HTMLElement | null;
+        const tag = (ae?.tagName ?? '').toLowerCase();
+        const isEditable =
+          tag === 'textarea' ||
+          tag === 'input' ||
+          Boolean(ae?.isContentEditable) ||
+          Boolean(ae?.getAttribute?.('contenteditable'));
+        if (isEditable) return;
+
         // 避免 Space 滚动页面
         e.preventDefault();
         setSpacePressed(true);
@@ -1698,6 +1760,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     };
     const onUp = (e: KeyboardEvent) => {
       if (e.key === ' ' || e.code === 'Space') {
+        // 输入控件内不拦截 Space，避免无法输入空格
+        const ae = document.activeElement as HTMLElement | null;
+        const tag = (ae?.tagName ?? '').toLowerCase();
+        const isEditable =
+          tag === 'textarea' ||
+          tag === 'input' ||
+          Boolean(ae?.isContentEditable) ||
+          Boolean(ae?.getAttribute?.('contenteditable'));
+        if (isEditable) return;
+
         e.preventDefault();
         setSpacePressed(false);
       }
@@ -2935,7 +3007,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     { id: 'story', title: 'Story Board', desc: '生成短片分镜首帧图（情绪与镜头）' },
   ] as const;
 
-  const fitToStage = () => {
+  const fitToStage = useCallback(() => {
     const el = stageRef.current;
     if (!el) return;
     const itemsAll = canvas.filter(
@@ -2969,7 +3041,38 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     const camX = stageSize.w / 2 - cx * nextZoom;
     const camY = stageSize.h / 2 - cy * nextZoom;
     setViewport(nextZoom, { x: camX, y: camY }, { syncUi: true });
-  };
+  }, [canvas, selectedKeys, setViewport, stageSize.h, stageSize.w]);
+
+  // Figma-ish：Shift+1 适配画布（仅在画布区域操作时生效）
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      // 输入控件内不处理，避免抢占用户输入
+      const ae = document.activeElement as HTMLElement | null;
+      const tag = (ae?.tagName ?? '').toLowerCase();
+      const isEditable =
+        tag === 'textarea' ||
+        tag === 'input' ||
+        Boolean(ae?.isContentEditable) ||
+        Boolean(ae?.getAttribute?.('contenteditable'));
+      if (isEditable) return;
+
+      // 仅当“在画板上操作”时才响应：画板 hover 或画板获得焦点
+      const stageEl = stageRef.current;
+      const isInStage = (stageEl && ae && stageEl.contains(ae)) || stageHoverRef.current;
+      if (!isInStage) return;
+
+      // 避免与浏览器/系统快捷键冲突
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.shiftKey && (e.key === '1' || e.code === 'Digit1')) {
+        e.preventDefault();
+        fitToStage();
+      }
+    };
+    const opts = { capture: true } as const;
+    window.addEventListener('keydown', onDown, opts);
+    return () => window.removeEventListener('keydown', onDown, opts);
+  }, [fitToStage]);
 
   const focusKeyRef = useRef<{ key: string; cx: number; cy: number } | null>(null);
 
@@ -3023,31 +3126,25 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
               background: 'rgba(0,0,0,0.10)',
-              cursor: activeTool === 'hand' ? 'grab' : 'default',
+              cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
             }}
             tabIndex={0}
             onPointerEnter={() => {
               stageHoverRef.current = true;
             }}
             onPointerDownCapture={(e) => {
-              if (!placing) return;
-              const placed = placeAtPointer(e);
-              if (!placed) return;
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            onMouseDown={() => stageRef.current?.focus()}
-            onBlur={() => {
-              // 失焦时清掉框选残留
-              setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
-              panRef.current.active = false;
-              dragItemsRef.current.active = false;
-            }}
-            onPointerDown={(e) => {
-              stageRef.current?.focus();
+              // placing 优先
+              if (placing) {
+                const placed = placeAtPointer(e);
+                if (!placed) return;
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+              }
 
-              // Hand tool / Space + 拖拽：平移（Hand 模式允许在任意元素上拖动）
-              if (activeTool === 'hand' || spacePressed) {
+              // Space/Hand：在捕获阶段接管拖拽，避免子元素（图片）stopPropagation 导致无法平移
+              if (effectiveTool === 'hand') {
+                stageRef.current?.focus();
                 panRef.current = {
                   active: true,
                   pointerId: e.pointerId,
@@ -3056,6 +3153,34 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                   baseCamX: cameraRef.current.x,
                   baseCamY: cameraRef.current.y,
                 };
+                setPanning(true);
+                (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+            onMouseDown={() => stageRef.current?.focus()}
+            onBlur={() => {
+              // 失焦时清掉框选残留
+              setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
+              panRef.current.active = false;
+              setPanning(false);
+              dragItemsRef.current.active = false;
+            }}
+            onPointerDown={(e) => {
+              stageRef.current?.focus();
+
+              // Hand tool / Space + 拖拽：平移（Hand 模式允许在任意元素上拖动）
+              if (effectiveTool === 'hand') {
+                panRef.current = {
+                  active: true,
+                  pointerId: e.pointerId,
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  baseCamX: cameraRef.current.x,
+                  baseCamY: cameraRef.current.y,
+                };
+                setPanning(true);
                 (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
                 e.preventDefault();
                 return;
@@ -3077,6 +3202,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
               // pointer 被系统取消时（例如手势/滚动打断），清理所有交互态，避免“长方形框选”残留
               dragItemsRef.current.active = false;
               panRef.current.active = false;
+              setPanning(false);
               setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
               try {
                 (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
@@ -3151,6 +3277,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
               const pan = panRef.current;
               if (pan.active && pan.pointerId === e.pointerId) {
                 panRef.current.active = false;
+                setPanning(false);
                 try {
                   (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
                 } catch {
@@ -3283,7 +3410,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 const w = it.w ?? 320;
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
-                const showSelectOverlay = activeTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
+                const showSelectOverlay = effectiveTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
                 const showHandles = showSelectOverlay && selectedKeys.length === 1;
                 const boxW = Math.max(40, Math.round(w));
                 const boxH = Math.max(40, Math.round(h));
@@ -3323,13 +3450,13 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                       background: 'transparent',
                       boxShadow: 'none',
                       overflow: 'visible',
-                      cursor: activeTool === 'hand' ? 'grab' : 'pointer',
+                      cursor: panning || effectiveTool === 'hand' ? 'inherit' : 'pointer',
                     }}
                     onMouseDown={(e) => {
-                      if (activeTool !== 'hand') e.stopPropagation();
+                      if (effectiveTool !== 'hand') e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
-                      if (activeTool === 'hand') return;
+                      if (effectiveTool === 'hand') return;
                       focusStage();
                       e.stopPropagation();
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
@@ -3364,7 +3491,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     onClick={(e) => {
                       focusStage();
                       e.stopPropagation();
-                      if (activeTool === 'hand') return;
+                      if (effectiveTool === 'hand') return;
                       // 生成器区域：仅做选中，不做 @img 引用插入
                       if (kind === 'generator') {
                         if (e.shiftKey) {
@@ -3787,30 +3914,27 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                     return (
                       <div key={`ui_${g.key}`} className="absolute" style={{ left: Math.round(x), top: Math.round(y), width: Math.round(w), height: Math.round(h) }}>
                         <div
-                          className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                          className="absolute text-[11px] font-semibold"
                           style={{
                             left: 0,
                             top: 0,
                             transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
                             transformOrigin: 'left bottom',
-                            background: 'rgba(255,255,255,0.80)',
-                            border: '1px solid rgba(0,0,0,0.10)',
-                            color: 'rgba(0,0,0,0.55)',
-                            boxShadow: '0 10px 24px rgba(0,0,0,0.10)',
+                            color: 'rgba(255,255,255,0.86)',
+                            textShadow: '0 2px 10px rgba(0,0,0,0.55)',
                           }}
                         >
                           Image Generator
                         </div>
                         <div
-                          className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                          className="absolute text-[11px] font-semibold"
                           style={{
                             right: 0,
                             top: 0,
                             transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
                             transformOrigin: 'right bottom',
-                            background: 'rgba(255,255,255,0.72)',
-                            border: '1px solid rgba(0,0,0,0.10)',
-                            color: 'rgba(0,0,0,0.45)',
+                            color: 'rgba(255,255,255,0.78)',
+                            textShadow: '0 2px 10px rgba(0,0,0,0.55)',
                           }}
                         >
                           {Math.round(w)} × {Math.round(h)}
@@ -3841,6 +3965,31 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         const selY = Math.round(inner.y);
                         const selW = Math.max(1, Math.round(inner.w));
                         const selH = Math.max(1, Math.round(inner.h));
+                        // 顶部标签：保持“两块”（name 在左、size 在右），但必须不重叠
+                        // 做法：
+                        // - 标签文字大小不随 zoom 缩放（通过 scale(var(--invZoom)) 达成），但容器可用“屏幕宽度”会随 zoom 和窗口尺寸变化；
+                        // - 所以 name 的截断宽度要基于“屏幕可用宽度”动态计算，窗口缩小/zoom 改变时会自动裁剪更多字符。
+                        const gap = 8;
+                        const pad = 16; // label 左右 padding 合计（8+8）
+                        // 精确测量文本宽度（像素），避免仅按 length 估算导致“该裁不裁/不该裁却裁”
+                        const sizeTextPx = measureLabelTextPx(sizeText);
+                        const nameTextPx = measureLabelTextPx(name);
+                        // 右侧尺寸标签宽度（像素）：文本宽 + padding/边框余量
+                        const sizeLabelW0 = Math.min(220, Math.max(60, sizeTextPx + pad + 14));
+                        // 选中框左上角在屏幕坐标中的 x（用于限制标签不超过可视区域宽度；窗口缩小时会变小）
+                        const screenLeft = Math.round((Math.round(x) + selX) * zoom + camera.x);
+                        const stageW = stageSize.w || stageRef.current?.clientWidth || 0;
+                        // 可用宽度应随窗口变化；不要再硬编码 360，否则“大图/宽窗口”也会被迫裁剪
+                        // 仍保留一个合理上限，避免超大画布时标签无限拉长影响观感
+                        const maxByViewport = stageW > 0 ? Math.max(80, Math.floor(stageW - 12 - screenLeft)) : 9999;
+                        const labelHardMax = 920;
+                        // 选中框在屏幕上的宽度（容器被缩放，但标签不缩放，因此必须用屏幕宽度来做约束）
+                        const screenSelW = Math.max(40, Math.floor(selW * zoom));
+                        const labelBoxW = Math.max(80, Math.min(labelHardMax, maxByViewport, screenSelW));
+                        const sizeLabelW = Math.min(sizeLabelW0, Math.max(52, labelBoxW - gap - 48));
+                        // nameBoxW：以“真实文本宽度”为上限，避免在空间足够时仍然不必要地裁剪
+                        const nameNeedW = Math.min(labelBoxW - sizeLabelW - gap, nameTextPx + pad + 14);
+                        const nameBoxW = Math.max(48, Math.floor(Math.min(labelBoxW - sizeLabelW - gap, Math.max(48, nameNeedW))));
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
@@ -3853,35 +4002,64 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                             }}
                           >
                             <div
-                              className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                              className="absolute text-[11px] font-semibold"
                               style={{
                                 left: 0,
                                 top: 0,
                                 transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
                                 transformOrigin: 'left bottom',
-                                background: 'rgba(255,255,255,0.80)',
-                                border: '1px solid rgba(0,0,0,0.10)',
-                                color: 'rgba(0,0,0,0.55)',
-                                boxShadow: '0 10px 24px rgba(0,0,0,0.10)',
-                                maxWidth: 360,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
+                                width: nameBoxW,
+                                maxWidth: nameBoxW,
+                                boxSizing: 'border-box',
+                                padding: '4px 8px',
+                                height: 22,
+                                display: 'flex',
+                                alignItems: 'center',
+                                borderRadius: 10,
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'rgba(255,255,255,0.86)',
+                                textShadow: 'none',
+                                pointerEvents: 'none',
+                                minWidth: 0,
                               }}
                               title={name}
                             >
-                              {name}
+                              <span
+                                style={{
+                                  display: 'block',
+                                  minWidth: 0,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {name}
+                              </span>
                             </div>
+
                             <div
-                              className="absolute px-2 py-1 rounded-[10px] text-[13px] font-semibold"
+                              className="absolute text-[11px] font-semibold"
                               style={{
                                 right: 0,
                                 top: 0,
                                 transform: 'translateY(calc(-100% - 10px)) scale(var(--invZoom))',
                                 transformOrigin: 'right bottom',
-                                background: 'rgba(255,255,255,0.72)',
-                                border: '1px solid rgba(0,0,0,0.10)',
-                                color: 'rgba(0,0,0,0.45)',
+                                width: sizeLabelW,
+                                maxWidth: sizeLabelW,
+                                boxSizing: 'border-box',
+                                padding: '4px 8px',
+                                height: 22,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'flex-end',
+                                borderRadius: 10,
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'rgba(255,255,255,0.78)',
+                                textShadow: 'none',
+                                pointerEvents: 'none',
+                                whiteSpace: 'nowrap',
                               }}
                               title={hasPixel ? '图片像素尺寸（natural）' : '图片尺寸（未解析到像素，暂用画布占位）'}
                             >
@@ -4162,7 +4340,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
                 onClick={fitToStage}
                 disabled={canvas.length === 0}
-                title="适配画布"
+                title="适配画布（Shift+1）"
               >
                 适配
               </button>
@@ -4220,13 +4398,23 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
+                      className={`h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 ${
+                        tempHand ? 'bg-white/12' : ''
+                      }`}
                       style={{ color: 'rgba(255,255,255,0.86)' }}
-                      title={activeTool === 'hand' ? 'Hand tool' : activeTool === 'mark' ? 'Mark' : 'Select'}
+                      title={
+                        effectiveTool === 'hand'
+                          ? tempHand
+                            ? 'Hand tool (Space)'
+                            : 'Hand tool'
+                          : effectiveTool === 'mark'
+                            ? 'Mark'
+                            : 'Select'
+                      }
                       aria-label="工具"
                       onClick={() => stageRef.current?.focus()}
                     >
-                      {activeTool === 'hand' ? <Hand size={18} /> : activeTool === 'mark' ? <MapPin size={18} /> : <MousePointer2 size={18} />}
+                      {effectiveTool === 'hand' ? <Hand size={18} /> : effectiveTool === 'mark' ? <MapPin size={18} /> : <MousePointer2 size={18} />}
                     </button>
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
