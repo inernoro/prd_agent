@@ -10,6 +10,18 @@
   --color-text-secondary: #64748b;
   --color-border: #e2e8f0;
 
+  /* Glass tokens (light, B: 克制) */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.86);
+  --glass-ring: rgba(15, 23, 42, 0.08);
+  --glass-shadow: 0 14px 40px rgba(2, 6, 23, 0.10);
+
+  /* Control tokens (light) */
+  --control-bg: rgba(255, 255, 255, 0.78);
+  --control-ring: rgba(15, 23, 42, 0.12);
+  --control-focus-ring: rgba(14, 165, 233, 0.35);
+  --control-placeholder: rgba(30, 41, 59, 0.45);
+
   /* Markdown tokens (light) */
   --md-text: var(--color-text);
   --md-muted: var(--color-text-secondary);
@@ -29,6 +41,18 @@
   --color-text: #f1f5f9;
   --color-text-secondary: #94a3b8;
   --color-border: #334155;
+
+  /* Glass tokens (dark, B: 克制/更稳) */
+  --glass-bg: rgba(15, 23, 42, 0.55);
+  --glass-bg-strong: rgba(15, 23, 42, 0.72);
+  --glass-ring: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0 18px 54px rgba(0, 0, 0, 0.55);
+
+  /* Control tokens (dark) */
+  --control-bg: rgba(255, 255, 255, 0.06);
+  --control-ring: rgba(255, 255, 255, 0.14);
+  --control-focus-ring: rgba(56, 189, 248, 0.30);
+  --control-placeholder: rgba(241, 245, 249, 0.35);
 
   /* Markdown tokens (dark) */
   --md-text: var(--color-text);
@@ -56,6 +80,73 @@ html, body {
   /* 外层不允许滚动：滚动只发生在内部可滚容器（如消息列表） */
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+@layer components {
+  /* 面板/卡片：弱 ring + 轻 blur + 柔和阴影 */
+  .ui-glass-panel {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-ring);
+    box-shadow: var(--glass-shadow);
+    border-radius: 1rem; /* 16px */
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  /* 弹窗容器：更稳的底色（更不透），避免“发白” */
+  .ui-glass-modal {
+    background: var(--glass-bg-strong);
+    border: 1px solid var(--glass-ring);
+    box-shadow: var(--glass-shadow);
+    border-radius: 1.25rem; /* 20px */
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  /* 输入控件：统一边界与 focus ring（避免亮边框跳变） */
+  .ui-control {
+    background: var(--control-bg);
+    border: 1px solid var(--control-ring);
+    color: var(--color-text);
+    border-radius: 0.75rem; /* 12px */
+  }
+  .ui-control::placeholder {
+    color: var(--control-placeholder);
+  }
+  .ui-control:focus,
+  .ui-control:focus-visible {
+    outline: none;
+    border-color: transparent;
+    box-shadow: 0 0 0 3px var(--control-focus-ring);
+  }
+
+  /* chip/pill：更克制的“细线无边框感” */
+  .ui-chip {
+    border-radius: 9999px;
+    border: 1px solid var(--glass-ring);
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .dark .ui-chip {
+    background: rgba(0, 0, 0, 0.18);
+  }
+
+  /* 顶部/侧栏 bar：更像玻璃，不抢内容 */
+  .ui-glass-bar {
+    background: var(--glass-bg-strong);
+    border-color: var(--glass-ring);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+
+/* 等宽字体栈：
+ * - 优先 Maple Mono（若用户已安装则生效）
+ * - Windows 默认兜底 Consolas
+ * - 其它平台兜底系统等宽
+ * 参考字体项目：`https://github.com/subframe7536/maple-font`
+ */
+:root {
+  --font-mono: "Maple Mono", "Maple Mono NF", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 #root {

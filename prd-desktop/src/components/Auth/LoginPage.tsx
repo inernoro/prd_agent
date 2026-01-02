@@ -94,7 +94,7 @@ export default function LoginPage() {
       {/* 右上角设置按钮 */}
       <button
         onClick={openModal}
-        className="absolute top-4 right-4 p-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 transition-all hover:scale-105"
+        className="absolute top-4 right-4 p-2.5 rounded-xl ui-glass-panel hover:bg-white/10 transition-all hover:scale-105"
         title="设置"
       >
         <svg className="w-5 h-5 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -106,7 +106,7 @@ export default function LoginPage() {
       {/* 设置模态框 */}
       <SettingsModal />
 
-      <div className="w-full max-w-md p-8 bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/20">
+      <div className="w-full max-w-md p-8 ui-glass-modal">
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-gradient-to-r from-cyan-400 to-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <span className="text-white font-bold text-2xl">P</span>
@@ -142,7 +142,7 @@ export default function LoginPage() {
             placeholder="用户名"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
-            className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+            className="w-full px-4 py-3 ui-control transition-colors"
             required
           />
           
@@ -151,7 +151,7 @@ export default function LoginPage() {
             placeholder="密码"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
-            className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+            className="w-full px-4 py-3 ui-control transition-colors"
             required
           />
 
@@ -162,14 +162,14 @@ export default function LoginPage() {
                 placeholder="邀请码"
                 value={form.inviteCode}
                 onChange={(e) => setForm({ ...form, inviteCode: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+                className="w-full px-4 py-3 ui-control transition-colors"
                 required
               />
               
               <select
                 value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value as 'PM' | 'DEV' | 'QA' })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-cyan-400 transition-colors"
+                className="w-full px-4 py-3 ui-control transition-colors"
               >
                 <option value="PM" className="bg-slate-800">产品经理</option>
                 <option value="DEV" className="bg-slate-800">开发工程师</option>
@@ -181,7 +181,7 @@ export default function LoginPage() {
                 placeholder="显示名称（可选）"
                 value={form.displayName}
                 onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+                className="w-full px-4 py-3 ui-control transition-colors"
               />
             </>
           )}

@@ -111,3 +111,30 @@ pub async fn get_group_members(
     let client = ApiClient::new();
     client.get(&format!("/groups/{}/members", group_id)).await
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmptyBody {}
+
+/// 清理群组上下文（服务端 LLM 上下文缓存）
+/// - 不删除消息历史
+/// - 仅影响后续提问时的上下文拼接
+#[command]
+pub async fn clear_group_context(group_id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let gid = group_id.trim().to_string();
+    if gid.is_empty() {
+        return Ok(ApiResponse::<serde_json::Value> {
+            success: false,
+            data: None,
+            error: Some(crate::models::ApiError {
+                code: "INVALID_FORMAT".to_string(),
+                message: "groupId 不能为空".to_string(),
+            }),
+        });
+    }
+    let client = ApiClient::new();
+    let request = EmptyBody {};
+    client
+        .post(&format!("/groups/{}/context/clear", gid), &request)
+        .await
+}

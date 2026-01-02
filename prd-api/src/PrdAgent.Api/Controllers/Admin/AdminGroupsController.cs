@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Admin;
@@ -17,10 +18,12 @@ public class AdminGroupsController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminGroupsController> _logger;
+    private readonly ICacheManager _cache;
 
-    public AdminGroupsController(MongoDbContext db, ILogger<AdminGroupsController> logger)
+    public AdminGroupsController(MongoDbContext db, ICacheManager cache, ILogger<AdminGroupsController> logger)
     {
         _db = db;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -438,6 +441,39 @@ public class AdminGroupsController : ControllerBase
         };
 
         return Ok(ApiResponse<AdminPagedResult<AdminMessageDto>>.Ok(response));
+    }
+
+    /// <summary>
+    /// 清空群组所有聊天消息（仅删除 messages；保留群组/成员/缺失）
+    /// </summary>
+    /// <remarks>
+    /// - 仅 ADMIN 可操作
+    /// - 会清理该群的 LLM 上下文缓存与 reset marker，避免“删除后仍带旧上下文”
+    /// </remarks>
+    [HttpDelete("{groupId}/messages")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> DeleteAllMessages(string groupId)
+    {
+        groupId = (groupId ?? string.Empty).Trim();
+        var group = await _db.Groups.Find(g => g.GroupId == groupId).FirstOrDefaultAsync();
+        if (group == null) return NotFound(ApiResponse<object>.Fail("GROUP_NOT_FOUND", "群组不存在"));
+
+        // 删除所有 messages（包括已软删的历史轮次）
+        await _db.Messages.DeleteManyAsync(m => m.GroupId == groupId);
+
+        // 清理群组上下文缓存（LLM 上下文拼接用）
+        try
+        {
+            await _cache.RemoveAsync(CacheKeys.ForGroupChatHistory(groupId));
+            await _cache.RemoveAsync(CacheKeys.ForGroupContextReset(groupId));
+        }
+        catch
+        {
+            // cache 清理失败不应影响主流程
+        }
+
+        _logger.LogInformation("Admin cleared all group messages: groupId={GroupId}", groupId);
+        return NoContent();
     }
 
     private async Task<AdminGroupStatsMaps> LoadGroupStatsAsync(List<string> groupIds)

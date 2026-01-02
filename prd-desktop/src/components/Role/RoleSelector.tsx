@@ -66,7 +66,7 @@ export default function RoleSelector() {
   };
 
   return (
-    <div className="flex items-center gap-1 bg-background-light dark:bg-background-dark rounded-lg p-1">
+    <div className="flex items-center gap-1 ui-chip p-1">
       {roles.map(({ value, label }) => (
         <button
           key={value}
@@ -74,7 +74,7 @@ export default function RoleSelector() {
           className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
             currentRole === value
               ? 'bg-primary-500 text-white'
-              : 'text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800'
+              : 'text-text-secondary hover:bg-black/5 dark:hover:bg-white/5'
           }`}
         >
           <RoleIcon role={value} className="w-4 h-4" />

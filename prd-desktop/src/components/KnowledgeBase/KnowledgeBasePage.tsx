@@ -26,7 +26,7 @@ export default function KnowledgeBasePage() {
             群组：{group.groupName} · 当前状态：待上传
           </div>
 
-          <div className="p-5 rounded-2xl border border-border bg-surface-light dark:bg-surface-dark">
+          <div className="p-5 ui-glass-panel">
             <div className="text-lg font-semibold mb-2">该群组未绑定 PRD</div>
             <div className="text-sm text-text-secondary">
               请先上传 PRD，并在左侧点击“上传PRD后绑定到当前群组”。绑定后，这里会显示 PRD 与后续资料入口。
@@ -46,27 +46,27 @@ export default function KnowledgeBasePage() {
         </div>
 
         <div className="grid gap-4">
-          <div className="p-5 rounded-2xl border border-border bg-surface-light dark:bg-surface-dark">
+          <div className="p-5 ui-glass-panel">
             <div className="text-lg font-semibold mb-2">当前 PRD（元信息）</div>
             <div className="text-sm text-text-secondary">
               documentId: <span className="font-mono">{document.id}</span> · chars: {document.charCount} · tokens~ {document.tokenEstimate}
             </div>
           </div>
 
-          <div className="p-5 rounded-2xl border border-border bg-surface-light dark:bg-surface-dark">
+          <div className="p-5 ui-glass-panel">
             <div className="text-lg font-semibold mb-2">资料文件</div>
             <div className="text-sm text-text-secondary mb-3">
               未来支持在同一群组下上传多个文件作为参考（不锁死设计）。当前版本先提供占位入口。
             </div>
             <button
               disabled
-              className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-text-secondary cursor-not-allowed"
+              className="px-4 py-2 rounded-lg ui-control text-text-secondary cursor-not-allowed opacity-70"
             >
               添加资料（开发中）
             </button>
           </div>
 
-          <div className="p-5 rounded-2xl border border-border bg-surface-light dark:bg-surface-dark">
+          <div className="p-5 ui-glass-panel">
             <div className="text-lg font-semibold mb-2">说明</div>
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>

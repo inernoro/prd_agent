@@ -3,21 +3,18 @@ import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useUserDirectoryStore } from '../../stores/userDirectoryStore';
+import { useSystemNoticeStore } from '../../stores/systemNoticeStore';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
-import WizardLoader from './WizardLoader';
+import SystemNoticeOverlay from '../Feedback/SystemNoticeOverlay';
 
-const phaseText: Record<string, string> = {
-  requesting: '正在请求大模型…',
-  connected: '已连接，等待首包…',
-  receiving: '正在接收信息…',
-  typing: '开始输出…',
-};
+// 阶段提示文案会造成重复状态块（且与“AI 回复气泡”割裂），这里不再使用。
 
 function ChatContainerInner() {
   const { sessionId, activeGroupId, currentRole } = useSessionStore();
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
-  const messages = useMessageStore((s) => s.messages);
+  const loadGroupMembers = useUserDirectoryStore((s) => s.loadGroupMembers);
   const startStreaming = useMessageStore((s) => s.startStreaming);
   const appendToStreamingMessage = useMessageStore((s) => s.appendToStreamingMessage);
   const startStreamingBlock = useMessageStore((s) => s.startStreamingBlock);
@@ -25,11 +22,10 @@ function ChatContainerInner() {
   const endStreamingBlock = useMessageStore((s) => s.endStreamingBlock);
   const setMessageCitations = useMessageStore((s) => s.setMessageCitations);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
-  const addMessage = useMessageStore((s) => s.addMessage);
+  const finishStreaming = useMessageStore((s) => s.finishStreaming);
   const clearPendingAssistant = useMessageStore((s) => s.clearPendingAssistant);
-  const isStreaming = useMessageStore((s) => s.isStreaming);
-  const streamingMessageId = useMessageStore((s) => s.streamingMessageId);
-  const streamingPhase = useMessageStore((s) => s.streamingPhase);
+  const pushNotice = useSystemNoticeStore((s) => s.push);
+  // isStreaming 状态由 MessageList/MessageBubble 负责展示（含占位动画），不再额外展示顶部 banner
   const setStreamingPhase = useMessageStore((s) => s.setStreamingPhase);
   const bindSession = useMessageStore((s) => s.bindSession);
   const syncFromServer = useMessageStore((s) => s.syncFromServer);
@@ -39,13 +35,6 @@ function ChatContainerInner() {
   const localMaxSeq = useMessageStore((s) => s.localMaxSeq);
   const getLastGroupSeq = useSessionStore((s) => s.getLastGroupSeq);
   const setLastGroupSeq = useSessionStore((s) => s.setLastGroupSeq);
-
-  const showTopPhaseBanner =
-    isStreaming &&
-    !!streamingPhase &&
-    streamingPhase !== 'typing' &&
-    // 如果当前已经有“流式气泡”，阶段提示应在气泡内展示，避免重复
-    (!streamingMessageId || !messages?.some((m) => m.id === streamingMessageId));
 
   useEffect(() => {
     // 监听消息流事件
@@ -178,20 +167,14 @@ function ChatContainerInner() {
           }
         }
         clearPendingAssistant();
-        stopStreaming();
+        finishStreaming();
       } else if (type === 'phase' && phase) {
         setStreamingPhase((phase as any) || null);
       } else if (type === 'error') {
         clearPendingAssistant();
         stopStreaming();
         if (errorMessage) {
-          addMessage({
-            id: `error-${Date.now()}`,
-            role: 'Assistant',
-            content: `请求失败：${errorMessage}`,
-            timestamp: new Date(),
-            viewRole: currentRole,
-          });
+          pushNotice(`请求失败：${errorMessage}`, { level: 'error', ttlMs: 8000, signature: `chat-error:${String(errorMessage)}` });
         }
       }
     }).catch((err) => {
@@ -204,7 +187,7 @@ function ChatContainerInner() {
         console.error('Failed to unlisten message-chunk event:', err);
       });
     };
-  }, [currentRole, clearPendingAssistant, startStreaming, appendToStreamingMessage, startStreamingBlock, appendToStreamingBlock, endStreamingBlock, stopStreaming, addMessage, setStreamingPhase, setMessageCitations]);
+  }, [currentRole, clearPendingAssistant, startStreaming, appendToStreamingMessage, startStreamingBlock, appendToStreamingBlock, endStreamingBlock, stopStreaming, finishStreaming, pushNotice, setStreamingPhase, setMessageCitations]);
 
   // 订阅群消息广播（SSE 由 Rust 消费并 emit 为 group-message）
   // 使用 localMaxSeq 作为断点续传游标
@@ -220,18 +203,18 @@ function ChatContainerInner() {
     invoke('subscribe_group_messages', { groupId: activeGroupId, afterSeq }).catch(() => {});
   }, [activeGroupId, localMaxSeq, getLastGroupSeq]);
 
+  // 首次进入群组：拉一次成员列表并缓存（用于把 senderId 显示成 username）
+  useEffect(() => {
+    if (!activeGroupId) return;
+    loadGroupMembers(activeGroupId).catch(() => {});
+  }, [activeGroupId, loadGroupMembers]);
+
   useEffect(() => {
     const unlisten = listen<any>('group-message', (event) => {
       const p = event.payload || {};
       if (p?.type === 'error') {
         if (p?.errorMessage) {
-          addMessage({
-            id: `group-stream-error-${Date.now()}`,
-            role: 'Assistant',
-            content: `群消息订阅失败：${String(p.errorMessage)}`,
-            timestamp: new Date(),
-            viewRole: currentRole,
-          });
+          pushNotice(`群消息订阅失败：${String(p.errorMessage)}`, { level: 'warning', ttlMs: 10_000, signature: `group-stream-error:${String(p.errorMessage)}` });
         }
         return;
       }
@@ -276,7 +259,7 @@ function ChatContainerInner() {
     return () => {
       unlisten.then((fn) => fn()).catch(() => {});
     };
-  }, [addMessage, currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById]);
+  }, [currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById, pushNotice]);
 
   // 会话/群组切换时：绑定会话并执行增量同步
   // 每次进入群组都会与服务端同步（本地是线上的缓存，服务端主导）
@@ -303,13 +286,9 @@ function ChatContainerInner() {
   }, [sessionId, activeGroupId, bindSession, syncFromServer]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
+      <SystemNoticeOverlay />
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-        {showTopPhaseBanner && (
-          <div className="px-4 py-2 border-b border-border bg-surface-light dark:bg-surface-dark">
-            <WizardLoader label={phaseText[streamingPhase] || '处理中...'} size={86} />
-          </div>
-        )}
         <MessageList />
       </div>
       

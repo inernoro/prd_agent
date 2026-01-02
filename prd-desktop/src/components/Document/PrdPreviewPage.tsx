@@ -797,7 +797,7 @@ export default function PrdPreviewPage(props?: {
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="h-12 px-4 border-b border-border bg-surface-light dark:bg-surface-dark flex items-center justify-between">
+      <div className="h-12 px-4 border-b ui-glass-bar flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
@@ -808,7 +808,7 @@ export default function PrdPreviewPage(props?: {
               }
               backFromPrdPreview();
             }}
-            className="h-8 px-2 rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors"
+            className="h-8 px-2 rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
             title={compactMode ? '关闭' : '返回'}
             aria-label={compactMode ? '关闭' : '返回'}
           >
@@ -835,7 +835,7 @@ export default function PrdPreviewPage(props?: {
           {compactMode ? (
             <button
               type="button"
-              className="h-8 px-2 rounded-md text-xs text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+              className="h-8 px-2 rounded-md text-xs text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
               onClick={() => {
                 if (typeof props?.onRequestOpenFullPreview === 'function') {
                   props.onRequestOpenFullPreview();
@@ -851,7 +851,7 @@ export default function PrdPreviewPage(props?: {
             <>
               <button
                 type="button"
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
                 onClick={() => setPrdPreviewTocOpen((v) => !v)}
                 aria-label="章节目录"
                 title="章节目录"
@@ -868,7 +868,7 @@ export default function PrdPreviewPage(props?: {
 
               <button
                 type="button"
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
                 onClick={() => setPrdPreviewCommentsOpen((v) => !v)}
                 aria-label="评论"
                 title="评论"
@@ -892,7 +892,7 @@ export default function PrdPreviewPage(props?: {
           {/* 左：目录 */}
           {!compactMode && prdPreviewTocOpen ? (
             <div
-              className="border-r border-border bg-surface-light dark:bg-surface-dark overflow-auto p-3"
+              className="border-r ui-glass-bar overflow-auto p-3"
               style={{ width: `${tocWidth}px` }}
             >
               <div className="text-xs font-semibold text-text-secondary px-2 py-1">目录</div>
@@ -909,7 +909,7 @@ export default function PrdPreviewPage(props?: {
                         setActiveHeadingTitle(t.text);
                         scrollToHeading(t.id);
                       }}
-                      className={`w-full text-left text-xs rounded-md pr-2 py-1 hover:bg-gray-100 dark:hover:bg-white/10 transition-colors ${tocIndentClass(t.level)} ${
+                      className={`w-full text-left text-xs rounded-md pr-2 py-1 hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${tocIndentClass(t.level)} ${
                         activeHeadingId === t.id ? 'text-primary-600 dark:text-primary-300' : 'text-text-secondary hover:text-primary-500'
                       }`}
                       title={t.text}
@@ -946,7 +946,9 @@ export default function PrdPreviewPage(props?: {
 
           {/* 中：正文 */}
           <div ref={prdPreviewContentRef} className="flex-1 min-w-0 overflow-auto p-5">
-            {prdPreviewBody}
+            <div className="max-w-[960px] mx-auto">
+              {prdPreviewBody}
+            </div>
           </div>
 
           {/* 拖拽条：正文/评论 */}
@@ -970,7 +972,7 @@ export default function PrdPreviewPage(props?: {
           {/* 右：评论 */}
           {!compactMode && prdPreviewCommentsOpen ? (
             <div
-              className="border-l border-border bg-surface-light dark:bg-surface-dark overflow-hidden"
+              className="border-l ui-glass-bar overflow-hidden"
               style={{ width: `${commentsWidth}px` }}
             >
               <PrdCommentsPanel
@@ -988,7 +990,7 @@ export default function PrdPreviewPage(props?: {
       {/* 引用导航浮层（仅当存在 citations） */}
       {!compactMode && Array.isArray(navCitations) && navCitations.length > 0 ? (
         <div className="fixed z-40 right-4 top-16">
-          <div className="bg-surface-light dark:bg-surface-dark border border-border rounded-xl shadow-lg px-3 py-2 w-[320px]">
+          <div className="ui-glass-panel px-3 py-2 w-[320px]">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold">
                 引用 {Math.min((navActiveIndex ?? 0) + 1, navCitations.length)}/{navCitations.length}
@@ -1029,7 +1031,7 @@ export default function PrdPreviewPage(props?: {
             <div className="mt-2 flex items-center justify-between gap-2">
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                className="px-2 py-1 text-xs rounded-md border border-black/10 dark:border-white/10 text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
                 onClick={() => {
                   setNavActiveIndex((navActiveIndex ?? 0) - 1);
                 }}
@@ -1039,7 +1041,7 @@ export default function PrdPreviewPage(props?: {
               </button>
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                className="px-2 py-1 text-xs rounded-md border border-black/10 dark:border-white/10 text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
                 onClick={() => {
                   setNavActiveIndex((navActiveIndex ?? 0) + 1);
                 }}
@@ -1084,14 +1086,14 @@ export default function PrdPreviewPage(props?: {
       {!compactMode && askOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={closeAskModal} />
-          <div className="relative z-10 w-full max-w-2xl mx-4 bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border overflow-hidden">
-            <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+          <div className="relative z-10 w-full max-w-2xl mx-4 ui-glass-modal overflow-hidden">
+            <div className="px-5 py-3 border-b border-black/10 dark:border-white/10 ui-glass-bar flex items-center justify-between">
               <div className="text-sm font-semibold">询问 AI（搜索全文）</div>
               <button
                 type="button"
                 onClick={closeAskModal}
                 disabled={askBusy}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
                 title="关闭"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1109,7 +1111,7 @@ export default function PrdPreviewPage(props?: {
                 value={askDraft}
                 onChange={(e) => setAskDraft(e.target.value)}
                 disabled={askBusy}
-                className="w-full min-h-[88px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/40 text-sm"
+                className="w-full min-h-[88px] px-3 py-2 ui-control resize-none text-sm"
                 placeholder="输入你的问题..."
               />
 
@@ -1118,7 +1120,7 @@ export default function PrdPreviewPage(props?: {
                   type="button"
                   onClick={closeAskModal}
                   disabled={askBusy}
-                  className="px-3 py-2 text-sm rounded-lg border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                  className="px-3 py-2 text-sm rounded-lg border border-black/10 dark:border-white/10 text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
                 >
                   取消
                 </button>

@@ -269,10 +269,10 @@ export default function ChatInput() {
   }, [content, adjustTextareaHeight]);
 
   return (
-    <div className="border-t border-border bg-surface-light dark:bg-surface-dark">
+    <div className="border-t ui-glass-bar">
       {/* 提示词栏：按当前角色展示 */}
       {canChat && document?.id && (
-        <div className="px-3 py-2 flex items-center gap-2 border-b border-border">
+        <div className="px-3 py-2 flex items-center gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
           <div className="text-xs text-text-secondary flex-shrink-0">提示词</div>
           <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none">
             {promptsForRole.map((p) => (
@@ -280,9 +280,9 @@ export default function ChatInput() {
                 key={p.promptKey}
                 onClick={() => handlePromptExplain(p)}
                 disabled={isStreaming || isSubmitting}
-                className={`flex-shrink-0 px-2.5 py-1.5 text-xs rounded-md transition-all ${
-                  'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:bg-gray-200 dark:hover:bg-gray-700'
-                } ${isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                className={`flex-shrink-0 px-2.5 py-1.5 text-xs ui-chip transition-colors ${
+                  isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                } text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5`}
                 title={p.title}
               >
                 <span className="hidden sm:inline">{p.title}</span>
@@ -300,7 +300,7 @@ export default function ChatInput() {
         <div className="flex items-end" style={{ height: `${inputHeight}px` }}>
           <button
             type="button"
-            className="h-9 w-9 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="h-9 w-9 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
             aria-label="附件"
             title="附件"
           >
@@ -320,7 +320,7 @@ export default function ChatInput() {
             }}
             onKeyDown={handleKeyDown}
             placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}
-            className="w-full min-w-0 px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm"
+            className="w-full min-w-0 px-3 py-2 ui-control rounded-xl resize-none text-sm"
             rows={1}
             disabled={isStreaming || !canChat}
           />

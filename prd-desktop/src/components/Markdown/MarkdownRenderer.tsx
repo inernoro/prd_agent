@@ -30,7 +30,7 @@ function TableWithCopy({ children, ...props }: any) {
           await copyText(md);
         }}
         icon={<CopySvg />}
-        className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md border border-border bg-background-light/70 dark:bg-background-dark/60 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md ui-glass-panel text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
       />
       <table ref={tableRef} {...props}>
         {children}
@@ -50,7 +50,7 @@ function ImageWithCopy({ src, alt, ...props }: any) {
             await copyImageFromUrl(safeSrc);
           }}
           icon={<CopySvg />}
-          className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md border border-border bg-background-light/70 dark:bg-background-dark/60 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md ui-glass-panel text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
         />
       ) : null}
       <img src={src} alt={alt} {...props} className={`max-w-full ${props?.className || ''}`.trim()} />
@@ -227,7 +227,7 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
                 <span className={showPopover ? 'relative inline-flex group' : 'inline-flex'}>
                   <button
                     type="button"
-                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-primary-400/40"
+                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 ui-chip text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-primary-400/30"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -292,9 +292,12 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
                     await copyText(codeText);
                   }}
                   icon={<CopySvg />}
-                  className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md border border-border bg-background-light/70 dark:bg-background-dark/60 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md ui-glass-panel text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
                 />
-                <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 p-3">
+                <pre
+                  className="overflow-x-auto rounded-md border border-border bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 p-3"
+                  style={{ fontFamily: 'var(--font-mono)', fontVariantLigatures: 'none' }}
+                >
                   {children}
                 </pre>
               </div>

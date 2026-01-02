@@ -67,6 +67,7 @@ public class ChatService : IChatService
         var startAtUtc = DateTime.UtcNow;
         DateTime? firstTokenAtUtc = null;
         var firstTokenMetricsEmitted = false;
+        long? assistantSeqAtFirstToken = null;
 
         // 获取会话
         var session = await _sessionService.GetByIdAsync(sessionId);
@@ -122,6 +123,11 @@ public class ChatService : IChatService
             RequestReceivedAtUtc = userInputAtUtc,
             StartAtUtc = startAtUtc
         };
+
+        // 群消息顺序键：新逻辑
+        // - User：请求到达服务器即分配一次 seq，并立即落库+广播
+        // - Assistant：首字到达时再分配一次 seq，落库+广播在最终完成时统一执行
+        var gidForSeq = (session.GroupId ?? string.Empty).Trim();
 
         // 构建系统Prompt
         var baseSystemPrompt = await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
@@ -206,6 +212,30 @@ public class ChatService : IChatService
             RequestType: "reasoning",
             RequestPurpose: "chat.sendMessage"));
 
+        // 先保存/广播用户消息（避免等 AI 结束才看到用户消息；并与 seq 分配语义一致）
+        var userMessage = new Message
+        {
+            SessionId = sessionId,
+            GroupId = session.GroupId ?? "",
+            SenderId = userId,
+            Role = MessageRole.User,
+            Content = content,
+            LlmRequestId = llmRequestId,
+            ViewRole = session.CurrentRole,
+            AttachmentIds = attachmentIds ?? new List<string>(),
+            ResendOfMessageId = string.IsNullOrWhiteSpace(resendOfMessageId) ? null : resendOfMessageId!.Trim(),
+            Timestamp = userInputAtUtc
+        };
+        if (!string.IsNullOrEmpty(gidForSeq))
+        {
+            userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+        }
+        await _messageRepository.InsertManyAsync(new[] { userMessage });
+        if (!string.IsNullOrEmpty(gidForSeq))
+        {
+            _groupMessageStreamHub.Publish(userMessage);
+        }
+
         var enumerator = _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
@@ -237,6 +267,11 @@ public class ChatService : IChatService
                     if (!firstTokenAtUtc.HasValue)
                     {
                         firstTokenAtUtc = DateTime.UtcNow;
+                        // AI 首字到达：分配 assistant seq（仅一次）
+                        if (!string.IsNullOrEmpty(gidForSeq) && !assistantSeqAtFirstToken.HasValue)
+                        {
+                            assistantSeqAtFirstToken = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+                        }
                     }
                     fullResponse.Append(chunk.Content);
                     foreach (var bt in blockTokenizer.Push(chunk.Content))
@@ -324,19 +359,7 @@ public class ChatService : IChatService
         }
 
         // 保存用户消息
-        var userMessage = new Message
-        {
-            SessionId = sessionId,
-            GroupId = session.GroupId ?? "",
-            SenderId = userId,
-            Role = MessageRole.User,
-            Content = content,
-            LlmRequestId = llmRequestId,
-            ViewRole = session.CurrentRole,
-            AttachmentIds = attachmentIds ?? new List<string>(),
-            ResendOfMessageId = string.IsNullOrWhiteSpace(resendOfMessageId) ? null : resendOfMessageId!.Trim(),
-            Timestamp = userInputAtUtc
-        };
+        // userMessage 已在请求开始阶段落库/广播，这里仅复用变量参与缓存拼接与关联
 
         // 保存AI回复
         var assistantMessage = new Message
@@ -368,21 +391,18 @@ public class ChatService : IChatService
         // 写入 MongoDB（用于后台追溯与统计）
         // 注意：日志中不得打印消息原文；仓储层不记录日志，这里也不记录 content
 
-        // 群消息顺序键：仅对 groupId 非空的群会话生成
-        var gidForSeq = (session.GroupId ?? string.Empty).Trim();
         if (!string.IsNullOrEmpty(gidForSeq))
         {
-            var pair = await _groupMessageSeqService.AllocatePairAsync(gidForSeq, cancellationToken);
-            userMessage.GroupSeq = pair.UserSeq;
-            assistantMessage.GroupSeq = pair.AssistantSeq;
+            // 若全程没有产生可见 token，则 assistantSeq 可能未分配；此时在落库前兜底分配一次
+            assistantMessage.GroupSeq = assistantSeqAtFirstToken
+                ?? await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
         }
 
-        await _messageRepository.InsertManyAsync(new[] { userMessage, assistantMessage });
+        await _messageRepository.InsertManyAsync(new[] { assistantMessage });
 
         // 群广播：只广播“消息级别”事件（user + assistant final），token/delta 不广播
         if (!string.IsNullOrEmpty(gidForSeq))
         {
-            _groupMessageStreamHub.Publish(userMessage);
             _groupMessageStreamHub.Publish(assistantMessage);
         }
 
@@ -456,9 +476,26 @@ public class ChatService : IChatService
             ? CacheKeys.ForGroupChatHistory(session.GroupId)
             : CacheKeys.ForChatHistory(sid);
 
+        // 群组上下文“重置点”：用于截断 LLM 上下文拼接（不影响消息历史回放接口）
+        // 注意：仅删除缓存并不能真正重置，因为 cache miss 会回源 Mongo；所以这里必须按 reset marker 过滤。
+        DateTime? groupResetAtUtc = null;
+        if (!string.IsNullOrEmpty(session.GroupId))
+        {
+            var ticks = await _cache.GetAsync<long?>(CacheKeys.ForGroupContextReset(session.GroupId));
+            if (ticks.HasValue && ticks.Value > 0)
+            {
+                try { groupResetAtUtc = new DateTime(ticks.Value, DateTimeKind.Utc); } catch { groupResetAtUtc = null; }
+            }
+        }
+
         var history = await _cache.GetAsync<List<Message>>(key);
         if (history != null && history.Count > 0)
         {
+            // 若存在 reset marker，则只保留 reset 之后的消息用于上下文拼接
+            if (groupResetAtUtc.HasValue)
+            {
+                history = history.Where(m => m.Timestamp > groupResetAtUtc.Value).ToList();
+            }
             return history.TakeLast(take).ToList();
         }
 
@@ -472,6 +509,11 @@ public class ChatService : IChatService
         {
             // 个人会话：按 sessionId 回放
             persisted = await _messageRepository.FindBySessionAsync(sid, before: null, limit: Math.Max(take, 50));
+        }
+
+        if (groupResetAtUtc.HasValue)
+        {
+            persisted = persisted.Where(m => m.Timestamp > groupResetAtUtc.Value).ToList();
         }
 
         // 回填 cache（仅用于 LLM 上下文拼接；历史回放仍走 Mongo API）
@@ -498,6 +540,24 @@ public class ChatService : IChatService
             : CacheKeys.ForChatHistory(session.SessionId);
 
         var history = await _cache.GetAsync<List<Message>>(key) ?? new List<Message>();
+
+        // 群组 reset marker：防止旧 cache（或并发写入）把 reset 之前的消息再次带回上下文
+        if (!string.IsNullOrEmpty(session.GroupId))
+        {
+            var ticks = await _cache.GetAsync<long?>(CacheKeys.ForGroupContextReset(session.GroupId));
+            if (ticks.HasValue && ticks.Value > 0)
+            {
+                try
+                {
+                    var resetAtUtc = new DateTime(ticks.Value, DateTimeKind.Utc);
+                    history = history.Where(m => m.Timestamp > resetAtUtc).ToList();
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+        }
         
         history.AddRange(messages);
         

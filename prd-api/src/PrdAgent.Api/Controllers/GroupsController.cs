@@ -673,6 +673,53 @@ public class GroupsController : ControllerBase
     }
 
     /// <summary>
+    /// 清理群组上下文（仅清理服务端 LLM 上下文缓存，不删除消息历史）
+    /// </summary>
+    /// <remarks>
+    /// 用途：用户主动“清理上下文”后，下一次提问不应携带历史对话进入 LLM 上下文拼接。
+    /// 注意：消息历史仍保留在 MongoDB（用于回放/审计/后台排障）。
+    /// </remarks>
+    [HttpPost("{groupId}/context/clear")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ClearGroupContext(string groupId)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        groupId = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 不能为空"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        var isMember = await _groupService.IsMemberAsync(groupId, userId);
+        if (!isMember)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+        }
+
+        // 关键：仅删除 chat history cache 并不足以“重置上下文”，因为 ChatService 会在 cache miss 时回源 Mongo 并回填。
+        // 因此这里写入一个 reset marker：后端在拼接 LLM 上下文时只取 reset 之后的消息。
+        var resetAtUtc = DateTime.UtcNow;
+        await _cache.SetAsync(CacheKeys.ForGroupContextReset(groupId), resetAtUtc.Ticks, expiry: TimeSpan.FromDays(30));
+        await _cache.RemoveAsync(CacheKeys.ForGroupChatHistory(groupId));
+        _logger.LogInformation("Group context cleared: groupId={GroupId}, userId={UserId}", groupId, userId);
+        return Ok(ApiResponse<object>.Ok(new object()));
+    }
+
+    /// <summary>
     /// 订阅群消息事件（SSE）：支持 afterSeq / Last-Event-ID 断线续传
     /// </summary>
     [HttpGet("{groupId}/messages/stream")]

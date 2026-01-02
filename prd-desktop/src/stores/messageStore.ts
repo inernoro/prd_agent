@@ -51,8 +51,49 @@ interface MessageState {
   setStreamingMessageCitations: (citations: DocCitation[]) => void;
   setStreamingPhase: (phase: StreamingPhase) => void;
   stopStreaming: () => void;
+  finishStreaming: () => void;
   clearCurrentContext: (sessionId: string | null) => void;
   clearMessages: () => void;
+}
+
+// -------- Streaming 平滑化（避免每个 chunk 都 setState 导致“跳”）--------
+// - 流式输出时，后端可能以很碎的 delta 推送；若每个 delta 都触发一次 set，会导致 UI 抖动（尤其 Markdown/布局）。
+// - 这里做“帧级缓冲 + 分片 flush”，让输出更丝滑，并带一点“吐字”视觉效果。
+let streamingPendingText = '';
+const streamingPendingByBlock = new Map<string, string>();
+let streamingFlushRaf: number | null = null;
+let streamingFlushTimeout: number | null = null;
+let streamingStopAfterDrain = false;
+
+const rafSchedule: (cb: FrameRequestCallback) => number =
+  typeof requestAnimationFrame === 'function'
+    ? (cb) => requestAnimationFrame(cb)
+    : (cb) => (setTimeout(() => cb(Date.now()), 16) as unknown as number);
+
+const rafCancel: (id: number) => void =
+  typeof cancelAnimationFrame === 'function'
+    ? (id) => cancelAnimationFrame(id)
+    : (id) => clearTimeout(id as unknown as any);
+
+function takeSmoothChunk(buf: string): string {
+  const s = String(buf || '');
+  if (s.length <= 32) return s;
+  // buffer 越大，每帧吐字越多，避免明显落后；buffer 越小则更细腻
+  const n = Math.max(24, Math.min(180, Math.ceil(s.length / 6)));
+  return s.slice(0, n);
+}
+
+function clearStreamingBuffers() {
+  streamingPendingText = '';
+  streamingPendingByBlock.clear();
+  if (streamingFlushRaf != null) {
+    rafCancel(streamingFlushRaf);
+    streamingFlushRaf = null;
+  }
+  if (streamingFlushTimeout != null) {
+    clearTimeout(streamingFlushTimeout as any);
+    streamingFlushTimeout = null;
+  }
 }
 
 function reviveMessage(m: any): Message {
@@ -74,6 +115,7 @@ function reviveMessage(m: any): Message {
     isDeleted: typeof m?.isDeleted === 'boolean' ? m.isDeleted : undefined,
     senderId: m?.senderId ?? undefined,
     senderName: m?.senderName ?? undefined,
+    senderRole: m?.senderRole ?? undefined,
   };
 }
 
@@ -82,16 +124,37 @@ function reviveMessages(list: any): Message[] {
   return list.map(reviveMessage).filter((x) => x.id);
 }
 
+function isLocalEphemeralMessage(m: Message): boolean {
+  const id = String((m as any)?.id ?? '').trim();
+  if (!id) return true;
+  // 本地占位：用户发送后立刻插入的“请求中 assistant”，只用于 UX，不应作为历史消息展示/持久化
+  if (id.startsWith('pending-assistant-')) return true;
+  // 本地系统提示：仅用于 UI 提示，不应持久化到聊天历史
+  if (id.startsWith('group-stream-error-')) return true;
+  if (id.startsWith('error-')) return true;
+  // 容错：极端情况下（崩溃/重启）可能遗留空 assistant 气泡；只要它明显不是服务端消息就清掉
+  const role = (m as any)?.role;
+  const content = String((m as any)?.content ?? '');
+  const hasSeq = typeof (m as any)?.groupSeq === 'number' && Number.isFinite((m as any).groupSeq) && (m as any).groupSeq > 0;
+  const hasBlocks = Array.isArray((m as any)?.blocks) && (m as any).blocks.length > 0;
+  const hasCitations = Array.isArray((m as any)?.citations) && (m as any).citations.length > 0;
+  if (role === 'Assistant' && !hasSeq && !hasBlocks && !hasCitations && !content.trim()) return true;
+  return false;
+}
+
 function maybeSortByGroupSeq(list: Message[]): Message[] {
   const hasSeq = list.some((m) => typeof (m as any)?.groupSeq === 'number');
   if (!hasSeq) return list;
-  // groupSeq 优先，其次 timestamp；缺失 groupSeq 的消息放到最前（历史兼容）
+  // groupSeq 优先，其次 timestamp；
+  // 注意：缺失 groupSeq 的消息如果放到最前，会导致 streaming assistant（尚未落库/尚未回填 groupSeq）
+  // 被挪到列表顶部，从而在“锁底视图”下看起来像“没有流式输出，结束才出现”。
+  // 这里改为：缺失 groupSeq 的消息放到最后，保证实时对话体验。
   return [...list].sort((a, b) => {
     const sa = typeof a.groupSeq === 'number' ? a.groupSeq : null;
     const sb = typeof b.groupSeq === 'number' ? b.groupSeq : null;
     if (sa == null && sb == null) return a.timestamp.getTime() - b.timestamp.getTime();
-    if (sa == null) return -1;
-    if (sb == null) return 1;
+    if (sa == null) return 1;
+    if (sb == null) return -1;
     if (sa !== sb) return sa - sb;
     return a.timestamp.getTime() - b.timestamp.getTime();
   });
@@ -528,14 +591,86 @@ export const useMessageStore = create<MessageState>()(
     };
   }),
 
-  appendToStreamingMessage: (content) => set((state) => {
-    if (!state.streamingMessageId) return state;
-    const next = state.messages.map((m) => {
-      if (m.id !== state.streamingMessageId) return m;
-      return { ...m, content: (m.content ?? '') + content };
-    });
-    return { messages: next, streamingPhase: state.streamingPhase === 'typing' ? state.streamingPhase : 'typing' };
-  }),
+  appendToStreamingMessage: (content) => {
+    const txt = String(content ?? '');
+    if (txt) streamingPendingText += txt;
+
+    const schedule = () => {
+      if (streamingFlushRaf != null) return;
+      streamingFlushRaf = rafSchedule(() => {
+        streamingFlushRaf = null;
+        const state = get();
+        if (!state.streamingMessageId) {
+          clearStreamingBuffers();
+          streamingStopAfterDrain = false;
+          return;
+        }
+
+        const msgChunk = takeSmoothChunk(streamingPendingText);
+        streamingPendingText = streamingPendingText.slice(msgChunk.length);
+
+        const blockChunks: Array<{ id: string; chunk: string }> = [];
+        for (const [bid, buf] of streamingPendingByBlock.entries()) {
+          const c = takeSmoothChunk(buf);
+          if (!c) continue;
+          blockChunks.push({ id: bid, chunk: c });
+          const rest = buf.slice(c.length);
+          if (rest) streamingPendingByBlock.set(bid, rest);
+          else streamingPendingByBlock.delete(bid);
+        }
+
+        if (msgChunk || blockChunks.length > 0) {
+          set((s) => {
+            if (!s.streamingMessageId) return s as any;
+            const next = s.messages.map((m) => {
+              if (m.id !== s.streamingMessageId) return m;
+              let nextContent = (m.content ?? '') + (msgChunk ?? '');
+              if (blockChunks.length > 0) {
+                const blocks = (m.blocks ?? []) as MessageBlock[];
+                const nextBlocks = [...blocks];
+                for (const bc of blockChunks) {
+                  const idx = nextBlocks.findIndex((b) => b.id === bc.id);
+                  if (idx === -1) {
+                    // 容错：没收到 blockStart 也能显示
+                    const inferred: MessageBlock = { id: bc.id, kind: 'paragraph', content: bc.chunk, isComplete: false };
+                    nextBlocks.push(inferred);
+                  } else {
+                    nextBlocks[idx] = { ...nextBlocks[idx], content: (nextBlocks[idx].content ?? '') + bc.chunk };
+                  }
+                  nextContent += bc.chunk;
+                }
+                return { ...m, content: nextContent, blocks: nextBlocks };
+              }
+              return { ...m, content: nextContent };
+            });
+            return { messages: next, streamingPhase: s.streamingPhase === 'typing' ? s.streamingPhase : 'typing' } as any;
+          });
+        }
+
+        // 若收到 done 后要求“优雅结束”：等缓冲吐完再 stop（避免最后一大坨瞬间刷出来）
+        if (streamingStopAfterDrain && !streamingPendingText && streamingPendingByBlock.size === 0) {
+          streamingStopAfterDrain = false;
+          clearStreamingBuffers();
+          set({ isStreaming: false, streamingMessageId: null, streamingPhase: null });
+          return;
+        }
+
+        if (streamingPendingText || streamingPendingByBlock.size > 0) schedule();
+      });
+    };
+
+    // 即便 txt 为空（例如 block delta 调度），也允许 schedule 触发 flush
+    if (txt || streamingPendingByBlock.size > 0) {
+      schedule();
+      // 双保险：极端情况下 rAF 可能被 WebView 节流，这里再挂一个 50ms 的兜底 tick
+      if (streamingFlushTimeout == null) {
+        streamingFlushTimeout = setTimeout(() => {
+          streamingFlushTimeout = null;
+          if (streamingPendingText || streamingPendingByBlock.size > 0) schedule();
+        }, 50) as any;
+      }
+    }
+  },
 
   startStreamingBlock: (block) => set((state) => {
     if (!state.streamingMessageId) return state;
@@ -560,23 +695,15 @@ export const useMessageStore = create<MessageState>()(
     return { messages: next };
   }),
 
-  appendToStreamingBlock: (blockId, content) => set((state) => {
-    if (!state.streamingMessageId) return state;
-    const next = state.messages.map((m) => {
-      if (m.id !== state.streamingMessageId) return m;
-      const blocks = (m.blocks ?? []) as MessageBlock[];
-      const idx = blocks.findIndex((b) => b.id === blockId);
-      if (idx === -1) {
-        // 容错：没收到 blockStart 也能显示
-        const inferred: MessageBlock = { id: blockId, kind: 'paragraph', content: content ?? '', isComplete: false };
-        return { ...m, content: (m.content ?? '') + (content ?? ''), blocks: [...blocks, inferred] };
-      }
-      const nextBlocks = [...blocks];
-      nextBlocks[idx] = { ...nextBlocks[idx], content: (nextBlocks[idx].content ?? '') + (content ?? '') };
-      return { ...m, content: (m.content ?? '') + (content ?? ''), blocks: nextBlocks };
-    });
-    return { messages: next, streamingPhase: state.streamingPhase === 'typing' ? state.streamingPhase : 'typing' };
-  }),
+  appendToStreamingBlock: (blockId, content) => {
+    const bid = String(blockId || '').trim();
+    const txt2 = String(content ?? '');
+    if (!bid || !txt2) return;
+    const prev = streamingPendingByBlock.get(bid) ?? '';
+    streamingPendingByBlock.set(bid, prev + txt2);
+    // 触发一次 flush（复用 appendToStreamingMessage 的调度器）
+    get().appendToStreamingMessage('');
+  },
 
   endStreamingBlock: (blockId) => set((state) => {
     if (!state.streamingMessageId) return state;
@@ -616,7 +743,75 @@ export const useMessageStore = create<MessageState>()(
     return { streamingPhase: phase };
   }),
   
-  stopStreaming: () => set({ isStreaming: false, streamingMessageId: null, streamingPhase: null }),
+  stopStreaming: () => {
+    streamingStopAfterDrain = false;
+    // 停止前把缓冲尽量写完（避免尾巴丢字）
+    const st = get();
+    if (st.streamingMessageId && (streamingPendingText || streamingPendingByBlock.size > 0)) {
+      const msgChunk = streamingPendingText;
+      const blockChunks: Array<{ id: string; chunk: string }> = [];
+      for (const [bid, buf] of streamingPendingByBlock.entries()) {
+        if (buf) blockChunks.push({ id: bid, chunk: buf });
+      }
+      clearStreamingBuffers();
+      if (msgChunk || blockChunks.length > 0) {
+        set((s) => {
+          if (!s.streamingMessageId) return s as any;
+          const next = s.messages.map((m) => {
+            if (m.id !== s.streamingMessageId) return m;
+            let nextContent = (m.content ?? '') + (msgChunk ?? '');
+            if (blockChunks.length > 0) {
+              const blocks = (m.blocks ?? []) as MessageBlock[];
+              const nextBlocks = [...blocks];
+              for (const bc of blockChunks) {
+                const idx = nextBlocks.findIndex((b) => b.id === bc.id);
+                if (idx === -1) {
+                  nextBlocks.push({ id: bc.id, kind: 'paragraph', content: bc.chunk, isComplete: false });
+                } else {
+                  nextBlocks[idx] = { ...nextBlocks[idx], content: (nextBlocks[idx].content ?? '') + bc.chunk };
+                }
+                nextContent += bc.chunk;
+              }
+              return { ...m, content: nextContent, blocks: nextBlocks };
+            }
+            return { ...m, content: nextContent };
+          });
+          return { messages: next } as any;
+        });
+      }
+    } else {
+      clearStreamingBuffers();
+    }
+    set({ isStreaming: false, streamingMessageId: null, streamingPhase: null });
+  },
+
+  // done 场景：让“吐字动画”把最后一段缓冲吐完后再结束，避免瞬间刷屏
+  finishStreaming: () => {
+    const st = get();
+    if (!st.streamingMessageId) {
+      streamingStopAfterDrain = false;
+      clearStreamingBuffers();
+      set({ isStreaming: false, streamingMessageId: null, streamingPhase: null });
+      return;
+    }
+    streamingStopAfterDrain = true;
+    // 触发 flush 调度（若当前无 pending，也会在下一次 delta 前保持 isStreaming=true）
+    get().appendToStreamingMessage('');
+    // 安全兜底：万一卡住（例如后端不再发 delta，但这里仍在 stopAfterDrain=true），最多 2s 后强制结束
+    setTimeout(() => {
+      const s2 = get();
+      if (!streamingStopAfterDrain) return;
+      if (!s2.isStreaming || !s2.streamingMessageId) {
+        streamingStopAfterDrain = false;
+        return;
+      }
+      if (!streamingPendingText && streamingPendingByBlock.size === 0) {
+        streamingStopAfterDrain = false;
+        clearStreamingBuffers();
+        set({ isStreaming: false, streamingMessageId: null, streamingPhase: null });
+      }
+    }, 2000);
+  },
 
   // 清理"当前对话上下文"（但保留 boundSessionId/boundGroupId），用于：
   // - 清空本地消息，不回填服务端历史（否则用户点"清理"会立刻又出现历史消息）
@@ -638,7 +833,9 @@ export const useMessageStore = create<MessageState>()(
     isSyncing: false,
   })),
   
-      clearMessages: () => set({
+      clearMessages: () => {
+        clearStreamingBuffers();
+        set({
         boundSessionId: null,
         boundGroupId: null,
         isPinnedToBottom: true,
@@ -653,7 +850,8 @@ export const useMessageStore = create<MessageState>()(
         localMinSeq: null,
         localMaxSeq: null,
         isSyncing: false,
-      }),
+        });
+      },
     }),
     {
       name: 'message-storage',
@@ -662,7 +860,8 @@ export const useMessageStore = create<MessageState>()(
         boundSessionId: s.boundSessionId,
         boundGroupId: s.boundGroupId,
         isPinnedToBottom: s.isPinnedToBottom,
-        messages: s.messages,
+        // 仅持久化“可作为历史”的消息：过滤本地占位/空气泡，避免重启后出现与后端不一致
+        messages: (s.messages || []).filter((m) => !isLocalEphemeralMessage(m)),
         localMinSeq: s.localMinSeq,
         localMaxSeq: s.localMaxSeq,
       }),
@@ -673,15 +872,16 @@ export const useMessageStore = create<MessageState>()(
           ...p,
         };
         const revived = reviveMessages(p.messages);
+        const cleaned = revived.filter((m) => !isLocalEphemeralMessage(m));
         // 刷新/重启后：对持久化消息做一次稳定纠序
-        next.messages = maybeSortByGroupSeq(revived);
+        next.messages = maybeSortByGroupSeq(cleaned);
         // 重建 seq 边界（以实际消息为准，防止脏数据）
-        const { minSeq, maxSeq } = computeSeqBounds(revived);
+        const { minSeq, maxSeq } = computeSeqBounds(cleaned);
         next.localMinSeq = minSeq;
         next.localMaxSeq = maxSeq;
         // 非持久化字段重置
         next.isLoadingOlder = false;
-        next.hasMoreOlder = revived.length > 0;
+        next.hasMoreOlder = cleaned.length > 0;
         next.pendingAssistantId = null;
         next.isSyncing = false;
         return next as MessageState;

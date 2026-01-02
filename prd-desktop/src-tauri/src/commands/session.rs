@@ -52,6 +52,12 @@ impl StreamCancelState {
     }
 }
 
+// debug instrumentation cleanup:
+// - keep a no-op stub to avoid build break if any stray calls remain
+// - does NOT write logs / emit anything
+#[allow(dead_code)]
+fn agent_log(_hypothesis_id: &str, _location: &str, _message: &str, _data: serde_json::Value) {}
+
 #[command]
 pub async fn cancel_stream(
     cancel: State<'_, StreamCancelState>,

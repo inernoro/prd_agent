@@ -395,9 +395,9 @@ export default function SettingsModal() {
       />
       
       {/* 模态框内容 */}
-      <div className="relative w-full max-w-md mx-4 bg-slate-800 rounded-2xl shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-md mx-4 ui-glass-modal max-h-[90vh] overflow-y-auto">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-slate-800 z-10">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-black/10 dark:border-white/10 sticky top-0 ui-glass-bar z-10">
           <h2 className="text-lg font-semibold text-white">设置</h2>
           <button
             onClick={closeModal}
@@ -415,7 +415,7 @@ export default function SettingsModal() {
           <div className="space-y-3">
             <label className="block text-sm font-medium text-white/80">版本与更新</label>
 
-            <div className="p-3 bg-white/5 border border-white/10 rounded-lg">
+            <div className="p-3 ui-glass-panel">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-xs text-white/50">当前版本</div>
@@ -437,7 +437,7 @@ export default function SettingsModal() {
               )}
 
               {(updateStatus === 'available' || updateStatus === 'installing') && (
-                <div className="mt-3 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+                <div className="mt-3 p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-xs text-cyan-400">
@@ -464,7 +464,7 @@ export default function SettingsModal() {
               )}
 
               {updateStatus === 'error' && updateError && (
-                <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-200 text-xs whitespace-pre-wrap break-words">
+                <div className="mt-3 p-3 rounded-lg border border-red-500/25 bg-red-500/8 text-red-200 text-xs whitespace-pre-wrap break-words">
                   {updateError}
                 </div>
               )}
@@ -500,7 +500,7 @@ export default function SettingsModal() {
             </label>
             
             {/* 默认地址显示 */}
-            <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+            <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
               <div className="flex items-center gap-2 mb-1">
                 <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -538,7 +538,7 @@ export default function SettingsModal() {
                     setTestResult(null);
                   }}
                   placeholder="https://api.example.com"
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 transition-colors"
+                  className="w-full px-4 py-3 ui-control transition-colors"
                 />
               </div>
             )}
@@ -622,7 +622,7 @@ export default function SettingsModal() {
           
           {/* 错误提示 */}
           {error && (
-            <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+            <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-200 text-sm">
               {error}
             </div>
           )}
@@ -630,7 +630,7 @@ export default function SettingsModal() {
           {/* 关于我们 */}
           <div className="space-y-3 pt-2">
             <label className="block text-sm font-medium text-white/80">关于我们</label>
-            <div className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2">
+            <div className="p-3 ui-glass-panel space-y-2">
               <div className="text-xs text-white/50">项目主页</div>
               <div className="flex items-center justify-end gap-2">
                 <button
@@ -655,7 +655,7 @@ export default function SettingsModal() {
           {/* 本地缓存 */}
           <div className="space-y-3 pt-2">
             <label className="block text-sm font-medium text-white/80">本地缓存</label>
-            <div className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2">
+            <div className="p-3 ui-glass-panel space-y-2">
               <div className="text-xs text-white/50">清理本机缓存与对话记录</div>
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -676,7 +676,7 @@ export default function SettingsModal() {
               </div>
 
               {clearConfirmStep > 0 && (
-                <div className="mt-2 p-3 rounded-lg border border-red-500/30 bg-red-500/10">
+                <div className="mt-2 p-3 rounded-lg border border-red-500/25 bg-red-500/8">
                   <div className="text-xs text-red-100">
                     {clearConfirmStep === 1
                       ? '确认清理本机缓存？这会退出登录，并清空本机缓存与对话记录（不影响服务器端数据）。'
@@ -718,10 +718,10 @@ export default function SettingsModal() {
         </div>
         
         {/* 操作按钮 */}
-        <div className="flex gap-3 px-6 py-4 border-t border-white/10 sticky bottom-0 bg-slate-800">
+        <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 sticky bottom-0 ui-glass-bar">
           <button
             onClick={closeModal}
-            className="flex-1 py-2.5 bg-white/10 text-white/80 font-medium rounded-lg hover:bg-white/20 transition-colors"
+            className="flex-1 py-2.5 ui-control text-white/80 font-medium hover:bg-white/10 transition-colors"
           >
             取消
           </button>

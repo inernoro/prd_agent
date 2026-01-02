@@ -5,6 +5,7 @@ import { Badge } from '@/components/design/Badge';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   deleteAdminGroup,
+  deleteAdminGroupMessages,
   generateAdminGapSummary,
   getAdminGroupGaps,
   getAdminGroupMembers,
@@ -109,6 +110,10 @@ export default function GroupsPage() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [gaps, setGaps] = useState<GapRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [messagesTotal, setMessagesTotal] = useState(0);
+  const [messagesPage, setMessagesPage] = useState(1);
+  const [messagesLoadingMore, setMessagesLoadingMore] = useState(false);
+  const [messagesClearing, setMessagesClearing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
 
   const [llmDetailOpen, setLlmDetailOpen] = useState(false);
@@ -194,8 +199,11 @@ export default function GroupsPage() {
     }
 
     // messages
+    setMessagesPage(1);
+    setMessagesTotal(0);
     const msgRes = await getAdminGroupMessages(g.groupId, { page: 1, pageSize: 20 });
     if (msgRes.success) {
+      setMessagesTotal(msgRes.data.total ?? 0);
       setMessages(
         msgRes.data.items.map((m) => ({
           id: m.id,
@@ -662,6 +670,109 @@ export default function GroupsPage() {
                       .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; }
                       .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
                     `}</style>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        已加载 {messages.length} / {messagesTotal || messages.length} 条
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          disabled={!selected || actionBusy || messagesClearing}
+                          onClick={async () => {
+                            if (!selected) return;
+                            const ok = await systemDialog.confirm({
+                              title: '确认清空群聊天数据',
+                              message: `将删除群组「${selected.groupName}」的所有聊天消息（数据库 messages），且不可恢复。群组/成员/缺失不受影响。是否继续？`,
+                              tone: 'danger',
+                              confirmText: '清空',
+                              cancelText: '取消',
+                            });
+                            if (!ok) return;
+                            const ok2 = await systemDialog.confirm({
+                              title: '再次确认',
+                              message: '这会永久删除该群全部聊天消息，且不可恢复。是否继续？',
+                              tone: 'danger',
+                              confirmText: '确认清空',
+                              cancelText: '取消',
+                            });
+                            if (!ok2) return;
+                            setMessagesClearing(true);
+                            try {
+                              const res = await deleteAdminGroupMessages(selected.groupId);
+                              if (res.success) {
+                                setMessages([]);
+                                setMessagesTotal(0);
+                                setMessagesPage(1);
+                                // 刷新群组列表的 messageCount/lastMessageAt
+                                await load();
+                              } else {
+                                systemDialog.alert({
+                                  title: '清空失败',
+                                  message: res.error?.message || '未知错误',
+                                });
+                              }
+                            } finally {
+                              setMessagesClearing(false);
+                            }
+                          }}
+                          title="清空该群全部聊天消息（不可恢复）"
+                          aria-label="清空该群全部聊天消息"
+                        >
+                          {messagesClearing ? '清空中...' : '清空群消息'}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={
+                            !selected ||
+                            messagesLoadingMore ||
+                            messagesClearing ||
+                            (messagesTotal > 0 ? messages.length >= messagesTotal : false)
+                          }
+                          onClick={async () => {
+                            if (!selected) return;
+                            if (messagesLoadingMore) return;
+                            if (messagesClearing) return;
+                            // 若后端总数未知，则允许至少再拉一次；若总数已知，按总数判断是否还能拉
+                            if (messagesTotal > 0 && messages.length >= messagesTotal) return;
+                            const nextPage = (messagesPage || 1) + 1;
+                            setMessagesLoadingMore(true);
+                            try {
+                              const res = await getAdminGroupMessages(selected.groupId, { page: nextPage, pageSize: 20 });
+                              if (res.success) {
+                                setMessagesTotal(res.data.total ?? messagesTotal);
+                                setMessagesPage(nextPage);
+                                const mapped = res.data.items.map((m) => ({
+                                  id: m.id,
+                                  sessionId: m.sessionId,
+                                  role: m.role,
+                                  senderId: m.senderId ?? null,
+                                  senderName: (m as any).senderName ?? null,
+                                  senderRole: (m as any).senderRole ?? null,
+                                  content: m.content,
+                                  llmRequestId: m.llmRequestId ?? null,
+                                  timestamp: m.timestamp,
+                                  tokenUsage: m.tokenUsage ?? null,
+                                }));
+                                // 追加并按 id 去重（避免后端排序/分页边界变化导致重复）
+                                setMessages((prev) => {
+                                  const seen = new Set(prev.map((x) => x.id));
+                                  const appended = mapped.filter((x) => !seen.has(x.id));
+                                  return [...prev, ...appended];
+                                });
+                              }
+                            } finally {
+                              setMessagesLoadingMore(false);
+                            }
+                          }}
+                          title="加载更多消息（按时间倒序分页）"
+                          aria-label="加载更多消息"
+                        >
+                          {messagesLoadingMore ? '加载中...' : '加载更多'}
+                        </Button>
+                      </div>
+                    </div>
                     {messages.map((m) => (
                       (() => {
                         const isAi = m.role === 'Assistant';

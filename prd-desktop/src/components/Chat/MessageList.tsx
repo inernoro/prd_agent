@@ -4,6 +4,8 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useUserDirectoryStore } from '../../stores/userDirectoryStore';
+import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import type { Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import AsyncIconButton from '../ui/AsyncIconButton';
@@ -12,12 +14,8 @@ import WizardLoader from './WizardLoader';
 
 type MsgStoreState = ReturnType<typeof useMessageStore.getState>;
 
-const phaseText: Record<string, string> = {
-  requesting: '正在请求大模型…',
-  connected: '已连接，等待首包…',
-  receiving: '正在接收信息…',
-  typing: '开始输出…',
-};
+// 注意：阶段文案（如“正在接收信息…”）会造成“AI 回复未带头像/昵称”的割裂观感。
+// 这里改为：阶段仅用动画表达，避免在 UI 中出现多处状态文案。
 
 const roleZh: Record<string, string> = {
   ADMIN: '超级管理员',
@@ -50,12 +48,14 @@ function initials(name?: string | null): string {
 }
 
 function ThinkingIndicator({ label }: { label?: string }) {
+  // 不展示文字：仅展示动画；aria/title 仍会使用 WizardLoader 内部默认值
+  const safeLabel = (label || '').trim() || undefined;
   return (
-    <WizardLoader label={label || '处理中'} labelMode="below" size={92} />
+    <WizardLoader label={safeLabel} labelMode="overlay" size={92} />
   );
 }
 
-function formatTsMs(ts: unknown): string {
+function formatChatTime(ts: unknown): string {
   const d =
     ts instanceof Date
       ? ts
@@ -63,16 +63,58 @@ function formatTsMs(ts: unknown): string {
         ? new Date(ts)
         : null;
   if (!d || Number.isNaN(d.getTime())) return '';
-  const pad = (n: number, w: number) => String(n).padStart(w, '0');
-  return `${d.getFullYear()}.${pad(d.getMonth() + 1, 2)}.${pad(d.getDate(), 2)} ${pad(d.getHours(), 2)}:${pad(d.getMinutes(), 2)}:${pad(d.getSeconds(), 2)}.${pad(d.getMilliseconds(), 3)}`;
+
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const now = new Date();
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const day0 = startOfDay(now);
+  const day1 = new Date(day0); day1.setDate(day1.getDate() - 1);
+  const day2 = new Date(day0); day2.setDate(day2.getDate() - 2);
+
+  const weekStart = (x: Date) => {
+    // 以周一为一周开始（更通用）
+    const s = startOfDay(x);
+    const dow = (s.getDay() + 6) % 7; // Mon=0 ... Sun=6
+    s.setDate(s.getDate() - dow);
+    return s;
+  };
+
+  const ampm = (x: Date) => (x.getHours() < 12 ? '上午' : '下午');
+  const hour12 = (x: Date) => {
+    const h = x.getHours();
+    if (h === 0) return 12;
+    if (h <= 12) return h;
+    return h - 12;
+  };
+  const hm = `${hour12(d)}:${pad2(d.getMinutes())}`;
+
+  if (d >= day0) return `${ampm(d)} ${hm}`;
+  if (d >= day1) return `昨天 ${ampm(d)} ${hm}`;
+  if (d >= day2) return `前天 ${ampm(d)} ${hm}`;
+
+  const ws = weekStart(now);
+  if (d >= ws) {
+    const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()] || '本周';
+    return `${wd} ${ampm(d)} ${hm}`;
+  }
+
+  return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
 }
 
-function formatDurationMs(ms: unknown): string {
+function formatDurationShort(ms: unknown): string {
   const n = typeof ms === 'number' ? ms : Number(ms);
   if (!Number.isFinite(n) || n < 0) return '';
-  // 统一用 ms，便于 debug；需要更友好展示再做 UI 调整
-  return `${Math.round(n)}ms`;
+  // 统一用秒（更短，不易撑破气泡）
+  const s = n / 1000;
+  return `${s.toFixed(s < 10 ? 1 : 0)}s`;
 }
+
+// function formatDurationMs(ms: unknown): string {
+//   const n = typeof ms === 'number' ? ms : Number(ms);
+//   if (!Number.isFinite(n) || n < 0) return '';
+//   // 统一用 ms，便于 debug；需要更友好展示再做 UI 调整
+//   return `${Math.round(n)}ms`;
+// }
 
 function unwrapMarkdownFences(text: string) {
   if (!text) return text;
@@ -186,6 +228,17 @@ function parseNavTitleFromHref(href: string) {
   return title ? title : null;
 }
 
+function isSystemNoticeMessage(message: Message): boolean {
+  // 系统提示（如 SSE 订阅失败）不作为“对话气泡”，而是居中提示条（参考图2）
+  const id = String(message?.id || '');
+  const content = String(message?.content || '');
+  if (id.startsWith('group-stream-error-')) return true;
+  // 兼容其它来源的失败提示
+  if (content.startsWith('群消息订阅失败：')) return true;
+  if (content.startsWith('请求失败：')) return true;
+  return false;
+}
+
 function MessageListInner() {
   const messages = useMessageStore((s: MsgStoreState) => s.messages);
   const isStreaming = useMessageStore((s: MsgStoreState) => s.isStreaming);
@@ -291,6 +344,8 @@ function MessageListInner() {
   }, [messages.length, pinnedWindowSize]);
 
   const pendingScrollToBottomSeqRef = useRef<number>(0);
+  const prevIsStreamingRef = useRef<boolean>(false);
+  const lastStreamingTransitionAtRef = useRef<number>(0);
 
   // 用户主动发送/提示词：强制跳到最新一页
   // 注意：这里不再做“同步滚动”（会触发 300ms 级别的同步布局/卡顿），只做状态更新与记录，
@@ -313,6 +368,15 @@ function MessageListInner() {
     const scrollTarget = pendingAssistantRef.current || bottomRef.current;
     scrollTarget?.scrollIntoView({ behavior: shouldInstant ? 'auto' : 'smooth', block: 'end' });
   }, [scrollToBottomSeq, messages.length, isStreaming, pendingAssistantId]);
+
+  // 记录 streaming 状态切换时间：用于抑制“done 后 smooth 再滚一次”的晃动
+  useEffect(() => {
+    const prev = prevIsStreamingRef.current;
+    if (prev !== isStreaming) {
+      prevIsStreamingRef.current = isStreaming;
+      lastStreamingTransitionAtRef.current = Date.now();
+    }
+  }, [isStreaming]);
 
   const shiftEarlier = useCallback(() => {
     const r = rangeRef.current;
@@ -424,10 +488,18 @@ function MessageListInner() {
     // 若用户“锁底”，则无条件滚到最新；否则沿用“接近底部才滚动”的策略
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isNearBottom = distanceToBottom < 140;
+    // 已在最底部（或极接近）：不要再触发 smooth scroll，避免出现“到 done 时又滚一次”的观感
+    if (distanceToBottom < 8) return;
     if (!isPinnedToBottom && !isNearBottom) return;
 
-    // 流式期间使用 auto，避免高频 smooth scroll 导致主线程卡顿
-    bottomRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
+    // 经验：done 时 content 高度会“最后抖一次”，如果此时用 smooth，会出现“到结尾又滚一遍”的晃动
+    // 策略：
+    // - streaming 期间始终 auto
+    // - streaming 刚结束后的 1.2s 内也用 auto（避免 smooth 二次滚动）
+    // - 其余场景：仅在用户接近底部时允许 smooth（提供轻微过渡）
+    const sinceFlip = Date.now() - (lastStreamingTransitionAtRef.current || 0);
+    const shouldAuto = isStreaming || sinceFlip < 1200;
+    bottomRef.current?.scrollIntoView({ behavior: shouldAuto ? 'auto' : 'smooth' });
   }, [messages, isStreaming, streamingMessageId, isPinnedToBottom]);
 
   // 重挂载（例如从预览页返回）时：如果用户此前锁底，则直接滚到最新
@@ -457,7 +529,6 @@ function MessageListInner() {
     () => messages.slice(effectiveRange.start, effectiveRange.end),
     [messages, effectiveRange.start, effectiveRange.end]
   );
-
 
   // 观察顶部/底部哨兵：窗口化滑动（不依赖第三方虚拟化库）
   useEffect(() => {
@@ -516,11 +587,20 @@ function MessageListInner() {
   }) {
     const currentUser = useAuthStore((s) => s.user ?? null);
     const currentUserId = currentUser?.userId ?? null;
-    const tsText = formatTsMs((message as any)?.timestamp);
+    const resolveUsername = useUserDirectoryStore((s) => s.resolveUsername);
+    const resolveRole = useUserDirectoryStore((s) => s.resolveRole);
+    const assistantFontScale = useUiPrefsStore((s) => s.assistantFontScale);
+    const assistantContentStyle = useMemo(() => {
+      // 仅对 Assistant 正文缩放（不影响气泡壳/头像/昵称行）
+      const n = Number(assistantFontScale);
+      const safe = Number.isFinite(n) && n > 0 ? n : 1;
+      return { fontSize: `${safe}em` } as const;
+    }, [assistantFontScale]);
+    const tsText = formatChatTime((message as any)?.timestamp);
     const ttftMs = (message as any)?.ttftMs;
     const totalMs = (message as any)?.totalMs;
-    const ttftAtText = formatTsMs((message as any)?.serverFirstTokenAtUtc);
-    // const doneAtText = formatTsMs((message as any)?.serverDoneAtUtc); // 保留：若未来需要展示 doneAt 再启用
+    const ttftAtText = formatChatTime((message as any)?.serverFirstTokenAtUtc);
+    // const doneAtText = formatChatTime((message as any)?.serverDoneAtUtc); // 保留：若未来需要展示 doneAt 再启用
     const doneMinusFirstTokenMs = (() => {
       const done = (message as any)?.serverDoneAtUtc;
       const first = (message as any)?.serverFirstTokenAtUtc;
@@ -566,9 +646,9 @@ function MessageListInner() {
           : '';
 
         const metaRightText = (() => {
-          if (message.role === 'User') return tsText || '';
+          if (message.role === 'User') return tsText || '刚刚';
           if (!firstTokenDisplay) return '';
-          const dur = typeof doneMinusFirstTokenMs === 'number' ? ` (${formatDurationMs(doneMinusFirstTokenMs)})` : '';
+          const dur = typeof doneMinusFirstTokenMs === 'number' ? ` · ${formatDurationShort(doneMinusFirstTokenMs)}` : '';
           return `${firstTokenDisplay}${dur}`;
         })();
 
@@ -577,7 +657,9 @@ function MessageListInner() {
         const senderDisplayName = (() => {
           if (message.role === 'Assistant') return 'PRD Agent';
           if (isMine) return (currentUser?.displayName || (currentUser as any)?.username || '我') as string;
-          return String(message.senderName || message.senderId || '用户');
+          // 优先显示 username（由 get_group_members 拉取一次后缓存）
+          const fromDir = resolveUsername(message.senderId);
+          return String(fromDir || message.senderName || message.senderId || '用户');
         })();
 
         const badgeText = (() => {
@@ -585,7 +667,7 @@ function MessageListInner() {
             const vr = String(message.viewRole || '').trim();
             return vr ? (roleZh[vr] || vr) : '';
           }
-          const sr = String((message as any).senderRole || '').trim();
+          const sr = String((message as any).senderRole || resolveRole(message.senderId) || '').trim();
           return sr ? (roleZh[sr] || sr) : '';
         })();
 
@@ -613,8 +695,11 @@ function MessageListInner() {
 
             <div className="min-w-0 max-w-[80%]">
               {/* 名字 + 角色 */}
-              <div className={`mb-1 flex items-center gap-2 ${isMine ? 'justify-end' : 'justify-start'} select-none`}>
-                <span className="text-[12px] leading-5 text-white/70">
+              <div className={`mb-1 flex items-center gap-2 ${isMine ? 'justify-end' : 'justify-start'} select-none min-w-0`}>
+                <span
+                  className="text-[12px] leading-5 text-white/70 max-w-[260px] truncate"
+                  title={senderDisplayName}
+                >
                   {senderDisplayName}
                 </span>
                 {badgeText ? (
@@ -628,18 +713,27 @@ function MessageListInner() {
                 className="relative group/message"
               >
               <div
-                className={`${showMeta ? 'relative px-4 pt-3 pb-7' : 'p-4'} rounded-2xl ${
+                className={`${showMeta ? 'relative px-4 pt-3 pb-6' : 'p-4'} rounded-2xl ${
                   message.role === 'User'
                     ? (isMine
                       ? 'bg-primary-500 text-white rounded-br-md shadow-sm'
                       : 'bg-surface-light/85 dark:bg-surface-dark/75 border border-border rounded-bl-md shadow-sm')
                     : isError
                       ? 'bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 rounded-bl-md'
-                      : 'bg-surface-light/85 dark:bg-surface-dark/75 border border-border rounded-bl-md shadow-sm'
+                      : 'bg-surface-light/85 dark:bg-surface-dark/75 ring-1 ring-black/5 dark:ring-white/10 rounded-bl-md shadow-sm'
                 }`}
               >
               {message.role === 'User' ? (
-                <p className={`whitespace-pre-wrap ${isMine ? '' : 'text-text-primary'}`}>{message.content}</p>
+                <p
+                  className={`whitespace-pre-wrap ${isMine ? '' : 'text-text-primary'}`}
+                  style={{
+                    // 当输出 ASCII 表格（依赖空格对齐）时，必须用等宽字体，否则右侧会错乱
+                    fontFamily: 'var(--font-mono)',
+                    fontVariantLigatures: 'none',
+                  }}
+                >
+                  {message.content}
+                </p>
               ) : (
                 <div>
             {showThinking ? (
@@ -651,6 +745,7 @@ function MessageListInner() {
                 {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
                   // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
               !isMessageStreaming ? (
+                    <div style={assistantContentStyle}>
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
                       content={renderedAssistantContent}
@@ -722,8 +817,9 @@ function MessageListInner() {
                         return true;
                       }}
                     />
+                    </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2" style={assistantContentStyle}>
                       {message.blocks.map((b: MessageBlock) => (
                         <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
                           {b.kind === 'codeBlock' ? (
@@ -751,10 +847,11 @@ function MessageListInner() {
                 ) : (
                   // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
               isMessageStreaming ? (
-                    <div>
+                    <div style={assistantContentStyle}>
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     </div>
                   ) : (
+                    <div style={assistantContentStyle}>
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
                       content={renderedAssistantContent}
@@ -826,6 +923,7 @@ function MessageListInner() {
                         return true;
                       }}
                     />
+                    </div>
                   )
                 )}
               </div>
@@ -835,7 +933,7 @@ function MessageListInner() {
               <div className="mt-3 pt-2">
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 ui-chip text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5"
                   title="查看本条回复的来源（右侧展开）"
                   onClick={() => {
                 if (!activeGroupId || !prdDocumentId) return;
@@ -886,14 +984,14 @@ function MessageListInner() {
             {/* 时间 + seq：贴近气泡底部（气泡内固定一行） */}
             {showMeta ? (
               <div
-                className={`absolute left-4 right-4 bottom-2 flex items-center justify-between text-[11px] leading-4 select-none ${
+                className={`absolute left-4 right-4 bottom-1 flex items-center justify-between gap-2 text-[10px] leading-4 select-none min-w-0 ${
                   message.role === 'User'
                     ? (isMine ? 'text-white/70' : 'text-text-secondary')
                     : 'text-text-secondary'
                 }`}
               >
-                <span className="opacity-60">{metaSeq}</span>
-                <span>{metaRightText}</span>
+                <span className="opacity-60 shrink-0">{metaSeq}</span>
+                <span className="min-w-0 flex-1 text-right truncate">{metaRightText}</span>
               </div>
             ) : null}
 
@@ -906,7 +1004,7 @@ function MessageListInner() {
 
               {message.role === 'User' && String(message.content || '').trim() ? (
                 <div className={`pointer-events-none absolute top-full ${isMine ? 'right-2' : 'left-2'} mt-1 z-20 opacity-0 group-hover/message:opacity-100 transition-opacity`}>
-                  <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg border border-border bg-background-light/80 dark:bg-background-dark/70 shadow-lg px-1 py-1">
+                  <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg ui-glass-panel px-1 py-1">
                     <AsyncIconButton
                       title="重发（在输入框中编辑后重新发送）"
                       onAction={async () => {
@@ -920,7 +1018,7 @@ function MessageListInner() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 21H7a2 2 0 01-2-2V8" />
                         </svg>
                       )}
-                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5"
                     />
                     <AsyncIconButton
                       title="复制消息"
@@ -932,7 +1030,7 @@ function MessageListInner() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
                         </svg>
                       )}
-                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5"
                     />
                   </div>
                 </div>
@@ -940,7 +1038,7 @@ function MessageListInner() {
 
               {message.role === 'Assistant' && String(message.content || '').trim() ? (
                 <div className="pointer-events-none absolute top-full right-2 mt-1 z-20 opacity-0 group-hover/message:opacity-100 transition-opacity">
-                  <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg border border-border bg-background-light/80 dark:bg-background-dark/70 shadow-lg px-1 py-1">
+                  <div className="pointer-events-auto inline-flex items-center gap-1 rounded-lg ui-glass-panel px-1 py-1">
                     <AsyncIconButton
                       title="复制回复（Markdown）"
                       onAction={async () => {
@@ -951,7 +1049,7 @@ function MessageListInner() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h6a2 2 0 002-2M8 5a2 2 0 012-2h6a2 2 0 012 2v11a2 2 0 01-2 2h-1" />
                         </svg>
                       )}
-                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5"
                     />
                   </div>
                 </div>
@@ -981,7 +1079,7 @@ function MessageListInner() {
 
       {isLoadingOlder ? (
         <div className="flex justify-center">
-          <div className="max-w-[80%] p-3 rounded-2xl bg-surface-light dark:bg-surface-dark border border-border">
+          <div className="max-w-[80%] p-3 rounded-2xl ui-glass-panel">
             <WizardLoader label="正在加载更早消息…" labelMode="below" size={72} />
           </div>
         </div>
@@ -1012,20 +1110,31 @@ function MessageListInner() {
       ) : null}
 
       {visible.map((message: Message) => {
+        // 系统提示已改为 overlay（SystemNoticeOverlay），避免“锁底”导致提示永远贴底
+        if (isSystemNoticeMessage(message)) return null;
+
         // 请求中占位 assistant：单独渲染，避免影响其它消息气泡的 memo 化
         if (pendingAssistantId && message.id === pendingAssistantId && message.role === 'Assistant' && !message.content) {
+          // 统一走 MessageBubble：让占位也带头像/昵称，动画作为气泡内容内联
           return (
-            <div key={message.id} ref={pendingAssistantRef} data-msg-id={message.id} className="flex justify-start">
-              <div className="max-w-[80%] p-4 rounded-2xl bg-surface-light dark:bg-surface-dark border border-border rounded-bl-md">
-                <WizardLoader label="正在请求大模型…" labelMode="below" size={92} />
-              </div>
+            <div key={message.id} ref={pendingAssistantRef} data-msg-id={message.id}>
+              <MessageBubble
+                message={message}
+                isMessageStreaming={false}
+                showThinking={true}
+                thinkingLabel=""
+                activeGroupId={activeGroupId}
+                prdDocumentId={prdDocument?.id ?? null}
+                openCitationDrawer={openCitationDrawer as any}
+                openWithCitations={openWithCitations as any}
+              />
             </div>
           );
         }
 
         const isMessageStreaming = isStreaming && streamingMessageId === message.id;
         const showThinking = isMessageStreaming && !!streamingPhase && streamingPhase !== 'typing';
-        const thinkingLabel = showThinking ? (phaseText[streamingPhase] || '处理中…') : '';
+        const thinkingLabel = ''; // 不展示阶段文案（仅动画）
 
         return (
           <MessageBubble

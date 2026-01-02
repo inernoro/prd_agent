@@ -5,6 +5,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
+import { assistantFontScaleBounds, useUiPrefsStore } from '../../stores/uiPrefsStore';
 import RoleSelector from '../Role/RoleSelector';
 
 interface HeaderProps {
@@ -15,16 +16,20 @@ interface HeaderProps {
 export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const { user, logout } = useAuthStore();
   const { groups } = useGroupListStore();
-  const { sessionId } = useSessionStore();
+  const { sessionId, activeGroupId } = useSessionStore();
   const clearContext = useSessionStore((s) => s.clearContext);
   const clearChatContext = useMessageStore((s) => s.clearCurrentContext);
+  const assistantFontScale = useUiPrefsStore((s) => s.assistantFontScale);
+  const increaseAssistantFont = useUiPrefsStore((s) => s.increaseAssistantFont);
+  const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
+  const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
 
   const canPreview = useMemo(() => {
     return groups.length > 0;
   }, [groups.length]);
 
   const handleClearCurrentContext = async () => {
-    const ok = window.confirm('确认清理当前对话上下文？这会清空本地对话记录（不影响服务器端数据），不会退出登录，也不会解绑 PRD。');
+    const ok = window.confirm('确认清理当前对话上下文？这会清空本地对话记录，并清理服务器端“LLM上下文缓存”（不删除消息历史），不会退出登录，也不会解绑 PRD。');
     if (!ok) return;
     const ok2 = window.confirm('再次确认：清理后当前会话上下文不可恢复。是否继续？');
     if (!ok2) return;
@@ -37,6 +42,16 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
     }
 
     try {
+      // 清理服务端上下文缓存（群组会话优先）
+      if (activeGroupId) {
+        const resp = await invoke<any>('clear_group_context', { groupId: activeGroupId });
+        const ok = Boolean(resp?.success);
+        const code = String(resp?.error?.code ?? '').trim();
+        if (!ok && code === 'UNAUTHORIZED') {
+          logout();
+          return;
+        }
+      }
       clearChatContext(sessionId);
       clearContext();
     } catch {
@@ -46,7 +61,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
 
   return (
     <>
-      <header className="h-14 px-4 flex items-center justify-between border-b border-border bg-surface-light dark:bg-surface-dark">
+      <header className="h-14 px-4 flex items-center justify-between border-b ui-glass-bar">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">P</span>
@@ -63,7 +78,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
 
           <button
             onClick={onToggleTheme}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
             title={isDark ? '切换到亮色模式' : '切换到暗色模式'}
           >
             {isDark ? (
@@ -95,13 +110,46 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                 <DropdownMenu.Content
                   sideOffset={6}
                   align="end"
-                  className="z-50 min-w-[120px] rounded-md border border-border bg-surface-light dark:bg-surface-dark shadow-lg p-1"
+                  className="z-50 min-w-[120px] rounded-md ui-glass-panel p-1"
                 >
                   <DropdownMenu.Item
-                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 outline-none text-text-secondary hover:text-text-primary"
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary"
                     onSelect={handleClearCurrentContext}
                   >
                     清理上下文
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />
+                  <DropdownMenu.Item
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={assistantFontScale <= assistantFontScaleBounds.min + 1e-6}
+                    onSelect={() => {
+                      decreaseAssistantFont();
+                    }}
+                  >
+                    缩小字体
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={assistantFontScale >= assistantFontScaleBounds.max - 1e-6}
+                    onSelect={() => {
+                      increaseAssistantFont();
+                    }}
+                  >
+                    放大字体
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={Math.abs(assistantFontScale - assistantFontScaleBounds.def) < 1e-6}
+                    onSelect={() => {
+                      resetAssistantFont();
+                    }}
+                  >
+                    恢复默认
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="px-2 py-1.5 text-xs rounded outline-none text-text-secondary select-none pointer-events-none opacity-70"
+                  >
+                    当前：{Math.round(assistantFontScale * 100)}%
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>

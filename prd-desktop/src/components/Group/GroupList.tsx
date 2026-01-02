@@ -194,10 +194,10 @@ export default function GroupList() {
             (e.currentTarget as HTMLDivElement).style.outline = 'none';
           }}
           onKeyDown={(e) => handleRowKeyDown(e, group)}
-          className={`group relative w-full px-3 h-12 rounded-lg text-left transition-colors cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30 focus-visible:ring-inset ${
+          className={`group relative w-full px-3 h-12 rounded-lg text-left transition-colors cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/25 focus-visible:ring-inset ${
             activeGroupId === group.groupId
-              ? 'bg-primary-50 dark:bg-white/5'
-              : 'hover:bg-gray-50 dark:hover:bg-white/5'
+              ? 'bg-primary-500/8 dark:bg-white/6'
+              : 'hover:bg-black/4 dark:hover:bg-white/5'
           }`}
           style={{ outline: 'none' }}
         >
@@ -233,7 +233,7 @@ export default function GroupList() {
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className={`h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors ${
+                      className={`h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${
                         activeGroupId === group.groupId ? 'visible' : 'invisible group-hover:visible group-focus-within:visible'
                       }`}
                       title="群设置"

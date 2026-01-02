@@ -35,8 +35,8 @@ export default function SystemErrorModal() {
     <div className="fixed inset-0 z-[999] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={close} />
 
-      <div className="relative z-10 w-full max-w-lg mx-4 bg-slate-800 rounded-2xl shadow-2xl border border-white/10 overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-slate-800">
+      <div className="relative z-10 w-full max-w-lg mx-4 ui-glass-modal overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
           <div className="min-w-0">
             <div className="text-lg font-semibold text-white truncate">{title || '系统错误'}</div>
           </div>

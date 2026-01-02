@@ -65,6 +65,7 @@ export type UpdateAdminGroupInput = {
 };
 export type UpdateAdminGroupContract = (groupId: string, input: UpdateAdminGroupInput) => Promise<ApiResponse<true>>;
 export type DeleteAdminGroupContract = (groupId: string) => Promise<ApiResponse<true>>;
+export type DeleteAdminGroupMessagesContract = (groupId: string) => Promise<ApiResponse<true>>;
 
 export type AdminGapStatus = 'pending' | 'resolved' | 'ignored';
 export type AdminGapItem = {

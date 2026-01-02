@@ -12,9 +12,9 @@ public interface IGroupMessageSeqService
 
     /// <summary>
     /// 一次性分配“用户+AI”一问一答所需的两个 seq：
-    /// - UserSeq 为奇数
-    /// - AssistantSeq 为偶数（= UserSeq + 1）
-    /// 要求该分配在并发场景下原子完成（避免跨用户交错导致奇偶错配）。
+    /// - UserSeq 先分配
+    /// - AssistantSeq 后分配（= UserSeq + 1）
+    /// 说明：这是历史兼容接口；新业务已改为分别调用 NextAsync 分配（User 到达服务器分配一次；AI 首字到达分配一次）。
     /// </summary>
     Task<(long UserSeq, long AssistantSeq)> AllocatePairAsync(string groupId, CancellationToken cancellationToken = default);
 }

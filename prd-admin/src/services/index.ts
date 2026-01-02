@@ -81,6 +81,7 @@ import type {
 } from '@/services/contracts/imageMaster';
 import type {
   DeleteAdminGroupContract,
+  DeleteAdminGroupMessagesContract,
   GenerateAdminGapSummaryContract,
   GetAdminGroupGapsContract,
   GetAdminGroupMembersContract,
@@ -172,6 +173,7 @@ import {
 } from '@/services/real/promptOverrides';
 import {
   deleteAdminGroupReal,
+  deleteAdminGroupMessagesReal,
   generateAdminGapSummaryReal,
   getAdminGroupGapsReal,
   getAdminGroupMembersReal,
@@ -218,6 +220,7 @@ export const removeAdminGroupMember: RemoveAdminGroupMemberContract = withAuth(r
 export const regenerateAdminGroupInvite: RegenerateAdminGroupInviteContract = withAuth(regenerateAdminGroupInviteReal);
 export const updateAdminGroup: UpdateAdminGroupContract = withAuth(updateAdminGroupReal);
 export const deleteAdminGroup: DeleteAdminGroupContract = withAuth(deleteAdminGroupReal);
+export const deleteAdminGroupMessages: DeleteAdminGroupMessagesContract = withAuth(deleteAdminGroupMessagesReal);
 
 // gaps 复用用户侧接口（/api/v1/groups/{groupId}/gaps），由后端做权限控制；后台仅聚合展示+状态变更
 export const getAdminGroupGaps: GetAdminGroupGapsContract = withAuth(getAdminGroupGapsReal);

@@ -18,6 +18,7 @@ import type {
   UpdateAdminGroupContract,
   UpdateAdminGroupInput,
   DeleteAdminGroupContract,
+  DeleteAdminGroupMessagesContract,
   GenerateAdminGapSummaryContract,
   SimulateMessageContract,
   SimulateMessageInput,
@@ -66,6 +67,15 @@ export const updateAdminGroupReal: UpdateAdminGroupContract = async (groupId: st
 
 export const deleteAdminGroupReal: DeleteAdminGroupContract = async (groupId: string) => {
   const res = await apiRequest<true>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}`, {
+    method: 'DELETE',
+    emptyResponseData: true,
+  });
+  if (!res.success) return res;
+  return ok(true);
+};
+
+export const deleteAdminGroupMessagesReal: DeleteAdminGroupMessagesContract = async (groupId: string) => {
+  const res = await apiRequest<true>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/messages`, {
     method: 'DELETE',
     emptyResponseData: true,
   });

@@ -47,14 +47,12 @@ export default function PrdSectionAskPanel(props: {
 
   const canAsk = useMemo(() => !!sessionId && !!headingId && !busy, [sessionId, headingId, busy]);
 
+  // 统一去掉阶段文案（尤其“正在接收信息…”），避免 UI 里出现多处状态字样；
+  // 面板里已有“正在生成…”提示即可。
   const phaseText = useMemo(() => {
-    if (!busy || !phase) return '';
-    if (phase === 'typing') return '开始输出…';
-    if (phase === 'receiving') return '正在接收信息…';
-    if (phase === 'connected') return '已连接，等待首包…';
-    if (phase === 'requesting') return '正在请求大模型…';
+    void phase;
     return '';
-  }, [busy, phase]);
+  }, [phase]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -202,14 +200,14 @@ export default function PrdSectionAskPanel(props: {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="h-10 px-4 rounded-full border border-border bg-surface-light dark:bg-surface-dark shadow-lg text-sm text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+          className="h-10 px-4 rounded-full ui-glass-panel text-sm text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
           title="提问本章（只基于当前章节内容）"
         >
           提问本章
         </button>
       ) : (
-        <div className="w-[560px] max-w-[calc(100vw-24px)] bg-surface-light dark:bg-surface-dark border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
+        <div className="w-[560px] max-w-[calc(100vw-24px)] ui-glass-modal overflow-hidden flex flex-col max-h-[80vh]">
+          <div className="px-4 py-3 border-b border-black/10 dark:border-white/10 ui-glass-bar flex items-center justify-between gap-2">
             <div className="min-w-0">
               <div className="text-xs text-text-secondary">当前章节</div>
               <div className="text-sm font-semibold truncate" title={headingTitle || headingId || ''}>
@@ -224,7 +222,7 @@ export default function PrdSectionAskPanel(props: {
                 <button
                   type="button"
                   onClick={() => onJumpToHeading?.(headingId)}
-                  className="h-8 px-2 rounded-md text-xs border border-border text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+                  className="h-8 px-2 rounded-md text-xs border border-black/10 dark:border-white/10 text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
                   title="跳转到正文该章节"
                 >
                   跳转到正文
@@ -233,7 +231,7 @@ export default function PrdSectionAskPanel(props: {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="h-8 px-2 rounded-md text-xs border border-border text-text-secondary hover:text-primary-500 hover:bg-gray-50 dark:hover:bg-white/10"
+                className="h-8 px-2 rounded-md text-xs border border-black/10 dark:border-white/10 text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
                 title="折叠"
               >
                 折叠
@@ -249,8 +247,8 @@ export default function PrdSectionAskPanel(props: {
               ) : null}
 
               {/* 当前回复 */}
-              <div className="rounded-xl border border-border bg-background-light/40 dark:bg-background-dark/30 overflow-hidden">
-                <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
+              <div className="rounded-xl overflow-hidden ui-glass-panel">
+                <div className="px-3 py-2 border-b border-black/10 dark:border-white/10 flex items-center justify-between gap-2">
                   <div className="min-w-0 flex items-center gap-2">
                     <div className="text-xs font-semibold text-text-secondary shrink-0">用户提问：</div>
                     <div
@@ -277,12 +275,12 @@ export default function PrdSectionAskPanel(props: {
             </div>
 
             {/* 下：输入框永远在底部 */}
-            <div className="border-t border-border p-4 bg-surface-light dark:bg-surface-dark">
+            <div className="border-t border-black/10 dark:border-white/10 p-4 ui-glass-bar">
               <textarea
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 disabled={!canAsk}
-                className="w-full min-h-[72px] px-3 py-2 bg-background-light dark:bg-background-dark border border-border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/40 text-sm"
+                className="w-full min-h-[72px] px-3 py-2 ui-control rounded-xl resize-none text-sm"
                 placeholder={canAsk ? '输入你想问本章的问题…' : (!sessionId ? '未绑定 PRD，无法提问' : '未识别到当前章节')}
               />
               <div className="mt-3 flex items-center justify-between gap-2">
@@ -299,7 +297,7 @@ export default function PrdSectionAskPanel(props: {
                         .catch((e: any) => console.error('Failed to clear preview ask history:', e));
                     }}
                     disabled={busy || !sessionId || !headingId || history.length === 0}
-                    className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                    className="px-3 py-2 text-sm rounded-xl border border-black/10 dark:border-white/10 text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
                     title="清空本章提问历史（仅清理本机落盘）"
                   >
                     清空历史
@@ -318,7 +316,7 @@ export default function PrdSectionAskPanel(props: {
                       persistedRef.current = false;
                     }}
                     disabled={busy}
-                    className="px-3 py-2 text-sm rounded-xl border border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-white/10 disabled:opacity-50"
+                    className="px-3 py-2 text-sm rounded-xl border border-black/10 dark:border-white/10 text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
                   >
                     清空
                   </button>

@@ -39,6 +39,8 @@ public static class CacheKeys
     public const string Document = "document:";
     public const string ChatHistory = "chat:history:";
     public const string GroupChatHistory = "chat:history:group:";
+    // 群组上下文重置点（用于 LLM 上下文拼接的截断，不影响消息历史）
+    public const string GroupContextReset = "chat:reset:group:";
     public const string UserSession = "user:session:";
 
     // Auth: refresh session 与 tokenVersion
@@ -49,6 +51,7 @@ public static class CacheKeys
     public static string ForDocument(string documentId) => $"{Document}{documentId}";
     public static string ForChatHistory(string sessionId) => $"{ChatHistory}{sessionId}";
     public static string ForGroupChatHistory(string groupId) => $"{GroupChatHistory}{groupId}";
+    public static string ForGroupContextReset(string groupId) => $"{GroupContextReset}{groupId}";
 
     public static string ForAuthRefresh(string userId, string clientType, string sessionKey)
         => $"{AuthRefresh}{userId}:{clientType}:{sessionKey}";

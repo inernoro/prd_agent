@@ -192,10 +192,10 @@ export default function DocumentUpload() {
       onPaste={handlePaste}
     >
       <div
-        className={`w-full max-w-2xl p-12 border-2 border-dashed rounded-2xl text-center transition-colors ${
+        className={`w-full max-w-2xl p-12 ui-glass-panel border-2 border-dashed text-center transition-colors ${
           isDragging 
-            ? 'border-primary-500 bg-primary-500/10' 
-            : 'border-border hover:border-primary-300'
+            ? 'border-primary-400/60 bg-primary-500/8' 
+            : 'border-black/10 dark:border-white/10 hover:border-primary-400/40'
         }`}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}

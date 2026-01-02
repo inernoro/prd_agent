@@ -29,7 +29,7 @@ export default function CitationChip({ citations, matchedIndices, onOpen }: Cita
     <span className="relative inline-flex align-middle group ml-2">
       <button
         type="button"
-        className="inline-flex items-center gap-1 max-w-[260px] rounded-full px-2 py-0.5 text-[11px] leading-5 border border-border bg-background-light/40 dark:bg-background-dark/30 text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-primary-400/40"
+        className="inline-flex items-center gap-1 max-w-[260px] rounded-full px-2 py-0.5 text-[11px] leading-5 ui-chip text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-primary-400/30"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -45,7 +45,7 @@ export default function CitationChip({ citations, matchedIndices, onOpen }: Cita
         className="pointer-events-none absolute z-30 left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block group-focus-within:block"
         aria-hidden="true"
       >
-        <span className="block w-[360px] max-w-[70vw] rounded-lg border border-border bg-surface-light/95 dark:bg-surface-dark/95 shadow-xl px-3 py-2 text-xs text-text-primary">
+        <span className="block w-[360px] max-w-[70vw] rounded-lg ui-glass-panel px-3 py-2 text-xs text-text-primary">
           <span className="block space-y-2">
             {items.map((idx) => {
               const c = citations[idx];
