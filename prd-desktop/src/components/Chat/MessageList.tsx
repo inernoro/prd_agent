@@ -745,9 +745,9 @@ function MessageListInner() {
                 {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
                   // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
               !isMessageStreaming ? (
-                    <div style={assistantContentStyle}>
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
+                      style={assistantContentStyle}
                       content={renderedAssistantContent}
                       citations={assistantCitations ?? []}
                       onOpenCitation={(idx) => {
@@ -817,11 +817,10 @@ function MessageListInner() {
                         return true;
                       }}
                     />
-                    </div>
                   ) : (
                     <div className="space-y-2" style={assistantContentStyle}>
                       {message.blocks.map((b: MessageBlock) => (
-                        <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none">
+                        <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none" style={assistantContentStyle}>
                           {b.kind === 'codeBlock' ? (
                             // 如果后端/模型标记为 markdown 代码块，用户通常期望“按 Markdown 渲染”而不是当代码展示
                             (b.language === 'markdown' || b.language === 'md') ? (
@@ -851,9 +850,9 @@ function MessageListInner() {
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     </div>
                   ) : (
-                    <div style={assistantContentStyle}>
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
+                      style={assistantContentStyle}
                       content={renderedAssistantContent}
                       citations={assistantCitations ?? []}
                       onOpenCitation={(idx) => {
@@ -923,7 +922,6 @@ function MessageListInner() {
                         return true;
                       }}
                     />
-                    </div>
                   )
                 )}
               </div>

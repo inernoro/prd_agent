@@ -1,4 +1,5 @@
 import { useMemo, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -78,6 +79,7 @@ function normalizeHeadingText(raw: string) {
 export type MarkdownRendererProps = {
   content: string;
   className?: string;
+  style?: CSSProperties;
   /**
    * 仅用于应用内“伪链接”（例如 citations），避免在桌面端触发外部跳转。
    * 返回 true 表示已消费该点击（不会继续默认行为）。
@@ -117,7 +119,7 @@ function scoreOverlap(a: Set<string>, b: Set<string>) {
   return score;
 }
 
-export default function MarkdownRenderer({ content, className, onInternalLinkClick, citations, onOpenCitation }: MarkdownRendererProps) {
+export default function MarkdownRenderer({ content, className, style, onInternalLinkClick, citations, onOpenCitation }: MarkdownRendererProps) {
   // slugger 需要在一次渲染周期内保持状态，用于处理重名标题的去重（a、a-1、a-2...）
   const slugger = useMemo(() => new GithubSlugger(), [content]);
   const citationList = useMemo(() => (Array.isArray(citations) ? citations.slice(0, 30) : []), [citations]);
@@ -163,7 +165,7 @@ export default function MarkdownRenderer({ content, className, onInternalLinkCli
   }, [slugger]);
 
   return (
-    <div className={className}>
+    <div className={className} style={style}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{

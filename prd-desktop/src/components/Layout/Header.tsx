@@ -120,7 +120,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />
                   <DropdownMenu.Item
-                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed"
                     disabled={assistantFontScale <= assistantFontScaleBounds.min + 1e-6}
                     onSelect={() => {
                       decreaseAssistantFont();
@@ -129,7 +129,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                     缩小字体
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed"
                     disabled={assistantFontScale >= assistantFontScaleBounds.max - 1e-6}
                     onSelect={() => {
                       increaseAssistantFont();
@@ -138,7 +138,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                     放大字体
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed"
                     disabled={Math.abs(assistantFontScale - assistantFontScaleBounds.def) < 1e-6}
                     onSelect={() => {
                       resetAssistantFont();

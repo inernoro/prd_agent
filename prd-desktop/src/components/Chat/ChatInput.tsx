@@ -320,7 +320,7 @@ export default function ChatInput() {
             }}
             onKeyDown={handleKeyDown}
             placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}
-            className="w-full min-w-0 px-3 py-2 ui-control rounded-xl resize-none text-sm"
+            className="w-full min-w-0 px-3 py-2 ui-control rounded-xl resize-none text-sm overflow-y-hidden"
             rows={1}
             disabled={isStreaming || !canChat}
           />
