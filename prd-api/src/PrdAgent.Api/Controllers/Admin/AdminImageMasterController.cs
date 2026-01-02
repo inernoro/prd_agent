@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -463,7 +465,11 @@ public class AdminImageMasterController : ControllerBase
         var session = await _db.ImageMasterSessions.Find(x => x.Id == sid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
         if (session == null) return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
 
-        var canvas = await _db.ImageMasterCanvases.Find(x => x.SessionId == sid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
+        var canvas = await _db.ImageMasterCanvases
+            .Find(x => x.SessionId == sid && x.OwnerUserId == adminId)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
         if (canvas == null)
         {
             return Ok(ApiResponse<object>.Ok(new { canvas = (object?)null }));
@@ -535,15 +541,37 @@ public class AdminImageMasterController : ControllerBase
             .SetOnInsert(x => x.SessionId, sid)
             .SetOnInsert(x => x.CreatedAt, now);
 
-        var res = await _db.ImageMasterCanvases.FindOneAndUpdateAsync<ImageMasterCanvas, ImageMasterCanvas>(
-            x => x.OwnerUserId == adminId && x.SessionId == sid,
-            update,
-            new FindOneAndUpdateOptions<ImageMasterCanvas, ImageMasterCanvas>
+        // 不依赖“唯一索引”：先取最新记录并按 Id 更新；不存在则插入
+        var existed = await _db.ImageMasterCanvases
+            .Find(x => x.OwnerUserId == adminId && x.SessionId == sid)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        ImageMasterCanvas? res;
+        if (existed != null)
+        {
+            await _db.ImageMasterCanvases.UpdateOneAsync(
+                x => x.Id == existed.Id,
+                update,
+                cancellationToken: ct);
+            res = await _db.ImageMasterCanvases.Find(x => x.Id == existed.Id).FirstOrDefaultAsync(ct);
+        }
+        else
+        {
+            var doc = new ImageMasterCanvas
             {
-                IsUpsert = true,
-                ReturnDocument = ReturnDocument.After
-            },
-            ct);
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerUserId = adminId,
+                SessionId = sid,
+                SchemaVersion = schemaVersion,
+                PayloadJson = payloadJson,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            await _db.ImageMasterCanvases.InsertOneAsync(doc, cancellationToken: ct);
+            res = doc;
+        }
 
         if (res == null)
         {
@@ -605,7 +633,11 @@ public class AdminImageMasterController : ControllerBase
             .Limit(assetLimit)
             .ToListAsync(ct);
 
-        var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+        var canvas = await _db.ImageMasterCanvases
+            .Find(x => x.WorkspaceId == wid)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
 
         // best-effort：更新 lastOpenedAt
         try
@@ -799,20 +831,39 @@ public class AdminImageMasterController : ControllerBase
                 Builders<ImageMasterWorkspace>.Update.Set(x => x.AssetsHash, assetsHash),
                 cancellationToken: ct);
         }
-        var update = Builders<ImageMasterCanvas>.Update
-            .Set(x => x.SchemaVersion, schemaVersion)
-            .Set(x => x.PayloadJson, payloadJson)
-            .Set(x => x.UpdatedAt, now)
-            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
-            .SetOnInsert(x => x.OwnerUserId, ws.OwnerUserId)
-            .SetOnInsert(x => x.WorkspaceId, wid)
-            .SetOnInsert(x => x.CreatedAt, now);
+        // 不依赖“唯一索引”：先取最新记录并按 Id 更新；不存在则插入
+        var existed = await _db.ImageMasterCanvases
+            .Find(x => x.WorkspaceId == wid)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
 
-        var res = await _db.ImageMasterCanvases.FindOneAndUpdateAsync<ImageMasterCanvas, ImageMasterCanvas>(
-            x => x.WorkspaceId == wid,
-            update,
-            new FindOneAndUpdateOptions<ImageMasterCanvas, ImageMasterCanvas> { IsUpsert = true, ReturnDocument = ReturnDocument.After },
-            ct);
+        ImageMasterCanvas? res;
+        if (existed != null)
+        {
+            var update = Builders<ImageMasterCanvas>.Update
+                .Set(x => x.SchemaVersion, schemaVersion)
+                .Set(x => x.PayloadJson, payloadJson)
+                .Set(x => x.UpdatedAt, now);
+
+            await _db.ImageMasterCanvases.UpdateOneAsync(x => x.Id == existed.Id, update, cancellationToken: ct);
+            res = await _db.ImageMasterCanvases.Find(x => x.Id == existed.Id).FirstOrDefaultAsync(ct);
+        }
+        else
+        {
+            var doc = new ImageMasterCanvas
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerUserId = ws.OwnerUserId,
+                WorkspaceId = wid,
+                SchemaVersion = schemaVersion,
+                PayloadJson = payloadJson,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            await _db.ImageMasterCanvases.InsertOneAsync(doc, cancellationToken: ct);
+            res = doc;
+        }
 
         if (res == null)
         {
@@ -908,19 +959,6 @@ public class AdminImageMasterController : ControllerBase
 
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
 
-        // workspace+sha unique：复用已存在记录（允许不同 owner 上传同一 sha，但同 workspace 只保留一条）
-        var existing = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.Sha256 == stored.Sha256).FirstOrDefaultAsync(ct);
-        if (existing != null)
-        {
-            var payloadExisting = new { asset = existing };
-            if (!string.IsNullOrWhiteSpace(idemKey))
-            {
-                var cacheKey = $"imageMaster:workspaces:assets:upload:{adminId}:{wid}:{idemKey}";
-                await _cache.SetAsync(cacheKey, payloadExisting, IdemExpiry);
-            }
-            return Ok(ApiResponse<object>.Ok(payloadExisting));
-        }
-
         var asset = new ImageAsset
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -941,14 +979,8 @@ public class AdminImageMasterController : ControllerBase
         {
             await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
         }
-        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        catch
         {
-            // 兜底：并发写入导致冲突；按 workspace+sha 回查并返回，避免前端看到 500
-            var again = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.Sha256 == stored.Sha256).FirstOrDefaultAsync(ct);
-            if (again != null)
-            {
-                return Ok(ApiResponse<object>.Ok(new { asset = again }));
-            }
             throw;
         }
         // 资产变化：更新 assetsHash/contentHash（不改封面）
@@ -981,6 +1013,245 @@ public class AdminImageMasterController : ControllerBase
             await _cache.SetAsync(cacheKey, payload, IdemExpiry);
         }
         return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>
+    /// ImageMaster：创建“可断线继续”的生图任务 runId。
+    /// - 后台执行：生图 -> 落 COS -> 写入 workspace 资产 -> 回填画布元素（TargetKey）
+    /// - 前端即使关闭页面，任务也会继续；下次打开 workspace 会从服务器恢复结果
+    /// </summary>
+    [HttpPost("workspaces/{id}/image-gen/runs")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateWorkspaceImageGenRun(string id, [FromBody] CreateWorkspaceImageGenRunRequest request, CancellationToken ct)
+    {
+        var traceId = HttpContext.TraceIdentifier;
+        try
+        {
+            var adminId = GetAdminId();
+            var wid = (id ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+            var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+            if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+            if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+            var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+            if (idemKey.Length > 200) idemKey = idemKey[..200];
+            if (!string.IsNullOrWhiteSpace(idemKey))
+            {
+                var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
+                if (existed != null) return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+            }
+
+            var prompt = (request?.Prompt ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(prompt)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
+
+            var targetKey = (request?.TargetKey ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(targetKey)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "targetKey 不能为空"));
+
+            // 模型：configModelId 或 platformId+modelId
+            var cfgModelId = (request?.ConfigModelId ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(cfgModelId)) cfgModelId = null;
+            var platformId = (request?.PlatformId ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
+            var modelId = (request?.ModelId ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
+            if (!string.IsNullOrWhiteSpace(cfgModelId))
+            {
+                var m = await _db.LLMModels.Find(x => x.Id == cfgModelId && x.Enabled).FirstOrDefaultAsync(ct);
+                if (m == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用"));
+                platformId = m.PlatformId;
+                modelId = m.ModelName;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
+                {
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "必须提供 configModelId，或提供 platformId + modelId"));
+                }
+            }
+
+            var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
+            var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "url" : request!.ResponseFormat!.Trim();
+
+            // 首帧引用：允许任意已落盘的 sha（不强制必须属于当前 workspace 的 ImageAssets 记录）
+            var initSha = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(initSha))
+            {
+                if (initSha.Length != 64 || !Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                {
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "initImageAssetSha256 格式不正确"));
+                }
+                var found = await _assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                if (found == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考图文件不存在或不可用"));
+            }
+            else
+            {
+                initSha = null;
+            }
+
+            // 关键：先把“占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
+            await UpsertWorkspaceCanvasPlaceholderAsync(
+                workspaceId: wid,
+                ownerUserId: ws.OwnerUserId,
+                targetKey: targetKey,
+                prompt: prompt,
+                x: request?.X,
+                y: request?.Y,
+                w: request?.W,
+                h: request?.H,
+                ct: ct);
+
+            var run = new ImageGenRun
+            {
+                OwnerAdminId = adminId,
+                Status = ImageGenRunStatus.Queued,
+                ConfigModelId = cfgModelId,
+                PlatformId = platformId,
+                ModelId = modelId,
+                Size = size,
+                ResponseFormat = responseFormat,
+                MaxConcurrency = 1,
+                Items = new List<ImageGenRunPlanItem> { new() { Prompt = prompt, Count = 1, Size = null } },
+                Total = 1,
+                Done = 0,
+                Failed = 0,
+                CancelRequested = false,
+                LastSeq = 0,
+                IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
+                CreatedAt = DateTime.UtcNow,
+                Purpose = "imageMaster",
+                WorkspaceId = wid,
+                TargetCanvasKey = targetKey,
+                InitImageAssetSha256 = initSha,
+                TargetX = request?.X,
+                TargetY = request?.Y,
+                TargetW = request?.W,
+                TargetH = request?.H,
+            };
+
+            try
+            {
+                await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: ct);
+            }
+            catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && !string.IsNullOrWhiteSpace(idemKey))
+            {
+                var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
+                if (existed != null) return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+                throw;
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { runId = run.Id }));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ImageMaster CreateWorkspaceImageGenRun failed: trace={TraceId}", traceId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"创建生图任务失败（traceId={traceId}）"));
+        }
+    }
+
+    private async Task UpsertWorkspaceCanvasPlaceholderAsync(
+        string workspaceId,
+        string ownerUserId,
+        string targetKey,
+        string prompt,
+        double? x,
+        double? y,
+        double? w,
+        double? h,
+        CancellationToken ct)
+    {
+        var canvas = await _db.ImageMasterCanvases
+            .Find(x2 => x2.WorkspaceId == workspaceId)
+            .SortByDescending(x2 => x2.UpdatedAt)
+            .ThenByDescending(x2 => x2.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        var payload = (canvas?.PayloadJson ?? string.Empty).Trim();
+
+        // 兼容历史脏数据：避免 payloadJson 非法导致 500（CreateRun 会先写占位）
+        JsonNode root;
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            root = new JsonObject { ["schemaVersion"] = 1, ["elements"] = new JsonArray() };
+        }
+        else
+        {
+            try
+            {
+                root = JsonNode.Parse(payload) ?? new JsonObject { ["schemaVersion"] = 1, ["elements"] = new JsonArray() };
+            }
+            catch
+            {
+                root = new JsonObject { ["schemaVersion"] = 1, ["elements"] = new JsonArray() };
+            }
+        }
+
+        // root 必须是 object；否则重置为默认结构
+        if (root is not JsonObject)
+        {
+            root = new JsonObject { ["schemaVersion"] = 1, ["elements"] = new JsonArray() };
+        }
+
+        var elements = root["elements"] as JsonArray ?? new JsonArray();
+        root["elements"] = elements;
+
+        JsonObject? target = null;
+        foreach (var n in elements)
+        {
+            var o = n as JsonObject;
+            if (o == null) continue;
+            var k = (o["key"]?.GetValue<string>() ?? string.Empty).Trim();
+            if (string.Equals(k, targetKey, StringComparison.Ordinal))
+            {
+                target = o;
+                break;
+            }
+        }
+        if (target == null)
+        {
+            target = new JsonObject { ["key"] = targetKey };
+            elements.Add(target);
+        }
+
+        target["kind"] = "generator";
+        target["status"] = "running";
+        target["prompt"] = prompt ?? "";
+        if (x.HasValue) target["x"] = x.Value;
+        if (y.HasValue) target["y"] = y.Value;
+        if (w.HasValue) target["w"] = w.Value;
+        if (h.HasValue) target["h"] = h.Value;
+
+        var json = root.ToJsonString(JsonOptions);
+        var now = DateTime.UtcNow;
+        if (canvas == null)
+        {
+            var doc = new ImageMasterCanvas
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                OwnerUserId = ownerUserId,
+                WorkspaceId = workspaceId,
+                SchemaVersion = 1,
+                PayloadJson = json,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            await _db.ImageMasterCanvases.InsertOneAsync(doc, cancellationToken: ct);
+        }
+        else
+        {
+            await _db.ImageMasterCanvases.UpdateOneAsync(
+                x2 => x2.Id == canvas.Id,
+                Builders<ImageMasterCanvas>.Update.Set(x2 => x2.PayloadJson, json).Set(x2 => x2.UpdatedAt, now),
+                cancellationToken: ct);
+        }
     }
 
     [HttpDelete("workspaces/{id}/assets/{assetId}")]
@@ -1186,19 +1457,6 @@ public class AdminImageMasterController : ControllerBase
         // 3) store file (sha de-dupe at storage level) and upsert meta
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
 
-        // owner+sha unique: try find existing
-        var existing = await _db.ImageAssets.Find(x => x.OwnerUserId == adminId && x.Sha256 == stored.Sha256).FirstOrDefaultAsync(ct);
-        if (existing != null)
-        {
-            var payloadExisting = new { asset = existing };
-            if (!string.IsNullOrWhiteSpace(idemKey))
-            {
-                var cacheKey = $"imageMaster:assets:upload:{adminId}:{idemKey}";
-                await _cache.SetAsync(cacheKey, payloadExisting, IdemExpiry);
-            }
-            return Ok(ApiResponse<object>.Ok(payloadExisting));
-        }
-
         var asset = new ImageAsset
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -1349,6 +1607,24 @@ public class AdminImageMasterController : ControllerBase
         await stream.CopyToAsync(ms, ct);
         return (ms.ToArray(), mime);
     }
+}
+
+public class CreateWorkspaceImageGenRunRequest
+{
+    public string Prompt { get; set; } = string.Empty;
+    public string TargetKey { get; set; } = string.Empty;
+    public double? X { get; set; }
+    public double? Y { get; set; }
+    public double? W { get; set; }
+    public double? H { get; set; }
+
+    public string? ConfigModelId { get; set; }
+    public string? PlatformId { get; set; }
+    public string? ModelId { get; set; }
+    public string? Size { get; set; }
+    public string? ResponseFormat { get; set; } // url | b64_json
+
+    public string? InitImageAssetSha256 { get; set; }
 }
 
 public class CreateSessionRequest

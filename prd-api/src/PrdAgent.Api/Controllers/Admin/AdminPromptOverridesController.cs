@@ -7,6 +7,8 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -37,12 +39,20 @@ public class AdminPromptOverridesController : ControllerBase
     private static string BuildDefaultImageGenPlanPrompt()
         => ImageGenPlanPrompt.Build(ImageGenPlanDefaultMaxItems);
 
+    private static string Sha256Hex(string s)
+    {
+        var bytes = Encoding.UTF8.GetBytes(s ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
     [HttpGet("image-gen-plan")]
     public async Task<IActionResult> GetImageGenPlan(CancellationToken ct)
     {
         var adminId = GetAdminId();
         var doc = await _db.AdminPromptOverrides
             .Find(x => x.OwnerAdminId == adminId && x.Key == KeyImageGenPlan)
+            .SortByDescending(x => x.UpdatedAt)
             .FirstOrDefaultAsync(ct);
 
         var defaultPromptText = BuildDefaultImageGenPlanPrompt();
@@ -65,8 +75,10 @@ public class AdminPromptOverridesController : ControllerBase
         var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
+            // 幂等：不依赖唯一索引，按“最新一条”读取
             var cached = await _db.AdminIdempotencyRecords
                 .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_promptoverrides_put_imageGenPlan" && x.IdempotencyKey == idemKey)
+                .SortByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(ct);
             if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
             {
@@ -103,21 +115,19 @@ public class AdminPromptOverridesController : ControllerBase
             {
                 var rec = new AdminIdempotencyRecord
                 {
-                    Id = Guid.NewGuid().ToString("N"),
+                    // 以确定性 Id 防并发重复（仅依赖 _id 唯一）
+                    Id = Sha256Hex($"{adminId}|admin_promptoverrides_put_imageGenPlan|{idemKey}"),
                     OwnerAdminId = adminId,
                     Scope = "admin_promptoverrides_put_imageGenPlan",
                     IdempotencyKey = idemKey,
                     PayloadJson = JsonSerializer.Serialize(payload),
                     CreatedAt = DateTime.UtcNow
                 };
-                try
-                {
-                    await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
-                }
-                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-                {
-                    // ignore
-                }
+                await _db.AdminIdempotencyRecords.ReplaceOneAsync(
+                    x => x.Id == rec.Id,
+                    rec,
+                    new ReplaceOptions { IsUpsert = true },
+                    ct);
             }
 
             return Ok(ApiResponse<object>.Ok(payload));
@@ -129,15 +139,21 @@ public class AdminPromptOverridesController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
-        var filter = Builders<AdminPromptOverride>.Filter.Eq(x => x.OwnerAdminId, adminId)
-                     & Builders<AdminPromptOverride>.Filter.Eq(x => x.Key, KeyImageGenPlan);
-        var update = Builders<AdminPromptOverride>.Update
-            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
-            .Set(x => x.OwnerAdminId, adminId)
-            .Set(x => x.Key, KeyImageGenPlan)
-            .Set(x => x.PromptText, promptText)
-            .Set(x => x.UpdatedAt, now);
-        await _db.AdminPromptOverrides.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+        // 不依赖 unique：使用确定性 Id（owner+key）写入，避免并发插入重复记录
+        var overrideId = Sha256Hex($"{adminId}|{KeyImageGenPlan}");
+        var doc2 = new AdminPromptOverride
+        {
+            Id = overrideId,
+            OwnerAdminId = adminId,
+            Key = KeyImageGenPlan,
+            PromptText = promptText,
+            UpdatedAt = now
+        };
+        await _db.AdminPromptOverrides.ReplaceOneAsync(
+            x => x.Id == overrideId,
+            doc2,
+            new ReplaceOptions { IsUpsert = true },
+            ct);
 
         var defaultPrompt = BuildDefaultImageGenPlanPrompt();
         var payload2 = new
@@ -153,21 +169,18 @@ public class AdminPromptOverridesController : ControllerBase
         {
             var rec = new AdminIdempotencyRecord
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = Sha256Hex($"{adminId}|admin_promptoverrides_put_imageGenPlan|{idemKey}"),
                 OwnerAdminId = adminId,
                 Scope = "admin_promptoverrides_put_imageGenPlan",
                 IdempotencyKey = idemKey,
                 PayloadJson = JsonSerializer.Serialize(payload2),
                 CreatedAt = DateTime.UtcNow
             };
-            try
-            {
-                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
-            }
-            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-            {
-                // ignore
-            }
+            await _db.AdminIdempotencyRecords.ReplaceOneAsync(
+                x => x.Id == rec.Id,
+                rec,
+                new ReplaceOptions { IsUpsert = true },
+                ct);
         }
 
         return Ok(ApiResponse<object>.Ok(payload2));
@@ -182,6 +195,7 @@ public class AdminPromptOverridesController : ControllerBase
         {
             var cached = await _db.AdminIdempotencyRecords
                 .Find(x => x.OwnerAdminId == adminId && x.Scope == "admin_promptoverrides_del_imageGenPlan" && x.IdempotencyKey == idemKey)
+                .SortByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(ct);
             if (cached != null && !string.IsNullOrWhiteSpace(cached.PayloadJson))
             {
@@ -214,21 +228,18 @@ public class AdminPromptOverridesController : ControllerBase
         {
             var rec = new AdminIdempotencyRecord
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = Sha256Hex($"{adminId}|admin_promptoverrides_del_imageGenPlan|{idemKey}"),
                 OwnerAdminId = adminId,
                 Scope = "admin_promptoverrides_del_imageGenPlan",
                 IdempotencyKey = idemKey,
                 PayloadJson = JsonSerializer.Serialize(payload),
                 CreatedAt = DateTime.UtcNow
             };
-            try
-            {
-                await _db.AdminIdempotencyRecords.InsertOneAsync(rec, cancellationToken: ct);
-            }
-            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-            {
-                // ignore
-            }
+            await _db.AdminIdempotencyRecords.ReplaceOneAsync(
+                x => x.Id == rec.Id,
+                rec,
+                new ReplaceOptions { IsUpsert = true },
+                ct);
         }
 
         return Ok(ApiResponse<object>.Ok(payload));

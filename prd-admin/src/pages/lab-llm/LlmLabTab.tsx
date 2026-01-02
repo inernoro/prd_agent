@@ -163,6 +163,8 @@ const ASPECT_OPTIONS: AspectOption[] = [
   { id: '9:16', label: '9:16', size: '720x1280', iconW: 14, iconH: 24 },
 ];
 
+type CopyToast = { id: string; text: string };
+
 type PromptSizeMeta = {
   size?: string;
   width?: number;
@@ -535,11 +537,24 @@ function base64ToUint8Array(b64: string) {
 async function downloadAllAsZip(items: { src: string; filename: string }[], zipName: string) {
   const zip = new JSZip();
   let okCount = 0;
+  const nameCounts: Record<string, number> = {};
+
+  const dedupeFilename = (finalName: string) => {
+    const key = finalName.toLowerCase();
+    const prev = nameCounts[key] ?? 0;
+    nameCounts[key] = prev + 1;
+    if (prev === 0) return finalName;
+    const dot = finalName.lastIndexOf('.');
+    const base = dot > 0 ? finalName.slice(0, dot) : finalName;
+    const ext = dot > 0 ? finalName.slice(dot) : '';
+    return `${base}_${prev + 1}${ext}`;
+  };
 
   for (const it of items) {
     const src = (it.src || '').trim();
     const name = filenameSafe(it.filename) || 'image';
-    const finalName = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ? name : `${name}.png`;
+    const finalName0 = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ? name : `${name}.png`;
+    const finalName = dedupeFilename(finalName0);
     if (!src) continue;
 
     try {
@@ -575,6 +590,30 @@ async function downloadAllAsZip(items: { src: string; filename: string }[], zipN
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+async function copyImageToClipboardFromSrc(src: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const s = String(src || '').trim();
+  if (!s) return { ok: false, reason: '无图片内容' };
+
+  const nav: any = navigator as any;
+  const ClipboardItemCtor = (window as any).ClipboardItem;
+  if (!nav?.clipboard?.write || !ClipboardItemCtor) {
+    return { ok: false, reason: '当前浏览器不支持复制图片（需要 ClipboardItem）' };
+  }
+
+  try {
+    const res = await fetch(s, { mode: 'cors' });
+    if (!res.ok) return { ok: false, reason: `读取图片失败：HTTP ${res.status}` };
+    const blob = await res.blob();
+    const mime = blob.type || 'image/png';
+    const item = new ClipboardItemCtor({ [mime]: blob });
+    await nav.clipboard.write([item]);
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: `复制失败：${msg || '未知原因'}` };
+  }
 }
 
 const defaultParams: ModelLabParams = {
@@ -969,6 +1008,20 @@ export default function LlmLabTab() {
     title: '图片预览',
     src: '',
   });
+
+  const [copyToast, setCopyToast] = useState<CopyToast | null>(null);
+  const copyToastTimerRef = useRef<number | null>(null);
+  const showCopyToast = useCallback((text: string) => {
+    const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    setCopyToast({ id, text });
+    if (copyToastTimerRef.current) window.clearTimeout(copyToastTimerRef.current);
+    copyToastTimerRef.current = window.setTimeout(() => setCopyToast(null), 3000);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (copyToastTimerRef.current) window.clearTimeout(copyToastTimerRef.current);
+    };
+  }, []);
 
   // 自动保存（防抖）：避免“加入实验后刷新丢失”
   const autoSaveTimerRef = useRef<number | null>(null);
@@ -2421,6 +2474,22 @@ export default function LlmLabTab() {
 
   return (
     <div className="h-full min-h-0">
+      {copyToast ? (
+        <div
+          key={copyToast.id}
+          className="fixed left-1/2 top-[88px] -translate-x-1/2 z-[9999] px-3 py-2 rounded-[12px] text-[13px] font-semibold"
+          style={{
+            background: 'rgba(0,0,0,0.72)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.92)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
+            pointerEvents: 'none',
+          }}
+        >
+          {copyToast.text}
+        </div>
+      ) : null}
       <div className="h-full min-h-0 grid grid-cols-1 gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
         {/* 左上：试验区 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
@@ -3797,11 +3866,16 @@ export default function LlmLabTab() {
                                 ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  void copyToClipboard(it.prompt);
+                                  if (!src) return;
+                                  void (async () => {
+                                    const r = await copyImageToClipboardFromSrc(src);
+                                    if (r.ok) showCopyToast('复制成功');
+                                    else showCopyToast(r.reason);
+                                  })();
                                 }}
-                                aria-label="复制提示词"
-                                title="复制提示词"
-                                disabled={!it.prompt}
+                                aria-label="复制图片"
+                                title="复制图片"
+                                disabled={it.status !== 'done' || !src}
                               >
                                 <Copy size={12} />
                                 复制
@@ -3838,10 +3912,10 @@ export default function LlmLabTab() {
                       };
 
                       const toolbar = (
-                        <div className="flex items-center justify-between gap-2 pb-2">
-                          <div className="flex items-center gap-2 min-w-0">
+                        <div className="pb-2">
+                          <div className="flex items-center justify-between gap-2">
                             <div
-                              className="px-2 py-1 rounded-[10px] text-xs font-semibold"
+                              className="px-2 py-1 rounded-[10px] text-xs font-semibold shrink-0"
                               style={{
                                 border: '1px solid rgba(250,204,21,0.55)',
                                 background: 'rgba(250,204,21,0.08)',
@@ -3850,31 +3924,27 @@ export default function LlmLabTab() {
                             >
                               布局预览：将生成 {wantN} × {modelCount} = {total} 张
                             </div>
-                            {hasAnyOutput ? (
-                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                已生成 {done.length}/{total} 张（点击图片可放大，右上角勾选用于下载选中）
-                              </div>
-                            ) : (
-                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                选择模型后会按“每模型 {wantN} 张”进行对比展示
-                              </div>
-                            )}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Button variant="secondary" size="xs" onClick={() => setAllSelected(true)} disabled={done.length === 0}>
+                                全选
+                              </Button>
+                              <Button variant="secondary" size="xs" onClick={() => setAllSelected(false)} disabled={selectedKeys.length === 0}>
+                                清空选择
+                              </Button>
+                              <Button variant="secondary" size="xs" onClick={downloadSelected} disabled={selectedKeys.length === 0}>
+                                <Download size={14} />
+                                下载选中
+                              </Button>
+                              <Button variant="primary" size="xs" onClick={downloadAll} disabled={done.length === 0}>
+                                <Download size={14} />
+                                下载全部
+                              </Button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Button variant="secondary" size="xs" onClick={() => setAllSelected(true)} disabled={done.length === 0}>
-                              全选
-                            </Button>
-                            <Button variant="secondary" size="xs" onClick={() => setAllSelected(false)} disabled={selectedKeys.length === 0}>
-                              清空选择
-                            </Button>
-                            <Button variant="secondary" size="xs" onClick={downloadSelected} disabled={selectedKeys.length === 0}>
-                              <Download size={14} />
-                              下载选中
-                            </Button>
-                            <Button variant="primary" size="xs" onClick={downloadAll} disabled={done.length === 0}>
-                              <Download size={14} />
-                              下载全部
-                            </Button>
+                          <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {hasAnyOutput
+                              ? `已生成 ${done.length}/${total} 张（点击图片可放大，右上角勾选用于下载选中）`
+                              : `选择模型后会按“每模型 ${wantN} 张”进行对比展示`}
                           </div>
                         </div>
                       );
@@ -4152,11 +4222,16 @@ export default function LlmLabTab() {
                                   ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    void copyToClipboard(it.prompt);
+                                    if (!src) return;
+                                    void (async () => {
+                                      const r = await copyImageToClipboardFromSrc(src);
+                                      if (r.ok) showCopyToast('复制成功');
+                                      else showCopyToast(r.reason);
+                                    })();
                                   }}
-                                  aria-label="复制提示词"
-                                  title="复制提示词"
-                                  disabled={!it.prompt}
+                                  aria-label="复制图片"
+                                  title="复制图片"
+                                  disabled={it.status !== 'done' || !src}
                                 >
                                   <Copy size={12} />
                                   复制
@@ -4496,12 +4571,20 @@ export default function LlmLabTab() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void copyToClipboard(imagePreviewDialog.src || '')}
+                onClick={() => {
+                  const src = String(imagePreviewDialog.src || '').trim();
+                  if (!src) return;
+                  void (async () => {
+                    const r = await copyImageToClipboardFromSrc(src);
+                    if (r.ok) showCopyToast('复制成功');
+                    else showCopyToast(r.reason);
+                  })();
+                }}
                 disabled={!imagePreviewDialog.src}
-                title="复制图片 dataURL（或原始 URL）"
+                title="复制图片"
               >
                 <Copy size={16} />
-                复制链接
+                复制图片
               </Button>
             </div>
 

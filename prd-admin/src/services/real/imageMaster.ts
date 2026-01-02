@@ -20,6 +20,7 @@ import type {
   DeleteImageMasterWorkspaceAssetContract,
   RefreshImageMasterWorkspaceCoverContract,
   UploadImageAssetContract,
+  CreateWorkspaceImageGenRunContract,
   ImageAsset,
   ImageMasterCanvas,
   ImageMasterMessage,
@@ -213,6 +214,17 @@ export const uploadImageMasterWorkspaceAssetReal: UploadImageMasterWorkspaceAsse
       width: input.width,
       height: input.height,
     },
+  });
+};
+
+export const createWorkspaceImageGenRunReal: CreateWorkspaceImageGenRunContract = async ({ id, input, idempotencyKey }) => {
+  const headers: Record<string, string> = {};
+  const idem = String(idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ runId: string }>(`/api/v1/admin/image-master/workspaces/${encodeURIComponent(id)}/image-gen/runs`, {
+    method: 'POST',
+    headers,
+    body: input,
   });
 };
 

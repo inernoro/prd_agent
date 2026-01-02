@@ -200,7 +200,8 @@ async function apiRequestInner<T>(
       text ||
       `HTTP ${res.status} ${res.statusText}`;
     if (maybeHtml) {
-      message = `HTTP ${res.status} ${res.statusText || 'Request Failed'}`;
+      // 代理/Nginx 的 HTML 错误页：避免把整段 HTML 塞进 UI；同时保留 path 便于定位
+      message = `HTTP ${res.status} ${res.statusText || 'Request Failed'} (${path})`;
     } else if (typeof message === 'string' && message.length > 1600) {
       message = `${message.slice(0, 1600)}…`;
     }

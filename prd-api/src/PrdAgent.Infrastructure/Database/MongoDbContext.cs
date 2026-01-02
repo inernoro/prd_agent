@@ -72,15 +72,32 @@ public class MongoDbContext
 
     private void CreateIndexes()
     {
+        static bool IsIndexConflict(MongoCommandException ex)
+            => ex.CodeName is "IndexOptionsConflict" or "IndexKeySpecsConflict" or "IndexAlreadyExists";
+
         // Users索引
-        Users.Indexes.CreateOne(new CreateIndexModel<User>(
-            Builders<User>.IndexKeys.Ascending(u => u.Username),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            Users.Indexes.CreateOne(new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Ascending(u => u.Username),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore：旧环境可能存在 unique 索引；按“业务控制”原则不再强制
+        }
 
         // Groups索引
-        Groups.Indexes.CreateOne(new CreateIndexModel<Group>(
-            Builders<Group>.IndexKeys.Ascending(g => g.InviteCode),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            Groups.Indexes.CreateOne(new CreateIndexModel<Group>(
+                Builders<Group>.IndexKeys.Ascending(g => g.InviteCode),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // Documents：Id 为 _id（内容 hash），天然唯一；额外加一个 CreatedAt 索引便于排序/排查
         Documents.Indexes.CreateOne(new CreateIndexModel<ParsedPrd>(
@@ -94,11 +111,18 @@ public class MongoDbContext
                 .Descending(x => x.CreatedAt)));
 
         // GroupMembers复合索引
-        GroupMembers.Indexes.CreateOne(new CreateIndexModel<GroupMember>(
-            Builders<GroupMember>.IndexKeys
-                .Ascending(m => m.GroupId)
-                .Ascending(m => m.UserId),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            GroupMembers.Indexes.CreateOne(new CreateIndexModel<GroupMember>(
+                Builders<GroupMember>.IndexKeys
+                    .Ascending(m => m.GroupId)
+                    .Ascending(m => m.UserId),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // Messages索引
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
@@ -111,17 +135,23 @@ public class MongoDbContext
             new CreateIndexOptions { Name = "idx_messages_reply_to" }));
         // groupId + groupSeq 唯一：用于群消息顺序键（SSE 断线续传/严格有序）。
         // 注意：历史/非群消息 groupSeq 可能为空；若不加 partial filter，Unique 会导致同群多个 null 冲突。
-        Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
-            Builders<Message>.IndexKeys
-                .Ascending(m => m.GroupId)
-                .Ascending(m => m.GroupSeq),
-            new CreateIndexOptions<Message>
-            {
-                Name = "uniq_messages_group_seq",
-                Unique = true,
-                // 仅对存在且为 long 的 groupSeq 建唯一约束；避免 null / 缺失字段冲突
-                PartialFilterExpression = new BsonDocument("GroupSeq", new BsonDocument("$type", "long"))
-            }));
+        try
+        {
+            Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
+                Builders<Message>.IndexKeys
+                    .Ascending(m => m.GroupId)
+                    .Ascending(m => m.GroupSeq),
+                new CreateIndexOptions<Message>
+                {
+                    Name = "uniq_messages_group_seq",
+                    // 仅对存在且为 long 的 groupSeq 建唯一约束；避免 null / 缺失字段冲突
+                    PartialFilterExpression = new BsonDocument("GroupSeq", new BsonDocument("$type", "long"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore：可能已存在 unique 版本
+        }
         // 用于按 sessionId + 时间游标分页（before）
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
             Builders<Message>.IndexKeys
@@ -134,14 +164,28 @@ public class MongoDbContext
             Builders<ContentGap>.IndexKeys.Ascending(g => g.GroupId)));
         
         // InviteCodes: 禁止用业务字段 Code 当 _id；统一使用 string Id(Guid) 作为 _id，因此需要对 Code 建唯一索引
-        InviteCodes.Indexes.CreateOne(new CreateIndexModel<InviteCode>(
-            Builders<InviteCode>.IndexKeys.Ascending(x => x.Code),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            InviteCodes.Indexes.CreateOne(new CreateIndexModel<InviteCode>(
+                Builders<InviteCode>.IndexKeys.Ascending(x => x.Code),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
         
         // LLMPlatforms索引
-        LLMPlatforms.Indexes.CreateOne(new CreateIndexModel<LLMPlatform>(
-            Builders<LLMPlatform>.IndexKeys.Ascending(p => p.Name),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            LLMPlatforms.Indexes.CreateOne(new CreateIndexModel<LLMPlatform>(
+                Builders<LLMPlatform>.IndexKeys.Ascending(p => p.Name),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
         
         // LLMModels索引
         LLMModels.Indexes.CreateOne(new CreateIndexModel<LLMModel>(
@@ -206,16 +250,30 @@ public class MongoDbContext
             Builders<ModelLabRunItem>.IndexKeys.Ascending(x => x.ModelId)));
 
         // ModelLabModelSets 索引（同一 Admin 下名称唯一）
-        ModelLabModelSets.Indexes.CreateOne(new CreateIndexModel<ModelLabModelSet>(
-            Builders<ModelLabModelSet>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.Name),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            ModelLabModelSets.Indexes.CreateOne(new CreateIndexModel<ModelLabModelSet>(
+                Builders<ModelLabModelSet>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.Name),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
         ModelLabModelSets.Indexes.CreateOne(new CreateIndexModel<ModelLabModelSet>(
             Builders<ModelLabModelSet>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
 
         // ModelLabGroups 索引（同一 Admin 下名称唯一）
-        ModelLabGroups.Indexes.CreateOne(new CreateIndexModel<ModelLabGroup>(
-            Builders<ModelLabGroup>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.Name),
-            new CreateIndexOptions { Unique = true }));
+        try
+        {
+            ModelLabGroups.Indexes.CreateOne(new CreateIndexModel<ModelLabGroup>(
+                Builders<ModelLabGroup>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.Name),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
         ModelLabGroups.Indexes.CreateOne(new CreateIndexModel<ModelLabGroup>(
             Builders<ModelLabGroup>.IndexKeys.Ascending(x => x.OwnerAdminId).Descending(x => x.UpdatedAt)));
 
@@ -237,32 +295,33 @@ public class MongoDbContext
         // ImageAssets（Workspace 场景）：按 workspace + createdAt；按 workspace + sha256 去重（仅对存在 workspaceId 的文档生效）
         ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
             Builders<ImageAsset>.IndexKeys.Ascending(x => x.WorkspaceId).Descending(x => x.CreatedAt)));
-        ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
-            Builders<ImageAsset>.IndexKeys.Ascending(x => x.WorkspaceId).Ascending(x => x.Sha256),
-            new CreateIndexOptions<ImageAsset>
-            {
-                Name = "uniq_image_assets_workspace_sha256",
-                Unique = true,
-                // 兼容旧 Mongo：partial index 不支持 $ne（会被解析成 $not/$eq 导致 createIndexes 失败）
-                // 约束由业务保证：workspaceId 必须是非空字符串；legacy 数据应清空（你已选择清库）。
-                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
-            }));
+        try
+        {
+            ImageAssets.Indexes.CreateOne(new CreateIndexModel<ImageAsset>(
+                Builders<ImageAsset>.IndexKeys.Ascending(x => x.WorkspaceId).Ascending(x => x.Sha256),
+                new CreateIndexOptions<ImageAsset>
+                {
+                    Name = "uniq_image_assets_workspace_sha256",
+                    // 兼容旧 Mongo：partial index 不支持 $ne（会被解析成 $not/$eq 导致 createIndexes 失败）
+                    // 约束由业务保证：workspaceId 必须是非空字符串；legacy 数据应清空（你已选择清库）。
+                    PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore：可能已存在 unique 版本
+        }
 
-        // ImageMasterCanvases：同一 owner + session 唯一；按 owner + updatedAt 排序
+        // ImageMasterCanvases：按 owner + session 查询（不做唯一约束，避免历史脏数据/字段缺失导致启动失败或写入冲突）
         ImageMasterCanvases.Indexes.CreateOne(new CreateIndexModel<ImageMasterCanvas>(
             Builders<ImageMasterCanvas>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.SessionId),
-            new CreateIndexOptions<ImageMasterCanvas> { Name = "uniq_image_master_canvases_owner_session", Unique = true }));
+            new CreateIndexOptions<ImageMasterCanvas> { Name = "idx_image_master_canvases_owner_session" }));
         ImageMasterCanvases.Indexes.CreateOne(new CreateIndexModel<ImageMasterCanvas>(
             Builders<ImageMasterCanvas>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt)));
-        // ImageMasterCanvases（Workspace 场景）：同一 workspace 唯一（仅对存在 workspaceId 的文档生效）
+        // ImageMasterCanvases（Workspace 场景）：按 workspaceId 查询（不做唯一约束）
         ImageMasterCanvases.Indexes.CreateOne(new CreateIndexModel<ImageMasterCanvas>(
             Builders<ImageMasterCanvas>.IndexKeys.Ascending(x => x.WorkspaceId),
-            new CreateIndexOptions<ImageMasterCanvas>
-            {
-                Name = "uniq_image_master_canvases_workspace",
-                Unique = true,
-                PartialFilterExpression = new BsonDocument("workspaceId", new BsonDocument("$type", "string"))
-            }));
+            new CreateIndexOptions<ImageMasterCanvas> { Name = "idx_image_master_canvases_workspace" }));
 
         // ImageMasterWorkspaces：按 owner + updatedAt；按 memberUserIds（multi-key）便于共享可见性查询
         ImageMasterWorkspaces.Indexes.CreateOne(new CreateIndexModel<ImageMasterWorkspace>(
@@ -272,30 +331,42 @@ public class MongoDbContext
 
         // ImageGenSizeCaps：为兼容更多 Mongo 版本，拆成两个 unique partial index，避免 partial filter 中出现 $not/$ne null
         // 1) modelId 唯一：仅对存在 ModelId 字段的文档生效（upsert 插入时未设置 ModelId 的字段将不存在）
-        ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
-            Builders<ImageGenSizeCaps>.IndexKeys.Ascending(x => x.ModelId),
-            new CreateIndexOptions<ImageGenSizeCaps>
-            {
-                Name = "uniq_image_gen_size_caps_modelId",
-                Unique = true,
-                PartialFilterExpression = new BsonDocument("ModelId", new BsonDocument("$exists", true))
-            }));
+        try
+        {
+            ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
+                Builders<ImageGenSizeCaps>.IndexKeys.Ascending(x => x.ModelId),
+                new CreateIndexOptions<ImageGenSizeCaps>
+                {
+                    Name = "uniq_image_gen_size_caps_modelId",
+                    PartialFilterExpression = new BsonDocument("ModelId", new BsonDocument("$exists", true))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // 2) platformId + modelId 唯一（字段名：ModelName）：仅对存在 PlatformId & ModelName 字段的文档生效
-        ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
-            Builders<ImageGenSizeCaps>.IndexKeys
-                .Ascending(x => x.PlatformId)
-                .Ascending(x => x.ModelName),
-            new CreateIndexOptions<ImageGenSizeCaps>
-            {
-                Name = "uniq_image_gen_size_caps_platformId_modelName",
-                Unique = true,
-                PartialFilterExpression = new BsonDocument
+        try
+        {
+            ImageGenSizeCaps.Indexes.CreateOne(new CreateIndexModel<ImageGenSizeCaps>(
+                Builders<ImageGenSizeCaps>.IndexKeys
+                    .Ascending(x => x.PlatformId)
+                    .Ascending(x => x.ModelName),
+                new CreateIndexOptions<ImageGenSizeCaps>
                 {
-                    { "PlatformId", new BsonDocument("$exists", true) },
-                    { "ModelName", new BsonDocument("$exists", true) }
-                }
-            }));
+                    Name = "uniq_image_gen_size_caps_platformId_modelName",
+                    PartialFilterExpression = new BsonDocument
+                    {
+                        { "PlatformId", new BsonDocument("$exists", true) },
+                        { "ModelName", new BsonDocument("$exists", true) }
+                    }
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // ImageGenRuns：按 owner + createdAt；worker 取队列时按 status + createdAt
         ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
@@ -303,29 +374,49 @@ public class MongoDbContext
         ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
             Builders<ImageGenRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt)));
         // 幂等键：同一 admin 下唯一（只对存在 IdempotencyKey 的文档生效）
-        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
-            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
-            new CreateIndexOptions<ImageGenRun>
-            {
-                Name = "uniq_image_gen_runs_owner_idem",
-                Unique = true,
-                // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
-                PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
-            }));
+        try
+        {
+            ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+                Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
+                new CreateIndexOptions<ImageGenRun>
+                {
+                    Name = "uniq_image_gen_runs_owner_idem",
+                    // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
+                    PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // ImageGenRunItems：按 runId + (itemIndex,imageIndex) 唯一；按 owner + runId 查询
         ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
             Builders<ImageGenRunItem>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.RunId)));
-        ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
-            Builders<ImageGenRunItem>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.ItemIndex).Ascending(x => x.ImageIndex),
-            new CreateIndexOptions<ImageGenRunItem> { Name = "uniq_image_gen_run_items_run_pos", Unique = true }));
+        try
+        {
+            ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
+                Builders<ImageGenRunItem>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.ItemIndex).Ascending(x => x.ImageIndex),
+                new CreateIndexOptions<ImageGenRunItem> { Name = "uniq_image_gen_run_items_run_pos" }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // ImageGenRunEvents：按 runId + seq；用于 SSE afterSeq 续传
         ImageGenRunEvents.Indexes.CreateOne(new CreateIndexModel<ImageGenRunEvent>(
             Builders<ImageGenRunEvent>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.RunId)));
-        ImageGenRunEvents.Indexes.CreateOne(new CreateIndexModel<ImageGenRunEvent>(
-            Builders<ImageGenRunEvent>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.Seq),
-            new CreateIndexOptions<ImageGenRunEvent> { Name = "uniq_image_gen_run_events_run_seq", Unique = true }));
+        try
+        {
+            ImageGenRunEvents.Indexes.CreateOne(new CreateIndexModel<ImageGenRunEvent>(
+                Builders<ImageGenRunEvent>.IndexKeys.Ascending(x => x.RunId).Ascending(x => x.Seq),
+                new CreateIndexOptions<ImageGenRunEvent> { Name = "uniq_image_gen_run_events_run_seq" }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // UploadArtifacts：按 requestId + createdAt；按 requestId + kind；按 sha256（非唯一，仅便于排查）
         UploadArtifacts.Indexes.CreateOne(new CreateIndexModel<UploadArtifact>(
@@ -336,32 +427,44 @@ public class MongoDbContext
             Builders<UploadArtifact>.IndexKeys.Ascending(x => x.Sha256).Descending(x => x.CreatedAt)));
 
         // AdminPromptOverrides：同一管理员 + key 唯一（用于覆盖 system prompt）
-        AdminPromptOverrides.Indexes.CreateOne(new CreateIndexModel<AdminPromptOverride>(
-            Builders<AdminPromptOverride>.IndexKeys
-                .Ascending(x => x.OwnerAdminId)
-                .Ascending(x => x.Key),
-            new CreateIndexOptions<AdminPromptOverride>
-            {
-                Name = "uniq_admin_prompt_overrides_owner_key",
-                Unique = true
-            }));
+        try
+        {
+            AdminPromptOverrides.Indexes.CreateOne(new CreateIndexModel<AdminPromptOverride>(
+                Builders<AdminPromptOverride>.IndexKeys
+                    .Ascending(x => x.OwnerAdminId)
+                    .Ascending(x => x.Key),
+                new CreateIndexOptions<AdminPromptOverride>
+                {
+                    Name = "uniq_admin_prompt_overrides_owner_key",
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // AdminIdempotencyRecords：同一管理员 + scope + idemKey 唯一（用于写接口幂等，替代 Redis）
-        AdminIdempotencyRecords.Indexes.CreateOne(new CreateIndexModel<AdminIdempotencyRecord>(
-            Builders<AdminIdempotencyRecord>.IndexKeys
-                .Ascending(x => x.OwnerAdminId)
-                .Ascending(x => x.Scope)
-                .Ascending(x => x.IdempotencyKey),
-            new CreateIndexOptions<AdminIdempotencyRecord>
-            {
-                // 注意：历史环境可能已存在同名索引，但字段名为 PascalCase（OwnerAdminId/Scope/IdempotencyKey）。
-                // MongoDB 不允许“同名但定义不同”的索引，会导致启动时 createIndexes 直接抛异常并使 API 进程崩溃。
-                // 这里改用新名字，避免冲突；旧索引可后续人工清理。
-                Name = "uniq_admin_idempotency_owner_scope_key_v2",
-                Unique = true,
-                // 仅对字符串类型生效（与 ImageGenRuns 的 idemKey 规则一致）
-                PartialFilterExpression = new BsonDocument("idempotencyKey", new BsonDocument("$type", "string"))
-            }));
+        try
+        {
+            AdminIdempotencyRecords.Indexes.CreateOne(new CreateIndexModel<AdminIdempotencyRecord>(
+                Builders<AdminIdempotencyRecord>.IndexKeys
+                    .Ascending(x => x.OwnerAdminId)
+                    .Ascending(x => x.Scope)
+                    .Ascending(x => x.IdempotencyKey),
+                new CreateIndexOptions<AdminIdempotencyRecord>
+                {
+                    // 注意：历史环境可能已存在同名索引，但字段名为 PascalCase（OwnerAdminId/Scope/IdempotencyKey）。
+                    // MongoDB 不允许“同名但定义不同”的索引，会导致启动时 createIndexes 直接抛异常并使 API 进程崩溃。
+                    // 这里改用新名字，避免冲突；旧索引可后续人工清理。
+                    Name = "uniq_admin_idempotency_owner_scope_key_v2",
+                    // 仅对字符串类型生效（与 ImageGenRuns 的 idemKey 规则一致）
+                    PartialFilterExpression = new BsonDocument("idempotencyKey", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
         AdminIdempotencyRecords.Indexes.CreateOne(new CreateIndexModel<AdminIdempotencyRecord>(
             Builders<AdminIdempotencyRecord>.IndexKeys.Descending(x => x.CreatedAt)));
     }

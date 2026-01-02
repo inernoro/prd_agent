@@ -58,6 +58,16 @@ export default function DataManagePage() {
     ] as Array<{ key: string; title: string; count: number; domains: string[] }>;
   }, [summary]);
 
+  const coreCounts = useMemo(() => {
+    const s = summary;
+    return {
+      users: fmtNum(s?.users ?? 0),
+      platforms: fmtNum(s?.llmPlatforms ?? 0),
+      enabledModels: fmtNum(s?.llmModelsEnabled ?? 0),
+      totalModels: fmtNum(s?.llmModelsTotal ?? 0),
+    };
+  }, [summary]);
+
   const doPurge = async (domains: string[]) => {
     setMsg(null);
     setErr(null);
@@ -106,6 +116,19 @@ export default function DataManagePage() {
 
       <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
         <Card className="p-4">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>核心数据（保留）</div>
+          <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+            开发期维护：建议仅把这三类数据视为“基础设施”。下方“一键删除（保留核心）”不会删除它们（仅会删除未启用模型）。
+          </div>
+          <div className="mt-3 grid gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <div className="flex items-center justify-between"><span>用户（users）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.users}</span></div>
+            <div className="flex items-center justify-between"><span>平台（llmplatforms）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.platforms}</span></div>
+            <div className="flex items-center justify-between"><span>启用模型（llmmodels.enabled=true）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.enabledModels}</span></div>
+            <div className="flex items-center justify-between"><span>模型总数（llmmodels）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.totalModels}</span></div>
+          </div>
+        </Card>
+
+        <Card className="p-4">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>数据概览</div>
           <div className="mt-3 grid gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
             <div className="flex items-center justify-between"><span>LLM 请求日志</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.llmRequestLogs ?? 0)}</span></div>
@@ -127,6 +150,36 @@ export default function DataManagePage() {
           </div>
 
           <div className="mt-4 grid gap-3">
+            <div className="rounded-[14px] p-3 flex items-center justify-between gap-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>开发期：一键删除（保留核心）</div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  将删除除 users/llmplatforms/启用 llmmodels 外的所有集合；并删除未启用模型。
+                </div>
+              </div>
+
+              <Tooltip content="该操作不可恢复" side="top" align="end">
+                <span className="inline-flex">
+                  <ConfirmTip
+                    title="确认执行开发清库？"
+                    description="将删除除 users / llmplatforms / 启用 llmmodels 外的所有数据，并清掉相关缓存（不可恢复）。"
+                    confirmText="确认删除"
+                    onConfirm={async () => {
+                      await doPurge(['devReset']);
+                    }}
+                    disabled={loading}
+                    side="top"
+                    align="end"
+                  >
+                    <Button variant="danger" size="sm" disabled={loading}>
+                      <Trash2 size={16} />
+                      一键删除
+                    </Button>
+                  </ConfirmTip>
+                </span>
+              </Tooltip>
+            </div>
+
             {domainCards.map((it) => (
               <div key={it.key} className="rounded-[14px] p-3 flex items-center justify-between gap-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
                 <div className="min-w-0">

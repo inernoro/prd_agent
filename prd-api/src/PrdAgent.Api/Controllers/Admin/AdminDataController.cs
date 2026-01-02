@@ -613,6 +613,10 @@ public class AdminDataController : ControllerBase
     {
         var payload = new DataSummaryResponse
         {
+            Users = await _db.Users.CountDocumentsAsync(_ => true),
+            LlmPlatforms = await _db.LLMPlatforms.CountDocumentsAsync(_ => true),
+            LlmModelsTotal = await _db.LLMModels.CountDocumentsAsync(_ => true),
+            LlmModelsEnabled = await _db.LLMModels.CountDocumentsAsync(x => x.Enabled),
             LlmRequestLogs = await _db.LlmRequestLogs.CountDocumentsAsync(_ => true),
             Messages = await _db.Messages.CountDocumentsAsync(_ => true),
             Documents = await _db.Documents.CountDocumentsAsync(_ => true),
@@ -700,10 +704,70 @@ public class AdminDataController : ControllerBase
             await _cache.RemoveByPatternAsync($"{CacheKeys.Document}*");
         }
 
+        // dev reset：保留 users + llmplatforms + 启用 llmmodels，其余全清（开发期维护）
+        if (requested.Contains("devreset") || requested.Contains("devresetkeepmodels") || requested.Contains("resetkeepmodels"))
+        {
+            matchedAny = true;
+
+            // 1) 删除未启用模型（仅保留 enabled=true）
+            var delDisabledModels = await _db.LLMModels.DeleteManyAsync(x => !x.Enabled);
+            payload.DisabledModelsDeleted = delDisabledModels.DeletedCount;
+
+            // 2) 清掉“配置/提示词/日志/会话/业务数据/图片/实验”等全部非核心集合
+            long other = 0;
+            other += (await _db.Groups.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.GroupMembers.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.GroupMessageCounters.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.Messages.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.Documents.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.Attachments.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ContentGaps.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.PrdComments.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.InviteCodes.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.LLMConfigs.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.AppSettings.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.Prompts.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.SystemPrompts.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.LlmRequestLogs.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ApiRequestLogs.DeleteManyAsync(_ => true)).DeletedCount;
+
+            other += (await _db.ModelLabExperiments.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ModelLabRuns.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ModelLabRunItems.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ModelLabModelSets.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ModelLabGroups.DeleteManyAsync(_ => true)).DeletedCount;
+
+            other += (await _db.ImageMasterSessions.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageMasterMessages.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageAssets.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageMasterCanvases.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageMasterWorkspaces.DeleteManyAsync(_ => true)).DeletedCount;
+
+            other += (await _db.ImageGenSizeCaps.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageGenRuns.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageGenRunItems.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.ImageGenRunEvents.DeleteManyAsync(_ => true)).DeletedCount;
+
+            other += (await _db.UploadArtifacts.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.AdminPromptOverrides.DeleteManyAsync(_ => true)).DeletedCount;
+            other += (await _db.AdminIdempotencyRecords.DeleteManyAsync(_ => true)).DeletedCount;
+
+            payload.OtherDeleted = other;
+
+            // 3) cache 清理：尽量清空相关前缀（避免 UI 看到幽灵数据）
+            await _cache.RemoveByPatternAsync($"{CacheKeys.Session}*");
+            await _cache.RemoveByPatternAsync($"{CacheKeys.ChatHistory}*");
+            await _cache.RemoveByPatternAsync($"{CacheKeys.GroupChatHistory}*");
+            await _cache.RemoveByPatternAsync($"{CacheKeys.UserSession}*");
+            await _cache.RemoveByPatternAsync($"{CacheKeys.Document}*");
+            await _cache.RemoveByPatternAsync("platform:models:*");
+            await _cache.RemoveByPatternAsync("platform:models:v2:*");
+        }
+
         // 校验：至少匹配到一个 domain，否则视为格式错误（即使数据本来为空，也应返回成功）
         if (!matchedAny)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "domains 不支持（可选：llmLogs, sessionsMessages, documents）"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "domains 不支持（可选：llmLogs, sessionsMessages, documents, devReset）"));
         }
 
         if (!string.IsNullOrWhiteSpace(idemKey))
@@ -888,6 +952,12 @@ public class ImportPlatformDeleteItem
 
 public class DataSummaryResponse
 {
+    // 核心保留数据（开发期“保留核心清库”会保留这些）
+    public long Users { get; set; }
+    public long LlmPlatforms { get; set; }
+    public long LlmModelsTotal { get; set; }
+    public long LlmModelsEnabled { get; set; }
+
     public long LlmRequestLogs { get; set; }
     public long Messages { get; set; }
     public long Documents { get; set; }
@@ -916,6 +986,10 @@ public class DataPurgeResponse
     public long ImageMasterSessions { get; set; }
     public long ImageMasterMessages { get; set; }
 
+    // devReset：额外统计
+    public long DisabledModelsDeleted { get; set; }
+    public long OtherDeleted { get; set; }
+
     public bool AllZero()
     {
         return LlmRequestLogs == 0
@@ -925,7 +999,9 @@ public class DataPurgeResponse
                && ContentGaps == 0
                && PrdComments == 0
                && ImageMasterSessions == 0
-               && ImageMasterMessages == 0;
+               && ImageMasterMessages == 0
+               && DisabledModelsDeleted == 0
+               && OtherDeleted == 0;
     }
 }
 

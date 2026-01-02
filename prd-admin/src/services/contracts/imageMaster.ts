@@ -127,6 +127,29 @@ export type UploadImageMasterWorkspaceAssetContract = (input: {
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ asset: ImageAsset }>>;
 
+// -------- ImageMaster：生图任务化（服务端后台执行） --------
+
+export type CreateWorkspaceImageGenRunInput = {
+  prompt: string;
+  targetKey: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  configModelId?: string;
+  platformId?: string;
+  modelId?: string;
+  size?: string;
+  responseFormat?: 'url' | 'b64_json';
+  initImageAssetSha256?: string;
+};
+
+export type CreateWorkspaceImageGenRunContract = (args: {
+  id: string;
+  input: CreateWorkspaceImageGenRunInput;
+  idempotencyKey?: string;
+}) => Promise<ApiResponse<{ runId: string }>>;
+
 export type DeleteImageMasterWorkspaceAssetContract = (input: { id: string; assetId: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 export type RefreshImageMasterWorkspaceCoverContract = (input: { id: string; limit?: number; idempotencyKey?: string }) => Promise<

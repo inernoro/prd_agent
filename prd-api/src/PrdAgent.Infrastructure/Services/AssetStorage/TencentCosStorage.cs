@@ -99,6 +99,19 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             var req = new GetObjectBytesRequest(_bucket, k);
             ct.ThrowIfCancellationRequested();
             var result = await Task.Run(() => _cos.GetObject(req), ct).ConfigureAwait(false);
+
+            // 兼容：某些 SDK 版本 GetObject 在 404/403 时不抛异常，而是通过 result.httpCode 表达
+            var httpCode =
+                TryGetIntMember(result, "httpCode") ??
+                TryGetIntMember(result, "HttpCode") ??
+                TryGetIntMember(result, "statusCode") ??
+                TryGetIntMember(result, "StatusCode");
+            if (httpCode is < 200 or >= 300)
+            {
+                // 404：视为不存在；其它：视为不可用（避免把底层实现细节抛到上层业务）
+                return null;
+            }
+
             var bytes = TryGetBytesFromResult(result);
             if (bytes != null && bytes.Length > 0) return bytes;
 
@@ -138,7 +151,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
 
             var rdesc = DescribeObjectForDebug(result);
             var qdesc = DescribeObjectForDebug(req);
-            throw new InvalidOperationException($"COS download returned empty. bucket={_bucket} key={k} request={qdesc} result={rdesc}");
+            _logger.LogWarning("COS download returned empty. bucket={Bucket} key={Key} request={Request} result={Result}", _bucket, k, qdesc, rdesc);
+            return null;
         }
         catch (CosServerException ex) when (LooksLikeNotFound(ex))
         {

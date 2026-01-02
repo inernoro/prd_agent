@@ -49,6 +49,7 @@ public class OpenAIImageClient
         _ctxAccessor = ctxAccessor;
     }
 
+
     public async Task<ApiResponse<ImageGenResult>> GenerateAsync(
         string prompt,
         int n,
@@ -139,6 +140,12 @@ public class OpenAIImageClient
             {
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未提供 modelName（平台回退调用需要 modelName）");
             }
+        }
+
+        // 开发期 stub：允许 apiKey 为空（Stub 不做鉴权），避免测试时误报“配置不完整”
+        if (!string.IsNullOrWhiteSpace(apiUrl) && string.IsNullOrWhiteSpace(apiKey) && IsLocalStubApi(apiUrl))
+        {
+            apiKey = "stub";
         }
 
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
@@ -347,7 +354,8 @@ public class OpenAIImageClient
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
                         ["content-type"] = initImageBase64 == null ? "application/json" : "multipart/form-data",
-                        ["authorization"] = "Bearer ***"
+                        // 统一使用标准 Header 名，避免某些 curl 生成/回放工具把不同大小写当作“两个头”
+                        ["Authorization"] = "Bearer ***"
                     },
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
@@ -586,7 +594,11 @@ public class OpenAIImageClient
                 var msg = TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em2) ? em2 : $"生图失败：HTTP {(int)resp.StatusCode}";
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, msg);
             }
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, $"生图失败：HTTP {(int)resp.StatusCode}");
+            // 5xx：优先透出上游错误（含 request id），便于定位“token/鉴权”类问题
+            var msg5xx = TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em3)
+                ? $"生图失败：{em3}"
+                : $"生图失败：HTTP {(int)resp.StatusCode}";
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, msg5xx);
         }
 
         try
@@ -1515,32 +1527,35 @@ public class OpenAIImageClient
             var now = DateTime.UtcNow;
             if (!string.IsNullOrWhiteSpace(key.ModelId))
             {
-                var filter = Builders<ImageGenSizeCaps>.Filter.Eq(x => x.ModelId, key.ModelId);
-                var update = Builders<ImageGenSizeCaps>.Update
-                    .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
-                    .SetOnInsert(x => x.ModelId, key.ModelId)
-                    .SetOnInsert(x => x.CreatedAt, now)
-                    .Set(x => x.AllowedSizes, cleaned)
-                    .Set(x => x.Source, "upstream-error")
-                    .Set(x => x.UpdatedAt, now);
-                await _db.ImageGenSizeCaps.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+                // 不依赖 unique：以确定性 Id 写入（仅依赖 _id 唯一）
+                var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"mid|{key.ModelId}"))).ToLowerInvariant();
+                var doc = new ImageGenSizeCaps
+                {
+                    Id = id,
+                    ModelId = key.ModelId,
+                    AllowedSizes = cleaned,
+                    Source = "upstream-error",
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                await _db.ImageGenSizeCaps.ReplaceOneAsync(x => x.Id == id, doc, new ReplaceOptions { IsUpsert = true }, ct);
                 return;
             }
 
             if (!string.IsNullOrWhiteSpace(key.PlatformId) && !string.IsNullOrWhiteSpace(key.ModelNameLower))
             {
-                var filter = Builders<ImageGenSizeCaps>.Filter.And(
-                    Builders<ImageGenSizeCaps>.Filter.Eq(x => x.PlatformId, key.PlatformId),
-                    Builders<ImageGenSizeCaps>.Filter.Eq(x => x.ModelName, key.ModelNameLower));
-                var update = Builders<ImageGenSizeCaps>.Update
-                    .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
-                    .SetOnInsert(x => x.PlatformId, key.PlatformId)
-                    .SetOnInsert(x => x.ModelName, key.ModelNameLower)
-                    .SetOnInsert(x => x.CreatedAt, now)
-                    .Set(x => x.AllowedSizes, cleaned)
-                    .Set(x => x.Source, "upstream-error")
-                    .Set(x => x.UpdatedAt, now);
-                await _db.ImageGenSizeCaps.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+                var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"pid|{key.PlatformId}|mn|{key.ModelNameLower}"))).ToLowerInvariant();
+                var doc = new ImageGenSizeCaps
+                {
+                    Id = id,
+                    PlatformId = key.PlatformId,
+                    ModelName = key.ModelNameLower,
+                    AllowedSizes = cleaned,
+                    Source = "upstream-error",
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                await _db.ImageGenSizeCaps.ReplaceOneAsync(x => x.Id == id, doc, new ReplaceOptions { IsUpsert = true }, ct);
             }
         }
         catch
@@ -1607,6 +1622,23 @@ public class OpenAIImageClient
 
         // 其他未知格式：兜底到最小可用
         return "1920x1920";
+    }
+
+    private static bool IsLocalStubApi(string apiUrl)
+    {
+        try
+        {
+            var raw = (apiUrl ?? string.Empty).Trim().TrimEnd('/');
+            if (!Uri.TryCreate(raw, UriKind.Absolute, out var u)) return false;
+            var host = (u.Host ?? string.Empty).Trim().ToLowerInvariant();
+            if (host != "localhost" && host != "127.0.0.1") return false;
+            var path = (u.AbsolutePath ?? string.Empty).Trim().ToLowerInvariant();
+            return path.Contains("/api/v1/stub", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
 

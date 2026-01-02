@@ -60,6 +60,38 @@ public class ImageGenRun
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+
+    // ---------------------------
+    // 扩展：与业务场景绑定（可选）
+    // ---------------------------
+
+    /// <summary>
+    /// 可选：任务用途（如 "imageMaster"）。用于 worker 做不同的后处理。
+    /// </summary>
+    public string? Purpose { get; set; }
+
+    /// <summary>
+    /// 可选：若该 run 由 ImageMaster Workspace 触发，则绑定 workspaceId。
+    /// </summary>
+    public string? WorkspaceId { get; set; }
+
+    /// <summary>
+    /// 可选：ImageMaster 场景下，要回填的画布元素 key（用于把生成结果写回 canvas payload）。
+    /// </summary>
+    public string? TargetCanvasKey { get; set; }
+
+    /// <summary>
+    /// 可选：ImageMaster 场景下，用于图生图的首帧资产 sha256（服务端读取，不依赖前端长连接）。
+    /// </summary>
+    public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 可选：ImageMaster 场景下，为了在“任务创建后即使前端关闭也能恢复占位”，服务端可写入占位位置信息。
+    /// </summary>
+    public double? TargetX { get; set; }
+    public double? TargetY { get; set; }
+    public double? TargetW { get; set; }
+    public double? TargetH { get; set; }
 }
 
 public enum ImageGenRunStatus

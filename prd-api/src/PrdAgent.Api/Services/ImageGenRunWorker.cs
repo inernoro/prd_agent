@@ -1,8 +1,11 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -162,6 +165,7 @@ public class ImageGenRunWorker : BackgroundService
 
         using var scope = _scopeFactory.CreateScope();
         var imageClient = scope.ServiceProvider.GetRequiredService<OpenAIImageClient>();
+        var assetStorage = scope.ServiceProvider.GetRequiredService<IAssetStorage>();
 
         for (var itemIndex = 0; itemIndex < items.Count; itemIndex++)
         {
@@ -203,6 +207,21 @@ public class ImageGenRunWorker : BackgroundService
                         await AppendEventAsync(run, "image", new { type = "imageStart", runId = run.Id, itemIndex = curItemIndex, imageIndex, prompt = curPrompt, size = reqSize, requestedSize = reqSize, modelId = run.ModelId, platformId = run.PlatformId }, ct);
 
                         var requestedModelId = !string.IsNullOrWhiteSpace(run.ConfigModelId) ? run.ConfigModelId : run.ModelId;
+
+                        // ImageMaster：支持“首帧资产 sha”图生图（服务端读取；前端可关闭页面）
+                        string? initImageBase64 = null;
+                        var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+                        if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                        {
+                            var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                            if (found != null && found.Value.bytes.Length > 0)
+                            {
+                                var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                var b64 = Convert.ToBase64String(found.Value.bytes);
+                                initImageBase64 = $"data:{mime};base64,{b64}";
+                            }
+                        }
+
                         var res = await imageClient.GenerateAsync(
                             curPrompt,
                             n: 1,
@@ -211,7 +230,9 @@ public class ImageGenRunWorker : BackgroundService
                             ct,
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
-                            modelName: run.ModelId);
+                            modelName: run.ModelId,
+                            initImageBase64: initImageBase64,
+                            initImageProvided: initImageBase64 != null);
 
                         if (!res.Success || res.Data == null)
                         {
@@ -244,6 +265,18 @@ public class ImageGenRunWorker : BackgroundService
                         var sizeAdjusted = meta?.SizeAdjusted ?? false;
                         var ratioAdjusted = meta?.RatioAdjusted ?? false;
 
+                        // ImageMaster：若绑定 workspace，则把结果落到资产（COS）并回填画布元素（避免断线/关闭导致丢失）
+                        ImageAsset? persisted = null;
+                        if (!string.IsNullOrWhiteSpace(run.WorkspaceId))
+                        {
+                            persisted = await TryPersistToImageMasterAsync(run, curPrompt, reqSize, effSize, base64, url, assetStorage, ct);
+                            if (persisted != null)
+                            {
+                                url = persisted.Url;
+                                base64 = null;
+                            }
+                        }
+
                         await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Done, base64, url, revisedPrompt, null, null, ct, effSize, sizeAdjusted, ratioAdjusted);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
                         await AppendEventAsync(run, "image", new
@@ -261,7 +294,8 @@ public class ImageGenRunWorker : BackgroundService
                             platformId = run.PlatformId,
                             base64,
                             url,
-                            revisedPrompt
+                            revisedPrompt,
+                            asset = persisted == null ? null : new { id = persisted.Id, sha256 = persisted.Sha256, url = persisted.Url }
                         }, ct);
                     }
                     finally
@@ -367,11 +401,12 @@ public class ImageGenRunWorker : BackgroundService
         bool? ratioAdjusted = null)
     {
         var now = DateTime.UtcNow;
-        var filter = Builders<ImageGenRunItem>.Filter.Eq(x => x.RunId, run.Id)
-                     & Builders<ImageGenRunItem>.Filter.Eq(x => x.ItemIndex, itemIndex)
-                     & Builders<ImageGenRunItem>.Filter.Eq(x => x.ImageIndex, imageIndex);
+        // 不依赖 unique 索引：以确定性 Id 防并发重复插入（仅依赖 _id 唯一）
+        var fixedId = $"{run.Id}:{itemIndex}:{imageIndex}";
+        var filter = Builders<ImageGenRunItem>.Filter.Eq(x => x.Id, fixedId);
 
         var update = Builders<ImageGenRunItem>.Update
+            .SetOnInsert(x => x.Id, fixedId)
             .SetOnInsert(x => x.OwnerAdminId, run.OwnerAdminId)
             .SetOnInsert(x => x.RunId, run.Id)
             .SetOnInsert(x => x.ItemIndex, itemIndex)
@@ -425,6 +460,178 @@ public class ImageGenRunWorker : BackgroundService
         catch
         {
             // ignore
+        }
+    }
+
+    private static bool TryParseWxH(string? raw, out int w, out int h)
+    {
+        w = 0;
+        h = 0;
+        var s = (raw ?? string.Empty).Trim().ToLowerInvariant();
+        var m = Regex.Match(s, "^(\\d{2,5})x(\\d{2,5})$");
+        if (!m.Success) return false;
+        if (!int.TryParse(m.Groups[1].Value, out w)) return false;
+        if (!int.TryParse(m.Groups[2].Value, out h)) return false;
+        if (w <= 0 || h <= 0) return false;
+        return true;
+    }
+
+    private async Task<ImageAsset?> TryPersistToImageMasterAsync(
+        ImageGenRun run,
+        string prompt,
+        string requestedSize,
+        string? effectiveSize,
+        string? base64,
+        string? url,
+        IAssetStorage assetStorage,
+        CancellationToken ct)
+    {
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        var adminId = (run.OwnerAdminId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(adminId)) return null;
+
+        byte[] bytes;
+        string mime;
+        if (!string.IsNullOrWhiteSpace(base64))
+        {
+            var s = base64.Trim();
+            if (s.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var comma = s.IndexOf(',');
+                if (comma < 0) return null;
+                var header = s.Substring(5, comma - 5);
+                var payload = s[(comma + 1)..].Trim();
+                var semi = header.IndexOf(';');
+                var ctStr = semi >= 0 ? header[..semi] : header;
+                mime = string.IsNullOrWhiteSpace(ctStr) ? "image/png" : ctStr.Trim();
+                bytes = Convert.FromBase64String(payload);
+            }
+            else
+            {
+                mime = "image/png";
+                bytes = Convert.FromBase64String(s);
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return null;
+            mime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+            bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        }
+        else
+        {
+            return null;
+        }
+
+        if (bytes.Length == 0) return null;
+        if (bytes.LongLength > 15 * 1024 * 1024) return null;
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) mime = "image/png";
+
+        var stored = await assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+
+        ImageAsset asset;
+        // 允许“同图多次上传/同 sha 多条记录”：仅底层对象存储按 sha 去重
+        asset = new ImageAsset
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            OwnerUserId = adminId,
+            WorkspaceId = wid,
+            Sha256 = stored.Sha256,
+            Mime = stored.Mime,
+            SizeBytes = stored.SizeBytes,
+            Url = stored.Url,
+            Prompt = (prompt ?? string.Empty).Trim(),
+            CreatedAt = DateTime.UtcNow
+        };
+        if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
+
+        var sizeForMeta = string.IsNullOrWhiteSpace(effectiveSize) ? requestedSize : effectiveSize!;
+        if (TryParseWxH(sizeForMeta, out var w, out var h))
+        {
+            asset.Width = w;
+            asset.Height = h;
+        }
+
+        await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+
+        await TryPatchWorkspaceCanvasAsync(run, asset, ct);
+        return asset;
+    }
+
+    private async Task TryPatchWorkspaceCanvasAsync(ImageGenRun run, ImageAsset asset, CancellationToken ct)
+    {
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        var key = (run.TargetCanvasKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(key)) return;
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+            if (canvas == null) return;
+            var raw = (canvas.PayloadJson ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(raw)) return;
+
+            JsonNode? root;
+            try { root = JsonNode.Parse(raw); } catch { return; }
+            if (root == null) return;
+
+            var elements = root["elements"] as JsonArray;
+            if (elements == null) return;
+
+            JsonObject? target = null;
+            foreach (var n in elements)
+            {
+                var o = n as JsonObject;
+                if (o == null) continue;
+                var k = (o["key"]?.GetValue<string>() ?? string.Empty).Trim();
+                if (string.Equals(k, key, StringComparison.Ordinal))
+                {
+                    target = o;
+                    break;
+                }
+            }
+
+            if (target == null)
+            {
+                var o = new JsonObject
+                {
+                    ["key"] = key,
+                    ["kind"] = "image",
+                    ["status"] = "done",
+                    ["syncStatus"] = "synced",
+                    ["prompt"] = asset.Prompt ?? "",
+                    ["src"] = asset.Url ?? "",
+                    ["assetId"] = asset.Id,
+                    ["sha256"] = asset.Sha256,
+                    ["createdAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                };
+                if (run.TargetX.HasValue) o["x"] = run.TargetX.Value;
+                if (run.TargetY.HasValue) o["y"] = run.TargetY.Value;
+                if (run.TargetW.HasValue) o["w"] = run.TargetW.Value;
+                if (run.TargetH.HasValue) o["h"] = run.TargetH.Value;
+                elements.Add(o);
+            }
+            else
+            {
+                target["kind"] = "image";
+                target["status"] = "done";
+                target["syncStatus"] = "synced";
+                target["syncError"] = null;
+                target["src"] = asset.Url ?? "";
+                target["assetId"] = asset.Id;
+                target["sha256"] = asset.Sha256;
+                if (!string.IsNullOrWhiteSpace(asset.Prompt)) target["prompt"] = asset.Prompt!;
+            }
+
+            var nextJson = root.ToJsonString(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var now = DateTime.UtcNow;
+            var res = await _db.ImageMasterCanvases.UpdateOneAsync(
+                x => x.Id == canvas.Id && x.UpdatedAt == canvas.UpdatedAt,
+                Builders<ImageMasterCanvas>.Update.Set(x => x.PayloadJson, nextJson).Set(x => x.UpdatedAt, now),
+                cancellationToken: ct);
+            if (res.ModifiedCount > 0) return;
         }
     }
 }

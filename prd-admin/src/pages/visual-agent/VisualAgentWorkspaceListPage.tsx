@@ -24,6 +24,101 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
+function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['coverAssets'] }) {
+  const assets = Array.isArray(props.assets) ? props.assets : [];
+  const n = assets.length;
+
+  const Tile = (p: { idx: number; style?: React.CSSProperties }) => {
+    const a = assets[p.idx];
+    return a?.url ? (
+      <img
+        src={a.url}
+        alt=""
+        className="h-full w-full object-cover"
+        style={p.style}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    ) : (
+      <div
+        className="h-full w-full"
+        style={{
+          ...p.style,
+          background: 'linear-gradient(135deg, rgba(250,204,21,0.06) 0%, rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.05) 100%)',
+        }}
+      />
+    );
+  };
+
+  if (n <= 0) return null;
+  if (n === 1) {
+    return (
+      <img
+        src={assets[0]?.url}
+        alt={props.title || 'workspace cover'}
+        className="absolute inset-0 h-full w-full object-cover"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+
+  // 2 张：左右两栏（更直观）
+  if (n === 2) {
+    return (
+      <div
+        className="absolute inset-0 grid"
+        style={{
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+          gridTemplateRows: 'repeat(1, minmax(0, 1fr))',
+          gap: 1,
+          background: 'var(--border-subtle)',
+        }}
+      >
+        <Tile idx={0} />
+        <Tile idx={1} />
+      </div>
+    );
+  }
+
+  // 3 张：左边全高大图，右边上下两半
+  if (n === 3) {
+    return (
+      <div
+        className="absolute inset-0 grid"
+        style={{
+          gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)',
+          gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+          gap: 1,
+          background: 'var(--border-subtle)',
+        }}
+      >
+        <Tile idx={0} style={{ gridColumn: '1', gridRow: '1 / span 2' }} />
+        <Tile idx={1} style={{ gridColumn: '2', gridRow: '1' }} />
+        <Tile idx={2} style={{ gridColumn: '2', gridRow: '2' }} />
+      </div>
+    );
+  }
+
+  // 4+ 张：保持四宫格（取前 4 张），避免过密
+  return (
+    <div
+      className="absolute inset-0 grid"
+      style={{
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+        gap: 1,
+        background: 'var(--border-subtle)',
+      }}
+    >
+      <Tile idx={0} />
+      <Tile idx={1} />
+      <Tile idx={2} />
+      <Tile idx={3} />
+    </div>
+  );
+}
+
 export default function VisualAgentWorkspaceListPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
@@ -247,43 +342,7 @@ export default function VisualAgentWorkspaceListPage() {
                 borderBottom: '1px solid var(--border-subtle)',
               }}
             >
-              {Array.isArray(ws.coverAssets) && ws.coverAssets.length > 0 ? (
-                ws.coverAssets.length === 1 ? (
-                  <img
-                    src={ws.coverAssets[0]?.url}
-                    alt={ws.title || 'workspace cover'}
-                    className="absolute inset-0 h-full w-full object-cover"
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div
-                    className="absolute inset-0 grid"
-                    style={{
-                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                      gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
-                      gap: 1,
-                      background: 'var(--border-subtle)',
-                    }}
-                  >
-                    {Array.from({ length: 4 }).map((_, idx) => {
-                      const a = ws.coverAssets?.[idx];
-                      return a?.url ? (
-                        <img key={idx} src={a.url} alt="" className="h-full w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div
-                          key={idx}
-                          className="h-full w-full"
-                          style={{
-                            background:
-                              'linear-gradient(135deg, rgba(250,204,21,0.06) 0%, rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.05) 100%)',
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                )
-              ) : null}
+              <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />
               {/* subtle overlay to keep text contrast consistent even with bright covers */}
               <div
                 className="absolute inset-0"

@@ -3,18 +3,20 @@ import { Card } from '@/components/design/Card';
 import { saveImageMasterWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
-import { PrdLoader } from '@/components/ui/PrdLoader';
+import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   addImageMasterWorkspaceMessage,
   deleteImageMasterWorkspaceAsset,
-  generateImageGen,
+  createWorkspaceImageGenRun,
   getImageMasterWorkspaceDetail,
   getModels,
   planImageGen,
+  refreshImageMasterWorkspaceCover,
   saveImageMasterWorkspaceCanvas,
   uploadImageMasterWorkspaceAsset,
 } from '@/services';
+import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
@@ -204,6 +206,18 @@ type PersistedCanvasElementV1 =
 const PERSIST_SCHEMA_VERSION = 1 as const;
 const MAX_PERSIST_ELEMENTS = 200;
 
+function overlayUiScaleForBox(boxW: number, boxH: number): number {
+  const w = Math.max(1, Math.round(boxW));
+  const h = Math.max(1, Math.round(boxH));
+  const area = w * h;
+  // 基准面积：约等于 420x280 的卡片
+  const base = 420 * 280;
+  const s = Math.sqrt(area / base);
+  // 1) 最小也要比现在大一点，确保可读
+  // 2) 上限避免盖住整个画布
+  return Math.max(1.25, Math.min(2.4, s));
+}
+
 function safeJsonParse<T>(s: string): T | null {
   const raw = String(s ?? '').trim();
   if (!raw) return null;
@@ -243,7 +257,13 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
       const assetId = String(it.assetId ?? '').trim();
       const srcOk = isRemoteImageSrc(it.src);
       if (!assetId && !srcOk) {
-        skippedLocalOnlyImages += 1;
+        // 仅把“真正的本地临时内容”计入 skipped：
+        // - data: / blob: 属于本地内容，刷新后无法从服务器恢复 => 计数并提示
+        // - 空 src（例如生图占位 running/error）不应被误判为“本地临时内容”
+        const rawSrc = String(it.src ?? '').trim();
+        if (rawSrc && (rawSrc.startsWith('data:') || rawSrc.startsWith('blob:'))) {
+          skippedLocalOnlyImages += 1;
+        }
         continue;
       }
       els.push({
@@ -413,10 +433,101 @@ const zoomFactorFromDeltaY = (deltaY: number) => {
   return clampZoomFactor(Math.exp(-deltaY * k));
 };
 
-function loaderSizeForBox(w: number, h: number) {
-  // 需求：loader ≈ 面板的 1/2，并且随画布缩放一起缩放（这里用世界尺寸计算，最终会乘 zoom）
-  const base = Math.round(Math.max(24, Math.min(w, h) * 0.5));
-  return Math.max(44, Math.min(640, base));
+const INLINE_IMAGE_RX = /^\[IMAGE([^\]]*)\]\s*/;
+const INLINE_IMAGE_LEGACY_RX = /^\[IMAGE=([^\]|]+)(?:\|([^\]]+))?\]\s*/;
+
+function safeDecodeURIComponent(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+function parseInlineImageKv(body: string): { src?: string; name?: string } {
+  // body example: " src=... name=... sha=..."
+  const out: Record<string, string> = {};
+  const parts = String(body ?? '')
+    .trim()
+    .split(/\s+/g)
+    .filter(Boolean);
+  for (const p of parts) {
+    const idx = p.indexOf('=');
+    if (idx <= 0) continue;
+    const k = p.slice(0, idx).trim().toLowerCase();
+    const v = p.slice(idx + 1).trim();
+    if (!k || !v) continue;
+    out[k] = safeDecodeURIComponent(v);
+  }
+  return { src: out.src, name: out.name };
+}
+
+function extractInlineImageToken(raw: string): { src: string; name?: string; clean: string } | null {
+  const s = String(raw ?? '');
+  // v2: [IMAGE src=... name=...]
+  const m2 = INLINE_IMAGE_RX.exec(s);
+  if (m2) {
+    const body = String(m2[1] ?? '');
+    const kv = parseInlineImageKv(body);
+    const src = String(kv.src ?? '').trim();
+    const name = String(kv.name ?? '').trim();
+    const clean = s.slice(m2[0].length);
+    if (!src) return null;
+    return { src, name: name || undefined, clean };
+  }
+  // legacy: [IMAGE=src|name] or [IMAGE=src]
+  const m1 = INLINE_IMAGE_LEGACY_RX.exec(s);
+  if (!m1) return null;
+  const src = String(m1[1] ?? '').trim();
+  const nameEncoded = String(m1[2] ?? '').trim();
+  const name = nameEncoded ? safeDecodeURIComponent(nameEncoded) : '';
+  const clean = s.slice(m1[0].length);
+  if (!src) return null;
+  return { src, name: name || undefined, clean };
+}
+
+function buildInlineImageToken(src: string, name?: string): string {
+  const s = String(src ?? '').trim();
+  if (!s) return '';
+  // 不把大内容塞进消息：data/blob URL 不可持久化也不应写入数据库
+  if (s.startsWith('data:') || s.startsWith('blob:')) return '';
+  const n = String(name ?? '').trim();
+  const safeSrc = encodeURIComponent(s);
+  const safeName = n ? encodeURIComponent(n) : '';
+  // v2 token：可扩展 kv
+  return safeName ? `[IMAGE src=${safeSrc} name=${safeName}] ` : `[IMAGE src=${safeSrc}] `;
+}
+
+function guessRefName(ref: CanvasImageItem | null): string {
+  const p = String(ref?.prompt ?? '').trim();
+  if (p) return p.length > 80 ? p.slice(0, 80) : p;
+
+  const src = String(ref?.src ?? '').trim();
+  if (src) {
+    try {
+      const u = new URL(src);
+      const base = (u.pathname.split('/').pop() ?? '').trim();
+      const decoded = base ? decodeURIComponent(base) : '';
+      if (decoded) return decoded.length > 80 ? decoded.slice(0, 80) : decoded;
+    } catch {
+      // ignore
+    }
+    const base = (src.split('?')[0]?.split('#')[0]?.split('/').pop() ?? '').trim();
+    if (base) return base.length > 80 ? base.slice(0, 80) : base;
+  }
+
+  const sha = String(ref?.sha256 ?? '').trim().toLowerCase();
+  if (sha && sha.length >= 8) return `参考图 ${sha.slice(0, 8)}`;
+  return '参考图';
+}
+
+function truncateLabelFront(s: string, maxChars: number): string {
+  const t = String(s ?? '').trim();
+  if (!t) return '';
+  const n = Math.max(1, Math.floor(maxChars));
+  if (t.length <= n) return t;
+  // 用 "..."，与用户期望一致
+  return t.slice(0, Math.max(1, n - 3)) + '...';
 }
 
 function renderMentionHighlights(text: string) {
@@ -602,6 +713,15 @@ async function readImageSizeFromFile(file: File): Promise<{ w: number; h: number
   }
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(blob);
+  });
+}
+
 function buildTemplate(name: string) {
   if (name === 'wine') {
     return `为一家精品红酒商店设计一张海报：\n- 风格：高级、克制、现代\n- 主色：深酒红 + 金色点缀\n- 文案：Wine List / 2026 Spring Collection\n- 版式：留白，中心主视觉\n请输出：设计要点 + 生图提示词`;
@@ -619,7 +739,6 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   // 固定默认参数：用户不需要选择
-  const DEFAULT_RESPONSE_FORMAT = 'b64_json' as const;
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
   const imageGenSize = '1024x1024' as const;
   const DEFAULT_ZOOM = 0.5;
@@ -1598,7 +1717,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       lastSaveAtRef.current = now;
       lastSavedJsonRef.current = json;
 
-      if (built.skippedLocalOnlyImages > 0 && pendingLocalOnlyWarnRef.current !== built.skippedLocalOnlyImages) {
+      // 本地图片（data: / 非远程且无 assetId）在持久化前会被跳过，以避免把大内容写进画布 payload。
+      // 体验修复：上传完成后要明确提示“已同步完成”，并重置计数，避免用户以为仍未持久化。
+      if (built.skippedLocalOnlyImages === 0 && pendingLocalOnlyWarnRef.current > 0) {
+        pendingLocalOnlyWarnRef.current = 0;
+        pushMsg('Assistant', '同步完成：本地图片已持久化并纳入保存。');
+      } else if (built.skippedLocalOnlyImages > 0 && pendingLocalOnlyWarnRef.current !== built.skippedLocalOnlyImages) {
         pendingLocalOnlyWarnRef.current = built.skippedLocalOnlyImages;
         pushMsg(
           'Assistant',
@@ -2286,10 +2410,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     }
 
     setError('');
-    pushMsg('User', display || reqText);
-
     const seedKey = String(seedSelectedKey ?? '').trim();
     const selectedAtSend = seedKey ? (canvasRef.current.find((x) => x.key === seedKey) ?? null) : null;
+    const refForUi = (primaryRef ?? selectedAtSend) as CanvasImageItem | null;
+    const refSrc = String(refForUi?.src ?? '').trim();
+    const inlineRefToken = buildInlineImageToken(refSrc, guessRefName(refForUi));
+    pushMsg('User', `${inlineRefToken}${display || reqText}`);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -2324,29 +2450,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       firstPrompt = String(items[0]?.prompt ?? '').trim() || fallbackPrompt;
     }
 
-    const pickedIsVolcesSeedream = /volces|doubao|seedream/i.test(String(pickedModel?.modelName || ''));
     const refDim =
       (primaryRef?.naturalW && primaryRef?.naturalH ? { w: primaryRef.naturalW, h: primaryRef.naturalH } : null) ??
       (selectedAtSend?.naturalW && selectedAtSend?.naturalH ? { w: selectedAtSend.naturalW, h: selectedAtSend.naturalH } : null);
     const resolvedSizeForGen = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
 
-    pushMsg(
-      'Assistant',
-      [
-        `本次使用模型：${pickedModel?.name || pickedModel?.modelName}${forcedPick.forced ? '（@ 强制）' : ''}`,
-        directPrompt ? '直连模式：输入将原样作为提示词发送（未进行解析/改写）。' : `我已把需求解析成 ${items.length || 1} 条生图提示词。`,
-        !directPrompt && items.length ? '候选提示词（前 3 条）：\n' + items.slice(0, 3).map((x, i) => `${i + 1}. ${x.prompt}`).join('\n') : '',
-        (primaryRef || selectedAtSend) && pickedIsVolcesSeedream
-          ? directPrompt
-            ? '你选择了首帧图，但当前模型（seedream/Volces）通常不支持标准图生图首帧；且你开启了直连模式，本次不会自动做“风格提取→拼进提示词”，可能导致生成失败。需要该能力请关闭直连。'
-            : '你选择了首帧图。当前使用的 seedream/Volces 生图通常不支持标准图生图首帧，我会自动改为“风格提取→拼进提示词”的方式来尽量保持一致。'
-          : (primaryRef || selectedAtSend)
-            ? '你已选中一张图片作为参考图。本次将作为图生图参考传给生图接口（若上游平台不支持，会返回参数错误）。'
-            : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n')
-    );
+    // 用户要求移除右侧“本次使用模型/直连模式/参考图...”类提示，不再 push 该类 Assistant 消息
 
     // 画板占位
     const near = stageCenterWorld();
@@ -2456,113 +2565,172 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         }
       }
 
-      const gres = await generateImageGen({
-        modelId: pickedModel!.id,
-        prompt: firstPrompt,
-        n: 1,
-        size: resolvedSizeForGen,
-        responseFormat: DEFAULT_RESPONSE_FORMAT,
-        initImageBase64,
-        initImageUrl,
-        initImageAssetSha256,
+      // 新策略：将“生图 + 落盘”交给服务端后台任务 runId
+      // - 服务端会：生图 -> 落 COS -> 写入 workspace 资产 -> 回填画布元素（key）
+      // - 前端关闭页面不影响后台继续；下次打开 workspace 会直接看到结果
+
+      // 若选择了首帧但还未持久化到资产（dataUrl/外链），先上传一次拿到 sha256（服务端 run 只接受 sha）
+      // 关键修复：当引用图“看似有 sha”但其实还没落到本 workspace（或仍处于 pending/failed）时，也必须先确保落盘，
+      // 否则后端会报“参考图不存在/不可用”，并且封面/保存都会缺失。
+      if (refForInit) {
+        const needEnsure =
+          !initImageAssetSha256 ||
+          refForInit.syncStatus !== 'synced' ||
+          !refForInit.assetId ||
+          !refForInit.sha256;
+
+        if (needEnsure) {
+          let data: string | undefined = initImageBase64;
+          let sourceUrl: string | undefined = initImageUrl;
+
+          // 若引用的是自托管 file URL（可能来自别的画板/别的 workspace），则从浏览器 fetch 出 blob 再上传进当前 workspace
+          if (!data && initSrc.startsWith('/api/v1/admin/image-master/assets/file/')) {
+            try {
+              const r = await fetch(initSrc);
+              if (r.ok) {
+                const b = await r.blob();
+                const d = await blobToDataUrl(b);
+                if (d && d.startsWith('data:')) data = d;
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          // 若是 http(s) 但不允许服务端直下（或你希望统一走服务端存储），浏览器也可抓取后走 data
+          if (!data && !sourceUrl && /^https?:\/\//i.test(initSrc)) {
+            // 先尝试浏览器抓取（同源/可访问时更稳），失败再退回 sourceUrl 让服务端尝试下载
+            try {
+              const r = await fetch(initSrc);
+              if (r.ok) {
+                const b = await r.blob();
+                const d = await blobToDataUrl(b);
+                if (d && d.startsWith('data:')) data = d;
+              }
+            } catch {
+              sourceUrl = initSrc;
+            }
+          }
+
+          if (data || sourceUrl) {
+            const up = await uploadImageMasterWorkspaceAsset({
+              id: workspaceId,
+              data,
+              sourceUrl,
+              prompt: (refForInit?.prompt ?? '').trim() || 'reference',
+              width: refForInit?.naturalW,
+              height: refForInit?.naturalH,
+            });
+            if (up.success) {
+              initImageAssetSha256 = up.data.asset.sha256;
+              const a = up.data.asset;
+              const refKey = refForInit?.key;
+              if (refKey) {
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === refKey
+                      ? { ...x, assetId: a.id, sha256: a.sha256, src: a.url || x.src, syncStatus: 'synced', syncError: null }
+                      : x
+                  )
+                );
+              }
+              // best-effort：刷新封面（尤其当这是该 workspace 第一张图时）
+              void (async () => {
+                const r2 = await refreshImageMasterWorkspaceCover({ id: workspaceId, idempotencyKey: `cover_${Date.now()}` });
+                if (r2.success) setWorkspace(r2.data.workspace);
+              })();
+            } else {
+              const msg2 = up.error?.message || '参考图持久化失败';
+              // 避免继续传入“看似有 sha 但不可用”的引用，导致后端直接报错
+              initImageAssetSha256 = undefined;
+              const refKey = refForInit?.key;
+              if (refKey) {
+                setCanvas((prev) =>
+                  prev.map((x) => (x.key === refKey ? { ...x, syncStatus: 'failed', syncError: msg2 } : x))
+                );
+              }
+              pushMsg('Assistant', `参考图未能持久化到后端资产：${msg2}`);
+            }
+          }
+        }
+      }
+
+      const cur = canvasRef.current.find((x) => x.key === key) ?? null;
+      const runRes = await createWorkspaceImageGenRun({
+        id: workspaceId,
+        input: {
+          prompt: firstPrompt,
+          targetKey: key,
+          x: typeof cur?.x === 'number' ? cur!.x : undefined,
+          y: typeof cur?.y === 'number' ? cur!.y : undefined,
+          w: typeof cur?.w === 'number' ? cur!.w : undefined,
+          h: typeof cur?.h === 'number' ? cur!.h : undefined,
+          configModelId: pickedModel!.id,
+          size: resolvedSizeForGen,
+          responseFormat: 'url',
+          initImageAssetSha256: initImageAssetSha256,
+        },
+        idempotencyKey: `imRun_${workspaceId}_${key}`,
       });
-      if (!gres.success) {
-        const msg = gres.error?.message || '生成失败';
+      if (!runRes.success) {
+        const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
         setError(msg);
         pushMsg('Assistant', `生成失败：${msg}`);
         return;
       }
-      const img0 = (gres.data?.images ?? [])[0];
-      const meta = gres.data?.meta ?? null;
-      const src =
-        (img0?.url ?? '') ||
-        (img0?.base64 ? (img0.base64.startsWith('data:') ? img0.base64 : `data:image/png;base64,${img0.base64}`) : '');
-      if (!src) {
-        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: '未返回图片' } : x)));
-        setError('未返回图片');
-        pushMsg('Assistant', '生成失败：未返回图片');
+
+      const runId = String(runRes.data?.runId ?? '').trim();
+      if (!runId) {
+        const msg = '生成失败：未返回 runId';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+        setError(msg);
+        pushMsg('Assistant', msg);
         return;
       }
-      const eff = String(meta?.effectiveSize || '') || resolvedSizeForGen;
-      const req = String(meta?.requestedSize || '') || resolvedSizeForGen;
-      const effParsed = tryParseWxH(eff);
-      setCanvas((prev) =>
-        prev.map((x) =>
-          x.key === key
-            ? {
-                ...x,
-                // 需求：生成结束仍保持为“普通图片”
-                kind: 'image',
-                status: 'done',
-                src,
-                syncStatus: src.startsWith('/api/v1/admin/image-master/assets/file/') ? 'synced' : 'pending',
-                syncError: null,
-                requestedSize: req,
-                effectiveSize: eff,
-                sizeAdjusted: Boolean(meta?.sizeAdjusted ?? false),
-                ratioAdjusted: Boolean(meta?.ratioAdjusted ?? false),
-                // 统一按图片逻辑更新占位尺寸（若解析失败则保留原尺寸）
-                w: effParsed?.w ?? x.w,
-                h: effParsed?.h ?? x.h,
-              }
-            : x
-        )
-      );
-      setSelectedKeys([key]);
-      // 自动把视角移动到新生成的图上方（更像“在当前屏幕附近新增并跟随”）
-      requestAnimationFrame(() => {
-        const f = focusKeyRef.current;
-        if (!f || f.key !== key) return;
-        animateCameraToWorldCenter(f.cx, f.cy);
-      });
 
-      // 上传并持久化资产：把外部签名 URL / base64 转为自托管 URL（避免过期）
-      const parsed = tryParseWxH(eff) ?? tryParseWxH(resolvedSizeForGen);
-      const width = parsed?.w;
-      const height = parsed?.h;
-      const isAlreadyHosted = src.startsWith('/api/v1/admin/image-master/assets/file/');
-      if (!isAlreadyHosted) {
-        const up = await uploadImageMasterWorkspaceAsset({
-          id: workspaceId,
-          data: src.startsWith('data:') ? src : undefined,
-          sourceUrl: src.startsWith('http') ? src : undefined,
-          prompt: firstPrompt,
-          width,
-          height,
-        });
-        if (up.success) {
-          const a = up.data.asset;
-          setCanvas((prev) =>
-            prev.map((x) =>
-              x.key === key
-                ? {
-                    ...x,
-                    assetId: a.id,
-                    sha256: a.sha256,
-                    src: a.url || x.src,
-                    syncStatus: 'synced',
-                    syncError: null,
-                  }
-                : x
-            )
-          );
-        } else {
-          const msg = up.error?.message || '图片持久化失败';
-          setCanvas((prev) =>
-            prev.map((x) =>
-              x.key === key
-                ? {
-                    ...x,
-                    syncStatus: 'failed',
-                    syncError: msg,
-                  }
-                : x
-            )
-          );
-          pushMsg('Assistant', `图片未能持久化到后端资产（刷新可能丢失）：${msg}`);
-        }
-      }
+      // 可选：订阅进度并实时替换（关闭页面也没关系，服务端会最终回填）
+      const ac = new AbortController();
+      void streamImageGenRunWithRetry({
+        runId,
+        signal: ac.signal,
+        onEvent: (evt) => {
+          const data = String(evt.data ?? '').trim();
+          if (!data) return;
+          let obj: unknown = null;
+          try {
+            obj = JSON.parse(data) as unknown;
+          } catch {
+            return;
+          }
+          const o = obj as { type?: unknown; errorMessage?: unknown; asset?: any; url?: unknown };
+          const t = String(o.type ?? '');
+          if (t === 'imageDone') {
+            const asset = (o as any).asset as { id?: string; sha256?: string; url?: string } | null | undefined;
+            const u = String(asset?.url ?? (o as any).url ?? '');
+            if (!u) return;
+            setCanvas((prev) =>
+              prev.map((x) =>
+                x.key === key
+                  ? {
+                      ...x,
+                      kind: 'image',
+                      status: 'done',
+                      src: u,
+                      assetId: asset?.id || x.assetId,
+                      sha256: asset?.sha256 || x.sha256,
+                      syncStatus: 'synced',
+                      syncError: null,
+                    }
+                  : x
+              )
+            );
+          } else if (t === 'imageError' || t === 'error') {
+            const msg = String((o as any).errorMessage ?? '生成失败');
+            setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+          }
+        },
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
@@ -3426,6 +3594,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 const selW = Math.max(1, inner.w);
                 const selH = Math.max(1, inner.h);
                 const selRadius = clampRadius(fitToImage ? 14 : 16, selW, selH);
+                const overlayUiScale = overlayUiScaleForBox(boxW, boxH);
+                const overlayTransform = `scale(calc(var(--invZoom) * ${overlayUiScale.toFixed(3)}))`;
                 const handleBase: React.CSSProperties = {
                   width: 12,
                   height: 12,
@@ -3558,20 +3728,20 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <PrdLoader size={loaderSizeForBox(w, h)} />
+                          <div className="absolute inset-0">
+                            <PrdPetalBreathingLoader fill className="absolute inset-0" />
                           </div>
                         ) : it.status === 'error' ? (
                           <div
                             className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
-                            style={{ color: 'rgba(255,255,255,0.82)' }}
+                            style={{ color: 'rgba(255,255,255,0.82)', transform: overlayTransform, transformOrigin: 'center' }}
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div className="text-[13px] font-extrabold" style={{ color: 'rgba(255,255,255,0.92)' }}>
+                            <div className="text-[16px] font-extrabold" style={{ color: 'rgba(255,255,255,0.92)' }}>
                               生成失败
                             </div>
-                            <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.70)' }}>
+                            <div className="text-[14px]" style={{ color: 'rgba(255,255,255,0.72)' }}>
                               {String(it.errorMessage || '未知错误')}
                             </div>
                             <div className="flex items-center gap-2">
@@ -3648,8 +3818,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         >
                           预计 {Math.round(w)} × {Math.round(h)}
                         </div>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <PrdLoader size={loaderSizeForBox(w, h)} />
+                        <div className="absolute inset-0">
+                          <PrdPetalBreathingLoader fill className="absolute inset-0" />
                         </div>
                       </div>
                     ) : kind === 'shape' ? (
@@ -3721,11 +3891,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                             >
                               {Math.round(w)} × {Math.round(h)}
                             </div>
-                            <div className="text-[13px] font-extrabold" style={{ color: 'rgba(255,255,255,0.90)' }}>
-                              图片加载失败
-                            </div>
-                            <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
-                              {String(it.errorMessage || '图片不可用（可能已删除或地址失效）')}
+                            <div
+                              className="flex flex-col items-center justify-center gap-2 px-2"
+                              style={{ transform: overlayTransform, transformOrigin: 'center' }}
+                            >
+                              <div className="text-[16px] font-extrabold" style={{ color: 'rgba(255,255,255,0.90)' }}>
+                                图片加载失败
+                              </div>
+                              <div className="text-[14px]" style={{ color: 'rgba(255,255,255,0.70)' }}>
+                                {String(it.errorMessage || '图片不可用（可能已删除或地址失效）')}
+                              </div>
                             </div>
                           </div>
                         ) : (
@@ -4925,45 +5100,113 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
               </div>
             </div>
 
-            <div className="mt-3 grid gap-2">
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className="w-full text-left rounded-[14px] px-3 py-2.5 hover:bg-white/5 transition-colors"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-                  onClick={() => {
-                    const text = buildTemplate(t.id);
-                    setInput(text);
-                    requestAnimationFrame(() => inputRef.current?.focus());
-                  }}
-                >
-                  <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {t.title}
-                  </div>
-                  <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {t.desc}
-                  </div>
-                </button>
-              ))}
-            </div>
+            {(!input.trim() && messages.length === 0) ? (
+              <div className="mt-3 grid gap-2">
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="w-full text-left rounded-[14px] px-3 py-2.5 hover:bg-white/5 transition-colors"
+                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                    onClick={() => {
+                      const text = buildTemplate(t.id);
+                      setInput(text);
+                      requestAnimationFrame(() => inputRef.current?.focus());
+                    }}
+                  >
+                    <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {t.title}
+                    </div>
+                    <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {t.desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
-            <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-2.5">
+            <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5">
               {messages.map((m) => {
                 const isUser = m.role === 'User';
+                // 过滤历史遗留的“本次使用模型/直连模式...”提示（用户要求移除）
+                if (!isUser && String(m.content ?? '').trim().startsWith('本次使用模型：')) return null;
+                const parsed = isUser ? extractInlineImageToken(m.content) : null;
+                const refSrc = parsed?.src ? String(parsed.src).trim() : '';
+                const refNameFull = String(parsed?.name ?? '').trim();
+                const refName = truncateLabelFront(refNameFull || '参照图', 18) || '参照图';
+                const contentText = parsed ? parsed.clean : m.content;
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="max-w-[92%] rounded-[14px] px-3 py-2.5 text-xs"
+                      className="max-w-[92%] rounded-[14px] px-3 py-2 text-[14px] leading-[20px]"
                       style={{
-                        background: isUser ? 'color-mix(in srgb, var(--accent-gold) 28%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.04)',
+                        // 用户气泡更克制：减少金色占比，让它更贴整体背景
+                        background: isUser
+                          ? 'color-mix(in srgb, var(--accent-gold) 16%, rgba(255,255,255,0.02))'
+                          : 'rgba(255,255,255,0.04)',
                         border: '1px solid var(--border-subtle)',
                         color: 'var(--text-primary)',
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
                       }}
                     >
-                      {m.content}
+                      {isUser && refSrc ? (
+                        <span className="flex flex-wrap items-center gap-x-1.5">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5"
+                            style={{
+                              height: 20,
+                              maxWidth: 240,
+                              paddingLeft: 6,
+                              paddingRight: 8,
+                              borderRadius: 999,
+                              overflow: 'hidden',
+                              border: '1px solid var(--border-subtle)',
+                              // 与用户气泡（金色系）更协调：更亮、更“贴”背景
+                              background: 'color-mix(in srgb, var(--accent-gold) 14%, rgba(255,255,255,0.04))',
+                            }}
+                            title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
+                            aria-label="预览参考图"
+                            onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
+                          >
+                            <span
+                              style={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: 5,
+                                overflow: 'hidden',
+                                border: '1px solid rgba(255,255,255,0.22)',
+                                background: 'rgba(255,255,255,0.06)',
+                                display: 'inline-flex',
+                                flex: '0 0 auto',
+                              }}
+                            >
+                              <img
+                                src={refSrc}
+                                alt={refName || '参照图'}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                              />
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 14,
+                                lineHeight: '20px',
+                                color: 'rgba(255,255,255,0.82)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: 200,
+                              }}
+                            >
+                              {refName}
+                            </span>
+                          </button>
+                          <span style={{ lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{contentText}</span>
+                        </span>
+                      ) : (
+                        contentText
+                      )}
                     </div>
                   </div>
                 );

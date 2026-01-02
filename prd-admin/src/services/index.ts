@@ -78,6 +78,7 @@ import type {
   UploadImageMasterWorkspaceAssetContract,
   DeleteImageMasterWorkspaceAssetContract,
   UpdateImageMasterWorkspaceContract,
+  CreateWorkspaceImageGenRunContract,
 } from '@/services/contracts/imageMaster';
 import type {
   DeleteAdminGroupContract,
@@ -161,6 +162,7 @@ import {
   uploadImageMasterWorkspaceAssetReal,
   deleteImageMasterWorkspaceAssetReal,
   updateImageMasterWorkspaceReal,
+  createWorkspaceImageGenRunReal,
 } from '@/services/real/imageMaster';
 import { exportConfigReal, getDataSummaryReal, importConfigReal, previewImportConfigReal, purgeDataReal } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
@@ -327,6 +329,7 @@ export const saveImageMasterWorkspaceCanvas: SaveImageMasterWorkspaceCanvasContr
 export const saveImageMasterWorkspaceViewport: SaveImageMasterWorkspaceViewportContract = withAuth(saveImageMasterWorkspaceViewportReal);
 export const uploadImageMasterWorkspaceAsset: UploadImageMasterWorkspaceAssetContract = withAuth(uploadImageMasterWorkspaceAssetReal);
 export const deleteImageMasterWorkspaceAsset: DeleteImageMasterWorkspaceAssetContract = withAuth(deleteImageMasterWorkspaceAssetReal);
+export const createWorkspaceImageGenRun: CreateWorkspaceImageGenRunContract = withAuth(createWorkspaceImageGenRunReal);
 export const refreshImageMasterWorkspaceCover: RefreshImageMasterWorkspaceCoverContract = withAuth(refreshImageMasterWorkspaceCoverReal);
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);

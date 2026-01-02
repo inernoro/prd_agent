@@ -80,6 +80,12 @@ export type DataConfigImportResponse = {
 };
 
 export type DataSummaryResponse = {
+  // 核心保留数据（开发期“保留核心清库”会保留这些）
+  users?: number;
+  llmPlatforms?: number;
+  llmModelsTotal?: number;
+  llmModelsEnabled?: number;
+
   llmRequestLogs: number;
   messages: number;
   documents: number;
@@ -103,6 +109,10 @@ export type DataPurgeResponse = {
   prdComments: number;
   imageMasterSessions: number;
   imageMasterMessages: number;
+
+  // devReset：额外统计
+  disabledModelsDeleted?: number;
+  otherDeleted?: number;
 };
 
 export type ExportConfigContract = () => Promise<ApiResponse<ExportedConfig>>;

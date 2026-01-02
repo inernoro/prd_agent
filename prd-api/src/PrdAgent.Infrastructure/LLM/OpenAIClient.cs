@@ -175,7 +175,8 @@ public class OpenAIClient : ILLMClient
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
                         ["content-type"] = "application/json",
-                        ["authorization"] = "Bearer ***"
+                        // 统一使用标准 Header 名，避免某些 curl 生成/回放工具把不同大小写当作“两个头”
+                        ["Authorization"] = "Bearer ***"
                     },
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
