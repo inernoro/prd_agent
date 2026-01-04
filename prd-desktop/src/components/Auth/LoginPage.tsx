@@ -90,14 +90,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative">
+    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 via-purple-100 to-slate-200 dark:from-slate-900 dark:via-purple-900 dark:to-slate-900 relative">
       {/* 右上角设置按钮 */}
       <button
         onClick={openModal}
-        className="absolute top-4 right-4 p-2.5 rounded-xl ui-glass-panel hover:bg-white/10 transition-all hover:scale-105"
+        className="absolute top-4 right-4 p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105"
         title="设置"
       >
-        <svg className="w-5 h-5 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-5 h-5 text-slate-700/80 dark:text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
@@ -111,19 +111,27 @@ export default function LoginPage() {
           <div className="w-16 h-16 bg-gradient-to-r from-cyan-400 to-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <span className="text-white font-bold text-2xl">P</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">PRD Agent</h1>
-          <p className="text-white/60 text-sm mt-2">智能PRD解读助手</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">PRD Agent</h1>
+          <p className="text-slate-600 dark:text-white/60 text-sm mt-2">智能PRD解读助手</p>
         </div>
 
         <div className="flex mb-6">
           <button
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${isLogin ? 'text-white border-b-2 border-cyan-400' : 'text-white/50'}`}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              isLogin
+                ? 'text-slate-900 dark:text-white border-b-2 border-cyan-500 dark:border-cyan-400'
+                : 'text-slate-500 dark:text-white/50'
+            }`}
             onClick={() => setIsLogin(true)}
           >
             登录
           </button>
           <button
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${!isLogin ? 'text-white border-b-2 border-cyan-400' : 'text-white/50'}`}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              !isLogin
+                ? 'text-slate-900 dark:text-white border-b-2 border-cyan-500 dark:border-cyan-400'
+                : 'text-slate-500 dark:text-white/50'
+            }`}
             onClick={() => setIsLogin(false)}
           >
             注册
@@ -171,9 +179,9 @@ export default function LoginPage() {
                 onChange={(e) => setForm({ ...form, role: e.target.value as 'PM' | 'DEV' | 'QA' })}
                 className="w-full px-4 py-3 ui-control transition-colors"
               >
-                <option value="PM" className="bg-slate-800">产品经理</option>
-                <option value="DEV" className="bg-slate-800">开发工程师</option>
-                <option value="QA" className="bg-slate-800">测试工程师</option>
+                <option value="PM" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100">产品经理</option>
+                <option value="DEV" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100">开发工程师</option>
+                <option value="QA" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100">测试工程师</option>
               </select>
 
               <input
@@ -198,17 +206,17 @@ export default function LoginPage() {
         {/* 演示模式分隔线 */}
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-white/20"></div>
+            <div className="w-full border-t border-slate-900/10 dark:border-white/20"></div>
           </div>
           <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-transparent text-white/40">或</span>
+            <span className="px-2 bg-transparent text-slate-500 dark:text-white/40">或</span>
           </div>
         </div>
 
         {/* 演示模式按钮 */}
         <button
           onClick={handleDemoMode}
-          className="w-full py-3 bg-white/10 border border-white/30 text-white/80 font-medium rounded-lg hover:bg-white/20 hover:text-white transition-all flex items-center justify-center gap-2"
+          className="w-full py-3 bg-black/5 border border-slate-900/15 text-slate-700 font-medium rounded-lg hover:bg-black/10 transition-all flex items-center justify-center gap-2 dark:bg-white/10 dark:border-white/30 dark:text-white/80 dark:hover:bg-white/20 dark:hover:text-white"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -216,7 +224,7 @@ export default function LoginPage() {
           </svg>
           演示模式
         </button>
-        <p className="text-center text-white/30 text-xs mt-2">无需登录，快速体验功能</p>
+        <p className="text-center text-slate-500 text-xs mt-2 dark:text-white/30">无需登录，快速体验功能</p>
       </div>
     </div>
   );
