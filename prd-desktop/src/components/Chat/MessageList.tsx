@@ -883,7 +883,7 @@ function MessageListInner() {
                 ) : (
                   // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
               isMessageStreaming ? (
-                    <div style={assistantContentStyle}>
+                    <div className="prose prose-sm dark:prose-invert max-w-none" style={assistantContentStyle}>
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     </div>
                   ) : (

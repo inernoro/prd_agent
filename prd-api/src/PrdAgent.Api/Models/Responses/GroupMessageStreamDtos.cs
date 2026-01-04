@@ -15,6 +15,7 @@ public class GroupMessageStreamMessageDto
     public long GroupSeq { get; set; }
     public bool IsDeleted { get; set; }
     public string SessionId { get; set; } = string.Empty;
+    public string? RunId { get; set; }
     public string? SenderId { get; set; }
     public string? SenderName { get; set; }
     public UserRole? SenderRole { get; set; }

@@ -49,6 +49,7 @@ pub fn run() {
             commands::auth::register,
             commands::auth::set_auth_token,
             commands::auth::set_auth_session,
+            commands::assets::get_desktop_asset_skins,
             commands::group::create_group,
             commands::group::join_group,
             commands::group::get_groups,

@@ -4,6 +4,7 @@ import { ApiResponse, Document, Session, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
+import { useMessageStore } from '../../stores/messageStore';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 type GroupMemberInfo = {
@@ -19,6 +20,8 @@ export default function GroupList() {
   const { user } = useAuthStore();
   const { groups, loading, loadGroups } = useGroupListStore();
   const { activeGroupId, setActiveGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
+  const syncFromServer = useMessageStore((s) => s.syncFromServer);
+  const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
   const [dissolveTarget, setDissolveTarget] = useState<null | { groupId: string; groupName: string }>(null);
   const [dissolveBusy, setDissolveBusy] = useState(false);
   const [dissolveError, setDissolveError] = useState('');
@@ -48,6 +51,18 @@ export default function GroupList() {
 
   const openGroup = async (group: (typeof groups)[number]) => {
     if (user?.userId === 'demo-user-001') return;
+
+    // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
+    // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）
+    // - syncFromServer 内部有 isSyncing 保护，重复触发开销很低
+    try {
+      await syncFromServer({ groupId: group.groupId, limit: 100 });
+    } catch {
+      // ignore（断连/权限由全局处理）
+    } finally {
+      triggerScrollToBottom();
+    }
+
     // 切换群组必须先清空旧 session/document，避免串信息
     setActiveGroupContext(group.groupId);
 

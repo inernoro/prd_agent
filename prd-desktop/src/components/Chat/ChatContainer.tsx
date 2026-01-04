@@ -8,12 +8,16 @@ import { useSystemNoticeStore } from '../../stores/systemNoticeStore';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import SystemNoticeOverlay from '../Feedback/SystemNoticeOverlay';
+import { useGroupListStore } from '../../stores/groupListStore';
+import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
 
 // 阶段提示文案会造成重复状态块（且与“AI 回复气泡”割裂），这里不再使用。
 
 function ChatContainerInner() {
   const { sessionId, activeGroupId, currentRole } = useSessionStore();
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
+  const groups = useGroupListStore((s) => s.groups);
+  const openGroupDrawer = useGroupInfoDrawerStore((s) => s.open);
   const loadGroupMembers = useUserDirectoryStore((s) => s.loadGroupMembers);
   const startStreaming = useMessageStore((s) => s.startStreaming);
   const appendToStreamingMessage = useMessageStore((s) => s.appendToStreamingMessage);
@@ -288,6 +292,27 @@ function ChatContainerInner() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
       <SystemNoticeOverlay />
+      {/* 群标题栏：右上角打开群信息侧边栏 */}
+      {activeGroupId ? (
+        <div className="h-12 px-4 flex items-center justify-between border-b ui-glass-bar">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-text-primary truncate">
+              {groups.find((g) => g.groupId === activeGroupId)?.groupName || '群组'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => openGroupDrawer(activeGroupId)}
+            className="h-9 w-9 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
+            title="群信息"
+            aria-label="群信息"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 12h.01M19 12h.01M5 12h.01" />
+            </svg>
+          </button>
+        </div>
+      ) : null}
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
         <MessageList />
       </div>

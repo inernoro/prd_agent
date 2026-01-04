@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2 } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image } from 'lucide-react';
 import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
@@ -31,6 +31,7 @@ export default function AppShell() {
       { key: '/prompts', label: '提示词管理', icon: <FileText size={18} /> },
       { key: '/ai-chat', label: 'AI 对话', icon: <MessagesSquare size={18} /> },
       { key: '/visual-agent', label: '视觉创作 Agent', icon: <Wand2 size={18} /> },
+      { key: '/assets', label: '资源管理', icon: <Image size={18} /> },
       { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} /> },
       { key: '/data', label: '数据管理', icon: <Database size={18} /> },
       { key: '/lab', label: '实验室', icon: <FlaskConical size={18} /> },

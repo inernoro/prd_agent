@@ -14,6 +14,8 @@ use crate::services::api_client;
 pub struct AppConfig {
     pub api_base_url: String,
     #[serde(default)]
+    pub assets_base_url: String,
+    #[serde(default)]
     pub is_developer: bool,
     #[serde(default)]
     pub client_id: String,
@@ -23,6 +25,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             api_base_url: api_client::get_default_api_url(),
+            assets_base_url: "https://i.pa.759800.com".to_string(),
             is_developer: false,
             client_id: Uuid::new_v4().to_string(),
         }

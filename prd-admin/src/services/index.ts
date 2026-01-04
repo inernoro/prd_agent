@@ -81,6 +81,15 @@ import type {
   CreateWorkspaceImageGenRunContract,
 } from '@/services/contracts/imageMaster';
 import type {
+  CreateDesktopAssetKeyContract,
+  CreateDesktopAssetSkinContract,
+  DeleteDesktopAssetSkinContract,
+  ListDesktopAssetKeysContract,
+  ListDesktopAssetSkinsContract,
+  UpdateDesktopAssetSkinContract,
+  UploadDesktopAssetContract,
+} from '@/services/contracts/desktopAssets';
+import type {
   DeleteAdminGroupContract,
   DeleteAdminGroupMessagesContract,
   GenerateAdminGapSummaryContract,
@@ -187,6 +196,15 @@ import {
   updateAdminGapStatusReal,
   updateAdminGroupReal,
 } from '@/services/real/adminGroups';
+import {
+  createDesktopAssetKey as createDesktopAssetKeyReal,
+  createDesktopAssetSkin as createDesktopAssetSkinReal,
+  deleteDesktopAssetSkin as deleteDesktopAssetSkinReal,
+  listDesktopAssetKeys as listDesktopAssetKeysReal,
+  listDesktopAssetSkins as listDesktopAssetSkinsReal,
+  updateDesktopAssetSkin as updateDesktopAssetSkinReal,
+  uploadDesktopAsset as uploadDesktopAssetReal,
+} from '@/services/real/desktopAssets';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -308,6 +326,14 @@ export const uploadAiChatDocument: AiChatUploadDocumentContract = withAuth(uploa
 export const getAiChatHistory: AiChatGetHistoryContract = withAuth(getAiChatHistoryReal);
 
 export const suggestGroupName: SuggestGroupNameContract = withAuth(suggestGroupNameReal);
+
+export const listDesktopAssetSkins: ListDesktopAssetSkinsContract = withAuth(listDesktopAssetSkinsReal);
+export const createDesktopAssetSkin: CreateDesktopAssetSkinContract = withAuth(createDesktopAssetSkinReal);
+export const updateDesktopAssetSkin: UpdateDesktopAssetSkinContract = withAuth(updateDesktopAssetSkinReal);
+export const deleteDesktopAssetSkin: DeleteDesktopAssetSkinContract = withAuth(deleteDesktopAssetSkinReal);
+export const listDesktopAssetKeys: ListDesktopAssetKeysContract = withAuth(listDesktopAssetKeysReal);
+export const createDesktopAssetKey: CreateDesktopAssetKeyContract = withAuth(createDesktopAssetKeyReal);
+export const uploadDesktopAsset: UploadDesktopAssetContract = withAuth(uploadDesktopAssetReal);
 
 export const createImageMasterSession: CreateImageMasterSessionContract = withAuth(createImageMasterSessionReal);
 export const listImageMasterSessions: ListImageMasterSessionsContract = withAuth(listImageMasterSessionsReal);

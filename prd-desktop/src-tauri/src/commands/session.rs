@@ -462,6 +462,7 @@ pub async fn send_message(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[command]
 pub async fn resend_message(
     app: AppHandle,

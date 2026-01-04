@@ -47,7 +47,8 @@ public class GroupService : IGroupService
         {
             GroupId = group.GroupId,
             UserId = ownerId,
-            MemberRole = UserRole.PM
+            MemberRole = UserRole.PM,
+            Tags = BuildDefaultHumanTags(UserRole.PM)
         };
 
         await _memberRepository.InsertAsync(member);
@@ -95,12 +96,39 @@ public class GroupService : IGroupService
         {
             GroupId = group.GroupId,
             UserId = userId,
-            MemberRole = memberRole
+            MemberRole = memberRole,
+            Tags = BuildDefaultHumanTags(memberRole)
         };
 
         await _memberRepository.InsertAsync(member);
 
         return member;
+    }
+
+    private static List<GroupMemberTag> BuildDefaultHumanTags(UserRole role)
+    {
+        return new List<GroupMemberTag>
+        {
+            new()
+            {
+                Name = role switch
+                {
+                    UserRole.PM => "产品经理",
+                    UserRole.DEV => "开发",
+                    UserRole.QA => "测试",
+                    UserRole.ADMIN => "管理员",
+                    _ => "成员"
+                },
+                Role = role switch
+                {
+                    UserRole.PM => "pm",
+                    UserRole.DEV => "dev",
+                    UserRole.QA => "qa",
+                    UserRole.ADMIN => "admin",
+                    _ => "member"
+                }
+            }
+        };
     }
 
     public async Task<List<GroupMember>> GetMembersAsync(string groupId)

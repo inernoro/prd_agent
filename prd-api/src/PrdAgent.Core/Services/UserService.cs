@@ -62,6 +62,10 @@ public class UserService : IUserService
         if (user == null)
             return null;
 
+        // 机器人账号禁止登录：仅作为群内成员/审计主体存在
+        if (user.UserType == UserType.Bot)
+            return null;
+
         if (!BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
             return null;
 

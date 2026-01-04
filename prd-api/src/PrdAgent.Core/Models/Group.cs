@@ -60,7 +60,27 @@ public class GroupMember
     
     /// <summary>成员在群组中的角色</summary>
     public UserRole MemberRole { get; set; } = UserRole.DEV;
+
+    /// <summary>
+    /// 群内成员标签（用于展示与权限/能力路由；与 UserRole 不冲突，可多标签）
+    /// 约定示例：
+    /// - 机器人：[{name:"机器人", role:"robot"},{name:"产品经理", role:"pm"}]
+    /// - 人类：[{name:"产品经理", role:"pm"}]
+    /// </summary>
+    public List<GroupMemberTag> Tags { get; set; } = new();
     
     /// <summary>加入时间</summary>
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 群内成员标签
+/// </summary>
+public class GroupMemberTag
+{
+    /// <summary>展示名称（中文）</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>机器可读的 role（建议小写：robot/pm/dev/qa/owner/admin 等）</summary>
+    public string Role { get; set; } = string.Empty;
 }

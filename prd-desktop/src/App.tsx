@@ -11,9 +11,12 @@ import ChatContainer from './components/Chat/ChatContainer';
 import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
 import LoginPage from './components/Auth/LoginPage';
 import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
+import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
+import AssetsDiagPage from './components/Assets/AssetsDiagPage';
 import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
+import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
 function App() {
@@ -53,6 +56,15 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
+  }, [isDark]);
+
+  // 同步当前皮肤（dark/white）到远端资源表：供 “皮肤专有 icon” 解析优先级使用
+  useEffect(() => {
+    const desired = isDark ? 'dark' : 'white';
+    const cur = useRemoteAssetsStore.getState().skin;
+    if (!cur || cur === 'dark' || cur === 'white') {
+      useRemoteAssetsStore.getState().setSkin(desired);
+    }
   }, [isDark]);
 
   // 将持久化的 token 同步到 Rust（避免重启后 Rust 侧没有 token 导致请求 401）
@@ -244,7 +256,9 @@ function App() {
               - 没有任何群组：右侧显示上传 PRD（上传后自动建群）
               - 有群组：右侧进入会话区域；未绑定 PRD 的群组显示“待上传/不可对话”空态（由 ChatContainer/ChatInput 控制）
           */}
-          {groupsLoading ? (
+          {mode === 'AssetsDiag' ? (
+            <AssetsDiagPage />
+          ) : groupsLoading ? (
             <div className="flex-1 flex items-center justify-center text-text-secondary">
               加载中...
             </div>
@@ -259,6 +273,8 @@ function App() {
 
         {/* 引用小抽屉预览（不影响全屏 PrdPreviewPage 的引用浮层） */}
         <PrdCitationPreviewDrawer />
+        {/* 群信息侧边栏（右侧抽屉） */}
+        <GroupInfoDrawer />
       </div>
 
       {/* 全局系统级错误弹窗（invoke 层统一拦截触发） */}

@@ -22,6 +22,7 @@ namespace PrdAgent.Api.Controllers;
 public class GroupsController : ControllerBase
 {
     private readonly IGroupService _groupService;
+    private readonly IGroupBotService _groupBotService;
     private readonly IDocumentService _documentService;
     private readonly IUserService _userService;
     private readonly ISessionService _sessionService;
@@ -44,6 +45,7 @@ public class GroupsController : ControllerBase
 
     public GroupsController(
         IGroupService groupService,
+        IGroupBotService groupBotService,
         IDocumentService documentService,
         IUserService userService,
         ISessionService sessionService,
@@ -54,6 +56,7 @@ public class GroupsController : ControllerBase
         IGroupMessageStreamHub groupMessageStreamHub)
     {
         _groupService = groupService;
+        _groupBotService = groupBotService;
         _documentService = documentService;
         _userService = userService;
         _sessionService = sessionService;
@@ -113,6 +116,17 @@ public class GroupsController : ControllerBase
             prdTitleSnapshot: document?.Title,
             prdTokenEstimateSnapshot: document?.TokenEstimate,
             prdCharCountSnapshot: document?.CharCount);
+
+        // 创建群后自动初始化默认机器人账号（PM/DEV/QA），并加入群成员（幂等）
+        try
+        {
+            await _groupBotService.EnsureDefaultRoleBotsInGroupAsync(group.GroupId);
+        }
+        catch (Exception ex)
+        {
+            // 不阻断创建群主流程：失败时仍可手动调用 /bots/bootstrap
+            _logger.LogWarning(ex, "Failed to auto bootstrap group bots: {GroupId}", group.GroupId);
+        }
 
         var members = await _groupService.GetMembersAsync(group.GroupId);
 
@@ -330,12 +344,27 @@ public class GroupsController : ControllerBase
             var user = await _userService.GetByIdAsync(member.UserId);
             if (user != null)
             {
+                var tags = member.Tags ?? new List<GroupMemberTag>();
+                // 兼容旧数据：若 tags 缺失则按用户类型/角色补默认值
+                if (tags.Count == 0)
+                {
+                    tags = user.UserType == UserType.Bot
+                        ? BuildDefaultBotTags(user.BotKind ?? BotKind.DEV)
+                        : BuildDefaultHumanTags(member.MemberRole);
+                }
                 response.Add(new GroupMemberResponse
                 {
                     UserId = user.UserId,
                     Username = user.Username,
                     DisplayName = user.DisplayName,
                     MemberRole = member.MemberRole,
+                    IsBot = user.UserType == UserType.Bot,
+                    BotKind = user.UserType == UserType.Bot ? user.BotKind : null,
+                    Tags = tags.Select(t => new GroupMemberTagDto
+                    {
+                        Name = t.Name,
+                        Role = t.Role
+                    }).ToList(),
                     JoinedAt = member.JoinedAt,
                     IsOwner = member.UserId == group.OwnerId
                 });
@@ -343,6 +372,100 @@ public class GroupsController : ControllerBase
         }
 
         return Ok(ApiResponse<List<GroupMemberResponse>>.Ok(response));
+    }
+
+    /// <summary>
+    /// 初始化群内默认机器人账号（PM/DEV/QA），并加入群成员
+    /// </summary>
+    [HttpPost("{groupId}/bots/bootstrap")]
+    [ProducesResponseType(typeof(ApiResponse<BootstrapGroupBotsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> BootstrapBots(string groupId, [FromBody] BootstrapGroupBotsRequest? request)
+    {
+        var (isValid, errorMessage) = (request ?? new BootstrapGroupBotsRequest()).Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        groupId = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 不能为空"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 仅群主/管理员可初始化（避免普通成员把机器人“塞进群”）
+        var actor = await _userService.GetByIdAsync(userId);
+        if (actor == null)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+        if (actor.Role != UserRole.ADMIN && group.OwnerId != userId)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅群主可初始化机器人"));
+        }
+
+        if (request is { DryRun: true })
+        {
+            // 预留：当前不支持 dry-run（避免与“幂等初始化”语义混淆）
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "dryRun 暂不支持"));
+        }
+
+        IReadOnlyList<User> bots;
+        try
+        {
+            bots = await _groupBotService.EnsureDefaultRoleBotsInGroupAsync(groupId);
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("群组不存在", StringComparison.Ordinal))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        var members = await _groupService.GetMembersAsync(groupId);
+        var botSet = bots.Select(x => x.UserId).ToHashSet(StringComparer.Ordinal);
+        var botMembers = members.Where(m => botSet.Contains(m.UserId)).ToList();
+
+        var response = new BootstrapGroupBotsResponse
+        {
+            GroupId = groupId,
+            Bots = botMembers.Select(m =>
+            {
+                var u = bots.First(x => x.UserId == m.UserId);
+                var tags = m.Tags ?? new List<GroupMemberTag>();
+                if (tags.Count == 0)
+                {
+                    tags = BuildDefaultBotTags(u.BotKind ?? BotKind.DEV);
+                }
+                return new GroupMemberResponse
+                {
+                    UserId = u.UserId,
+                    Username = u.Username,
+                    DisplayName = u.DisplayName,
+                    MemberRole = m.MemberRole,
+                    IsBot = true,
+                    BotKind = u.BotKind,
+                    Tags = tags.Select(t => new GroupMemberTagDto { Name = t.Name, Role = t.Role }).ToList(),
+                    JoinedAt = m.JoinedAt,
+                    IsOwner = false
+                };
+            }).ToList()
+        };
+
+        return Ok(ApiResponse<BootstrapGroupBotsResponse>.Ok(response));
     }
 
     /// <summary>
@@ -928,6 +1051,7 @@ public class GroupsController : ControllerBase
                 GroupSeq = m.GroupSeq ?? 0,
                 IsDeleted = m.IsDeleted,
                 SessionId = m.SessionId,
+                RunId = m.RunId,
                 SenderId = m.SenderId,
                 SenderName = senderName,
                 SenderRole = senderRole,
@@ -939,6 +1063,49 @@ public class GroupsController : ControllerBase
                 Timestamp = m.Timestamp,
                 TokenUsage = m.TokenUsage
             }
+        };
+    }
+
+    private static List<GroupMemberTag> BuildDefaultHumanTags(UserRole role)
+    {
+        return new List<GroupMemberTag>
+        {
+            new()
+            {
+                Name = role switch
+                {
+                    UserRole.PM => "产品经理",
+                    UserRole.DEV => "开发",
+                    UserRole.QA => "测试",
+                    UserRole.ADMIN => "管理员",
+                    _ => "成员"
+                },
+                Role = role switch
+                {
+                    UserRole.PM => "pm",
+                    UserRole.DEV => "dev",
+                    UserRole.QA => "qa",
+                    UserRole.ADMIN => "admin",
+                    _ => "member"
+                }
+            }
+        };
+    }
+
+    private static List<GroupMemberTag> BuildDefaultBotTags(BotKind kind)
+    {
+        var roleTag = kind switch
+        {
+            BotKind.PM => new GroupMemberTag { Name = "产品经理", Role = "pm" },
+            BotKind.DEV => new GroupMemberTag { Name = "开发", Role = "dev" },
+            BotKind.QA => new GroupMemberTag { Name = "测试", Role = "qa" },
+            _ => new GroupMemberTag { Name = "开发", Role = "dev" }
+        };
+
+        return new List<GroupMemberTag>
+        {
+            new() { Name = "机器人", Role = "robot" },
+            roleTag
         };
     }
 

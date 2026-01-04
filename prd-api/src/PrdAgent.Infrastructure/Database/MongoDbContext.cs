@@ -69,6 +69,8 @@ public class MongoDbContext
     public IMongoCollection<UploadArtifact> UploadArtifacts => _database.GetCollection<UploadArtifact>("upload_artifacts");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
     public IMongoCollection<AdminIdempotencyRecord> AdminIdempotencyRecords => _database.GetCollection<AdminIdempotencyRecord>("admin_idempotency");
+    public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
+    public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
 
     private void CreateIndexes()
     {
@@ -467,5 +469,16 @@ public class MongoDbContext
         }
         AdminIdempotencyRecords.Indexes.CreateOne(new CreateIndexModel<AdminIdempotencyRecord>(
             Builders<AdminIdempotencyRecord>.IndexKeys.Descending(x => x.CreatedAt)));
+
+        // DesktopAssets：skin/key 允许未来扩展；不强制 unique 以避免因历史脏数据导致启动失败，约束由业务控制
+        DesktopAssetSkins.Indexes.CreateOne(new CreateIndexModel<DesktopAssetSkin>(
+            Builders<DesktopAssetSkin>.IndexKeys.Ascending(x => x.Name),
+            new CreateIndexOptions { Name = "idx_desktop_asset_skins_name" }));
+        DesktopAssetSkins.Indexes.CreateOne(new CreateIndexModel<DesktopAssetSkin>(
+            Builders<DesktopAssetSkin>.IndexKeys.Ascending(x => x.Enabled),
+            new CreateIndexOptions { Name = "idx_desktop_asset_skins_enabled" }));
+        DesktopAssetKeys.Indexes.CreateOne(new CreateIndexModel<DesktopAssetKey>(
+            Builders<DesktopAssetKey>.IndexKeys.Ascending(x => x.Key),
+            new CreateIndexOptions { Name = "idx_desktop_asset_keys_key" }));
     }
 }

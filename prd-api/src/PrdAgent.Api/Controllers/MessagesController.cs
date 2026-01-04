@@ -342,6 +342,7 @@ public class MessagesController : ControllerBase
         {
             Id = m.Id,
             GroupSeq = m.GroupSeq,
+            RunId = m.RunId,
             SenderId = m.SenderId,
             SenderName = m.SenderId != null && senderNameMap.TryGetValue(m.SenderId, out var nm) ? nm : null,
             SenderRole = m.SenderId != null && senderRoleMap.TryGetValue(m.SenderId, out var rr) ? rr : null,
@@ -365,6 +366,7 @@ public class MessageResponse
 {
     public string Id { get; set; } = string.Empty;
     public long? GroupSeq { get; set; }
+    public string? RunId { get; set; }
     public string? SenderId { get; set; }
     public string? SenderName { get; set; }
     public UserRole? SenderRole { get; set; }

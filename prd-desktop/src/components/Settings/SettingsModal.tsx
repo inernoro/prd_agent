@@ -8,6 +8,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
 
 interface ApiTestResult {
   success: boolean;
@@ -18,6 +19,7 @@ interface ApiTestResult {
 
 const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
+const DEFAULT_ASSETS_URL = 'https://i.pa.759800.com';
 
 function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
@@ -64,9 +66,12 @@ export default function SettingsModal() {
   const clearSession = useSessionStore((s) => s.clearSession);
   const clearGroups = useGroupListStore((s) => s.clear);
   const clearMessages = useMessageStore((s) => s.clearMessages);
+  const resetAssets = useRemoteAssetsStore((s) => s.resetLocalCacheAndRefresh);
   const [apiUrl, setApiUrl] = useState('');
+  const [assetsUrl, setAssetsUrl] = useState('');
   const [error, setError] = useState('');
   const [useDefault, setUseDefault] = useState(true);
+  const [useDefaultAssets, setUseDefaultAssets] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [clearConfirmStep, setClearConfirmStep] = useState<0 | 1 | 2>(0);
@@ -138,6 +143,11 @@ export default function SettingsModal() {
       setUseDefault(isDefault);
       setIsDeveloper(dev);
       setApiUrl(isDefault ? defaultApiUrl : config.apiBaseUrl);
+
+      const cfgAssets = (config.assetsBaseUrl || '').trim();
+      const isDefaultAssets = !cfgAssets || cfgAssets === DEFAULT_ASSETS_URL;
+      setUseDefaultAssets(isDefaultAssets);
+      setAssetsUrl(isDefaultAssets ? DEFAULT_ASSETS_URL : cfgAssets);
     }
   }, [config]);
 
@@ -146,6 +156,7 @@ export default function SettingsModal() {
     
     const defaultApiUrl = getDefaultApiUrl(isDeveloper);
     const urlToSave = useDefault ? defaultApiUrl : apiUrl.trim();
+    const assetsToSave = useDefaultAssets ? DEFAULT_ASSETS_URL : assetsUrl.trim();
     
     // 验证 URL 格式
     if (!urlToSave) {
@@ -159,9 +170,22 @@ export default function SettingsModal() {
       setError('请输入有效的 URL 地址');
       return;
     }
+
+    if (!assetsToSave) {
+      setError('资源地址不能为空');
+      return;
+    }
+    try {
+      new URL(assetsToSave);
+    } catch {
+      setError('请输入有效的资源 URL 地址');
+      return;
+    }
     
     try {
-      await saveConfig({ apiBaseUrl: urlToSave, isDeveloper });
+      await saveConfig({ apiBaseUrl: urlToSave, assetsBaseUrl: assetsToSave, isDeveloper });
+      // 资源域名切换后：清空本地缓存并重新获取 skins/etag（不影响登录态）
+      void resetAssets();
       closeModal();
     } catch (err) {
       setError(String(err));
@@ -174,6 +198,13 @@ export default function SettingsModal() {
       setApiUrl(getDefaultApiUrl(isDeveloper));
     }
     setTestResult(null);
+  };
+
+  const handleUseDefaultAssetsChange = (checked: boolean) => {
+    setUseDefaultAssets(checked);
+    if (checked) {
+      setAssetsUrl(DEFAULT_ASSETS_URL);
+    }
   };
 
   const handleDeveloperChange = (checked: boolean) => {
@@ -540,6 +571,54 @@ export default function SettingsModal() {
                   placeholder="https://api.example.com"
                   className="w-full px-4 py-3 ui-control transition-colors"
                 />
+              </div>
+            )}
+          </div>
+
+          {/* 资源地址配置 */}
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-text-secondary">
+              资源地址（图标/皮肤）
+            </label>
+
+            <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-xs font-medium text-cyan-400">默认资源域名</span>
+              </div>
+              <p className="text-sm text-text-primary font-mono break-all">{DEFAULT_ASSETS_URL}</p>
+            </div>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={useDefaultAssets}
+                  onChange={(e) => handleUseDefaultAssetsChange(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-6 rounded-full transition-colors ${useDefaultAssets ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${useDefaultAssets ? 'translate-x-4' : ''}`} />
+                </div>
+              </div>
+              <span className="text-sm text-text-secondary">使用默认资源地址</span>
+            </label>
+
+            {!useDefaultAssets && (
+              <div className="space-y-2">
+                <label className="block text-xs text-text-secondary">自定义资源地址</label>
+                <input
+                  type="url"
+                  value={assetsUrl}
+                  onChange={(e) => setAssetsUrl(e.target.value)}
+                  placeholder="https://i.pa.759800.com"
+                  className="w-full px-4 py-3 ui-control transition-colors"
+                />
+                <div className="text-xs text-text-secondary">
+                  规则固定：会拼接为 <span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；Desktop 仅拉取皮肤列表，不从 API 获取地址规则。
+                </div>
               </div>
             )}
           </div>
