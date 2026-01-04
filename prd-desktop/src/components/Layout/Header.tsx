@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { assistantFontScaleBounds, useUiPrefsStore } from '../../stores/uiPrefsStore';
+import { useConnectionStore } from '../../stores/connectionStore';
 import RoleSelector from '../Role/RoleSelector';
 
 interface HeaderProps {
@@ -19,6 +20,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const { sessionId, activeGroupId } = useSessionStore();
   const clearContext = useSessionStore((s) => s.clearContext);
   const clearChatContext = useMessageStore((s) => s.clearCurrentContext);
+  const connectionStatus = useConnectionStore((s) => s.status);
   const assistantFontScale = useUiPrefsStore((s) => s.assistantFontScale);
   const increaseAssistantFont = useUiPrefsStore((s) => s.increaseAssistantFont);
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
@@ -74,6 +76,24 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
             <>
               {sessionId ? <RoleSelector /> : null}
             </>
+          )}
+
+          {/* 连接状态：断连时给出轻量提示，避免用户误以为“无权限/系统坏了” */}
+          {connectionStatus === 'disconnected' && (
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-red-700 dark:text-red-200 bg-red-500/15 border border-red-500/35 shadow-sm animate-pulse"
+              title="已断线，正在重连…"
+              aria-label="已断线，正在重连"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 13a5 5 0 0 1 7.07-7.07l1.41 1.41" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 11a5 5 0 0 1-7.07 7.07l-1.41-1.41" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18" />
+              </svg>
+              <span className="text-sm font-semibold tracking-wide whitespace-nowrap">
+                已断线，正在重连…
+              </span>
+            </div>
           )}
 
           <button

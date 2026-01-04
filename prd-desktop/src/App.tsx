@@ -13,6 +13,7 @@ import LoginPage from './components/Auth/LoginPage';
 import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
 import { isSystemErrorCode } from './lib/systemError';
+import { useConnectionStore } from './stores/connectionStore';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const [isDark, setIsDark] = useState(false);
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
+  const connectionStatus = useConnectionStore((s) => s.status);
 
   // SSE 场景下 Rust 侧可能通过事件通知登录已过期（401且 refresh 失败）
   useEffect(() => {
@@ -117,8 +119,9 @@ function App() {
     if (user?.userId === 'demo-user-001') return;
 
     let stopped = false;
-    const fetchOnce = () =>
-      invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
+    const fetchOnce = () => {
+      if (connectionStatus === 'disconnected') return Promise.resolve();
+      return invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
         .then((res) => {
           if (stopped) return;
           if (res?.success && res.data) {
@@ -126,8 +129,9 @@ function App() {
           }
         })
         .catch(() => {
-          // 网络波动不打扰用户；UI 会回落到本地硬编码
+          // 网络波动/断连不打扰用户；UI 会回落到本地硬编码
         });
+    };
 
     // 立刻拉一次
     void fetchOnce();
@@ -145,7 +149,7 @@ function App() {
       window.clearInterval(timer);
       window.removeEventListener('focus', onFocus);
     };
-  }, [isAuthenticated, user?.userId, setPrompts]);
+  }, [isAuthenticated, user?.userId, setPrompts, connectionStatus]);
 
   // 监听 deep link：prdagent://join/{inviteCode}
   useEffect(() => {
