@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useMemo } from 'react';
 import { invoke } from '../lib/tauri';
 import type { ApiResponse } from '../types';
 
@@ -484,15 +485,16 @@ export function useRemoteAssetUrlPair(id: RemoteAssetId, args?: { skin?: SkinNam
 }
 
 export function useIsSkinVariantUnavailable(id: RemoteAssetId): { skin: string | null; unavailable: boolean } {
-  return useRemoteAssetsStore((s) => {
+  const skin = useRemoteAssetsStore((s) => normalizeSkin(s.skin));
+  const unavailable = useRemoteAssetsStore((s) => {
     const skin = normalizeSkin(s.skin);
-    if (!skin) return { skin: null, unavailable: false };
+    if (!skin) return false;
     const entry = s.assets?.[id] ?? DEFAULT_ASSETS[id];
     const key: VariantKey = `skin:${skin}`;
     const meta = getMeta(entry, key);
-    const unavailable = Boolean((meta as any)?.unavailable);
-    return { skin, unavailable };
+    return Boolean((meta as any)?.unavailable);
   });
+  return useMemo(() => ({ skin, unavailable }), [skin, unavailable]);
 }
 
 

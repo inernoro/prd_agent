@@ -1,33 +1,74 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
-  createDesktopAssetKey,
-  createDesktopAssetSkin,
-  deleteDesktopAssetSkin,
-  listDesktopAssetKeys,
-  listDesktopAssetSkins,
-  updateDesktopAssetSkin,
-  uploadDesktopAsset,
-} from '@/services';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createDesktopAssetKey, createDesktopAssetSkin, listDesktopAssetKeys, listDesktopAssetSkins, uploadDesktopAsset } from '@/services';
 import type { DesktopAssetKey, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
 }
 
-function skinLabel(name: string) {
+type AssetKind = 'image' | 'audio' | 'video' | 'other';
+
+type AssetRow = {
+  title: string;
+  key: string;
+  kind: AssetKind;
+  description?: string | null;
+  required?: boolean;
+};
+
+// 对齐 prd-desktop 的 REQUIRED_ASSETS（诊断页必须覆盖这些 key）
+const REQUIRED_ASSETS: AssetRow[] = [
+  { title: '冷启动加载', key: 'start_load.gif', kind: 'image', required: true },
+  { title: '加载动画', key: 'load.gif', kind: 'image', required: true },
+  { title: '登录 Logo', key: 'login_logo.svg', kind: 'image', required: true },
+  { title: '登录图标', key: 'login_icon.png', kind: 'image', required: true },
+];
+
+const BASE_ASSETS_URL = 'https://i.pa.759800.com';
+
+function labelForSkin(name: string) {
   const s = String(name || '').trim().toLowerCase();
   if (s === 'white') return '白天';
   if (s === 'dark') return '黑夜';
   return name;
 }
 
-function buildPreviewUrl(skin: string | null, key: string) {
-  const base = 'https://i.pa.759800.com';
+function normalizeSkinName(raw: string): { ok: boolean; value: string; error?: string } {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return { ok: false, value: s, error: '皮肤名不能为空' };
+  if (s.length > 32) return { ok: false, value: s, error: '皮肤名不能超过 32 字符' };
+  if (!/^[a-z0-9][a-z0-9\-_]{0,31}$/.test(s)) {
+    return { ok: false, value: s, error: '皮肤名仅允许小写字母/数字/中划线/下划线，且需以字母或数字开头' };
+  }
+  return { ok: true, value: s };
+}
+
+/**
+ * 对齐 Desktop 端规则：
+ * - URL 固定拼接为 /icon/desktop/<skin?>/<key>
+ * - key 强约束为“仅文件名”（不允许子目录），并且全小写
+ */
+function normalizeDesktopKey(raw: string): { ok: boolean; value: string; error?: string } {
+  const s = String(raw || '').trim().toLowerCase().replace(/^\/+/, '');
+  if (!s) return { ok: false, value: s, error: 'key 不能为空' };
+  if (s.length > 128) return { ok: false, value: s, error: 'key 不能超过 128 字符' };
+  if (s.includes('..')) return { ok: false, value: s, error: 'key 不允许包含 ..' };
+  if (s.includes('\\')) return { ok: false, value: s, error: 'key 不允许包含反斜杠' };
+  if (s.includes('/')) return { ok: false, value: s, error: 'Desktop 端 key 仅支持文件名（不允许包含 / 子目录）' };
+  if (!/^[a-z0-9][a-z0-9_\-.]{0,127}$/.test(s)) {
+    return { ok: false, value: s, error: 'key 仅允许小写字母/数字/下划线/中划线/点，且需以字母或数字开头' };
+  }
+  return { ok: true, value: s };
+}
+
+function buildIconUrl(baseUrl: string, key: string, skin?: string | null, cacheBust?: number | null): string {
+  const b = String(baseUrl || '').trim().replace(/\/+$/, '');
   const k = String(key || '').trim().replace(/^\/+/, '');
   const s = String(skin || '').trim().replace(/^\/+|\/+$/g, '');
-  if (!k) return '';
-  if (s) return `${base}/icon/desktop/${s}/${k}`;
-  return `${base}/icon/desktop/${k}`;
+  if (!b || !k) return '';
+  const url = s ? `${b}/icon/desktop/${s}/${k}` : `${b}/icon/desktop/${k}`;
+  const v = typeof cacheBust === 'number' && Number.isFinite(cacheBust) ? String(Math.floor(cacheBust)) : '';
+  return v ? `${url}?v=${encodeURIComponent(v)}` : url;
 }
 
 async function copyText(s: string) {
@@ -36,7 +77,6 @@ async function copyText(s: string) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    // fallback
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -54,17 +94,17 @@ export default function AssetsManagePage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
+  const [cacheBust, setCacheBust] = useState<number>(() => Date.now());
+  const [broken, setBroken] = useState<Record<string, boolean>>({});
+
   const [newSkin, setNewSkin] = useState('white');
   const [newKey, setNewKey] = useState('load.gif');
-  const [newKeyKind, setNewKeyKind] = useState('image');
+  const [newKeyKind, setNewKeyKind] = useState<AssetKind>('image');
   const [newKeyDesc, setNewKeyDesc] = useState('');
 
-  const [uploadSkin, setUploadSkin] = useState<string>(''); // ''=默认
-  const [uploadKey, setUploadKey] = useState('load.gif');
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadResultUrl, setUploadResultUrl] = useState<string>('');
-
-  const skinNames = useMemo(() => skins.filter((s) => s.enabled).map((s) => s.name), [skins]);
+  const [uploadingId, setUploadingId] = useState<string>('');
+  const [uploadTarget, setUploadTarget] = useState<{ skin: string | null; key: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const reload = async () => {
     setLoading(true);
@@ -86,13 +126,46 @@ export default function AssetsManagePage() {
     void reload();
   }, []);
 
+  const enabledSkins = useMemo(() => {
+    return (Array.isArray(skins) ? skins : []).filter((s) => s.enabled).map((s) => String(s.name || '').trim()).filter(Boolean);
+  }, [skins]);
+
+  const columns = useMemo(() => {
+    // 对齐 desktop：固定展示 base/white/dark；其它列来自服务端 enabled skins（去重并排序）
+    const uniq = Array.from(new Set(enabledSkins.map((x) => String(x || '').trim()).filter(Boolean)));
+    const tail = uniq.filter((x) => x !== 'white' && x !== 'dark').sort((a, b) => a.localeCompare(b));
+    return ['__base__', 'white', 'dark', ...tail];
+  }, [enabledSkins]);
+
+  const rows: AssetRow[] = useMemo(() => {
+    const requiredMap = new Map(REQUIRED_ASSETS.map((r) => [r.key, r]));
+    const extra: AssetRow[] = (Array.isArray(keys) ? keys : [])
+      .map((k) => ({
+        title: (k.description || '').trim() || k.key,
+        key: k.key,
+        kind: (k.kind as AssetKind) || 'image',
+        description: k.description ?? null,
+        required: requiredMap.has(k.key),
+      }))
+      .filter((r) => !requiredMap.has(r.key));
+    return [...REQUIRED_ASSETS, ...extra];
+  }, [keys]);
+
+  const desktopRoot = useMemo(() => {
+    const b = String(BASE_ASSETS_URL || '').trim().replace(/\/+$/, '');
+    return b ? `${b}/icon/desktop` : '';
+  }, []);
+
   const onCreateSkin = async () => {
-    const name = newSkin.trim().toLowerCase();
-    if (!name) return;
+    const norm = normalizeSkinName(newSkin);
+    if (!norm.ok) {
+      setErr(norm.error || '皮肤名不合法');
+      return;
+    }
     setLoading(true);
     setErr('');
     try {
-      const res = await createDesktopAssetSkin({ name, enabled: true });
+      const res = await createDesktopAssetSkin({ name: norm.value, enabled: true });
       if (!res.success) throw new Error(res.error?.message || '创建皮肤失败');
       await reload();
     } catch (e) {
@@ -102,45 +175,18 @@ export default function AssetsManagePage() {
     }
   };
 
-  const onToggleSkin = async (id: string, enabled: boolean) => {
-    setLoading(true);
-    setErr('');
-    try {
-      const res = await updateDesktopAssetSkin({ id, enabled });
-      if (!res.success) throw new Error(res.error?.message || '更新皮肤失败');
-      await reload();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e || '更新失败'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onDeleteSkin = async (id: string) => {
-    const ok = window.confirm('确认删除该皮肤？（仅删除元数据，不会自动删除 COS 文件）');
-    if (!ok) return;
-    setLoading(true);
-    setErr('');
-    try {
-      const res = await deleteDesktopAssetSkin({ id });
-      if (!res.success) throw new Error(res.error?.message || '删除皮肤失败');
-      await reload();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e || '删除失败'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const onCreateKey = async () => {
-    const key = newKey.trim().toLowerCase();
-    if (!key) return;
+    const norm = normalizeDesktopKey(newKey);
+    if (!norm.ok) {
+      setErr(norm.error || 'key 不合法');
+      return;
+    }
     setLoading(true);
     setErr('');
     try {
       const res = await createDesktopAssetKey({
-        key,
-        kind: newKeyKind.trim() || 'image',
+        key: norm.value,
+        kind: newKeyKind,
         description: newKeyDesc.trim() || null,
       });
       if (!res.success) throw new Error(res.error?.message || '创建 key 失败');
@@ -152,436 +198,326 @@ export default function AssetsManagePage() {
     }
   };
 
-  const onUpload = async () => {
-    const key = uploadKey.trim().toLowerCase();
-    if (!key) return;
-    if (!uploadFile) {
-      setErr('请先选择文件');
+  const chooseUpload = (skin: string | null, keyRaw: string) => {
+    const norm = normalizeDesktopKey(keyRaw);
+    if (!norm.ok) {
+      setErr(norm.error || 'key 不合法');
       return;
     }
-    setLoading(true);
     setErr('');
-    setUploadResultUrl('');
+    setUploadTarget({ skin, key: norm.value });
+    const el = fileRef.current;
+    if (!el) return;
+    // 允许重复选择同名文件也触发 onChange
+    el.value = '';
+    el.click();
+  };
+
+  const onPickedFile = async (file: File | null) => {
+    if (!file) return;
+    if (!uploadTarget) {
+      setErr('未选择上传目标（skin/key）');
+      return;
+    }
+    const { skin, key } = uploadTarget;
+    const id = `${key}@@${skin || '__base__'}`;
+    setUploadingId(id);
+    setErr('');
     try {
-      const res = await uploadDesktopAsset({ skin: uploadSkin ? uploadSkin : null, key, file: uploadFile });
+      const res = await uploadDesktopAsset({ skin, key, file });
       if (!res.success) throw new Error(res.error?.message || '上传失败');
-      setUploadResultUrl(res.data?.url || buildPreviewUrl(uploadSkin || null, key));
+      // 触发预览强制刷新（绕过 CDN/浏览器缓存）
+      setCacheBust(Date.now());
+      // 上传接口会自动 upsert key 元数据，这里顺手刷新列表
       await reload();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e || '上传失败'));
     } finally {
-      setLoading(false);
+      setUploadingId('');
     }
+  };
+
+  const hardRefresh = async () => {
+    setBroken({});
+    setCacheBust(Date.now());
+    await reload();
   };
 
   return (
     <div className="h-full w-full px-6 py-5">
-      <div className="flex items-center justify-between">
-        <div>
+      <input
+        ref={fileRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
+      />
+
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
           <div className="text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            Desktop 资源管理
+            Desktop 资源管理（诊断 + 上传）
           </div>
           <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            皮肤与资源 key 只存元数据；文件上传到 COS，Desktop 按固定规则拼接 URL 预览。
+            规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
           </div>
         </div>
-        <button
-          type="button"
-          className={cn(
-            'rounded-[12px] px-3 py-2 text-sm',
-            'border border-white/10 hover:bg-white/5',
-            loading && 'opacity-60 pointer-events-none'
-          )}
-          onClick={() => void reload()}
-        >
-          刷新
-        </button>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
+            onClick={() => void reload()}
+            title="重新获取 skins/keys"
+          >
+            重新获取皮肤
+          </button>
+          <button
+            type="button"
+            className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
+            onClick={() => void hardRefresh()}
+            title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
+          >
+            清空缓存并刷新
+          </button>
+        </div>
       </div>
 
       {err ? (
-        <div className="mt-4 rounded-[12px] px-4 py-3 text-sm" style={{ background: 'color-mix(in srgb, #ff4d4f 10%, transparent)', border: '1px solid color-mix(in srgb, #ff4d4f 35%, var(--border-subtle))', color: 'var(--text-primary)' }}>
+        <div
+          className="mt-4 rounded-[12px] px-4 py-3 text-sm"
+          style={{
+            background: 'color-mix(in srgb, #ff4d4f 10%, transparent)',
+            border: '1px solid color-mix(in srgb, #ff4d4f 35%, var(--border-subtle))',
+            color: 'var(--text-primary)',
+          }}
+        >
           {err}
         </div>
       ) : null}
 
-      <div className="mt-5 grid grid-cols-1 gap-4">
-        {/* Skins */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              皮肤（skins）
+      <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex flex-wrap items-end gap-3 justify-between">
+          <div className="min-w-0">
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              资源根目录
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                value={newSkin}
-                onChange={(e) => setNewSkin(e.target.value)}
-                className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
-                placeholder="例如 white / dark / blue"
-              />
-              <button
-                type="button"
-                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm"
-                onClick={() => void onCreateSkin()}
-                disabled={loading}
-              >
-                新建皮肤
-              </button>
+            <div className="mt-1 font-mono text-sm break-all" style={{ color: 'var(--text-primary)' }}>
+              {desktopRoot || '-'}
             </div>
           </div>
 
-          <div className="mt-3 overflow-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ color: 'var(--text-muted)' }}>
-                  <th className="text-left py-2">名称</th>
-                  <th className="text-left py-2">标题</th>
-                  <th className="text-left py-2">启用</th>
-                  <th className="text-left py-2">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {skins.map((s) => (
-                  <tr key={s.id} className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                    <td className="py-2">{s.name}</td>
-                    <td className="py-2" style={{ color: 'var(--text-muted)' }}>
-                      {skinLabel(s.name)}
-                    </td>
-                    <td className="py-2">
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={s.enabled}
-                          onChange={(e) => void onToggleSkin(s.id, e.target.checked)}
-                        />
-                        <span style={{ color: 'var(--text-muted)' }}>{s.enabled ? '是' : '否'}</span>
-                      </label>
-                    </td>
-                    <td className="py-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5"
-                          onClick={() => void copyText(s.name)}
-                          title="复制皮肤名"
-                        >
-                          复制
-                        </button>
-                        <button
-                          type="button"
-                          className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5"
-                          onClick={() => void onDeleteSkin(s.id)}
-                          title="删除皮肤"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {skins.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-3" style={{ color: 'var(--text-muted)' }}>
-                      暂无皮肤
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Keys */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              资源 key（keys）
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                value={newKey}
-                onChange={(e) => setNewKey(e.target.value)}
-                className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[240px]"
-                placeholder="例如 load.gif / login/logo.svg"
-              />
-              <select
-                value={newKeyKind}
-                onChange={(e) => setNewKeyKind(e.target.value)}
-                className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
-              >
-                <option value="image">image</option>
-                <option value="audio">audio</option>
-                <option value="video">video</option>
-                <option value="other">other</option>
-              </select>
-              <input
-                value={newKeyDesc}
-                onChange={(e) => setNewKeyDesc(e.target.value)}
-                className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[260px]"
-                placeholder="描述（可选）"
-              />
-              <button
-                type="button"
-                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm"
-                onClick={() => void onCreateKey()}
-                disabled={loading}
-              >
-                新建 key
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-3 overflow-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ color: 'var(--text-muted)' }}>
-                  <th className="text-left py-2">key</th>
-                  <th className="text-left py-2">kind</th>
-                  <th className="text-left py-2">描述</th>
-                  <th className="text-left py-2">默认地址</th>
-                  <th className="text-left py-2">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {keys.map((k) => {
-                  const url = buildPreviewUrl(null, k.key);
-                  return (
-                    <tr key={k.id} className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <td className="py-2">{k.key}</td>
-                      <td className="py-2" style={{ color: 'var(--text-muted)' }}>
-                        {k.kind}
-                      </td>
-                      <td className="py-2" style={{ color: 'var(--text-muted)' }}>
-                        {k.description || '-'}
-                      </td>
-                      <td className="py-2">
-                        <a className="underline text-sm" href={url} target="_blank" rel="noreferrer" title={url}>
-                          查看
-                        </a>
-                      </td>
-                      <td className="py-2">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5"
-                            onClick={() => void copyText(url)}
-                          >
-                            复制地址
-                          </button>
-                          <button
-                            type="button"
-                            className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5"
-                            onClick={() => {
-                              setUploadKey(k.key);
-                              setUploadSkin('');
-                              setUploadResultUrl('');
-                              window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-                            }}
-                            title="填充到上传表单"
-                          >
-                            一键替换
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {keys.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-3" style={{ color: 'var(--text-muted)' }}>
-                      暂无 key
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Upload */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-            上传/替换（覆盖写）
-          </div>
-          <div className="mt-3 grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
               <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                皮肤
-              </div>
-              <select
-                value={uploadSkin}
-                onChange={(e) => setUploadSkin(e.target.value)}
-                className="h-9 w-full px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
-              >
-                <option value="">默认（base）</option>
-                {skinNames.map((s) => (
-                  <option key={s} value={s}>
-                    {s}（{skinLabel(s)}）
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="col-span-4">
-              <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                key
-              </div>
-              <input
-                value={uploadKey}
-                onChange={(e) => setUploadKey(e.target.value)}
-                className="h-9 w-full px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
-                placeholder="例如 load.gif"
-              />
-            </div>
-            <div className="col-span-3">
-              <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                文件
-              </div>
-              <input
-                type="file"
-                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                className="h-9 w-full text-sm"
-              />
-            </div>
-            <div className="col-span-2 flex gap-2">
-              <button
-                type="button"
-                className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', loading && 'opacity-60 pointer-events-none')}
-                onClick={() => void onUpload()}
-              >
-                上传
-              </button>
-              <a
-                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm inline-flex items-center"
-                href={buildPreviewUrl(uploadSkin || null, uploadKey)}
-                target="_blank"
-                rel="noreferrer"
-                title="一键查看（按固定规则拼接）"
-              >
-                一键查看
-              </a>
-            </div>
-          </div>
-
-          {uploadResultUrl ? (
-            <div className="mt-3 flex items-center justify-between rounded-[12px] px-3 py-2" style={{ background: 'color-mix(in srgb, var(--accent-gold) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))' }}>
-              <div className="min-w-0">
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  上传成功（可复制地址）
-                </div>
-                <div className="text-sm truncate" title={uploadResultUrl} style={{ color: 'var(--text-primary)' }}>
-                  {uploadResultUrl}
-                </div>
+                新建皮肤（仅小写）
               </div>
               <div className="flex items-center gap-2">
+                <input
+                  value={newSkin}
+                  onChange={(e) => setNewSkin(e.target.value)}
+                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[160px]"
+                  placeholder="white / dark / blue"
+                />
                 <button
                   type="button"
-                  className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-sm"
-                  onClick={() => void copyText(uploadResultUrl)}
+                  className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', loading && 'opacity-60 pointer-events-none')}
+                  onClick={() => void onCreateSkin()}
                 >
-                  复制地址
+                  新建皮肤
                 </button>
               </div>
             </div>
-          ) : null}
-        </section>
 
-        {/* Preview Grid */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              预览矩阵（多少皮肤多少列）
-            </div>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              悬浮可见源站地址；缺失会显示“缺失/不可用”
+            <div>
+              <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                新建 key（仅文件名）
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={newKey}
+                  onChange={(e) => setNewKey(e.target.value)}
+                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                  placeholder="例如 load.gif"
+                />
+                <select
+                  value={newKeyKind}
+                  onChange={(e) => setNewKeyKind(e.target.value as AssetKind)}
+                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
+                >
+                  <option value="image">image</option>
+                  <option value="audio">audio</option>
+                  <option value="video">video</option>
+                  <option value="other">other</option>
+                </select>
+                <input
+                  value={newKeyDesc}
+                  onChange={(e) => setNewKeyDesc(e.target.value)}
+                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                  placeholder="描述（可选）"
+                />
+                <button
+                  type="button"
+                  className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', loading && 'opacity-60 pointer-events-none')}
+                  onClick={() => void onCreateKey()}
+                >
+                  新建 key
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
 
-          <div className="mt-3 overflow-auto">
+      <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          资源诊断矩阵（含缺失展示；支持上传覆盖写）
+        </div>
+        <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+          说明：本页 key 对齐 Desktop 端规则，仅支持文件名（不支持子目录）。上传会覆盖写到 COS：<span className="font-mono">icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>（全小写）。
+        </div>
+
+        <div className="mt-3 overflow-auto">
+          <div
+            className="grid"
+            style={{
+              gridTemplateColumns: `180px repeat(${columns.length}, minmax(240px, 1fr))`,
+            }}
+          >
+            {/* 表头 */}
             <div
-              className="grid"
-              style={{
-                gridTemplateColumns: `220px repeat(${1 + skinNames.length}, minmax(240px, 1fr))`,
-              }}
+              className="sticky top-0 z-10 px-3 py-2 text-sm"
+              style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}
             >
-              <div className="sticky top-0 z-10 py-2" style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}>
-                资源 key
-              </div>
-              <div className="sticky top-0 z-10 py-2 px-2 font-semibold" style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
-                默认
-              </div>
-              {skinNames.map((s) => (
-                <div key={s} className="sticky top-0 z-10 py-2 px-2 font-semibold" style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
-                  {s}（{skinLabel(s)}）
-                </div>
-              ))}
-
-              {keys.map((k) => (
-                <PreviewRow key={k.id} assetKey={k.key} skins={skinNames} />
-              ))}
-              {keys.length === 0 ? (
-                <div className="py-3" style={{ color: 'var(--text-muted)' }}>
-                  先创建 key，才会显示预览矩阵
-                </div>
-              ) : null}
+              项目
             </div>
+            {columns.map((c) => (
+              <div
+                key={c}
+                className="sticky top-0 z-10 px-3 py-2 text-sm font-semibold"
+                style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}
+              >
+                {c === '__base__' ? '默认' : labelForSkin(c)}
+              </div>
+            ))}
+
+            {rows.map((row) => (
+              <RowBlock
+                key={row.key}
+                row={row}
+                columns={columns}
+                cacheBust={cacheBust}
+                broken={broken}
+                uploadingId={uploadingId}
+                onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
+                onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
+                onUpload={(skin, key) => chooseUpload(skin, key)}
+              />
+            ))}
+            {rows.length === 0 ? (
+              <div className="py-3" style={{ color: 'var(--text-muted)' }}>
+                暂无 key
+              </div>
+            ) : null}
           </div>
-        </section>
+        </div>
       </div>
     </div>
   );
 }
 
-function PreviewRow(props: { assetKey: string; skins: string[] }) {
-  const { assetKey, skins } = props;
+function RowBlock(props: {
+  row: AssetRow;
+  columns: string[];
+  cacheBust: number;
+  broken: Record<string, boolean>;
+  uploadingId: string;
+  onBroken: (id: string) => void;
+  onRecovered: (id: string) => void;
+  onUpload: (skin: string | null, key: string) => void;
+}) {
+  const { row, columns, cacheBust, broken, uploadingId, onBroken, onRecovered, onUpload } = props;
+  const BOX = 96;
+
   return (
     <>
-      <div className="py-3 pr-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
-          {assetKey}
+      <div className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          {row.title}
         </div>
-        <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-          {assetKey.includes('/') ? 'path' : 'file'}
+        <div className="mt-1 text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
+          {row.key}
+          {row.required ? <span style={{ color: 'var(--accent-gold)' }}>（required）</span> : null}
         </div>
       </div>
-      <PreviewCell skin={null} assetKey={assetKey} />
-      {skins.map((s) => (
-        <PreviewCell key={s} skin={s} assetKey={assetKey} />
-      ))}
-    </>
-  );
-}
 
-function PreviewCell(props: { skin: string | null; assetKey: string }) {
-  const { skin, assetKey } = props;
-  const [bad, setBad] = useState(false);
-  const url = buildPreviewUrl(skin, assetKey);
-  return (
-    <div className="py-3 px-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-      <div className={cn('rounded-[12px] p-2 border', bad ? 'border-red-500/40' : 'border-white/10')} title={url}>
-        <img
-          src={url}
-          alt=""
-          onError={() => setBad(true)}
-          onLoad={() => setBad(false)}
-          style={{ width: 80, height: 80, objectFit: 'contain', display: 'block' }}
-        />
-      </div>
-      <div className={cn('mt-2 text-xs', bad ? 'text-red-400' : '')} style={{ color: bad ? undefined : 'var(--text-muted)' }}>
-        {bad ? '缺失/不可用' : '正常'}
-      </div>
-      <div className="mt-1 flex items-center gap-2">
-        <button
-          type="button"
-          className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs"
-          onClick={() => void copyText(url)}
-          title="复制源站地址"
-        >
-          复制
-        </button>
-        <a className="text-xs underline" href={url} target="_blank" rel="noreferrer">
-          查看
-        </a>
-      </div>
-    </div>
+      {columns.map((c) => {
+        const skin = c === '__base__' ? null : c;
+        const url = buildIconUrl(BASE_ASSETS_URL, row.key, skin, cacheBust);
+        const relPath = `${skin ? `${skin}/` : ''}${row.key}`;
+        const id = `${row.key}@@${c}`;
+        const isBroken = Boolean(broken?.[id]);
+        const isUploading = uploadingId === `${row.key}@@${skin || '__base__'}`;
+
+        return (
+          <div key={id} className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            <div className="flex flex-col gap-2">
+              <div
+                className={cn(
+                  'rounded-[12px] border p-2',
+                  isBroken ? 'border-red-500/40' : 'border-white/10'
+                )}
+                style={{ width: `${BOX}px`, height: `${BOX}px`, background: isBroken ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)' }}
+                title={url || ''}
+              >
+                {url ? (
+                  <img
+                    src={url}
+                    alt=""
+                    className="block w-full h-full select-none pointer-events-none"
+                    style={{ objectFit: 'contain' }}
+                    onError={() => onBroken(id)}
+                    onLoad={() => onRecovered(id)}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                    无 URL
+                  </div>
+                )}
+              </div>
+
+              <div className="text-xs" style={{ color: isBroken ? 'rgba(248,113,113,0.95)' : 'var(--text-muted)' }}>
+                {isBroken ? '缺失/不可用' : '正常'}
+              </div>
+              <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }} title={url || ''}>
+                {relPath}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className={cn('px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs', isUploading && 'opacity-60 pointer-events-none')}
+                  onClick={() => onUpload(skin, row.key)}
+                  title="上传/替换（覆盖写）"
+                >
+                  {isUploading ? '上传中...' : '上传/替换'}
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs"
+                  onClick={() => void copyText(url)}
+                  title="复制源站地址"
+                >
+                  复制地址
+                </button>
+                <a className="text-xs underline" href={url} target="_blank" rel="noreferrer">
+                  查看
+                </a>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
