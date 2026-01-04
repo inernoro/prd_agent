@@ -28,15 +28,30 @@ function roleTheme(role?: string | null): { badgeClass: string; avatarBgClass: s
   const r = String(role || '').trim().toUpperCase();
   switch (r) {
     case 'ADMIN':
-      return { badgeClass: 'bg-amber-500/15 text-amber-200 border-amber-400/30', avatarBgClass: 'bg-gradient-to-br from-amber-500/70 to-orange-500/70' };
+      return {
+        badgeClass: 'bg-amber-500/10 text-amber-700 border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/30',
+        avatarBgClass: 'bg-gradient-to-br from-amber-500/75 to-orange-500/75',
+      };
     case 'DEV':
-      return { badgeClass: 'bg-sky-500/15 text-sky-200 border-sky-400/30', avatarBgClass: 'bg-gradient-to-br from-sky-500/70 to-cyan-500/70' };
+      return {
+        badgeClass: 'bg-sky-500/10 text-sky-700 border-sky-300/40 dark:bg-sky-500/15 dark:text-sky-200 dark:border-sky-400/30',
+        avatarBgClass: 'bg-gradient-to-br from-sky-500/75 to-cyan-500/75',
+      };
     case 'QA':
-      return { badgeClass: 'bg-violet-500/15 text-violet-200 border-violet-400/30', avatarBgClass: 'bg-gradient-to-br from-violet-500/70 to-fuchsia-500/70' };
+      return {
+        badgeClass: 'bg-violet-500/10 text-violet-700 border-violet-300/40 dark:bg-violet-500/15 dark:text-violet-200 dark:border-violet-400/30',
+        avatarBgClass: 'bg-gradient-to-br from-violet-500/75 to-fuchsia-500/75',
+      };
     case 'PM':
-      return { badgeClass: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/30', avatarBgClass: 'bg-gradient-to-br from-emerald-500/70 to-teal-500/70' };
+      return {
+        badgeClass: 'bg-emerald-500/10 text-emerald-700 border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-400/30',
+        avatarBgClass: 'bg-gradient-to-br from-emerald-500/75 to-teal-500/75',
+      };
     default:
-      return { badgeClass: 'bg-white/8 text-white/70 border-white/15', avatarBgClass: 'bg-gradient-to-br from-white/25 to-white/10' };
+      return {
+        badgeClass: 'bg-black/5 text-text-secondary border-black/10 dark:bg-white/8 dark:text-white/70 dark:border-white/15',
+        avatarBgClass: 'bg-gradient-to-br from-slate-600/75 to-slate-400/75 dark:from-white/25 dark:to-white/10',
+      };
   }
 }
 
@@ -277,6 +292,9 @@ function MessageListInner() {
 
   const pendingAnchorRef = useRef<{ id: string; offset: number } | null>(null);
   const ensuredInitialRangeRef = useRef(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const showScrollToBottomRef = useRef(false);
+  showScrollToBottomRef.current = showScrollToBottom;
 
   // 关键修复：避免“messages 已存在但 range 仍是 0”导致白屏（用户一滚动才触发 range 更新）
   // 这里用 layoutEffect，保证首帧就有可见消息；本身只是一次 setState，不涉及滚动/读布局。
@@ -462,13 +480,32 @@ function MessageListInner() {
     if (!el) return;
 
     let raf: number | null = null;
+    // 滞回阈值：避免“临界抖动”导致 pinned/show 状态在滚动时频繁翻转
+    const PIN_ON_PX = 120;
+    const PIN_OFF_PX = 240;
+    const SHOW_ON_PX = 220;
+    const SHOW_OFF_PX = 120;
+
     const onScroll = () => {
       if (raf != null) return;
       raf = requestAnimationFrame(() => {
         raf = null;
         const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        // 仅根据“离底距离”判断是否锁底，避免窗口化 range 更新滞后导致 pinned 误被置为 false
-        setPinnedToBottom(distanceToBottom < 180);
+        // pinned：滞回
+        const prevPinned = useMessageStore.getState().isPinnedToBottom;
+        const nextPinned =
+          prevPinned ? distanceToBottom <= PIN_OFF_PX : distanceToBottom <= PIN_ON_PX;
+        if (nextPinned !== prevPinned) {
+          setPinnedToBottom(nextPinned);
+        }
+
+        // scroll-to-bottom icon：滞回（并与 pinned 脱钩，避免 pinned=true 但仍“离底较远”的瞬态）
+        const prevShow = showScrollToBottomRef.current;
+        const nextShow =
+          prevShow ? distanceToBottom >= SHOW_OFF_PX : distanceToBottom >= SHOW_ON_PX;
+        if (nextShow !== prevShow) {
+          setShowScrollToBottom(nextShow);
+        }
       });
     };
 
@@ -687,7 +724,7 @@ function MessageListInner() {
             {/* 头像（左/右） */}
             {(!isMine || message.role === 'Assistant') ? (
               <div className="shrink-0 mr-3 mt-1">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white ${theme.avatarBgClass} border border-white/15 shadow-sm`}>
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white ${theme.avatarBgClass} border border-black/10 dark:border-white/15 shadow-sm`}>
                   {message.role === 'Assistant' ? 'AI' : initials(senderDisplayName)}
                 </div>
               </div>
@@ -697,7 +734,7 @@ function MessageListInner() {
               {/* 名字 + 角色 */}
               <div className={`mb-1 flex items-center gap-2 ${isMine ? 'justify-end' : 'justify-start'} select-none min-w-0`}>
                 <span
-                  className="text-[12px] leading-5 text-white/70 max-w-[260px] truncate"
+                  className="text-[12px] leading-5 text-text-secondary max-w-[260px] truncate"
                   title={senderDisplayName}
                 >
                   {senderDisplayName}
@@ -1067,13 +1104,22 @@ function MessageListInner() {
     );
   }), []);
 
+  const scrollToLatest = useCallback(() => {
+    setPinnedToBottom(true);
+    const end = messages.length;
+    const start = Math.max(0, end - windowSize);
+    setRange({ start, end });
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }));
+  }, [messages.length, setPinnedToBottom, windowSize]);
+
   return (
-    <div
-      ref={containerRef}
-      // 强制合成层：缓解 WebKit/Tauri WebView 偶发“不 repaint，滚一下才显示”的现象
-      className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 transform-gpu"
-    >
-      <div ref={topSentinelRef} />
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      <div
+        ref={containerRef}
+        // 强制合成层：缓解 WebKit/Tauri WebView 偶发“不 repaint，滚一下才显示”的现象
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 transform-gpu"
+      >
+        <div ref={topSentinelRef} />
 
       {isLoadingOlder ? (
         <div className="flex justify-center">
@@ -1183,26 +1229,28 @@ function MessageListInner() {
         </div>
       )}
 
-      {hiddenBelow > 0 ? (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            className="text-xs text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 border border-border rounded-full px-3 py-1 bg-background-light/40 dark:bg-background-dark/30"
-            title="回到最新对话"
-            onClick={() => {
-              setPinnedToBottom(true);
-              const end = messages.length;
-              const start = Math.max(0, end - windowSize);
-              setRange({ start, end });
-              requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }));
-            }}
-          >
-            下面还有 {hiddenBelow} 条，点击回到最新
-          </button>
-        </div>
-      ) : null}
+        <div ref={bottomRef} />
+      </div>
 
-      <div ref={bottomRef} />
+      {/* 右下角悬浮“回到底部”按钮：仅在用户不在底部时显示（避免滚动时一闪一闪） */}
+      <button
+        type="button"
+        onClick={scrollToLatest}
+        className={`absolute bottom-4 right-4 z-20 h-11 w-11 rounded-full ui-glass-panel flex items-center justify-center transition-all ${
+          showScrollToBottom ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-1 pointer-events-none'
+        } hover:scale-105 hover:bg-black/5 dark:hover:bg-white/10`}
+        title={hiddenBelow > 0 ? `下面还有 ${hiddenBelow} 条，点击回到最新` : '回到最新对话'}
+        aria-label="回到最新对话"
+      >
+        <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+        {hiddenBelow > 0 ? (
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-primary-500 text-white text-[10px] leading-[18px] text-center">
+            {hiddenBelow > 99 ? '99+' : hiddenBelow}
+          </span>
+        ) : null}
+      </button>
     </div>
   );
 }
