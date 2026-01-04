@@ -709,8 +709,8 @@ export default function Sidebar() {
                 <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => (busy ? null : setJoinOpen(false))} />
                 <div className="relative w-full max-w-md mx-4 ui-glass-modal">
                   <div className="px-6 py-4 border-b border-black/10 dark:border-white/10">
-                    <div className="text-lg font-semibold text-white">加入群组</div>
-                    <div className="mt-1 text-sm text-white/60">输入邀请码或邀请链接</div>
+                    <div className="text-lg font-semibold text-text-primary">加入群组</div>
+                    <div className="mt-1 text-sm text-text-secondary">输入邀请码或邀请链接</div>
                   </div>
                   <div className="p-6 space-y-3">
                     <input
@@ -722,7 +722,7 @@ export default function Sidebar() {
                       autoFocus
                     />
                     {inlineError ? (
-                      <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-200 text-sm">
+                      <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
                         {inlineError}
                       </div>
                     ) : null}
@@ -731,7 +731,7 @@ export default function Sidebar() {
                     <button
                       onClick={() => setJoinOpen(false)}
                       disabled={!!busy}
-                      className="flex-1 py-2.5 ui-control text-white/80 font-medium hover:bg-white/10 transition-colors disabled:opacity-50"
+                      className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
                     >
                       取消
                     </button>
@@ -753,8 +753,8 @@ export default function Sidebar() {
                 <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => (busy ? null : setCreateOpen(false))} />
                 <div className="relative w-full max-w-md mx-4 ui-glass-modal">
                   <div className="px-6 py-4 border-b border-black/10 dark:border-white/10">
-                    <div className="text-lg font-semibold text-white">创建群组</div>
-                    <div className="mt-1 text-sm text-white/60">群组是容器；可在此处直接上传 PRD 自动创建</div>
+                    <div className="text-lg font-semibold text-text-primary">创建群组</div>
+                    <div className="mt-1 text-sm text-text-secondary">群组是容器；可在此处直接上传 PRD 自动创建</div>
                   </div>
                   <div className="p-6 space-y-3">
                     <input
@@ -771,7 +771,7 @@ export default function Sidebar() {
                         type="button"
                         onClick={() => createPrdInputRef.current?.click()}
                         disabled={!canSubmit}
-                        className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg ui-control text-white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
+                        className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg ui-control text-text-secondary hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
                         title="选择 PRD（.md）"
                       >
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -779,7 +779,7 @@ export default function Sidebar() {
                         </svg>
                         上传 PRD
                       </button>
-                      <div className="min-w-0 flex-1 text-sm text-white/60 truncate">
+                      <div className="min-w-0 flex-1 text-sm text-text-secondary truncate">
                         {createPrdFileName ? (
                           <span title={createPrdFileName}>{createPrdFileName}</span>
                         ) : (
@@ -797,7 +797,7 @@ export default function Sidebar() {
                     />
 
                     {inlineError ? (
-                      <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-200 text-sm">
+                      <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
                         {inlineError}
                       </div>
                     ) : null}
@@ -806,7 +806,7 @@ export default function Sidebar() {
                     <button
                       onClick={() => setCreateOpen(false)}
                       disabled={!!busy}
-                      className="flex-1 py-2.5 ui-control text-white/80 font-medium hover:bg-white/10 transition-colors disabled:opacity-50"
+                      className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
                     >
                       取消
                     </button>

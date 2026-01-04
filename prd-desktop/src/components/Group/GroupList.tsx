@@ -282,28 +282,28 @@ export default function GroupList() {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => (dissolveBusy ? null : setDissolveTarget(null))}
           />
-          <div className="relative w-full max-w-md mx-4 bg-slate-800 rounded-2xl shadow-2xl border border-white/10">
-            <div className="px-6 py-4 border-b border-white/10">
-              <div className="text-lg font-semibold text-white">解散群组</div>
-              <div className="mt-1 text-sm text-white/60">
-                将永久删除群组与成员关系：<span className="text-white">{dissolveTarget.groupName}</span>
+          <div className="relative w-full max-w-md mx-4 ui-glass-modal">
+            <div className="px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+              <div className="text-lg font-semibold text-text-primary">解散群组</div>
+              <div className="mt-1 text-sm text-text-secondary">
+                将永久删除群组与成员关系：<span className="text-text-primary">{dissolveTarget.groupName}</span>
               </div>
             </div>
             <div className="p-6 space-y-3">
-              <div className="text-sm text-white/70">
+              <div className="text-sm text-text-secondary">
                 确认后不可恢复。建议先通知群成员。
               </div>
               {dissolveError ? (
-                <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+                <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
                   {dissolveError}
                 </div>
               ) : null}
             </div>
-            <div className="flex gap-3 px-6 py-4 border-t border-white/10">
+            <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 ui-glass-bar">
               <button
                 onClick={() => setDissolveTarget(null)}
                 disabled={dissolveBusy}
-                className="flex-1 py-2.5 bg-white/10 text-white/80 font-medium rounded-lg hover:bg-white/20 transition-colors disabled:opacity-50"
+                className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
               >
                 取消
               </button>

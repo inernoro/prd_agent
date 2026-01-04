@@ -79,6 +79,12 @@ export default {
           900: '#0c4a6e',
           950: '#082f49',
         },
+        // 语义色：由 CSS tokens 驱动，避免浅色/深色反复打补丁
+        text: {
+          primary: 'var(--color-text)',
+          secondary: 'var(--color-text-secondary)',
+        },
+        border: 'var(--color-border)',
         surface: {
           light: '#ffffff',
           dark: '#1a1a2e',

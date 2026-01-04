@@ -23,7 +23,7 @@ export default function SystemErrorModal() {
   const headerRight = useMemo(() => {
     if (!code) return null;
     return (
-      <span className="text-xs font-mono px-2 py-1 rounded-md bg-white/5 border border-white/10 text-white/70">
+      <span className="text-xs font-mono px-2 py-1 rounded-md bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-text-secondary">
         {code}
       </span>
     );
@@ -38,18 +38,18 @@ export default function SystemErrorModal() {
       <div className="relative z-10 w-full max-w-lg mx-4 ui-glass-modal overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
           <div className="min-w-0">
-            <div className="text-lg font-semibold text-white truncate">{title || '系统错误'}</div>
+            <div className="text-lg font-semibold text-text-primary truncate">{title || '系统错误'}</div>
           </div>
           <div className="flex items-center gap-2">
             {headerRight}
             <button
               type="button"
               onClick={close}
-              className="p-1 rounded-lg hover:bg-white/10 transition-colors"
+              className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
               aria-label="关闭"
               title="关闭"
             >
-              <svg className="w-5 h-5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -57,14 +57,14 @@ export default function SystemErrorModal() {
         </div>
 
         <div className="p-6 space-y-4">
-          <div className="text-sm text-white/90 whitespace-pre-wrap break-words">{message || '请求失败'}</div>
+          <div className="text-sm text-text-primary whitespace-pre-wrap break-words">{message || '请求失败'}</div>
 
           {hasDetails ? (
             <div className="space-y-2">
               <button
                 type="button"
                 onClick={() => setShowDetails((v) => !v)}
-                className="inline-flex items-center gap-2 text-xs text-white/70 hover:text-white transition-colors"
+                className="inline-flex items-center gap-2 text-xs text-text-secondary hover:text-text-primary transition-colors"
               >
                 <span className="font-medium">{showDetails ? '隐藏详情' : '查看详情'}</span>
                 <svg
@@ -78,7 +78,7 @@ export default function SystemErrorModal() {
               </button>
 
               {showDetails ? (
-                <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words p-3 rounded-lg bg-black/30 border border-white/10 text-white/80 max-h-[40vh] overflow-auto">
+                <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words p-3 rounded-lg bg-black/5 dark:bg-black/30 border border-black/10 dark:border-white/10 text-text-secondary max-h-[40vh] overflow-auto">
                   {details}
                 </pre>
               ) : null}
@@ -89,7 +89,7 @@ export default function SystemErrorModal() {
             <button
               type="button"
               onClick={close}
-              className="px-3 py-2 text-sm rounded-lg bg-white/10 text-white hover:bg-white/15 transition-colors"
+              className="px-3 py-2 text-sm rounded-lg bg-black/5 text-text-secondary hover:bg-black/10 transition-colors dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
             >
               关闭
             </button>

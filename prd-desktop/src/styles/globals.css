@@ -139,6 +139,15 @@ html, body {
   }
 }
 
+@layer utilities {
+  /* 主题语义色：优先使用语义 token（避免深色硬编码导致浅色不适配） theme-scan-ignore */
+  .text-text-primary { color: var(--color-text); }
+  .text-text-secondary { color: var(--color-text-secondary); }
+  .border-border { border-color: var(--color-border); }
+  .bg-surface { background-color: var(--color-surface); }
+  .bg-background { background-color: var(--color-background); }
+}
+
 /* 等宽字体栈：
  * - 优先 Maple Mono（若用户已安装则生效）
  * - Windows 默认兜底 Consolas
