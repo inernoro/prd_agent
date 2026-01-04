@@ -1,6 +1,8 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import { useSystemErrorStore } from '../stores/systemErrorStore';
+import { useSystemNoticeStore } from '../stores/systemNoticeStore';
+import { useConnectionStore } from '../stores/connectionStore';
 import { isSystemErrorCode, systemErrorTitle } from './systemError';
 
 type InvokeArgs = Record<string, unknown> | undefined;
@@ -10,6 +12,39 @@ export function isTauri(): boolean {
   const g = globalThis as unknown as Record<string, any>;
   // 兼容不同版本/注入形态
   return Boolean(g.__TAURI_INTERNALS__?.invoke || g.__TAURI__?.invoke);
+}
+
+/**
+ * 裸调用：用于连接探活/自检等场景，避免递归触发 invoke 的全局错误弹窗逻辑
+ */
+export async function rawInvoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
+  if (!isTauri()) {
+    throw new Error('当前运行在非桌面(Tauri)环境，无法调用原生命令。');
+  }
+  return tauriInvoke<T>(cmd, args);
+}
+
+function looksLikeDisconnected(details: string): boolean {
+  const s = String(details || '').toLowerCase();
+  // 覆盖常见：端口关闭 / 连接被拒绝 / 超时 / DNS / 代理错误等
+  const needles = [
+    'connection refused',
+    'econnrefused',
+    'failed to connect',
+    'could not connect',
+    'connection error',
+    'network error',
+    'failed to fetch',
+    'dns',
+    'timed out',
+    'timeout',
+    'os error',
+    'connection reset',
+    'connection closed',
+    'tcp connect error',
+    'empty response from server',
+  ];
+  return needles.some((x) => s.includes(x));
 }
 
 /**
@@ -29,10 +64,33 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
     if (isApiResponseLike(result) && result.success === false) {
       const code = typeof result.error?.code === 'string' ? result.error.code : null;
       const message = typeof result.error?.message === 'string' ? result.error.message : '请求失败';
+
+      // 兜底：部分网络/代理/网关场景会返回 403 + 空 body，被我们映射成 PERMISSION_DENIED。
+      // 对这些“疑似断连”的情况，先做一次轻量探活，若不可达则切到断连态并避免弹“无权限”误导用户。
+      if (code === 'PERMISSION_DENIED') {
+        try {
+          const ok = await useConnectionStore.getState().probeOnce();
+          if (!ok) {
+            useSystemNoticeStore.getState().push('已断开连接，正在重连…', {
+              level: 'warning',
+              ttlMs: 4000,
+              signature: 'conn:disconnected',
+            });
+            return result;
+          }
+        } catch {
+          // ignore probe errors; fall through
+        }
+      }
+
       // UNAUTHORIZED 常见于启动/登录阶段的并发竞态或 token 同步窗口期：
       // - 不要在 invoke 层弹“系统错误”打扰用户
       // - 真正登录过期会由 Rust 侧 emit `auth-expired` 事件触发 logout（见 App.tsx）
-      if (isSystemErrorCode(code) && code !== 'UNAUTHORIZED') {
+      //
+      // PERMISSION_DENIED：
+      // - 很容易被网关/代理的 403（甚至空 body）误触发，导致用户误以为“账号无权限”
+      // - 真实的权限不足应优先由业务 UI（按钮禁用/提示语）表达，而不是系统弹窗刷屏
+      if (isSystemErrorCode(code) && code !== 'UNAUTHORIZED' && code !== 'PERMISSION_DENIED') {
         useSystemErrorStore.getState().open({
           title: systemErrorTitle(code),
           code,
@@ -42,9 +100,22 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
       }
     }
 
+    // 任意成功响应都可视为“连接正常”（避免需要额外心跳）
+    useConnectionStore.getState().markConnected();
     return result;
   } catch (err) {
     const details = errorDetails(err);
+    if (looksLikeDisconnected(details)) {
+      useConnectionStore.getState().markDisconnected(details);
+      useSystemNoticeStore.getState().push('已断开连接，正在重连…', {
+        level: 'warning',
+        ttlMs: 4500,
+        signature: 'conn:disconnected',
+      });
+      // 断连场景不弹系统错误弹窗（避免刷屏/误导成权限不足）
+      throw err;
+    }
+
     useSystemErrorStore.getState().open({
       title: '请求失败',
       code: null,

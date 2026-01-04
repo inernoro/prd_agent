@@ -8,6 +8,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
 
 interface ApiTestResult {
   success: boolean;
@@ -18,6 +19,7 @@ interface ApiTestResult {
 
 const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
+const DEFAULT_ASSETS_URL = 'https://i.pa.759800.com';
 
 function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
@@ -64,9 +66,12 @@ export default function SettingsModal() {
   const clearSession = useSessionStore((s) => s.clearSession);
   const clearGroups = useGroupListStore((s) => s.clear);
   const clearMessages = useMessageStore((s) => s.clearMessages);
+  const resetAssets = useRemoteAssetsStore((s) => s.resetLocalCacheAndRefresh);
   const [apiUrl, setApiUrl] = useState('');
+  const [assetsUrl, setAssetsUrl] = useState('');
   const [error, setError] = useState('');
   const [useDefault, setUseDefault] = useState(true);
+  const [useDefaultAssets, setUseDefaultAssets] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [clearConfirmStep, setClearConfirmStep] = useState<0 | 1 | 2>(0);
@@ -138,6 +143,11 @@ export default function SettingsModal() {
       setUseDefault(isDefault);
       setIsDeveloper(dev);
       setApiUrl(isDefault ? defaultApiUrl : config.apiBaseUrl);
+
+      const cfgAssets = (config.assetsBaseUrl || '').trim();
+      const isDefaultAssets = !cfgAssets || cfgAssets === DEFAULT_ASSETS_URL;
+      setUseDefaultAssets(isDefaultAssets);
+      setAssetsUrl(isDefaultAssets ? DEFAULT_ASSETS_URL : cfgAssets);
     }
   }, [config]);
 
@@ -146,6 +156,7 @@ export default function SettingsModal() {
     
     const defaultApiUrl = getDefaultApiUrl(isDeveloper);
     const urlToSave = useDefault ? defaultApiUrl : apiUrl.trim();
+    const assetsToSave = useDefaultAssets ? DEFAULT_ASSETS_URL : assetsUrl.trim();
     
     // 验证 URL 格式
     if (!urlToSave) {
@@ -159,9 +170,22 @@ export default function SettingsModal() {
       setError('请输入有效的 URL 地址');
       return;
     }
+
+    if (!assetsToSave) {
+      setError('资源地址不能为空');
+      return;
+    }
+    try {
+      new URL(assetsToSave);
+    } catch {
+      setError('请输入有效的资源 URL 地址');
+      return;
+    }
     
     try {
-      await saveConfig({ apiBaseUrl: urlToSave, isDeveloper });
+      await saveConfig({ apiBaseUrl: urlToSave, assetsBaseUrl: assetsToSave, isDeveloper });
+      // 资源域名切换后：清空本地缓存并重新获取 skins/etag（不影响登录态）
+      void resetAssets();
       closeModal();
     } catch (err) {
       setError(String(err));
@@ -174,6 +198,13 @@ export default function SettingsModal() {
       setApiUrl(getDefaultApiUrl(isDeveloper));
     }
     setTestResult(null);
+  };
+
+  const handleUseDefaultAssetsChange = (checked: boolean) => {
+    setUseDefaultAssets(checked);
+    if (checked) {
+      setAssetsUrl(DEFAULT_ASSETS_URL);
+    }
   };
 
   const handleDeveloperChange = (checked: boolean) => {
@@ -398,12 +429,12 @@ export default function SettingsModal() {
       <div className="relative w-full max-w-md mx-4 ui-glass-modal max-h-[90vh] overflow-y-auto">
         {/* 标题栏 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-black/10 dark:border-white/10 sticky top-0 ui-glass-bar z-10">
-          <h2 className="text-lg font-semibold text-white">设置</h2>
+          <h2 className="text-lg font-semibold text-text-primary">设置</h2>
           <button
             onClick={closeModal}
-            className="p-1 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
           >
-            <svg className="w-5 h-5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -413,27 +444,27 @@ export default function SettingsModal() {
         <div className="p-6 space-y-5">
           {/* 版本与更新 */}
           <div className="space-y-3">
-            <label className="block text-sm font-medium text-white/80">版本与更新</label>
+            <label className="block text-sm font-medium text-text-secondary">版本与更新</label>
 
             <div className="p-3 ui-glass-panel">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-xs text-white/50">当前版本</div>
-                  <div className="text-sm text-white/80 font-mono break-all">
+                  <div className="text-xs text-text-secondary">当前版本</div>
+                  <div className="text-sm text-text-primary font-mono break-all">
                     {appVersion ? appVersion : '-'}
                   </div>
                 </div>
                 <button
                   onClick={handleCheckUpdate}
                   disabled={updateStatus === 'checking' || updateStatus === 'installing'}
-                  className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
                 >
                   {updateStatus === 'checking' ? '检查中...' : '检查更新'}
                 </button>
               </div>
 
               {updateStatus === 'no-update' && (
-                <p className="mt-2 text-xs text-white/50">已是最新版本</p>
+                <p className="mt-2 text-xs text-text-secondary">已是最新版本</p>
               )}
 
               {(updateStatus === 'available' || updateStatus === 'installing') && (
@@ -443,7 +474,7 @@ export default function SettingsModal() {
                       <div className="text-xs text-cyan-400">
                         {updateStatus === 'installing' ? '正在安装更新' : '发现新版本'}
                       </div>
-                      <div className="text-sm text-white/80 font-mono break-all">
+                      <div className="text-sm text-text-primary font-mono break-all">
                         {updateInfo?.version || '新版本'}
                       </div>
                     </div>
@@ -456,7 +487,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   {updateInfo?.notes && (
-                    <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap break-words">
+                    <pre className="mt-2 text-xs text-text-secondary whitespace-pre-wrap break-words">
                       {updateInfo.notes}
                     </pre>
                   )}
@@ -464,7 +495,7 @@ export default function SettingsModal() {
               )}
 
               {updateStatus === 'error' && updateError && (
-                <div className="mt-3 p-3 rounded-lg border border-red-500/25 bg-red-500/8 text-red-200 text-xs whitespace-pre-wrap break-words">
+                <div className="mt-3 p-3 rounded-lg border border-red-500/25 bg-red-500/8 text-red-700 dark:text-red-200 text-xs whitespace-pre-wrap break-words">
                   {updateError}
                 </div>
               )}
@@ -473,7 +504,7 @@ export default function SettingsModal() {
 
           {/* 开发者选项 */}
           <div className="space-y-3">
-            <label className="block text-sm font-medium text-white/80">
+            <label className="block text-sm font-medium text-text-secondary">
               开发者选项
             </label>
 
@@ -485,17 +516,17 @@ export default function SettingsModal() {
                   onChange={(e) => handleDeveloperChange(e.target.checked)}
                   className="sr-only"
                 />
-                <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-white/20'}`}>
+                <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
                   <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
                 </div>
               </div>
-              <span className="text-sm text-white/70">我是开发者（默认地址切换到本地）</span>
+              <span className="text-sm text-text-secondary">我是开发者（默认地址切换到本地）</span>
             </label>
           </div>
 
           {/* API 地址配置 */}
           <div className="space-y-3">
-            <label className="block text-sm font-medium text-white/80">
+            <label className="block text-sm font-medium text-text-secondary">
               API 服务地址
             </label>
             
@@ -507,7 +538,7 @@ export default function SettingsModal() {
                 </svg>
                 <span className="text-xs font-medium text-cyan-400">默认服务器</span>
               </div>
-              <p className="text-sm text-white/80 font-mono break-all">{getDefaultApiUrl(isDeveloper)}</p>
+              <p className="text-sm text-text-primary font-mono break-all">{getDefaultApiUrl(isDeveloper)}</p>
             </div>
             
             {/* 使用默认地址开关 */}
@@ -519,17 +550,17 @@ export default function SettingsModal() {
                   onChange={(e) => handleUseDefaultChange(e.target.checked)}
                   className="sr-only"
                 />
-                <div className={`w-10 h-6 rounded-full transition-colors ${useDefault ? 'bg-cyan-500' : 'bg-white/20'}`}>
+                <div className={`w-10 h-6 rounded-full transition-colors ${useDefault ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
                   <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${useDefault ? 'translate-x-4' : ''}`} />
                 </div>
               </div>
-              <span className="text-sm text-white/70">使用默认地址</span>
+              <span className="text-sm text-text-secondary">使用默认地址</span>
             </label>
             
             {/* 自定义地址输入框 */}
             {!useDefault && (
               <div className="space-y-2">
-                <label className="block text-xs text-white/50">自定义地址</label>
+                <label className="block text-xs text-text-secondary">自定义地址</label>
                 <input
                   type="url"
                   value={apiUrl}
@@ -544,16 +575,64 @@ export default function SettingsModal() {
             )}
           </div>
 
+          {/* 资源地址配置 */}
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-text-secondary">
+              资源地址（图标/皮肤）
+            </label>
+
+            <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-xs font-medium text-cyan-400">默认资源域名</span>
+              </div>
+              <p className="text-sm text-text-primary font-mono break-all">{DEFAULT_ASSETS_URL}</p>
+            </div>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={useDefaultAssets}
+                  onChange={(e) => handleUseDefaultAssetsChange(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-6 rounded-full transition-colors ${useDefaultAssets ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${useDefaultAssets ? 'translate-x-4' : ''}`} />
+                </div>
+              </div>
+              <span className="text-sm text-text-secondary">使用默认资源地址</span>
+            </label>
+
+            {!useDefaultAssets && (
+              <div className="space-y-2">
+                <label className="block text-xs text-text-secondary">自定义资源地址</label>
+                <input
+                  type="url"
+                  value={assetsUrl}
+                  onChange={(e) => setAssetsUrl(e.target.value)}
+                  placeholder="https://i.pa.759800.com"
+                  className="w-full px-4 py-3 ui-control transition-colors"
+                />
+                <div className="text-xs text-text-secondary">
+                  规则固定：会拼接为 <span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；Desktop 仅拉取皮肤列表，不从 API 获取地址规则。
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* API 连接测试 */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="block text-sm font-medium text-white/80">
+              <label className="block text-sm font-medium text-text-secondary">
                 连接测试
               </label>
               <button
                 onClick={handleTestConnection}
                 disabled={isTesting}
-                className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
               >
                 {isTesting ? (
                   <>
@@ -594,19 +673,19 @@ export default function SettingsModal() {
                 
                 <div className="space-y-1 text-sm">
                   {testResult.success && testResult.latencyMs !== null && (
-                    <div className="flex items-center gap-2 text-white/70">
+                    <div className="flex items-center gap-2 text-text-secondary">
                       <span>延迟:</span>
                       <span className="font-mono text-green-400">{testResult.latencyMs}ms</span>
                     </div>
                   )}
                   {testResult.success && testResult.serverStatus && (
-                    <div className="flex items-center gap-2 text-white/70">
+                    <div className="flex items-center gap-2 text-text-secondary">
                       <span>状态:</span>
                       <span className="font-mono text-green-400">{testResult.serverStatus}</span>
                     </div>
                   )}
                   {!testResult.success && testResult.error && (
-                    <p className="text-red-300">{testResult.error}</p>
+                    <p className="text-red-700 dark:text-red-300">{testResult.error}</p>
                   )}
                 </div>
               </div>
@@ -614,7 +693,7 @@ export default function SettingsModal() {
 
             {/* 未测试时的提示 */}
             {!testResult && !isTesting && (
-              <p className="text-xs text-white/40">
+              <p className="text-xs text-text-secondary">
                 点击"测试连接"验证 API 服务是否可用
               </p>
             )}
@@ -629,24 +708,24 @@ export default function SettingsModal() {
 
           {/* 关于我们 */}
           <div className="space-y-3 pt-2">
-            <label className="block text-sm font-medium text-white/80">关于我们</label>
+            <label className="block text-sm font-medium text-text-secondary">关于我们</label>
             <div className="p-3 ui-glass-panel space-y-2">
-              <div className="text-xs text-white/50">项目主页</div>
+              <div className="text-xs text-text-secondary">项目主页</div>
               <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={handleCopyGithub}
-                  className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
                 >
                   复制链接
                 </button>
                 <button
                   onClick={handleOpenGithub}
-                  className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
                 >
                   打开
                 </button>
               </div>
-              <p className="text-xs text-white/40">
+              <p className="text-xs text-text-secondary">
                 若系统限制无法自动打开，请复制链接到浏览器访问。
               </p>
             </div>
@@ -654,15 +733,15 @@ export default function SettingsModal() {
 
           {/* 本地缓存 */}
           <div className="space-y-3 pt-2">
-            <label className="block text-sm font-medium text-white/80">本地缓存</label>
+            <label className="block text-sm font-medium text-text-secondary">本地缓存</label>
             <div className="p-3 ui-glass-panel space-y-2">
-              <div className="text-xs text-white/50">清理本机缓存与对话记录</div>
+              <div className="text-xs text-text-secondary">清理本机缓存与对话记录</div>
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs text-white/40">
+                  <p className="text-xs text-text-secondary">
                     将退出登录，并清空本机缓存（不影响服务器端数据）。
                   </p>
-                  <div className="mt-1 text-xs text-white/60">
+                  <div className="mt-1 text-xs text-text-secondary">
                     本机缓存：{cacheBytes === null ? '计算中...' : formatBytes(cacheBytes)}{cacheNote}
                   </div>
                 </div>
@@ -687,7 +766,7 @@ export default function SettingsModal() {
                       type="button"
                       onClick={handleCancelClear}
                       disabled={isClearing}
-                      className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white/80 rounded-lg transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
                     >
                       取消
                     </button>
@@ -721,7 +800,7 @@ export default function SettingsModal() {
         <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 sticky bottom-0 ui-glass-bar">
           <button
             onClick={closeModal}
-            className="flex-1 py-2.5 ui-control text-white/80 font-medium hover:bg-white/10 transition-colors"
+            className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
           >
             取消
           </button>

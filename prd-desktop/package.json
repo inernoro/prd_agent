@@ -14,6 +14,8 @@
     "pretauri:build": "pnpm tauri:icons",
     "tauri:build": "tauri build",
     "lint": "eslint src --ext ts,tsx",
+    "theme:scan": "node ./scripts/theme-scan.mjs",
+    "theme:scan:strict": "THEME_SCAN_STRICT=1 node ./scripts/theme-scan.mjs",
     "test": "vitest"
   },
   "dependencies": {

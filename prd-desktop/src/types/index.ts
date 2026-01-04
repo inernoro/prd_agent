@@ -1,5 +1,5 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
-export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview';
+export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag';
 export type MessageRole = 'User' | 'Assistant';
 
 export interface DocCitation {
@@ -96,6 +96,21 @@ export interface Group {
   inviteLink?: string;
   inviteCode: string;
   memberCount: number;
+}
+
+export interface GroupMemberTag {
+  name: string;
+  role: string; // robot/pm/dev/qa/admin/...
+}
+
+export interface GroupMember {
+  userId: string;
+  username: string;
+  displayName: string;
+  memberRole: UserRole;
+  tags: GroupMemberTag[];
+  joinedAt: string;
+  isOwner: boolean;
 }
 
 export interface ApiResponse<T> {

@@ -16,6 +16,30 @@ public enum UserRole
 }
 
 /// <summary>
+/// 用户类型（人类/机器人账号）
+/// </summary>
+public enum UserType
+{
+    /// <summary>人类用户</summary>
+    Human,
+    /// <summary>机器人账号（系统内置/服务账号）</summary>
+    Bot
+}
+
+/// <summary>
+/// 机器人类型（用于区分群内不同“角色机器人账号”）
+/// </summary>
+public enum BotKind
+{
+    /// <summary>产品经理机器人</summary>
+    PM,
+    /// <summary>开发机器人</summary>
+    DEV,
+    /// <summary>测试机器人</summary>
+    QA
+}
+
+/// <summary>
 /// 用户状态
 /// </summary>
 public enum UserStatus

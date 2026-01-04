@@ -11,8 +11,13 @@ import ChatContainer from './components/Chat/ChatContainer';
 import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
 import LoginPage from './components/Auth/LoginPage';
 import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
+import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
+import AssetsDiagPage from './components/Assets/AssetsDiagPage';
+import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
+import { useConnectionStore } from './stores/connectionStore';
+import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
 function App() {
@@ -21,6 +26,7 @@ function App() {
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const [isDark, setIsDark] = useState(false);
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
+  const connectionStatus = useConnectionStore((s) => s.status);
 
   // SSE 场景下 Rust 侧可能通过事件通知登录已过期（401且 refresh 失败）
   useEffect(() => {
@@ -51,6 +57,15 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
+  }, [isDark]);
+
+  // 同步当前皮肤（dark/white）到远端资源表：供 “皮肤专有 icon” 解析优先级使用
+  useEffect(() => {
+    const desired = isDark ? 'dark' : 'white';
+    const cur = useRemoteAssetsStore.getState().skin;
+    if (!cur || cur === 'dark' || cur === 'white') {
+      useRemoteAssetsStore.getState().setSkin(desired);
+    }
   }, [isDark]);
 
   // 将持久化的 token 同步到 Rust（避免重启后 Rust 侧没有 token 导致请求 401）
@@ -117,8 +132,9 @@ function App() {
     if (user?.userId === 'demo-user-001') return;
 
     let stopped = false;
-    const fetchOnce = () =>
-      invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
+    const fetchOnce = () => {
+      if (connectionStatus === 'disconnected') return Promise.resolve();
+      return invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
         .then((res) => {
           if (stopped) return;
           if (res?.success && res.data) {
@@ -126,8 +142,9 @@ function App() {
           }
         })
         .catch(() => {
-          // 网络波动不打扰用户；UI 会回落到本地硬编码
+          // 网络波动/断连不打扰用户；UI 会回落到本地硬编码
         });
+    };
 
     // 立刻拉一次
     void fetchOnce();
@@ -145,7 +162,7 @@ function App() {
       window.clearInterval(timer);
       window.removeEventListener('focus', onFocus);
     };
-  }, [isAuthenticated, user?.userId, setPrompts]);
+  }, [isAuthenticated, user?.userId, setPrompts, connectionStatus]);
 
   // 监听 deep link：prdagent://join/{inviteCode}
   useEffect(() => {
@@ -228,6 +245,9 @@ function App() {
     return <LoginPage />;
   }
 
+  // 冷启动全局加载遮罩：只保留一个（覆盖侧栏+主区），避免出现“导航一份、主区一份”的重复加载提示
+  const showColdStartLoading = groupsLoading;
+
   return (
     <div className="h-full flex flex-col bg-background-light dark:bg-background-dark">
       <Header isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} />
@@ -240,10 +260,11 @@ function App() {
               - 没有任何群组：右侧显示上传 PRD（上传后自动建群）
               - 有群组：右侧进入会话区域；未绑定 PRD 的群组显示“待上传/不可对话”空态（由 ChatContainer/ChatInput 控制）
           */}
-          {groupsLoading ? (
-            <div className="flex-1 flex items-center justify-center text-text-secondary">
-              加载中...
-            </div>
+          {mode === 'AssetsDiag' ? (
+            <AssetsDiagPage />
+          ) : groupsLoading ? (
+            // 冷启动加载时由 StartLoadOverlay 统一覆盖；主区保持空，避免重复“加载中...”
+            <div className="flex-1" />
           ) : groups.length === 0 ? (
             <DocumentUpload />
           ) : mode === 'PrdPreview' ? (
@@ -255,10 +276,15 @@ function App() {
 
         {/* 引用小抽屉预览（不影响全屏 PrdPreviewPage 的引用浮层） */}
         <PrdCitationPreviewDrawer />
+        {/* 群信息侧边栏（右侧抽屉） */}
+        <GroupInfoDrawer />
       </div>
 
       {/* 全局系统级错误弹窗（invoke 层统一拦截触发） */}
       <SystemErrorModal />
+
+      {/* 冷启动全局加载遮罩（唯一加载动画） */}
+      <StartLoadOverlay open={showColdStartLoading} />
     </div>
   );
 }

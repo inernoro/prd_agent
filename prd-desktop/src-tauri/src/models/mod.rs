@@ -105,8 +105,17 @@ pub struct GroupMemberInfo {
     pub username: String,
     pub display_name: String,
     pub member_role: String,
+    #[serde(default)]
+    pub tags: Vec<GroupMemberTag>,
     pub joined_at: String,
     pub is_owner: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMemberTag {
+    pub name: String,
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +125,12 @@ pub struct OpenGroupSessionResponse {
     pub group_id: String,
     pub document_id: String,
     pub current_role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopSkinsResponse {
+    pub skins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

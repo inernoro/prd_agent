@@ -120,7 +120,9 @@ struct EmptyBody {}
 /// - 不删除消息历史
 /// - 仅影响后续提问时的上下文拼接
 #[command]
-pub async fn clear_group_context(group_id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+pub async fn clear_group_context(
+    group_id: String,
+) -> Result<ApiResponse<serde_json::Value>, String> {
     let gid = group_id.trim().to_string();
     if gid.is_empty() {
         return Ok(ApiResponse::<serde_json::Value> {

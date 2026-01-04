@@ -13,6 +13,7 @@ import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentWorkspaceListPage from '@/pages/visual-agent/VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from '@/pages/visual-agent/VisualAgentWorkspaceEditorPage';
+import AssetsManagePage from '@/pages/AssetsManagePage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="llm-logs" element={<LlmLogsPage />} />
         <Route path="data" element={<DataManagePage />} />
         <Route path="prompts" element={<PromptStagesPage />} />
+        <Route path="assets" element={<AssetsManagePage />} />
         <Route path="lab" element={<LabPage />} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>

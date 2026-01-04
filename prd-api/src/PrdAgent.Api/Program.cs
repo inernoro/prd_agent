@@ -680,6 +680,14 @@ builder.Services.AddScoped<IGroupService>(sp =>
     return new GroupService(groupRepo, memberRepo, docRepo);
 });
 
+builder.Services.AddScoped<IGroupBotService>(sp =>
+{
+    var userRepo = sp.GetRequiredService<IUserRepository>();
+    var groupRepo = sp.GetRequiredService<IGroupRepository>();
+    var memberRepo = sp.GetRequiredService<IGroupMemberRepository>();
+    return new GroupBotService(userRepo, groupRepo, memberRepo);
+});
+
 builder.Services.AddScoped<IGapDetectionService>(sp =>
 {
     var gapRepo = sp.GetRequiredService<IContentGapRepository>();

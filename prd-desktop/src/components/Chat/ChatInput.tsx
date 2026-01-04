@@ -3,6 +3,7 @@ import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useConnectionStore } from '../../stores/connectionStore';
 import { Message, PromptItem, UserRole } from '../../types';
 
 function roleSuffix(role: UserRole) {
@@ -61,6 +62,8 @@ export default function ChatInput() {
   const { sessionId, currentRole, document, prompts } = useSessionStore();
   const { addUserMessageWithPendingAssistant, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
   const { user } = useAuthStore();
+  const connectionStatus = useConnectionStore((s) => s.status);
+  const isDisconnected = connectionStatus === 'disconnected';
   const [content, setContent] = useState('');
   const [resendTargetMessageId, setResendTargetMessageId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -70,6 +73,7 @@ export default function ChatInput() {
   // 检测是否为演示模式
   const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
+  const canChatNow = canChat && !isDisconnected;
 
   // 等待 UI 先完成一次/两次绘制，再发起请求（避免 invoke 的同步开销挡住首帧反馈）
   const waitForUiPaint = useCallback(async () => {
@@ -154,7 +158,7 @@ export default function ChatInput() {
   };
 
   const handlePromptExplain = async (p: PromptItem) => {
-    if (!sessionId || isStreaming || isSubmitting) return;
+    if (!sessionId || isStreaming || isSubmitting || isDisconnected) return;
     try {
       setIsSubmitting(true);
       const text = `【讲解】${p.title}`;
@@ -181,7 +185,7 @@ export default function ChatInput() {
   };
 
   const handleSend = async () => {
-    if (!content.trim() || !sessionId || isStreaming || isSubmitting) return;
+    if (!content.trim() || !sessionId || isStreaming || isSubmitting || isDisconnected) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -279,9 +283,9 @@ export default function ChatInput() {
               <button
                 key={p.promptKey}
                 onClick={() => handlePromptExplain(p)}
-                disabled={isStreaming || isSubmitting}
+                disabled={isStreaming || isSubmitting || isDisconnected}
                 className={`flex-shrink-0 px-2.5 py-1.5 text-xs ui-chip transition-colors ${
-                  isStreaming ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                  isStreaming || isSubmitting || isDisconnected ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
                 } text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5`}
                 title={p.title}
               >
@@ -319,17 +323,21 @@ export default function ChatInput() {
               setContent(e.target.value);
             }}
             onKeyDown={handleKeyDown}
-            placeholder={canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问"}
+            placeholder={
+              isDisconnected
+                ? "服务器已断开连接，正在重连…"
+                : (canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问")
+            }
             className="w-full min-w-0 px-3 py-2 ui-control rounded-xl resize-none text-sm overflow-y-hidden"
             rows={1}
-            disabled={isStreaming || !canChat}
+            disabled={isStreaming || !canChatNow}
           />
         </div>
 
         <div className="flex items-end justify-end" style={{ height: `${inputHeight}px` }}>
           <button
             onClick={isStreaming ? handleCancel : handleSend}
-            disabled={isStreaming ? false : (isSubmitting || !content.trim() || !canChat)}
+            disabled={isStreaming ? false : (isSubmitting || !content.trim() || !canChatNow)}
             className="h-9 w-9 flex items-center justify-center bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label={isStreaming ? '停止' : '发送'}
             title={isStreaming ? '停止' : '发送'}

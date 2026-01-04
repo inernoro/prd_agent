@@ -31,6 +31,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<JoinGroupResponse>))]
 [JsonSerializable(typeof(ApiResponse<List<GroupResponse>>))]
 [JsonSerializable(typeof(ApiResponse<List<GroupMemberResponse>>))]
+[JsonSerializable(typeof(ApiResponse<BootstrapGroupBotsResponse>))]
 [JsonSerializable(typeof(ApiResponse<List<MessageResponse>>))]
 [JsonSerializable(typeof(ApiResponse<PromptsClientResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserListResponse>))]
@@ -49,6 +50,12 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminRegenerateInviteResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminMessageDto>>))]
 [JsonSerializable(typeof(ApiResponse<HealthCheckResponse>))]
+// Desktop Assets
+[JsonSerializable(typeof(ApiResponse<DesktopSkinsResponse>))]
+[JsonSerializable(typeof(ApiResponse<List<AdminDesktopAssetSkinDto>>))]
+[JsonSerializable(typeof(ApiResponse<AdminDesktopAssetSkinDto>))]
+[JsonSerializable(typeof(ApiResponse<List<AdminDesktopAssetKeyDto>>))]
+[JsonSerializable(typeof(ApiResponse<AdminDesktopAssetUploadResponse>))]
 // 群消息 SSE
 [JsonSerializable(typeof(GroupMessageStreamEventDto))]
 [JsonSerializable(typeof(GroupMessageStreamMessageDto))]
@@ -73,6 +80,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(CreateGroupRequest))]
 [JsonSerializable(typeof(JoinGroupRequest))]
 [JsonSerializable(typeof(GroupMessageRequest))]
+[JsonSerializable(typeof(BootstrapGroupBotsRequest))]
 [JsonSerializable(typeof(UploadDocumentRequest))]
 [JsonSerializable(typeof(UpdateStatusRequest))]
 [JsonSerializable(typeof(UpdateRoleRequest))]
@@ -83,6 +91,10 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(AdminBulkCreateUserItem))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
 [JsonSerializable(typeof(ForceExpireRequest))]
+// Desktop Assets 请求
+[JsonSerializable(typeof(AdminCreateDesktopAssetSkinRequest))]
+[JsonSerializable(typeof(AdminUpdateDesktopAssetSkinRequest))]
+[JsonSerializable(typeof(AdminCreateDesktopAssetKeyRequest))]
 // Admin Data 请求
 [JsonSerializable(typeof(DataConfigImportRequest))]
 [JsonSerializable(typeof(DataPurgeRequest))]

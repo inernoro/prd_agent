@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { invoke } from '../lib/tauri';
+import { useRemoteAssetsStore } from './remoteAssetsStore';
 
 interface AppConfig {
   apiBaseUrl: string;
+  assetsBaseUrl?: string;
   isDeveloper: boolean;
   clientId?: string;
 }
@@ -28,12 +30,18 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     try {
       const config = await invoke<AppConfig>('get_config');
       set({ config });
+      // 同步资源域名到 remoteAssets（不影响 skins/key 规则；仅用于替换域名前缀）
+      const assetsBaseUrl = (config?.assetsBaseUrl || '').trim();
+      if (assetsBaseUrl) {
+        useRemoteAssetsStore.getState().setBaseUrl(assetsBaseUrl);
+      }
     } catch (err) {
       console.error('Failed to load config:', err);
       // 使用默认配置
       set({
-        config: { apiBaseUrl: 'https://pa.759800.com', isDeveloper: false },
+        config: { apiBaseUrl: 'https://pa.759800.com', assetsBaseUrl: 'https://i.pa.759800.com', isDeveloper: false },
       });
+      useRemoteAssetsStore.getState().setBaseUrl('https://i.pa.759800.com');
     } finally {
       set({ isLoading: false });
     }
@@ -47,6 +55,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const toSave: AppConfig = { ...prev, ...config };
       await invoke('save_config', { config: toSave });
       set({ config: toSave });
+      const assetsBaseUrl = (toSave.assetsBaseUrl || '').trim();
+      if (assetsBaseUrl) {
+        useRemoteAssetsStore.getState().setBaseUrl(assetsBaseUrl);
+      }
     } catch (err) {
       console.error('Failed to save config:', err);
       throw err;

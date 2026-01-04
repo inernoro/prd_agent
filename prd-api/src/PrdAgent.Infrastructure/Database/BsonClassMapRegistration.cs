@@ -53,6 +53,8 @@ public static class BsonClassMapRegistration
             RegisterAdminPromptOverride();
             RegisterAdminIdempotencyRecord();
             RegisterSystemPromptSettings();
+            RegisterDesktopAssetSkin();
+            RegisterDesktopAssetKey();
 
             _registered = true;
         }
@@ -380,6 +382,43 @@ public static class BsonClassMapRegistration
                 cm.SetIgnoreExtraElements(true);
             });
         }
+    }
+
+    private static void RegisterDesktopAssetSkin()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(DesktopAssetSkin))) return;
+        BsonClassMap.RegisterClassMap<DesktopAssetSkin>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.MapMember(x => x.Name).SetElementName("name");
+            cm.MapMember(x => x.Enabled).SetElementName("enabled");
+            cm.MapMember(x => x.CreatedByAdminId).SetElementName("createdByAdminId");
+            cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
+            cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterDesktopAssetKey()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(DesktopAssetKey))) return;
+        BsonClassMap.RegisterClassMap<DesktopAssetKey>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.MapMember(x => x.Key).SetElementName("key");
+            cm.MapMember(x => x.Kind).SetElementName("kind");
+            cm.MapMember(x => x.Description).SetElementName("description");
+            cm.MapMember(x => x.CreatedByAdminId).SetElementName("createdByAdminId");
+            cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
+            cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+            cm.SetIgnoreExtraElements(true);
+        });
     }
 
     private static void RegisterLlmRequestLog()

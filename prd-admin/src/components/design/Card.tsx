@@ -18,14 +18,19 @@ export function Card({
         className
       )}
       style={{
-        background:
+        /**
+         * 兼容兜底：部分环境（旧 WebView / 某些浏览器版本）不支持 color-mix()，
+         * 会导致整个 background 声明无效 -> 卡片变“透明”从而看不清字。
+         * 这里用 backgroundColor 作为可靠兜底；渐变用 backgroundImage（失败也不影响底色）。
+         */
+        backgroundColor: 'var(--bg-elevated)',
+        backgroundImage:
           variant === 'gold'
             ? 'linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 92%, black) 0%, color-mix(in srgb, var(--bg-elevated) 86%, black) 100%), radial-gradient(520px 360px at 50% 0%, rgba(214,178,106,0.12) 0%, transparent 58%)'
             : 'linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 92%, black) 0%, color-mix(in srgb, var(--bg-elevated) 86%, black) 100%)',
-        border:
-          variant === 'gold'
-            ? '1px solid color-mix(in srgb, var(--accent-gold) 45%, var(--border-default))'
-            : '1px solid color-mix(in srgb, var(--border-subtle) 80%, rgba(255,255,255,0.12))',
+        borderWidth: 1,
+        borderStyle: 'solid',
+        borderColor: variant === 'gold' ? 'var(--border-default)' : 'var(--border-subtle)',
         boxShadow: 'var(--shadow-card)',
       }}
     >

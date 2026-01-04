@@ -4,6 +4,7 @@ import { ApiResponse, Document, Session, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
+import { useMessageStore } from '../../stores/messageStore';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 type GroupMemberInfo = {
@@ -19,6 +20,8 @@ export default function GroupList() {
   const { user } = useAuthStore();
   const { groups, loading, loadGroups } = useGroupListStore();
   const { activeGroupId, setActiveGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
+  const syncFromServer = useMessageStore((s) => s.syncFromServer);
+  const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
   const [dissolveTarget, setDissolveTarget] = useState<null | { groupId: string; groupName: string }>(null);
   const [dissolveBusy, setDissolveBusy] = useState(false);
   const [dissolveError, setDissolveError] = useState('');
@@ -48,6 +51,18 @@ export default function GroupList() {
 
   const openGroup = async (group: (typeof groups)[number]) => {
     if (user?.userId === 'demo-user-001') return;
+
+    // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
+    // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）
+    // - syncFromServer 内部有 isSyncing 保护，重复触发开销很低
+    try {
+      await syncFromServer({ groupId: group.groupId, limit: 100 });
+    } catch {
+      // ignore（断连/权限由全局处理）
+    } finally {
+      triggerScrollToBottom();
+    }
+
     // 切换群组必须先清空旧 session/document，避免串信息
     setActiveGroupContext(group.groupId);
 
@@ -165,11 +180,8 @@ export default function GroupList() {
   };
 
   if (loading) {
-    return (
-      <div className="p-4 text-center text-text-secondary text-sm">
-        加载中...
-      </div>
-    );
+    // 冷启动全局加载由 StartLoadOverlay 统一覆盖，这里不再重复展示“加载中...”
+    return <div className="p-4" />;
   }
 
   if (groups.length === 0) {
@@ -282,28 +294,28 @@ export default function GroupList() {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => (dissolveBusy ? null : setDissolveTarget(null))}
           />
-          <div className="relative w-full max-w-md mx-4 bg-slate-800 rounded-2xl shadow-2xl border border-white/10">
-            <div className="px-6 py-4 border-b border-white/10">
-              <div className="text-lg font-semibold text-white">解散群组</div>
-              <div className="mt-1 text-sm text-white/60">
-                将永久删除群组与成员关系：<span className="text-white">{dissolveTarget.groupName}</span>
+          <div className="relative w-full max-w-md mx-4 ui-glass-modal">
+            <div className="px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+              <div className="text-lg font-semibold text-text-primary">解散群组</div>
+              <div className="mt-1 text-sm text-text-secondary">
+                将永久删除群组与成员关系：<span className="text-text-primary">{dissolveTarget.groupName}</span>
               </div>
             </div>
             <div className="p-6 space-y-3">
-              <div className="text-sm text-white/70">
+              <div className="text-sm text-text-secondary">
                 确认后不可恢复。建议先通知群成员。
               </div>
               {dissolveError ? (
-                <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+                <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
                   {dissolveError}
                 </div>
               ) : null}
             </div>
-            <div className="flex gap-3 px-6 py-4 border-t border-white/10">
+            <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 ui-glass-bar">
               <button
                 onClick={() => setDissolveTarget(null)}
                 disabled={dissolveBusy}
-                className="flex-1 py-2.5 bg-white/10 text-white/80 font-medium rounded-lg hover:bg-white/20 transition-colors disabled:opacity-50"
+                className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
               >
                 取消
               </button>

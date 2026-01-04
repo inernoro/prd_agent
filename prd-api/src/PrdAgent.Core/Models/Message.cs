@@ -33,6 +33,12 @@ public class Message
     
     /// <summary>会话ID</summary>
     public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 运行ID（预埋：未来用于多 Agent 编排/自动交接/回放）。
+    /// - 当前版本可为空，不影响现有消息逻辑
+    /// </summary>
+    public string? RunId { get; set; }
     
     /// <summary>发送者用户ID（AI消息为null）</summary>
     public string? SenderId { get; set; }

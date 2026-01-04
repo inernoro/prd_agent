@@ -66,12 +66,12 @@ export default function RoleSelector() {
   };
 
   return (
-    <div className="flex items-center gap-1 ui-chip p-1">
+    <div className="flex items-center gap-1 ui-chip p-1 rounded-full">
       {roles.map(({ value, label }) => (
         <button
           key={value}
           onClick={() => handleChange(value)}
-          className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
+          className={`px-3 py-1.5 text-sm rounded-full transition-colors flex items-center gap-1.5 ${
             currentRole === value
               ? 'bg-primary-500 text-white'
               : 'text-text-secondary hover:bg-black/5 dark:hover:bg-white/5'

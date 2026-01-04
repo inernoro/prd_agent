@@ -38,8 +38,18 @@ public class GroupMemberResponse
     public string Username { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public UserRole MemberRole { get; set; }
+    public List<GroupMemberTagDto> Tags { get; set; } = new();
+    // 兼容字段：前端若仍依赖 isBot/botKind，可继续使用；但推荐迁移到 tags[]
+    public bool IsBot { get; set; }
+    public BotKind? BotKind { get; set; }
     public DateTime JoinedAt { get; set; }
     public bool IsOwner { get; set; }
+}
+
+public class GroupMemberTagDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
 }
 
 /// <summary>
