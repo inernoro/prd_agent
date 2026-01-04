@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useRemoteAssetUrlPair } from '../../stores/remoteAssetsStore';
+import { useIsSkinVariantUnavailable, useRemoteAssetsStore, useRemoteAssetUrlPair } from '../../stores/remoteAssetsStore';
 
 export type WizardLoaderProps = {
   className?: string;
@@ -24,12 +24,16 @@ export default function WizardLoader({
   const s = Math.max(40, Math.min(180, Number(size) || 120));
   const rootClass = `flex items-center gap-3 ${labelMode === 'below' ? 'flex-col items-start gap-2' : ''} ${className || ''}`.trim();
   const { skinUrl, baseUrl } = useRemoteAssetUrlPair('icon.desktop.load');
-  const [stage, setStage] = useState<'skin' | 'base' | 'local'>(() => (skinUrl && skinUrl !== baseUrl ? 'skin' : 'base'));
+  const { skin, unavailable } = useIsSkinVariantUnavailable('icon.desktop.load');
+  const [stage, setStage] = useState<'skin' | 'base' | 'local'>(() => {
+    if (unavailable) return 'base';
+    return skinUrl && skinUrl !== baseUrl ? 'skin' : 'base';
+  });
 
   // 当 URL 发生变化（etag/lastModified 更新、baseUrl/skin 变更）时，重新按优先级尝试远端资源
   useEffect(() => {
-    setStage(skinUrl && skinUrl !== baseUrl ? 'skin' : 'base');
-  }, [skinUrl, baseUrl]);
+    setStage(unavailable ? 'base' : (skinUrl && skinUrl !== baseUrl ? 'skin' : 'base'));
+  }, [skinUrl, baseUrl, unavailable]);
 
   const ariaLabel = useMemo(() => label || '处理中', [label]);
   const currentSrc = stage === 'skin' ? skinUrl : stage === 'base' ? baseUrl : null;
@@ -54,6 +58,8 @@ export default function WizardLoader({
               style={{ imageRendering: 'auto' }}
               onError={() => {
                 if (stage === 'skin' && baseUrl && baseUrl !== skinUrl) {
+                  // 皮肤资源缺失：记住并直接跳过，避免下次再次先撞 404 再回退
+                  useRemoteAssetsStore.getState().markSkinVariantUnavailable('icon.desktop.load', skin);
                   setStage('base');
                 } else {
                   setStage('local');

@@ -206,7 +206,7 @@ export default function AssetsManagePage() {
 
       <div className="mt-5 grid grid-cols-1 gap-4">
         {/* Skins */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel)', border: '1px solid var(--border-subtle)' }}>
+        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               皮肤（skins）
@@ -291,7 +291,7 @@ export default function AssetsManagePage() {
         </section>
 
         {/* Keys */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel)', border: '1px solid var(--border-subtle)' }}>
+        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               资源 key（keys）
@@ -398,7 +398,7 @@ export default function AssetsManagePage() {
         </section>
 
         {/* Upload */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel)', border: '1px solid var(--border-subtle)' }}>
+        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             上传/替换（覆盖写）
           </div>
@@ -485,7 +485,7 @@ export default function AssetsManagePage() {
         </section>
 
         {/* Preview Grid */}
-        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel)', border: '1px solid var(--border-subtle)' }}>
+        <section className="rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               预览矩阵（多少皮肤多少列）
@@ -502,14 +502,14 @@ export default function AssetsManagePage() {
                 gridTemplateColumns: `220px repeat(${1 + skinNames.length}, minmax(240px, 1fr))`,
               }}
             >
-              <div className="sticky top-0 z-10 py-2" style={{ background: 'var(--panel)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}>
+              <div className="sticky top-0 z-10 py-2" style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}>
                 资源 key
               </div>
-              <div className="sticky top-0 z-10 py-2 px-2 font-semibold" style={{ background: 'var(--panel)', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
+              <div className="sticky top-0 z-10 py-2 px-2 font-semibold" style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
                 默认
               </div>
               {skinNames.map((s) => (
-                <div key={s} className="sticky top-0 z-10 py-2 px-2 font-semibold" style={{ background: 'var(--panel)', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
+                <div key={s} className="sticky top-0 z-10 py-2 px-2 font-semibold" style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
                   {s}（{skinLabel(s)}）
                 </div>
               ))}

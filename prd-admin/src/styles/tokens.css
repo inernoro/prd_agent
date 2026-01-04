@@ -9,6 +9,11 @@
   --bg-input: rgba(255, 255, 255, 0.04);
   --bg-input-hover: rgba(255, 255, 255, 0.06);
 
+  /* 面板层：用于页面分区容器（比 bg-card 更“实”，避免在动效背景上文字不清） */
+  --panel: linear-gradient(180deg, rgba(18, 18, 22, 0.92) 0%, rgba(18, 18, 22, 0.78) 100%);
+  /* sticky/表头等需要更稳定的底色 */
+  --panel-solid: rgba(18, 18, 22, 0.92);
+
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-default: rgba(255, 255, 255, 0.12);
   --border-hover: rgba(255, 255, 255, 0.18);

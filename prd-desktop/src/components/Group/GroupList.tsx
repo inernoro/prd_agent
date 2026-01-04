@@ -180,11 +180,8 @@ export default function GroupList() {
   };
 
   if (loading) {
-    return (
-      <div className="p-4 text-center text-text-secondary text-sm">
-        加载中...
-      </div>
-    );
+    // 冷启动全局加载由 StartLoadOverlay 统一覆盖，这里不再重复展示“加载中...”
+    return <div className="p-4" />;
   }
 
   if (groups.length === 0) {

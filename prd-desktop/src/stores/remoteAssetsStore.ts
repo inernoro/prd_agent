@@ -4,7 +4,7 @@ import { invoke } from '../lib/tauri';
 import type { ApiResponse } from '../types';
 
 export type RemoteAssetKind = 'image' | 'audio' | 'video' | 'other';
-export type RemoteAssetId = 'icon.desktop.load';
+export type RemoteAssetId = 'icon.desktop.load' | 'icon.desktop.startLoad';
 
 export type SkinName = string;
 
@@ -24,6 +24,12 @@ export type RemoteAssetMeta = {
   etag?: string | null;
   /** 最近一次成功 HEAD 到的 Last-Modified（若服务端不提供则为空） */
   lastModified?: string | null;
+  /**
+   * 变体不可用标记：
+   * - 用于“皮肤资源不存在时不要每次都先撞 404 再回退”的体验优化
+   * - 可通过“清空缓存并刷新”或后端 HEAD 成功自动恢复
+   */
+  unavailable?: boolean | null;
   /** 上次检查时间（ms） */
   lastCheckedAt?: number | null;
   /** 上次成功时间（ms） */
@@ -53,6 +59,21 @@ const DEFAULT_ASSETS: Record<RemoteAssetId, RemoteAssetEntry> = {
   'icon.desktop.load': {
     kind: 'image',
     path: '/icon/desktop/load.gif',
+    absoluteUrlOverride: null,
+    metaByVariant: {
+      base: {
+        etag: null,
+        lastModified: null,
+        lastCheckedAt: null,
+        lastOkAt: null,
+        lastFailAt: null,
+        failCount: 0,
+      },
+    },
+  },
+  'icon.desktop.startLoad': {
+    kind: 'image',
+    path: '/icon/desktop/start_load.gif',
     absoluteUrlOverride: null,
     metaByVariant: {
       base: {
@@ -177,6 +198,7 @@ export type RemoteAssetsState = {
   setSkins: (skins: SkinName[]) => void;
   refreshSkinsFromServer: () => Promise<void>;
   resetLocalCacheAndRefresh: () => Promise<void>;
+  markSkinVariantUnavailable: (id: RemoteAssetId, skin: SkinName | null) => void;
   getAssetUrl: (id: RemoteAssetId, args?: { variant?: 'base' | 'skin'; skin?: SkinName | null }) => string;
   refreshOnColdStart: () => Promise<void>;
 };
@@ -234,6 +256,23 @@ export const useRemoteAssetsStore = create<RemoteAssetsState>()(
         } catch {
           // ignore
         }
+      },
+
+      markSkinVariantUnavailable: (id, skin) => {
+        const s = normalizeSkin(skin);
+        if (!s) return;
+        const key: VariantKey = `skin:${s}`;
+        set((prev) => {
+          const entry = prev.assets?.[id] ?? DEFAULT_ASSETS[id];
+          const meta = getMeta(entry, key);
+          const nextMeta: RemoteAssetMeta = {
+            ...meta,
+            unavailable: true,
+            lastFailAt: Date.now(),
+            failCount: Math.min(20, (typeof (meta as any).failCount === 'number' ? (meta as any).failCount : 0) + 1),
+          };
+          return { assets: { ...(prev.assets || DEFAULT_ASSETS), [id]: setMeta(entry, key, nextMeta) } };
+        });
       },
 
       getAssetUrl: (id, args) => {
@@ -304,6 +343,7 @@ export const useRemoteAssetsStore = create<RemoteAssetsState>()(
               const prevMeta = getMeta(prevEntry, key as VariantKey);
               const nextMeta: RemoteAssetMeta = {
                 ...prevMeta,
+                unavailable: false,
                 etag: etag ?? (prevMeta as any).etag ?? null,
                 lastModified: lastModified ?? (prevMeta as any).lastModified ?? null,
                 lastCheckedAt: checkedAt,
@@ -322,6 +362,7 @@ export const useRemoteAssetsStore = create<RemoteAssetsState>()(
                 : 0;
               const nextMeta: RemoteAssetMeta = {
                 ...prevMeta,
+                // 失败不强行置 unavailable：可能是网络波动；真正“不存在”由 img onError 触发记录
                 lastCheckedAt: checkedAt,
                 lastFailAt: checkedAt,
                 failCount: Math.min(20, prevFail + 1),
@@ -440,6 +481,18 @@ export function useRemoteAssetUrlPair(id: RemoteAssetId, args?: { skin?: SkinNam
   const baseUrl = useRemoteAssetUrl(id, { variant: 'base' });
   const skinUrl = useRemoteAssetUrl(id, { variant: 'skin', skin: args?.skin ?? null });
   return { skinUrl, baseUrl };
+}
+
+export function useIsSkinVariantUnavailable(id: RemoteAssetId): { skin: string | null; unavailable: boolean } {
+  return useRemoteAssetsStore((s) => {
+    const skin = normalizeSkin(s.skin);
+    if (!skin) return { skin: null, unavailable: false };
+    const entry = s.assets?.[id] ?? DEFAULT_ASSETS[id];
+    const key: VariantKey = `skin:${skin}`;
+    const meta = getMeta(entry, key);
+    const unavailable = Boolean((meta as any)?.unavailable);
+    return { skin, unavailable };
+  });
 }
 
 

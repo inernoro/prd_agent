@@ -14,6 +14,7 @@ import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDr
 import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
 import AssetsDiagPage from './components/Assets/AssetsDiagPage';
+import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
@@ -244,6 +245,9 @@ function App() {
     return <LoginPage />;
   }
 
+  // 冷启动全局加载遮罩：只保留一个（覆盖侧栏+主区），避免出现“导航一份、主区一份”的重复加载提示
+  const showColdStartLoading = groupsLoading;
+
   return (
     <div className="h-full flex flex-col bg-background-light dark:bg-background-dark">
       <Header isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} />
@@ -259,9 +263,8 @@ function App() {
           {mode === 'AssetsDiag' ? (
             <AssetsDiagPage />
           ) : groupsLoading ? (
-            <div className="flex-1 flex items-center justify-center text-text-secondary">
-              加载中...
-            </div>
+            // 冷启动加载时由 StartLoadOverlay 统一覆盖；主区保持空，避免重复“加载中...”
+            <div className="flex-1" />
           ) : groups.length === 0 ? (
             <DocumentUpload />
           ) : mode === 'PrdPreview' ? (
@@ -279,6 +282,9 @@ function App() {
 
       {/* 全局系统级错误弹窗（invoke 层统一拦截触发） */}
       <SystemErrorModal />
+
+      {/* 冷启动全局加载遮罩（唯一加载动画） */}
+      <StartLoadOverlay open={showColdStartLoading} />
     </div>
   );
 }

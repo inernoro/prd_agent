@@ -7,15 +7,15 @@ type AssetRow = {
   title: string;
   key: string; // 资源名（文件名/相对路径），Desktop 内置清单
   kind: 'image';
-  size: number;
 };
 
 // Desktop 侧只存“需要的 key”，不存 URL 规则；URL 在页面按固定规则拼接
 const REQUIRED_ASSETS: AssetRow[] = [
-  { title: '加载动画', key: 'load.gif', kind: 'image', size: 92 },
-  // 登录页目前 UI 还没用到图片资源，这里先约定 key，供你们后台替换验证
-  { title: '登录 Logo', key: 'login/logo.svg', kind: 'image', size: 64 },
-  { title: '登录图标', key: 'login/icon.png', kind: 'image', size: 64 },
+  { title: '冷启动加载', key: 'start_load.gif', kind: 'image' },
+  { title: '加载动画', key: 'load.gif', kind: 'image' },
+  // 规则确认：除皮肤目录外不允许再有子目录；因此 key 统一使用“文件名”
+  { title: '登录 Logo', key: 'login_logo.svg', kind: 'image' },
+  { title: '登录图标', key: 'login_icon.png', kind: 'image' },
 ];
 
 function labelForSkin(skin: string): string {
@@ -27,7 +27,11 @@ function labelForSkin(skin: string): string {
 
 function buildIconUrl(baseUrl: string, key: string, skin?: string | null): string {
   const b = String(baseUrl || '').trim().replace(/\/+$/, '');
-  const k = String(key || '').trim().replace(/^\/+/, '');
+  const k = String(key || '')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\\/g, '')
+    .replace(/\//g, ''); // 强约束：除 skin 目录外无子目录（key 仅文件名）
   const s = String(skin || '').trim().replace(/^\/+|\/+$/g, '');
   if (!b || !k) return '';
   if (s) return `${b}/icon/desktop/${s}/${k}`;
@@ -52,14 +56,22 @@ export default function AssetsDiagPage() {
   }, [refreshSkins]);
 
   const columns = useMemo(() => {
-    const uniq = Array.from(new Set((Array.isArray(skins) ? skins : []).map((x) => String(x || '').trim()).filter(Boolean)));
-    // 保证 white/dark 在前（若存在）
-    const head: string[] = [];
-    if (uniq.includes('white')) head.push('white');
-    if (uniq.includes('dark')) head.push('dark');
-    const tail = uniq.filter((x) => x !== 'white' && x !== 'dark').sort((a, b) => a.localeCompare(b));
-    return ['__base__', ...head, ...tail];
+    // 规则：无论当前皮肤/是否切换，都要展示：
+    // - 默认(base) 一列
+    // - white/dark 两列（即使服务端未配置/暂时没返回，也用于“缺失/可用性”诊断）
+    // - 其它皮肤列来自服务端下发 skins
+    const raw = Array.isArray(skins) ? skins : [];
+    const uniq = Array.from(new Set(raw.map((x) => String(x || '').trim()).filter(Boolean)));
+    const tail = uniq
+      .filter((x) => x !== 'white' && x !== 'dark')
+      .sort((a, b) => a.localeCompare(b));
+    return ['__base__', 'white', 'dark', ...tail];
   }, [skins]);
+
+  const desktopRoot = useMemo(() => {
+    const b = String(baseUrl || '').trim().replace(/\/+$/, '');
+    return b ? `${b}/icon/desktop` : '';
+  }, [baseUrl]);
 
   if (!isAdmin) {
     return (
@@ -102,6 +114,11 @@ export default function AssetsDiagPage() {
             清空缓存并刷新
           </button>
         </div>
+      </div>
+
+      {/* 统一资源根目录（单独一行展示；hover 显示完整路径由每格 title 负责） */}
+      <div className="px-4 py-2 border-b text-xs text-text-secondary">
+        <div className="font-mono break-all">{desktopRoot || '-'}</div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto">
@@ -154,6 +171,7 @@ function RowBlock(props: {
   onRecovered: (id: string) => void;
 }) {
   const { row, columns, baseUrl, broken, onBroken, onRecovered } = props;
+  const BOX = 96; // 统一正方形预览尺寸（所有资源一致）
 
   return (
     <>
@@ -164,15 +182,16 @@ function RowBlock(props: {
       {columns.map((c) => {
         const skin = c === '__base__' ? null : c;
         const url = buildIconUrl(baseUrl, row.key, skin);
+        const relPath = `${skin ? `${skin}/` : ''}${row.key}`;
         const id = `${row.key}@@${c}`;
         const isBroken = Boolean(broken?.[id]);
         return (
           <div key={id} className="border-b px-4 py-4">
             {row.kind === 'image' ? (
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-2">
                 <div
                   className={`rounded-xl border ${isBroken ? 'border-red-500/50 bg-red-500/10' : 'border-black/10 dark:border-white/10'} p-2`}
-                  style={{ width: `${row.size + 16}px`, height: `${row.size + 16}px` }}
+                  style={{ width: `${BOX}px`, height: `${BOX}px` }}
                   title={url || ''}
                 >
                   {url ? (
@@ -180,23 +199,20 @@ function RowBlock(props: {
                       src={url}
                       alt=""
                       aria-hidden="true"
-                      width={row.size}
-                      height={row.size}
-                      className="block select-none pointer-events-none"
+                      className="block select-none pointer-events-none w-full h-full"
                       onError={() => onBroken(id)}
                       onLoad={() => onRecovered(id)}
+                      style={{ objectFit: 'contain' }}
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-xs text-text-secondary">无 URL</div>
                   )}
                 </div>
-                <div className="min-w-0">
-                  <div className={`text-sm ${isBroken ? 'text-red-600 dark:text-red-300' : 'text-text-secondary'}`}>
-                    {isBroken ? '缺失/不可用' : '正常'}
-                  </div>
-                  <div className="text-xs text-text-secondary truncate" title={url || ''}>
-                    {url || '-'}
-                  </div>
+                <div className={`text-sm ${isBroken ? 'text-red-600 dark:text-red-300' : 'text-text-secondary'}`}>
+                  {isBroken ? '缺失/不可用' : '正常'}
+                </div>
+                <div className="text-xs text-text-secondary break-all" title={url || ''}>
+                  {url ? relPath : '-'}
                 </div>
               </div>
             ) : null}
