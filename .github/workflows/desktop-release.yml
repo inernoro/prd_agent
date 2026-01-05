@@ -90,11 +90,14 @@ jobs:
             echo "  Expected format: x.y.z or x.y.z-suffix"
           fi
           
+          # 设置环境变量供后续 steps 使用
           echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
-          node - <<'NODE'
+          
+          # 将 VERSION 作为参数传递给 Node.js 脚本（因为同一 step 中 $GITHUB_ENV 可能还未生效）
+          node - "$VERSION" <<'NODE'
           import fs from "fs";
           
-          const v = process.env.APP_VERSION;
+          const v = process.argv[1];
           if (!v) {
             console.error("APP_VERSION is empty");
             process.exit(1);
