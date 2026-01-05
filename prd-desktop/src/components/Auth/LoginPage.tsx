@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { invoke, isTauri } from '../../lib/tauri';
 import { useAuthStore } from '../../stores/authStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ApiResponse, User } from '../../types';
 import SettingsModal from '../Settings/SettingsModal';
+import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
+import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
+import { buildDesktopAssetUrl } from '../../lib/desktopAssetUrl';
 
 interface LoginResponse {
   accessToken: string;
@@ -17,17 +20,44 @@ interface LoginResponse {
 export default function LoginPage() {
   const { login } = useAuthStore();
   const { openModal } = useSettingsStore();
-  const [isLogin, setIsLogin] = useState(true);
+  const loadConfig = useSettingsStore((s) => s.loadConfig);
+  const branding = useDesktopBrandingStore((s) => s.branding);
+  const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
+  const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
+  const assetsBaseUrl = useRemoteAssetsStore((s) => s.baseUrl);
+  const skin = useRemoteAssetsStore((s) => s.skin);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
   const [form, setForm] = useState({
     username: '',
     password: '',
-    inviteCode: '',
-    role: 'DEV' as 'PM' | 'DEV' | 'QA',
-    displayName: '',
   });
+
+  // 启动时：同步 config（让 assetsBaseUrl 生效）+ 在线模式拉一次品牌配置（登录 icon + 名称）
+  useEffect(() => {
+    if (!isTauri()) return;
+    void loadConfig();
+    void refreshBranding('startup');
+  }, [loadConfig, refreshBranding]);
+
+  const iconUrls = useMemo(() => {
+    return buildDesktopAssetUrl({
+      baseUrl: assetsBaseUrl,
+      key: branding.loginIconKey,
+      skin: skin ?? null,
+    });
+  }, [assetsBaseUrl, branding.loginIconKey, skin]);
+
+  const [iconSrc, setIconSrc] = useState<string>('');
+  useEffect(() => {
+    if (branding.source !== 'server') {
+      setIconSrc('');
+      return;
+    }
+    // 先尝试 skin，再回落 base
+    setIconSrc(iconUrls.skinUrl || iconUrls.baseUrl);
+  }, [branding.source, iconUrls.baseUrl, iconUrls.skinUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,57 +66,28 @@ export default function LoginPage() {
 
     try {
       if (!isTauri()) {
-        setError('当前页面运行在浏览器环境，无法登录。请使用桌面窗口启动，或点击“演示模式”。');
+        setError('当前页面运行在浏览器环境，无法登录。请使用桌面窗口启动。');
         return;
       }
-      if (isLogin) {
-        const response = await invoke<ApiResponse<LoginResponse>>('login', {
-          username: form.username,
-          password: form.password,
-        });
+      const response = await invoke<ApiResponse<LoginResponse>>('login', {
+        username: form.username,
+        password: form.password,
+      });
 
-        if (response.success && response.data) {
-          login(response.data.user, {
-            accessToken: response.data.accessToken,
-            refreshToken: response.data.refreshToken,
-            sessionKey: response.data.sessionKey,
-          });
-        } else {
-          setError(response.error?.message || '登录失败');
-        }
+      if (response.success && response.data) {
+        login(response.data.user, {
+          accessToken: response.data.accessToken,
+          refreshToken: response.data.refreshToken,
+          sessionKey: response.data.sessionKey,
+        });
       } else {
-        const response = await invoke<ApiResponse<{ userId: string }>>('register', {
-          username: form.username,
-          password: form.password,
-          inviteCode: form.inviteCode,
-          role: form.role,
-          displayName: form.displayName || undefined,
-        });
-
-        if (response.success) {
-          setIsLogin(true);
-          setError('');
-          alert('注册成功，请登录');
-        } else {
-          setError(response.error?.message || '注册失败');
-        }
+        setError(response.error?.message || '登录失败');
       }
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  };
-
-  // 演示模式：跳过登录，使用模拟用户
-  const handleDemoMode = () => {
-    const demoUser: User = {
-      userId: 'demo-user-001',
-      username: 'demo',
-      displayName: '演示用户',
-      role: 'PM',
-    };
-    login(demoUser, { accessToken: 'demo-token', refreshToken: 'demo-refresh', sessionKey: 'demo-session' });
   };
 
   return (
@@ -108,34 +109,27 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md p-8 ui-glass-modal">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-r from-cyan-400 to-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span className="text-white font-bold text-2xl">P</span>
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-gradient-to-r from-cyan-400 to-purple-500">
+            {branding.source === 'server' && iconSrc ? (
+              <img
+                src={iconSrc}
+                alt="login icon"
+                className="w-16 h-16 object-cover"
+                onError={() => {
+                  if (iconSrc === iconUrls.skinUrl && iconUrls.baseUrl) {
+                    setIconSrc(iconUrls.baseUrl);
+                  } else {
+                    // 回退到内置
+                    resetBranding();
+                  }
+                }}
+              />
+            ) : (
+              <span className="text-white font-bold text-2xl">P</span>
+            )}
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">PRD Agent</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{branding.desktopName || 'PRD Agent'}</h1>
           <p className="text-slate-600 dark:text-white/60 text-sm mt-2">智能PRD解读助手</p>
-        </div>
-
-        <div className="flex mb-6">
-          <button
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${
-              isLogin
-                ? 'text-slate-900 dark:text-white border-b-2 border-cyan-500 dark:border-cyan-400'
-                : 'text-slate-500 dark:text-white/50'
-            }`}
-            onClick={() => setIsLogin(true)}
-          >
-            登录
-          </button>
-          <button
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${
-              !isLogin
-                ? 'text-slate-900 dark:text-white border-b-2 border-cyan-500 dark:border-cyan-400'
-                : 'text-slate-500 dark:text-white/50'
-            }`}
-            onClick={() => setIsLogin(false)}
-          >
-            注册
-          </button>
         </div>
 
         {error && (
@@ -163,68 +157,14 @@ export default function LoginPage() {
             required
           />
 
-          {!isLogin && (
-            <>
-              <input
-                type="text"
-                placeholder="邀请码"
-                value={form.inviteCode}
-                onChange={(e) => setForm({ ...form, inviteCode: e.target.value })}
-                className="w-full px-4 py-3 ui-control transition-colors"
-                required
-              />
-              
-              <select
-                value={form.role}
-                onChange={(e) => setForm({ ...form, role: e.target.value as 'PM' | 'DEV' | 'QA' })}
-                className="w-full px-4 py-3 ui-control transition-colors"
-              >
-                <option value="PM" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100">产品经理</option>
-                <option value="DEV" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100">开发工程师</option>
-                <option value="QA" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100">测试工程师</option>
-              </select>
-
-              <input
-                type="text"
-                placeholder="显示名称（可选）"
-                value={form.displayName}
-                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-                className="w-full px-4 py-3 ui-control transition-colors"
-              />
-            </>
-          )}
-
           <button
             type="submit"
             disabled={loading}
             className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            {loading ? '请稍候...' : isLogin ? '登录' : '注册'}
+            {loading ? '请稍候...' : '登录'}
           </button>
         </form>
-
-        {/* 演示模式分隔线 */}
-        <div className="relative my-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-slate-900/10 dark:border-white/20"></div>
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-transparent text-slate-500 dark:text-white/40">或</span>
-          </div>
-        </div>
-
-        {/* 演示模式按钮 */}
-        <button
-          onClick={handleDemoMode}
-          className="w-full py-3 bg-black/5 border border-slate-900/15 text-slate-700 font-medium rounded-lg hover:bg-black/10 transition-all flex items-center justify-center gap-2 dark:bg-white/10 dark:border-white/30 dark:text-white/80 dark:hover:bg-white/20 dark:hover:text-white"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          演示模式
-        </button>
-        <p className="text-center text-slate-500 text-xs mt-2 dark:text-white/30">无需登录，快速体验功能</p>
       </div>
     </div>
   );

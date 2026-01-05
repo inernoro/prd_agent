@@ -1,9 +1,11 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { Badge } from '@/components/design/Badge';
+import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
-import { getDataSummary, purgeData } from '@/services';
-import type { DataSummaryResponse } from '@/services/contracts/data';
+import { getDataSummary, previewUsersPurge, purgeData, purgeUsers } from '@/services';
+import type { AdminUserPreviewItem, AdminUsersPurgePreviewResponse, DataSummaryResponse } from '@/services/contracts/data';
 import { DataTransferDialog } from '@/pages/model-manage/DataTransferDialog';
 import { Database, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -19,6 +21,85 @@ function fmtNum(n: number | null | undefined) {
   return Number.isFinite(v) ? v.toLocaleString() : '0';
 }
 
+function fmtDate(s: string | null | undefined) {
+  if (!s) return '—';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function MetricCard({
+  title,
+  value,
+  hint,
+  loading,
+  accent,
+}: {
+  title: string;
+  value: string;
+  hint?: string;
+  loading?: boolean;
+  accent?: 'gold' | 'green';
+}) {
+  return (
+    <Card className="p-5" variant={accent === 'gold' ? 'gold' : 'default'}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            {title}
+          </div>
+          {hint && (
+            <div className="mt-1 text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
+              {hint}
+            </div>
+          )}
+        </div>
+        {loading ? <Badge size="sm">加载中</Badge> : <Badge size="sm" variant="new">已更新</Badge>}
+      </div>
+      <div className="mt-4 flex items-baseline gap-2">
+        <div
+          className="text-[34px] font-semibold tracking-[-0.03em] leading-none"
+          style={{ color: accent === 'green' ? 'var(--accent-green)' : 'var(--text-primary)' }}
+        >
+          {loading ? '—' : value}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function OverviewGroup({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <div
+      className="rounded-[14px] p-4"
+      style={{
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</div>
+      </div>
+      <div className="mt-3 grid gap-2">
+        {items.map((it) => (
+          <div key={it.label} className="flex items-center justify-between gap-3">
+            <div className="min-w-0 text-sm truncate" style={{ color: 'var(--text-secondary)' }}>{it.label}</div>
+            <div className="shrink-0 text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
+              {it.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function DataManagePage() {
   const [summary, setSummary] = useState<DataSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,6 +107,12 @@ export default function DataManagePage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [transferOpen, setTransferOpen] = useState(false);
+
+  const [usersPurgeOpen, setUsersPurgeOpen] = useState(false);
+  const [usersPurgeStep, setUsersPurgeStep] = useState<1 | 2>(1);
+  const [usersPreviewLoading, setUsersPreviewLoading] = useState(false);
+  const [usersPreview, setUsersPreview] = useState<AdminUsersPurgePreviewResponse | null>(null);
+  const [usersConfirmText, setUsersConfirmText] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +168,62 @@ export default function DataManagePage() {
     await load();
   };
 
+  const openUsersPurge = async () => {
+    setUsersPurgeOpen(true);
+    setUsersPurgeStep(1);
+    setUsersConfirmText('');
+    setUsersPreview(null);
+
+    setUsersPreviewLoading(true);
+    try {
+      const res = await previewUsersPurge(20);
+      if (!res.success) {
+        setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '加载预览失败'}`);
+        return;
+      }
+      setUsersPreview(res.data);
+    } finally {
+      setUsersPreviewLoading(false);
+    }
+  };
+
+  const doPurgeUsers = async () => {
+    setMsg(null);
+    setErr(null);
+    const idem = safeIdempotencyKey();
+    const res = await purgeUsers({ confirmed: true }, idem);
+    if (!res.success) {
+      setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '清理失败'}`);
+      return;
+    }
+    setMsg(`已清理用户数据：usersDeleted=${fmtNum(res.data.usersDeleted)} groupMembersDeleted=${fmtNum(res.data.groupMembersDeleted)}`);
+    setUsersPurgeOpen(false);
+    await load();
+  };
+
+  const UserRow = ({ u }: { u: AdminUserPreviewItem }) => {
+    return (
+      <div
+        className="grid gap-2 rounded-[12px] px-3 py-2 hover:bg-white/3"
+        style={{
+          gridTemplateColumns: '1.1fr 1.1fr 0.8fr 0.8fr 1.2fr',
+          border: '1px solid rgba(255,255,255,0.07)',
+        }}
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{u.username || '—'}</div>
+          <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName || '—'}</div>
+        </div>
+        <div className="min-w-0 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          <span className="font-mono">{u.userId || '—'}</span>
+        </div>
+        <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{u.role}</div>
+        <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{u.status}</div>
+        <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{fmtDate(u.createdAt)}</div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
@@ -114,52 +257,56 @@ export default function DataManagePage() {
         </div>
       )}
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-        <Card className="p-4">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>核心数据（保留）</div>
-          <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-            开发期维护：建议仅把这三类数据视为“基础设施”。下方“一键删除（保留核心）”不会删除它们（仅会删除未启用模型）。
+      {/* 删除/危险操作置顶：保持小屏样式，宽屏下两列排布减少“很高很挤” */}
+      <Card className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>危险操作</div>
+            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+              这些操作会删除核心或账号相关数据，请谨慎。
+            </div>
           </div>
-          <div className="mt-3 grid gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            <div className="flex items-center justify-between"><span>用户（users）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.users}</span></div>
-            <div className="flex items-center justify-between"><span>平台（llmplatforms）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.platforms}</span></div>
-            <div className="flex items-center justify-between"><span>启用模型（llmmodels.enabled=true）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.enabledModels}</span></div>
-            <div className="flex items-center justify-between"><span>模型总数（llmmodels）</span><span style={{ color: 'var(--text-primary)' }}>{coreCounts.totalModels}</span></div>
-          </div>
-        </Card>
+          <Badge variant="featured">Danger</Badge>
+        </div>
 
-        <Card className="p-4">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>数据概览</div>
-          <div className="mt-3 grid gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            <div className="flex items-center justify-between"><span>LLM 请求日志</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.llmRequestLogs ?? 0)}</span></div>
-            <div className="flex items-center justify-between"><span>消息</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.messages ?? 0)}</span></div>
-            <div className="flex items-center justify-between"><span>ImageMaster 会话</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.imageMasterSessions ?? 0)}</span></div>
-            <div className="flex items-center justify-between"><span>ImageMaster 消息</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.imageMasterMessages ?? 0)}</span></div>
-            <div className="h-px my-2" style={{ background: 'rgba(255,255,255,0.10)' }} />
-            <div className="flex items-center justify-between"><span>文档</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.documents ?? 0)}</span></div>
-            <div className="flex items-center justify-between"><span>附件</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.attachments ?? 0)}</span></div>
-            <div className="flex items-center justify-between"><span>内容缺口</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.contentGaps ?? 0)}</span></div>
-            <div className="flex items-center justify-between"><span>PRD 评论</span><span style={{ color: 'var(--text-primary)' }}>{fmtNum(summary?.prdComments ?? 0)}</span></div>
-          </div>
-        </Card>
-
-        <Card className="p-4">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>一键清理</div>
-          <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-            清理会直接删除 MongoDB 数据并清掉相关缓存。请谨慎操作。
-          </div>
-
-          <div className="mt-4 grid gap-3">
-            <div className="rounded-[14px] p-3 flex items-center justify-between gap-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          <div
+            className="rounded-[14px] px-4 py-3"
+            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.12)' }}
+          >
+            <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>开发期：一键删除（保留核心）</div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  将删除除 users/llmplatforms/启用 llmmodels 外的所有集合；并删除未启用模型。
+                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  用户数据：清理非管理员账号
+                </div>
+              </div>
+              <Tooltip content="该操作不可恢复" side="top" align="end">
+                <span className="inline-flex shrink-0">
+                  <Button variant="danger" size="sm" disabled={loading} onClick={openUsersPurge}>
+                    <Trash2 size={16} />
+                    预览并删除
+                  </Button>
+                </span>
+              </Tooltip>
+            </div>
+            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              先预览将删除的用户列表，再二次确认执行（ADMIN 会保留）。
+            </div>
+          </div>
+
+          <div
+            className="rounded-[14px] px-4 py-3"
+            style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.12)' }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  开发期：一键删除（保留核心）
                 </div>
               </div>
 
               <Tooltip content="该操作不可恢复" side="top" align="end">
-                <span className="inline-flex">
+                <span className="inline-flex shrink-0">
                   <ConfirmTip
                     title="确认执行开发清库？"
                     description="将删除除 users / llmplatforms / 启用 llmmodels 外的所有数据，并清掉相关缓存（不可恢复）。"
@@ -179,39 +326,255 @@ export default function DataManagePage() {
                 </span>
               </Tooltip>
             </div>
+            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              将删除除 users/llmplatforms/启用 llmmodels 外的所有集合；并删除未启用模型。
+            </div>
+          </div>
+        </div>
+      </Card>
 
-            {domainCards.map((it) => (
-              <div key={it.key} className="rounded-[14px] p-3 flex items-center justify-between gap-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{it.title}</div>
-                  <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>当前数量：{fmtNum(it.count)}</div>
+      <div className="grid gap-4">
+        <div className="min-w-0 grid gap-4">
+          {/* KPI：避免 auto-fit 在临界宽度出现 3+1 断行；改为稳定的 2×2 / 宽屏 4×1 */}
+          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+            <MetricCard title="Users" hint="users（核心保留）" value={coreCounts.users} loading={loading} />
+            <MetricCard title="Platforms" hint="llmplatforms（核心保留）" value={coreCounts.platforms} loading={loading} />
+            <MetricCard title="Enabled Models" hint="llmmodels.enabled=true（核心保留）" value={coreCounts.enabledModels} loading={loading} accent="gold" />
+            <MetricCard title="Total Models" hint="llmmodels（核心保留）" value={coreCounts.totalModels} loading={loading} />
+          </div>
+
+          <Card className="p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>数据概览</div>
+                <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  按领域分组展示集合数据量，用于快速定位与清理。
+                </div>
+              </div>
+              <Badge variant="subtle">{loading ? '同步中' : '已同步'}</Badge>
+            </div>
+
+            {/* 概览：列数稳定，避免宽屏拉伸过大导致空旷 */}
+            <div className="mt-5 grid gap-4 lg:grid-cols-3">
+              <OverviewGroup
+                title="LLM / Logs"
+                items={[
+                  { label: 'LLM 请求日志', value: fmtNum(summary?.llmRequestLogs ?? 0) },
+                ]}
+              />
+              <OverviewGroup
+                title="会话 / 消息"
+                items={[
+                  { label: '消息', value: fmtNum(summary?.messages ?? 0) },
+                  { label: 'ImageMaster 会话', value: fmtNum(summary?.imageMasterSessions ?? 0) },
+                  { label: 'ImageMaster 消息', value: fmtNum(summary?.imageMasterMessages ?? 0) },
+                ]}
+              />
+              <OverviewGroup
+                title="文档 / 知识库"
+                items={[
+                  { label: '文档', value: fmtNum(summary?.documents ?? 0) },
+                  { label: '附件', value: fmtNum(summary?.attachments ?? 0) },
+                  { label: '内容缺口', value: fmtNum(summary?.contentGaps ?? 0) },
+                  { label: 'PRD 评论', value: fmtNum(summary?.prdComments ?? 0) },
+                ]}
+              />
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>按领域快速清理</div>
+                <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  对业务数据做定向清空（不可恢复），不影响核心保留数据。
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3">
+              {domainCards.map((it) => (
+                <div
+                  key={it.key}
+                  className="flex items-center justify-between gap-3 rounded-[14px] px-4 py-3"
+                  style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)' }}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{it.title}</div>
+                      <Badge size="sm">{fmtNum(it.count)}</Badge>
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      当前数量：{fmtNum(it.count)}
+                    </div>
+                  </div>
+
+                  <Tooltip content="该操作不可恢复" side="top" align="end">
+                    <span className="inline-flex">
+                      <ConfirmTip
+                        title="确认清理？"
+                        description={`将清空：${it.title}（不可恢复）`}
+                        confirmText="确认清理"
+                        onConfirm={async () => {
+                          await doPurge(it.domains);
+                        }}
+                        disabled={loading}
+                        side="top"
+                        align="end"
+                      >
+                        <Button variant="danger" size="sm" disabled={loading}>
+                          <Trash2 size={16} />
+                          清空
+                        </Button>
+                      </ConfirmTip>
+                    </span>
+                  </Tooltip>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      <Dialog
+        open={usersPurgeOpen}
+        onOpenChange={(open) => {
+          setUsersPurgeOpen(open);
+          if (!open) {
+            setUsersPurgeStep(1);
+            setUsersConfirmText('');
+            setUsersPreview(null);
+          }
+        }}
+        title={usersPurgeStep === 1 ? '预览：清理用户数据' : '二次确认：删除用户数据'}
+        description={usersPurgeStep === 1 ? '将删除非管理员用户账号（ADMIN 保留）。' : '该操作不可恢复。'}
+        maxWidth={900}
+        content={
+          <div className="min-h-0 flex flex-col gap-4">
+            {usersPurgeStep === 1 ? (
+              <>
+                <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>
+                  {usersPreviewLoading ? (
+                    '加载预览中...'
+                  ) : usersPreview ? (
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                      <div><span style={{ color: 'var(--text-muted)' }}>总用户</span> <span style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.totalUsers)}</span></div>
+                      <div><span style={{ color: 'var(--text-muted)' }}>管理员</span> <span style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.adminUsers)}</span></div>
+                      <div><span style={{ color: 'var(--text-muted)' }}>将删除</span> <span style={{ color: 'rgba(239,68,68,0.95)' }}>{fmtNum(usersPreview.willDeleteUsers)}</span></div>
+                      <div><span style={{ color: 'var(--text-muted)' }}>将保留</span> <span style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.willKeepUsers)}</span></div>
+                    </div>
+                  ) : (
+                    '暂无预览数据'
+                  )}
                 </div>
 
-                <Tooltip content="该操作不可恢复" side="top" align="end">
-                  <span className="inline-flex">
-                    <ConfirmTip
-                      title="确认清理？"
-                      description={`将清空：${it.title}（不可恢复）`}
-                      confirmText="确认清理"
-                      onConfirm={async () => {
-                        await doPurge(it.domains);
+                {usersPreview?.notes?.length ? (
+                  <div className="grid gap-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {usersPreview.notes.map((t, idx) => (
+                      <div key={idx}>- {t}</div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>将删除的用户（示例）</div>
+                  <div className="grid gap-2 rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.10)' }}>
+                    <div
+                      className="grid gap-2 px-3 py-2 rounded-[12px]"
+                      style={{
+                        gridTemplateColumns: '1.1fr 1.1fr 0.8fr 0.8fr 1.2fr',
+                        color: 'var(--text-muted)',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid rgba(255,255,255,0.06)',
                       }}
-                      disabled={loading}
-                      side="top"
-                      align="end"
                     >
-                      <Button variant="danger" size="sm" disabled={loading}>
-                        <Trash2 size={16} />
-                        清空
-                      </Button>
-                    </ConfirmTip>
-                  </span>
-                </Tooltip>
-              </div>
-            ))}
+                      <div className="text-[11px] font-semibold uppercase tracking-wider">账号</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wider">UserId</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wider">Role</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wider">Status</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wider">CreatedAt</div>
+                    </div>
+                    {usersPreviewLoading ? (
+                      <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                    ) : usersPreview?.sampleWillDeleteUsers?.length ? (
+                      usersPreview.sampleWillDeleteUsers.map((u) => <UserRow key={u.userId} u={u} />)
+                    ) : (
+                      <div className="text-sm" style={{ color: 'var(--text-muted)' }}>无（可能只有管理员账号）</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>将保留的管理员（示例）</div>
+                  <div className="grid gap-2 rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.10)' }}>
+                    {usersPreview?.sampleWillKeepAdmins?.length ? (
+                      usersPreview.sampleWillKeepAdmins.map((u) => <UserRow key={u.userId} u={u} />)
+                    ) : (
+                      <div className="text-sm" style={{ color: 'var(--text-muted)' }}>无管理员账号（异常）</div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.28)', background: 'rgba(239,68,68,0.10)', color: 'rgba(239,68,68,0.95)' }}>
+                  将删除非管理员用户账号，该操作不可恢复。
+                </div>
+                <div className="grid gap-2">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>请输入 DELETE 以确认</div>
+                  <input
+                    value={usersConfirmText}
+                    onChange={(e) => setUsersConfirmText(e.target.value)}
+                    placeholder="DELETE"
+                    className="h-[42px] rounded-[12px] px-3 text-sm outline-none"
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.14)',
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  if (usersPurgeStep === 1) {
+                    setUsersPurgeOpen(false);
+                  } else {
+                    setUsersPurgeStep(1);
+                    setUsersConfirmText('');
+                  }
+                }}
+              >
+                {usersPurgeStep === 1 ? '取消' : '返回预览'}
+              </Button>
+              {usersPurgeStep === 1 ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={usersPreviewLoading}
+                  onClick={() => setUsersPurgeStep(2)}
+                >
+                  下一步
+                </Button>
+              ) : (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={usersConfirmText !== 'DELETE' || loading}
+                  onClick={doPurgeUsers}
+                >
+                  确认删除
+                </Button>
+              )}
+            </div>
           </div>
-        </Card>
-      </div>
+        }
+      />
 
       <DataTransferDialog
         open={transferOpen}

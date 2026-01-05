@@ -174,14 +174,12 @@ function App() {
   // 登录后预加载群组列表，避免 UI 先闪“上传PRD”
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (user?.userId === 'demo-user-001') return;
     loadGroups().catch(() => {});
   }, [isAuthenticated, loadGroups, user?.userId]);
 
   // 登录后拉取提示词列表（用于提示词按钮）
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (user?.userId === 'demo-user-001') return;
 
     let stopped = false;
     const fetchOnce = () => {

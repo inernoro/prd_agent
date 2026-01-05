@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
@@ -154,12 +155,8 @@ public class AuthController : ControllerBase
         var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, ct);
         var accessToken = _jwtService.GenerateAccessToken(user, ct, sessionKey, tokenVersion);
 
-        var baseUrl = (HttpContext.RequestServices.GetRequiredService<IConfiguration>()["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
-        string? avatarUrl = null;
-        if (!string.IsNullOrWhiteSpace(baseUrl) && !string.IsNullOrWhiteSpace(user.AvatarFileName))
-        {
-            avatarUrl = $"{baseUrl}/icon/backups/head/{user.AvatarFileName.Trim().ToLowerInvariant()}";
-        }
+        var cfg = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var avatarUrl = AvatarUrlBuilder.Build(cfg, user);
 
         var response = new LoginResponse
         {
@@ -250,12 +247,8 @@ public class AuthController : ControllerBase
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
         var accessToken = _jwtService.GenerateAccessToken(user, ct, request.SessionKey, tokenVersion);
 
-        var baseUrl2 = (HttpContext.RequestServices.GetRequiredService<IConfiguration>()["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
-        string? avatarUrl2 = null;
-        if (!string.IsNullOrWhiteSpace(baseUrl2) && !string.IsNullOrWhiteSpace(user.AvatarFileName))
-        {
-            avatarUrl2 = $"{baseUrl2}/icon/backups/head/{user.AvatarFileName.Trim().ToLowerInvariant()}";
-        }
+        var cfg2 = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var avatarUrl2 = AvatarUrlBuilder.Build(cfg2, user);
 
         var response = new LoginResponse
         {

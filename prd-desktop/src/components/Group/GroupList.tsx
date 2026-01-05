@@ -37,14 +37,11 @@ export default function GroupList() {
   };
 
   useEffect(() => {
-    // 演示模式下不请求后端
-    if (user?.userId === 'demo-user-001') return;
     loadGroups();
   }, [loadGroups, user?.userId]);
 
   useEffect(() => {
     // 有群组时默认选中第一个群组
-    if (user?.userId === 'demo-user-001') return;
     if (!activeGroupId && groups.length > 0) {
       void openGroup(groups[0]);
     }
@@ -52,8 +49,6 @@ export default function GroupList() {
   }, [groups, activeGroupId, user?.userId]);
 
   const openGroup = async (group: (typeof groups)[number]) => {
-    if (user?.userId === 'demo-user-001') return;
-
     // 切换群组：先重置消息/分页/滚动状态，再切换 session/document，避免残留状态导致：
     // - 列表停留在旧的 range（看起来像“显示最旧消息”）
     // - 错误显示“仅加载最近3轮…”
@@ -120,7 +115,6 @@ export default function GroupList() {
     if (ownerMap[groupId] != null) return;
     if (ownerLoadingMap[groupId]) return;
     if (!user?.userId) return;
-    if (user.userId === 'demo-user-001') return;
     try {
       setOwnerLoadingMap((prev) => ({ ...prev, [groupId]: true }));
       const resp = await invoke<ApiResponse<GroupMemberInfo[]>>('get_group_members', { groupId });
@@ -148,7 +142,6 @@ export default function GroupList() {
 
   const confirmDissolve = async () => {
     if (!dissolveTarget || dissolveBusy) return;
-    if (user?.userId === 'demo-user-001') return;
 
     setDissolveError('');
     try {
@@ -201,7 +194,7 @@ export default function GroupList() {
   if (groups.length === 0) {
     return (
       <div className="p-4 text-center text-text-secondary text-sm">
-        {user?.userId === 'demo-user-001' ? '演示模式下不支持群组功能' : '暂无群组'}
+        暂无群组
       </div>
     );
   }

@@ -18,7 +18,6 @@ export default function Sidebar() {
   const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const isDemoMode = user?.userId === 'demo-user-001';
   const [joinOpen, setJoinOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [joinInput, setJoinInput] = useState('');
@@ -79,7 +78,7 @@ export default function Sidebar() {
     }
   }, [expandedWidth, isCollapsed]);
 
-  const canSubmit = useMemo(() => !busy && !isDemoMode, [busy, isDemoMode]);
+  const canSubmit = useMemo(() => !busy, [busy]);
 
   const openKnowledge = useCallback(async () => {
     setMode('Knowledge');
@@ -129,7 +128,6 @@ export default function Sidebar() {
   const isAdmin = user?.role === 'ADMIN';
 
   const refreshActiveOwner = useCallback(async () => {
-    if (isDemoMode) return;
     const gid = String(activeGroupId || '').trim();
     if (!gid) {
       setActiveOwner(false);
@@ -158,7 +156,7 @@ export default function Sidebar() {
     } finally {
       setActiveOwnerLoading(false);
     }
-  }, [activeGroupId, activeOwnerLoading, invoke, isAdmin, isDemoMode, user?.userId]);
+  }, [activeGroupId, activeOwnerLoading, invoke, isAdmin, user?.userId]);
 
   useEffect(() => {
     void refreshActiveOwner();
@@ -166,15 +164,10 @@ export default function Sidebar() {
 
   const canReplacePrd = useMemo(() => {
     if (!activeGroupId) return false;
-    if (isDemoMode) return false;
     return Boolean(isAdmin || activeOwner);
-  }, [activeGroupId, activeOwner, isAdmin, isDemoMode]);
+  }, [activeGroupId, activeOwner, isAdmin]);
 
   const handleJoinGroup = async () => {
-    if (isDemoMode) {
-      alert('演示模式下不支持群组功能');
-      return;
-    }
     // Tauri 环境下 window.prompt 可能不弹，改为应用内输入
     setJoinOpen(true);
   };
@@ -225,10 +218,6 @@ export default function Sidebar() {
   };
 
   const handleCreateGroup = async () => {
-    if (isDemoMode) {
-      alert('演示模式下不支持群组功能');
-      return;
-    }
     // Tauri 环境下 window.prompt 可能不弹，改为应用内输入
     setCreateOpen(true);
   };
@@ -355,10 +344,6 @@ export default function Sidebar() {
   }, []);
 
   const uploadAndBindToActiveGroup = useCallback(async (content: string) => {
-    if (isDemoMode) {
-      alert('演示模式下不支持群组功能');
-      return;
-    }
     if (!activeGroupId) {
       alert('请先选择一个群组');
       return;
@@ -403,13 +388,9 @@ export default function Sidebar() {
     } finally {
       setBusy(null);
     }
-  }, [activeGroupId, isDemoMode, loadGroups, logout, openGroupSession]);
+  }, [activeGroupId, loadGroups, logout, openGroupSession]);
 
   const openBindPrdPicker = useCallback(() => {
-    if (isDemoMode) {
-      alert('演示模式下不支持群组功能');
-      return;
-    }
     if (!activeGroupId) {
       alert('请先选择一个群组');
       return;
@@ -419,7 +400,7 @@ export default function Sidebar() {
       return;
     }
     fileInputRef.current?.click();
-  }, [activeGroupId, isDemoMode, canReplacePrd]);
+  }, [activeGroupId, canReplacePrd]);
 
   const handleFileSelectForBind = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.currentTarget;

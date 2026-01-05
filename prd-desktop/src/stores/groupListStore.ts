@@ -15,13 +15,6 @@ export const useGroupListStore = create<GroupListState>((set) => ({
   loading: false,
 
   loadGroups: async () => {
-    // 演示模式不依赖后端，也不加载群组列表
-    const demoUserId = useAuthStore.getState().user?.userId;
-    if (demoUserId === 'demo-user-001') {
-      set({ groups: [], loading: false });
-      return;
-    }
-
     set({ loading: true });
     try {
       const runOnce = async () => {

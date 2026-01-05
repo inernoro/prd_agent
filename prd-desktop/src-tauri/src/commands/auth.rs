@@ -12,24 +12,6 @@ struct LoginRequest {
     client_type: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RegisterRequest {
-    username: String,
-    password: String,
-    invite_code: String,
-    role: String,
-    display_name: Option<String>,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterResponse {
-    pub user_id: String,
-    pub username: String,
-    pub role: String,
-}
-
 #[command]
 pub async fn login(
     username: String,
@@ -58,26 +40,6 @@ pub async fn login(
     }
 
     Ok(response)
-}
-
-#[command]
-pub async fn register(
-    username: String,
-    password: String,
-    invite_code: String,
-    role: String,
-    display_name: Option<String>,
-) -> Result<ApiResponse<RegisterResponse>, String> {
-    let client = ApiClient::new();
-    let request = RegisterRequest {
-        username,
-        password,
-        invite_code,
-        role,
-        display_name,
-    };
-
-    client.post("/auth/register", &request).await
 }
 
 /// 前端持久化登录态恢复时，同步 token 到 Rust（用于后续 API/SSE 鉴权）

@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 import { useUserDirectoryStore } from '../../stores/userDirectoryStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import type { Message, MessageBlock } from '../../types';
@@ -676,6 +677,7 @@ function MessageListInner() {
     openWithCitations: (args: any) => void;
   }) {
     const currentUser = useAuthStore((s) => s.user ?? null);
+    const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
     const currentUserId = currentUser?.userId ?? null;
     const resolveUsername = useUserDirectoryStore((s) => s.resolveUsername);
     const resolveRole = useUserDirectoryStore((s) => s.resolveRole);
@@ -745,7 +747,7 @@ function MessageListInner() {
         const showMeta = !!(metaSeq || metaRightText);
 
         const senderDisplayName = (() => {
-          if (message.role === 'Assistant') return 'PRD Agent';
+          if (message.role === 'Assistant') return desktopName || 'PRD Agent';
           if (isMine) return (currentUser?.displayName || (currentUser as any)?.username || '我') as string;
           // 优先显示 username（由 get_group_members 拉取一次后缓存）
           const fromDir = resolveUsername(message.senderId);

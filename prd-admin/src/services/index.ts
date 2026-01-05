@@ -45,7 +45,15 @@ import type {
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
 import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/services/contracts/aiChat';
 import type { SuggestGroupNameContract } from '@/services/contracts/intent';
-import type { ExportConfigContract, GetDataSummaryContract, ImportConfigContract, PreviewImportConfigContract, PurgeDataContract } from '@/services/contracts/data';
+import type {
+  ExportConfigContract,
+  GetDataSummaryContract,
+  ImportConfigContract,
+  PreviewImportConfigContract,
+  PreviewUsersPurgeContract,
+  PurgeDataContract,
+  PurgeUsersContract,
+} from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
 import type { GetAdminPromptsContract, PutAdminPromptsContract, ResetAdminPromptsContract } from '@/services/contracts/prompts';
 import type {
@@ -90,6 +98,7 @@ import type {
   UpdateDesktopAssetSkinContract,
   UploadDesktopAssetContract,
 } from '@/services/contracts/desktopAssets';
+import type { GetDesktopBrandingSettingsContract, UpdateDesktopBrandingSettingsContract } from '@/services/contracts/desktopBranding';
 import type {
   DeleteAdminGroupContract,
   DeleteAdminGroupMessagesContract,
@@ -175,7 +184,15 @@ import {
   updateImageMasterWorkspaceReal,
   createWorkspaceImageGenRunReal,
 } from '@/services/real/imageMaster';
-import { exportConfigReal, getDataSummaryReal, importConfigReal, previewImportConfigReal, purgeDataReal } from '@/services/real/data';
+import {
+  exportConfigReal,
+  getDataSummaryReal,
+  importConfigReal,
+  previewImportConfigReal,
+  previewUsersPurgeReal,
+  purgeDataReal,
+  purgeUsersReal,
+} from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
 import { getAdminPromptsReal, putAdminPromptsReal, resetAdminPromptsReal } from '@/services/real/prompts';
 import { getAdminSystemPromptsReal, putAdminSystemPromptsReal, resetAdminSystemPromptsReal } from '@/services/real/systemPrompts';
@@ -207,6 +224,7 @@ import {
   updateDesktopAssetSkin as updateDesktopAssetSkinReal,
   uploadDesktopAsset as uploadDesktopAssetReal,
 } from '@/services/real/desktopAssets';
+import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -338,6 +356,9 @@ export const listDesktopAssetKeys: ListDesktopAssetKeysContract = withAuth(listD
 export const createDesktopAssetKey: CreateDesktopAssetKeyContract = withAuth(createDesktopAssetKeyReal);
 export const uploadDesktopAsset: UploadDesktopAssetContract = withAuth(uploadDesktopAssetReal);
 
+export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
+export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);
+
 export const createImageMasterSession: CreateImageMasterSessionContract = withAuth(createImageMasterSessionReal);
 export const listImageMasterSessions: ListImageMasterSessionsContract = withAuth(listImageMasterSessionsReal);
 export const getImageMasterSession: GetImageMasterSessionContract = withAuth(getImageMasterSessionReal);
@@ -366,3 +387,5 @@ export const importConfig: ImportConfigContract = withAuth(importConfigReal);
 export const previewImportConfig: PreviewImportConfigContract = withAuth(previewImportConfigReal);
 export const getDataSummary: GetDataSummaryContract = withAuth(getDataSummaryReal);
 export const purgeData: PurgeDataContract = withAuth(purgeDataReal);
+export const previewUsersPurge: PreviewUsersPurgeContract = withAuth(previewUsersPurgeReal);
+export const purgeUsers: PurgeUsersContract = withAuth(purgeUsersReal);

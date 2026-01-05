@@ -6,7 +6,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar } from '@/services';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
-import { resolveAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 
 type UserRow = {
   userId: string;
@@ -513,7 +513,21 @@ export default function UsersPage() {
                               botKind: u.botKind,
                               avatarFileName: u.avatarFileName ?? null,
                             });
-                            return url ? <img src={url} alt="avatar" className="h-full w-full object-cover" /> : null;
+                            const fallback = resolveNoHeadAvatarUrl();
+                            return (
+                              <img
+                                src={url}
+                                alt="avatar"
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  const el = e.currentTarget;
+                                  if (el.getAttribute('data-fallback-applied') === '1') return;
+                                  if (!fallback) return;
+                                  el.setAttribute('data-fallback-applied', '1');
+                                  el.src = fallback;
+                                }}
+                              />
+                            );
                           })()}
                         </div>
                         <div className="min-w-0">

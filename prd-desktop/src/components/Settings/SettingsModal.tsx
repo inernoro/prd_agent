@@ -9,6 +9,7 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
+import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 
 interface ApiTestResult {
   success: boolean;
@@ -67,11 +68,11 @@ export default function SettingsModal() {
   const clearGroups = useGroupListStore((s) => s.clear);
   const clearMessages = useMessageStore((s) => s.clearMessages);
   const resetAssets = useRemoteAssetsStore((s) => s.resetLocalCacheAndRefresh);
+  const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
+  const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
   const [apiUrl, setApiUrl] = useState('');
   const [assetsUrl, setAssetsUrl] = useState('');
   const [error, setError] = useState('');
-  const [useDefault, setUseDefault] = useState(true);
-  const [useDefaultAssets, setUseDefaultAssets] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [clearConfirmStep, setClearConfirmStep] = useState<0 | 1 | 2>(0);
@@ -138,25 +139,20 @@ export default function SettingsModal() {
   useEffect(() => {
     if (config) {
       const dev = import.meta.env.DEV ? Boolean(config.isDeveloper) : false;
-      const defaultApiUrl = getDefaultApiUrl(dev);
-      const isDefault = config.apiBaseUrl === defaultApiUrl;
-      setUseDefault(isDefault);
       setIsDeveloper(dev);
-      setApiUrl(isDefault ? defaultApiUrl : config.apiBaseUrl);
+      const cfgApi = String(config.apiBaseUrl || '').trim();
+      setApiUrl(cfgApi || getDefaultApiUrl(dev));
 
       const cfgAssets = (config.assetsBaseUrl || '').trim();
-      const isDefaultAssets = !cfgAssets || cfgAssets === DEFAULT_ASSETS_URL;
-      setUseDefaultAssets(isDefaultAssets);
-      setAssetsUrl(isDefaultAssets ? DEFAULT_ASSETS_URL : cfgAssets);
+      setAssetsUrl(cfgAssets || DEFAULT_ASSETS_URL);
     }
   }, [config]);
 
   const handleSave = async () => {
     setError('');
     
-    const defaultApiUrl = getDefaultApiUrl(isDeveloper);
-    const urlToSave = useDefault ? defaultApiUrl : apiUrl.trim();
-    const assetsToSave = useDefaultAssets ? DEFAULT_ASSETS_URL : assetsUrl.trim();
+    const urlToSave = apiUrl.trim();
+    const assetsToSave = assetsUrl.trim();
     
     // 验证 URL 格式
     if (!urlToSave) {
@@ -186,33 +182,34 @@ export default function SettingsModal() {
       await saveConfig({ apiBaseUrl: urlToSave, assetsBaseUrl: assetsToSave, isDeveloper });
       // 资源域名切换后：清空本地缓存并重新获取 skins/etag（不影响登录态）
       void resetAssets();
+      // 切换服务地址/资源域名后，刷新一次 Desktop 品牌配置（在线模式）
+      void refreshBranding('save');
       closeModal();
     } catch (err) {
       setError(String(err));
     }
   };
 
-  const handleUseDefaultChange = (checked: boolean) => {
-    setUseDefault(checked);
-    if (checked) {
-      setApiUrl(getDefaultApiUrl(isDeveloper));
-    }
-    setTestResult(null);
-  };
-
-  const handleUseDefaultAssetsChange = (checked: boolean) => {
-    setUseDefaultAssets(checked);
-    if (checked) {
-      setAssetsUrl(DEFAULT_ASSETS_URL);
-    }
-  };
-
   const handleDeveloperChange = (checked: boolean) => {
     setIsDeveloper(checked);
-    if (useDefault) {
-      setApiUrl(getDefaultApiUrl(checked));
+    // 仅影响“默认值”，输入框始终可编辑：
+    // - 切到开发者：若当前还是线上默认（或空），则切到 localhost:5000
+    // - 退出开发者：若当前是 localhost:5000，则切回线上默认
+    const trimmed = apiUrl.trim();
+    if (checked) {
+      if (!trimmed || trimmed === DEFAULT_API_URL_NON_DEV) setApiUrl(DEFAULT_API_URL_DEV);
+    } else {
+      if (trimmed === DEFAULT_API_URL_DEV) setApiUrl(DEFAULT_API_URL_NON_DEV);
     }
     setTestResult(null);
+    // 切换“本地/在线”后触发一次品牌配置刷新：
+    // - 本地：回到内置品牌
+    // - 在线：拉一次服务端配置
+    if (checked) {
+      resetBranding();
+    } else {
+      void refreshBranding('toggle');
+    }
   };
 
   const handleTestConnection = async () => {
@@ -220,8 +217,7 @@ export default function SettingsModal() {
     setTestResult(null);
     setError('');
 
-    const defaultApiUrl = getDefaultApiUrl(isDeveloper);
-    const urlToTest = useDefault ? defaultApiUrl : apiUrl.trim();
+    const urlToTest = apiUrl.trim();
 
     if (!urlToTest) {
       setError('请先输入 API 地址');
@@ -240,6 +236,9 @@ export default function SettingsModal() {
     try {
       const result = await invoke<ApiTestResult>('test_api_connection', { apiUrl: urlToTest });
       setTestResult(result);
+      if (result?.success) {
+        void refreshBranding('test');
+      }
     } catch (err) {
       setTestResult({
         success: false,
@@ -399,7 +398,7 @@ export default function SettingsModal() {
       }
 
       try {
-        sessionStorage.removeItem('demo-prd-content');
+        // no-op: legacy demo cache removed
       } catch {
         // ignore
       }
@@ -531,50 +530,33 @@ export default function SettingsModal() {
             <label className="block text-sm font-medium text-text-secondary">
               API 服务地址
             </label>
-            
-            {/* 默认地址显示 */}
-            <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
-              <div className="flex items-center gap-2 mb-1">
-                <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-xs font-medium text-cyan-400">默认服务器</span>
-              </div>
-              <p className="text-sm text-text-primary font-mono break-all">{getDefaultApiUrl(isDeveloper)}</p>
-            </div>
-            
-            {/* 使用默认地址开关 */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={useDefault}
-                  onChange={(e) => handleUseDefaultChange(e.target.checked)}
-                  className="sr-only"
-                />
-                <div className={`w-10 h-6 rounded-full transition-colors ${useDefault ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
-                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${useDefault ? 'translate-x-4' : ''}`} />
-                </div>
-              </div>
-              <span className="text-sm text-text-secondary">使用默认地址</span>
-            </label>
-            
-            {/* 自定义地址输入框 */}
-            {!useDefault && (
-              <div className="space-y-2">
-                <label className="block text-xs text-text-secondary">自定义地址</label>
-                <input
-                  type="url"
-                  value={apiUrl}
-                  onChange={(e) => {
-                    setApiUrl(e.target.value);
+
+            {/* 地址输入框（始终可编辑） */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label className="block text-xs text-text-secondary">API 地址</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiUrl(getDefaultApiUrl(isDeveloper));
                     setTestResult(null);
                   }}
-                  placeholder="https://api.example.com"
-                  className="w-full px-4 py-3 ui-control transition-colors"
-                />
+                  className="px-2.5 py-1 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-100 rounded-lg transition-colors"
+                >
+                  恢复默认
+                </button>
               </div>
-            )}
+              <input
+                type="url"
+                value={apiUrl}
+                onChange={(e) => {
+                  setApiUrl(e.target.value);
+                  setTestResult(null);
+                }}
+                placeholder={getDefaultApiUrl(isDeveloper)}
+                className="w-full px-4 py-3 ui-control transition-colors"
+              />
+            </div>
           </div>
 
           {/* 资源地址配置 */}
@@ -583,46 +565,30 @@ export default function SettingsModal() {
               资源地址（图标/皮肤）
             </label>
 
-            <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
-              <div className="flex items-center gap-2 mb-1">
-                <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-xs font-medium text-cyan-400">默认资源域名</span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label className="block text-xs text-text-secondary">资源地址</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAssetsUrl(DEFAULT_ASSETS_URL);
+                  }}
+                  className="px-2.5 py-1 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-100 rounded-lg transition-colors"
+                >
+                  恢复默认
+                </button>
               </div>
-              <p className="text-sm text-text-primary font-mono break-all">{DEFAULT_ASSETS_URL}</p>
+              <input
+                type="url"
+                value={assetsUrl}
+                onChange={(e) => setAssetsUrl(e.target.value)}
+                placeholder={DEFAULT_ASSETS_URL}
+                className="w-full px-4 py-3 ui-control transition-colors"
+              />
+              <div className="text-xs text-text-secondary">
+                规则固定：会拼接为 <span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；Desktop 仅拉取皮肤列表，不从 API 获取地址规则。
+              </div>
             </div>
-
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={useDefaultAssets}
-                  onChange={(e) => handleUseDefaultAssetsChange(e.target.checked)}
-                  className="sr-only"
-                />
-                <div className={`w-10 h-6 rounded-full transition-colors ${useDefaultAssets ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
-                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${useDefaultAssets ? 'translate-x-4' : ''}`} />
-                </div>
-              </div>
-              <span className="text-sm text-text-secondary">使用默认资源地址</span>
-            </label>
-
-            {!useDefaultAssets && (
-              <div className="space-y-2">
-                <label className="block text-xs text-text-secondary">自定义资源地址</label>
-                <input
-                  type="url"
-                  value={assetsUrl}
-                  onChange={(e) => setAssetsUrl(e.target.value)}
-                  placeholder="https://i.pa.759800.com"
-                  className="w-full px-4 py-3 ui-control transition-colors"
-                />
-                <div className="text-xs text-text-secondary">
-                  规则固定：会拼接为 <span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；Desktop 仅拉取皮肤列表，不从 API 获取地址规则。
-                </div>
-              </div>
-            )}
           </div>
 
           {/* API 连接测试 */}

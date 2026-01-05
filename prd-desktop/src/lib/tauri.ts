@@ -54,7 +54,7 @@ function looksLikeDisconnected(details: string): boolean {
  */
 export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
   if (!isTauri()) {
-    throw new Error('当前运行在非桌面(Tauri)环境，无法调用原生命令。请使用桌面窗口打开，或使用“演示模式”。');
+    throw new Error('当前运行在非桌面(Tauri)环境，无法调用原生命令。请使用桌面窗口打开。');
   }
 
   try {

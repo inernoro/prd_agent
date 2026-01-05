@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Json;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
@@ -62,17 +63,8 @@ public class AdminUsersController : ControllerBase
         return (true, null);
     }
 
-    private string? BuildAvatarUrl(string? avatarFileName)
-    {
-        var file = (avatarFileName ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(file)) return null;
-        // 全局约束：COS 对象 key 必须全小写；这里统一以小写拼接
-        file = file.ToLowerInvariant();
-
-        var baseUrl = (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
-        return $"{baseUrl}/icon/backups/head/{file}";
-    }
+    private string? BuildAvatarUrl(User user)
+        => AvatarUrlBuilder.Build(_cfg, user);
 
     /// <summary>
     /// 获取用户列表
@@ -125,7 +117,7 @@ public class AdminUsersController : ControllerBase
                 UserType = u.UserType.ToString(),
                 BotKind = u.UserType == UserType.Bot ? u.BotKind?.ToString() : null,
                 AvatarFileName = u.AvatarFileName,
-                AvatarUrl = BuildAvatarUrl(u.AvatarFileName),
+                AvatarUrl = BuildAvatarUrl(u),
                 CreatedAt = u.CreatedAt,
                 LastLoginAt = u.LastLoginAt,
                 IsLocked = remaining > 0,
@@ -168,7 +160,7 @@ public class AdminUsersController : ControllerBase
             UserType = user.UserType.ToString(),
             BotKind = user.UserType == UserType.Bot ? user.BotKind?.ToString() : null,
             AvatarFileName = user.AvatarFileName,
-            AvatarUrl = BuildAvatarUrl(user.AvatarFileName),
+            AvatarUrl = BuildAvatarUrl(user),
             CreatedAt = user.CreatedAt,
             LastLoginAt = user.LastLoginAt,
             IsLocked = remaining > 0,

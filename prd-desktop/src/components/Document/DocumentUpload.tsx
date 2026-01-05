@@ -15,15 +15,12 @@ interface UploadResponse {
 
 export default function DocumentUpload() {
   const { setSession } = useSessionStore();
-  const { user, logout } = useAuthStore();
+  const { logout } = useAuthStore();
   const { loadGroups } = useGroupListStore();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const loadGifUrl = useRemoteAssetUrl('icon.desktop.load');
-
-  // 检测是否为演示模式
-  const isDemoMode = user?.userId === 'demo-user-001';
 
   const suggestGroupName = async (content: string, fileName?: string | null, docTitle?: string | null) => {
     const rawFileBase = fileName ? normalizeCandidateName(stripFileExtension(fileName)) : '';
@@ -54,35 +51,6 @@ export default function DocumentUpload() {
     setError('');
 
     try {
-      // 演示模式：模拟文档上传
-      if (isDemoMode) {
-        await new Promise(resolve => setTimeout(resolve, 800)); // 模拟延迟
-        
-        // 提取文档标题（从第一行 # 开头的内容）
-        const titleMatch = content.match(/^#\s+(.+)$/m);
-        const title = titleMatch ? titleMatch[1] : '演示文档';
-        
-        const demoDocument: Document = {
-          id: 'demo-doc-001',
-          title,
-          charCount: content.length,
-          tokenEstimate: Math.ceil(content.length / 4),
-        };
-        
-        const session: Session = {
-          sessionId: 'demo-session-001',
-          documentId: demoDocument.id,
-          currentRole: 'PM',
-          mode: 'QA',
-        };
-        
-        // 存储文档内容到 sessionStorage 供后续使用
-        sessionStorage.setItem('demo-prd-content', content);
-        
-        setSession(session, demoDocument);
-        return;
-      }
-
       const response = await invoke<ApiResponse<UploadResponse>>('upload_document', {
         content,
       });

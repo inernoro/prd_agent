@@ -631,6 +631,130 @@ public class AdminDataController : ControllerBase
     }
 
     /// <summary>
+    /// 预览：清理用户数据（默认仅清理非 ADMIN 用户；不包含密码哈希）
+    /// </summary>
+    [HttpGet("users/preview")]
+    public async Task<IActionResult> PreviewUsersPurge([FromQuery] int? limit)
+    {
+        var take = limit ?? 20;
+        if (take <= 0) take = 20;
+        if (take > 100) take = 100;
+
+        var total = await _db.Users.CountDocumentsAsync(_ => true);
+        var adminCount = await _db.Users.CountDocumentsAsync(x => x.Role == UserRole.ADMIN);
+        var willDeleteCount = await _db.Users.CountDocumentsAsync(x => x.Role != UserRole.ADMIN);
+
+        var sampleWillDelete = await _db.Users
+            .Find(x => x.Role != UserRole.ADMIN)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(take)
+            .Project(x => new AdminUserPreviewItem
+            {
+                UserId = x.UserId,
+                Username = x.Username,
+                DisplayName = x.DisplayName,
+                Role = x.Role,
+                UserType = x.UserType,
+                Status = x.Status,
+                CreatedAt = x.CreatedAt,
+                LastLoginAt = x.LastLoginAt
+            })
+            .ToListAsync();
+
+        var sampleAdmins = await _db.Users
+            .Find(x => x.Role == UserRole.ADMIN)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(10)
+            .Project(x => new AdminUserPreviewItem
+            {
+                UserId = x.UserId,
+                Username = x.Username,
+                DisplayName = x.DisplayName,
+                Role = x.Role,
+                UserType = x.UserType,
+                Status = x.Status,
+                CreatedAt = x.CreatedAt,
+                LastLoginAt = x.LastLoginAt
+            })
+            .ToListAsync();
+
+        var payload = new AdminUsersPurgePreviewResponse
+        {
+            TotalUsers = total,
+            AdminUsers = adminCount,
+            WillDeleteUsers = willDeleteCount,
+            WillKeepUsers = total - willDeleteCount,
+            SampleWillDeleteUsers = sampleWillDelete,
+            SampleWillKeepAdmins = sampleAdmins,
+            Notes = new List<string>
+            {
+                "仅删除 Role != ADMIN 的用户账号；管理员账号会保留。",
+                "预览不包含密码哈希等敏感字段。",
+                "删除用户不会自动级联删除群组/消息等业务数据（如需要彻底清库，请使用“开发期：一键删除（保留核心）”）。"
+            }
+        };
+
+        return Ok(ApiResponse<AdminUsersPurgePreviewResponse>.Ok(payload));
+    }
+
+    /// <summary>
+    /// 清理：删除非 ADMIN 用户（支持 Idempotency-Key；需 confirmed=true）
+    /// </summary>
+    [HttpPost("users/purge")]
+    public async Task<IActionResult> PurgeUsers([FromBody] AdminUsersPurgeRequest request)
+    {
+        if (request == null || !request.Confirmed)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "confirmed 必须为 true"));
+
+        var adminId = GetAdminId();
+        var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"admin:data:purge-users:{adminId}:{idemKey}";
+            var cached = await _cache.GetAsync<AdminUsersPurgeResponse>(cacheKey);
+            if (cached != null)
+            {
+                return Ok(ApiResponse<AdminUsersPurgeResponse>.Ok(cached));
+            }
+        }
+
+        // 仅删除非 ADMIN 用户
+        var toDeleteUserIds = await _db.Users
+            .Find(x => x.Role != UserRole.ADMIN)
+            .Project(x => x.UserId)
+            .ToListAsync();
+
+        var usersDeleted = 0L;
+        var groupMembersDeleted = 0L;
+
+        if (toDeleteUserIds.Count > 0)
+        {
+            usersDeleted = (await _db.Users.DeleteManyAsync(x => x.Role != UserRole.ADMIN)).DeletedCount;
+            groupMembersDeleted = (await _db.GroupMembers.DeleteManyAsync(x => toDeleteUserIds.Contains(x.UserId))).DeletedCount;
+
+            // 尽量清掉用户相关缓存（避免 UI 看到“幽灵数据”）
+            await _cache.RemoveByPatternAsync($"{CacheKeys.UserSession}*");
+        }
+
+        var payload = new AdminUsersPurgeResponse
+        {
+            UsersDeleted = usersDeleted,
+            GroupMembersDeleted = groupMembersDeleted,
+        };
+
+        if (!string.IsNullOrWhiteSpace(idemKey))
+        {
+            var cacheKey = $"admin:data:purge-users:{adminId}:{idemKey}";
+            await _cache.SetAsync(cacheKey, payload, PurgeIdempotencyExpiry);
+        }
+
+        _logger.LogWarning("Admin purge users executed. usersDeleted={UsersDeleted}, groupMembersDeleted={GroupMembersDeleted}",
+            payload.UsersDeleted, payload.GroupMembersDeleted);
+
+        return Ok(ApiResponse<AdminUsersPurgeResponse>.Ok(payload));
+    }
+
+    /// <summary>
     /// 一键清理指定领域的数据（支持 Idempotency-Key）
     /// </summary>
     [HttpPost("purge")]
@@ -1003,6 +1127,45 @@ public class DataPurgeResponse
                && DisabledModelsDeleted == 0
                && OtherDeleted == 0;
     }
+}
+
+public class AdminUsersPurgeRequest
+{
+    /// <summary>
+    /// 强制二次确认：必须为 true 才会执行删除
+    /// </summary>
+    public bool Confirmed { get; set; }
+}
+
+public class AdminUsersPurgePreviewResponse
+{
+    public long TotalUsers { get; set; }
+    public long AdminUsers { get; set; }
+    public long WillDeleteUsers { get; set; }
+    public long WillKeepUsers { get; set; }
+
+    public List<AdminUserPreviewItem> SampleWillDeleteUsers { get; set; } = new();
+    public List<AdminUserPreviewItem> SampleWillKeepAdmins { get; set; } = new();
+
+    public List<string> Notes { get; set; } = new();
+}
+
+public class AdminUsersPurgeResponse
+{
+    public long UsersDeleted { get; set; }
+    public long GroupMembersDeleted { get; set; }
+}
+
+public class AdminUserPreviewItem
+{
+    public string UserId { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public UserRole Role { get; set; }
+    public UserType UserType { get; set; }
+    public UserStatus Status { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastLoginAt { get; set; }
 }
 
 

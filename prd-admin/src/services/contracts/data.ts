@@ -115,10 +115,42 @@ export type DataPurgeResponse = {
   otherDeleted?: number;
 };
 
+export type AdminUserPreviewItem = {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: 'PM' | 'DEV' | 'QA' | 'ADMIN';
+  userType: 'Human' | 'Bot';
+  status: 'Active' | 'Locked';
+  createdAt: string;
+  lastLoginAt?: string | null;
+};
+
+export type AdminUsersPurgePreviewResponse = {
+  totalUsers: number;
+  adminUsers: number;
+  willDeleteUsers: number;
+  willKeepUsers: number;
+  sampleWillDeleteUsers: AdminUserPreviewItem[];
+  sampleWillKeepAdmins: AdminUserPreviewItem[];
+  notes: string[];
+};
+
+export type AdminUsersPurgeRequest = {
+  confirmed: boolean;
+};
+
+export type AdminUsersPurgeResponse = {
+  usersDeleted: number;
+  groupMembersDeleted: number;
+};
+
 export type ExportConfigContract = () => Promise<ApiResponse<ExportedConfig>>;
 export type ImportConfigContract = (input: DataConfigImportRequest) => Promise<ApiResponse<DataConfigImportResponse>>;
 export type PreviewImportConfigContract = (input: DataConfigImportRequest) => Promise<ApiResponse<DataConfigImportPreviewResponse>>;
 export type GetDataSummaryContract = () => Promise<ApiResponse<DataSummaryResponse>>;
 export type PurgeDataContract = (input: DataPurgeRequest, idempotencyKey?: string) => Promise<ApiResponse<DataPurgeResponse>>;
+export type PreviewUsersPurgeContract = (limit?: number) => Promise<ApiResponse<AdminUsersPurgePreviewResponse>>;
+export type PurgeUsersContract = (input: AdminUsersPurgeRequest, idempotencyKey?: string) => Promise<ApiResponse<AdminUsersPurgeResponse>>;
 
 

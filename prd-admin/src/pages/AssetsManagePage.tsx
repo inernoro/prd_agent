@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createDesktopAssetKey, createDesktopAssetSkin, listDesktopAssetKeys, listDesktopAssetSkins, uploadDesktopAsset } from '@/services';
+import { createDesktopAssetKey, createDesktopAssetSkin, getDesktopBrandingSettings, listDesktopAssetKeys, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset } from '@/services';
 import type { DesktopAssetKey, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 
 function cn(...xs: Array<string | false | null | undefined>) {
@@ -16,13 +16,14 @@ type AssetRow = {
   required?: boolean;
 };
 
-// 对齐 prd-desktop 的 REQUIRED_ASSETS（诊断页必须覆盖这些 key）
+// 诊断页固定要求的资源（仅保留“启动/加载”这类真正刚需；登录图标由品牌配置 loginIconKey 决定）
 const REQUIRED_ASSETS: AssetRow[] = [
   { title: '冷启动加载', key: 'start_load.gif', kind: 'image', required: true },
   { title: '加载动画', key: 'load.gif', kind: 'image', required: true },
-  { title: '登录 Logo', key: 'login_logo.svg', kind: 'image', required: true },
-  { title: '登录图标', key: 'login_icon.png', kind: 'image', required: true },
 ];
+
+// 有“品牌配置”后，这两个 key 的单独行展示会显得重复（仍可通过品牌配置上传/或手动新建 key 上传）
+const HIDDEN_ASSET_KEYS = new Set(['login_icon.png', 'login_logo.svg']);
 
 const BASE_ASSETS_URL = 'https://i.pa.759800.com';
 
@@ -94,6 +95,10 @@ export default function AssetsManagePage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
+  const [brandingName, setBrandingName] = useState('PRD Agent');
+  const [brandingIconKey, setBrandingIconKey] = useState('login_icon.png');
+  const [brandingSaving, setBrandingSaving] = useState(false);
+
   const [cacheBust, setCacheBust] = useState<number>(() => Date.now());
   const [broken, setBroken] = useState<Record<string, boolean>>({});
 
@@ -110,11 +115,15 @@ export default function AssetsManagePage() {
     setLoading(true);
     setErr('');
     try {
-      const [sRes, kRes] = await Promise.all([listDesktopAssetSkins(), listDesktopAssetKeys()]);
+      const [sRes, kRes, bRes] = await Promise.all([listDesktopAssetSkins(), listDesktopAssetKeys(), getDesktopBrandingSettings()]);
       if (!sRes.success) throw new Error(sRes.error?.message || '加载 skins 失败');
       if (!kRes.success) throw new Error(kRes.error?.message || '加载 keys 失败');
       setSkins(Array.isArray(sRes.data) ? sRes.data : []);
       setKeys(Array.isArray(kRes.data) ? kRes.data : []);
+      if (bRes.success && bRes.data) {
+        setBrandingName(String(bRes.data.desktopName || 'PRD Agent'));
+        setBrandingIconKey(String(bRes.data.loginIconKey || 'login_icon.png'));
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e || '加载失败'));
     } finally {
@@ -125,6 +134,31 @@ export default function AssetsManagePage() {
   useEffect(() => {
     void reload();
   }, []);
+
+  const brandingPreviewUrl = useMemo(() => {
+    const k = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
+    return buildIconUrl(BASE_ASSETS_URL, k || 'login_icon.png', null, cacheBust);
+  }, [brandingIconKey, cacheBust]);
+
+  const saveBranding = async () => {
+    setBrandingSaving(true);
+    setErr('');
+    try {
+      const name = String(brandingName || '').trim();
+      const key = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
+      const res = await updateDesktopBrandingSettings({
+        desktopName: name || 'PRD Agent',
+        loginIconKey: key || 'login_icon.png',
+      });
+      if (!res.success) throw new Error(res.error?.message || '保存失败');
+      // 刷新，确保与后端最终值一致（含截断/规范化）
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e || '保存失败'));
+    } finally {
+      setBrandingSaving(false);
+    }
+  };
 
   const enabledSkins = useMemo(() => {
     return (Array.isArray(skins) ? skins : []).filter((s) => s.enabled).map((s) => String(s.name || '').trim()).filter(Boolean);
@@ -147,7 +181,8 @@ export default function AssetsManagePage() {
         description: k.description ?? null,
         required: requiredMap.has(k.key),
       }))
-      .filter((r) => !requiredMap.has(r.key));
+      .filter((r) => !requiredMap.has(r.key))
+      .filter((r) => !HIDDEN_ASSET_KEYS.has(String(r.key || '').trim().toLowerCase()));
     return [...REQUIRED_ASSETS, ...extra];
   }, [keys]);
 
@@ -228,6 +263,12 @@ export default function AssetsManagePage() {
       if (!res.success) throw new Error(res.error?.message || '上传失败');
       // 触发预览强制刷新（绕过 CDN/浏览器缓存）
       setCacheBust(Date.now());
+      // 如果刚上传的是品牌预览 key，清除“预览失败”提示
+      setBroken((p) => {
+        const next = { ...p };
+        delete next.__branding__;
+        return next;
+      });
       // 上传接口会自动 upsert key 元数据，这里顺手刷新列表
       await reload();
     } catch (e) {
@@ -235,6 +276,22 @@ export default function AssetsManagePage() {
     } finally {
       setUploadingId('');
     }
+  };
+
+  const chooseBrandingIconUpload = () => {
+    const norm = normalizeDesktopKey(brandingIconKey);
+    if (!norm.ok) {
+      setErr(norm.error || '登录图标 key 不合法');
+      return;
+    }
+    // 规范化回写（全小写、去路径）
+    setBrandingIconKey(norm.value);
+    setErr('');
+    setUploadTarget({ skin: null, key: norm.value });
+    const el = fileRef.current;
+    if (!el) return;
+    el.value = '';
+    el.click();
   };
 
   const hardRefresh = async () => {
@@ -364,6 +421,85 @@ export default function AssetsManagePage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop 品牌配置（放在资源管理之后） */}
+      <div
+        className="mt-4 rounded-[16px] p-4"
+        style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Desktop 品牌配置（登录页名称 + 图标）
+            </div>
+            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              在线模式下 Desktop 会拉取该配置：名称用于登录页标题；图标从 <span className="font-mono">/icon/desktop/&lt;key&gt;</span> 加载（key 仅文件名、必须全小写，可指向任意图片格式）。
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              className={cn('px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90', uploadingId === `__branding__@@__base__` && 'opacity-60 pointer-events-none')}
+              onClick={() => chooseBrandingIconUpload()}
+              title="上传当前登录图标 key 对应的文件到 /icon/desktop/<key>"
+              type="button"
+            >
+              上传图标
+            </button>
+            <button
+              className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
+              onClick={() => void saveBranding()}
+              disabled={brandingSaving}
+              title="保存 Desktop 品牌配置"
+              type="button"
+            >
+              {brandingSaving ? '保存中...' : '保存'}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="md:col-span-1">
+            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Desktop 名称</div>
+            <input
+              className="w-full px-3 py-2 rounded-xl ui-control"
+              value={brandingName}
+              onChange={(e) => setBrandingName(e.target.value)}
+              placeholder="PRD Agent"
+            />
+          </div>
+          <div className="md:col-span-1">
+            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>登录图标 key（文件名）</div>
+            <input
+              className="w-full px-3 py-2 rounded-xl ui-control font-mono"
+              value={brandingIconKey}
+              onChange={(e) => setBrandingIconKey(e.target.value)}
+              placeholder="login_icon.png"
+            />
+          </div>
+          <div className="md:col-span-1">
+            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>预览（base）</div>
+            <div className="flex items-center gap-3">
+              <img
+                src={brandingPreviewUrl}
+                alt="login icon preview"
+                className="h-10 w-10 rounded-xl border"
+                style={{ borderColor: 'var(--border-subtle)' }}
+                onError={() => setBroken((p) => ({ ...p, __branding__: true }))}
+              />
+              <div className="min-w-0">
+                <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
+                  {brandingPreviewUrl}
+                </div>
+              </div>
+            </div>
+            {broken.__branding__ ? (
+              <div className="mt-1 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
+                预览加载失败：请确认该 key 已在本页上传（或已存在于 COS）。
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

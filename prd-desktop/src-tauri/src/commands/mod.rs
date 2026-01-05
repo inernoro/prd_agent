@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod auth;
+pub mod branding;
 pub mod config;
 pub mod document;
 pub mod group;

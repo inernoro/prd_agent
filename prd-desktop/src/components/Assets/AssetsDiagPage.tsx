@@ -13,9 +13,7 @@ type AssetRow = {
 const REQUIRED_ASSETS: AssetRow[] = [
   { title: '冷启动加载', key: 'start_load.gif', kind: 'image' },
   { title: '加载动画', key: 'load.gif', kind: 'image' },
-  // 规则确认：除皮肤目录外不允许再有子目录；因此 key 统一使用“文件名”
-  { title: '登录 Logo', key: 'login_logo.svg', kind: 'image' },
-  { title: '登录图标', key: 'login_icon.png', kind: 'image' },
+  // 登录页图标由后台品牌配置 loginIconKey 决定，不再做固定 required 约束
 ];
 
 function labelForSkin(skin: string): string {

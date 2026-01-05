@@ -8,7 +8,7 @@ import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
-import { resolveAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { updateUserAvatar } from '@/services';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode };
@@ -201,7 +201,21 @@ export default function AppShell() {
                       botKind: user?.botKind,
                       avatarFileName: user?.avatarFileName ?? null,
                     });
-                    return url ? <img src={url} alt="avatar" className="h-full w-full object-cover" /> : null;
+                    const fallback = resolveNoHeadAvatarUrl();
+                    return (
+                      <img
+                        src={url}
+                        alt="avatar"
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          const el = e.currentTarget;
+                          if (el.getAttribute('data-fallback-applied') === '1') return;
+                          if (!fallback) return;
+                          el.setAttribute('data-fallback-applied', '1');
+                          el.src = fallback;
+                        }}
+                      />
+                    );
                   })()}
                 </button>
                 <div className="min-w-0">

@@ -8,6 +8,7 @@ import { useMessageStore } from '../../stores/messageStore';
 import { assistantFontScaleBounds, useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import RoleSelector from '../Role/RoleSelector';
+import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 
 interface HeaderProps {
   isDark: boolean;
@@ -27,6 +28,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
   const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
   const isAdmin = user?.role === 'ADMIN';
+  const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
   const isMac = useMemo(() => {
     try {
       return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -82,7 +84,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
           <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">P</span>
           </div>
-          <h1 className="text-lg font-semibold">PRD Agent</h1>
+          <h1 className="text-lg font-semibold">{desktopName || 'PRD Agent'}</h1>
         </div>
 
         <div className="flex items-center gap-4">

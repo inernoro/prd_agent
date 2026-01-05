@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -34,14 +35,6 @@ public class GroupsController : ControllerBase
     private readonly IConfiguration _cfg;
 
     private static readonly TimeSpan GroupSessionExpiry = TimeSpan.FromMinutes(30);
-
-    private const string AvatarPathPrefix = "icon/backups/head";
-    private static readonly Dictionary<string, string> DefaultBotAvatarFiles = new()
-    {
-        ["pm"] = "bot_pm.gif",
-        ["dev"] = "bot_dev.gif",
-        ["qa"] = "bot_qa.gif",
-    };
 
     private static string? GetUserId(ClaimsPrincipal user)
     {
@@ -80,37 +73,7 @@ public class GroupsController : ControllerBase
 
     private string? BuildAvatarUrl(User user)
     {
-        if (user == null) return null;
-
-        // 1) 明确设置的头像文件名优先
-        var file = (user.AvatarFileName ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(file))
-        {
-            // COS 对象 key 统一小写（防止跨系统大小写不一致导致 404） [[memory:12726348]]
-            file = file.ToLowerInvariant();
-        }
-        else
-        {
-            // 2) 机器人账号：兜底默认头像（与后台展示保持一致）
-            if (user.UserType == UserType.Bot || user.Username.Trim().ToLowerInvariant().StartsWith("bot_"))
-            {
-                var kind = (user.BotKind?.ToString() ?? string.Empty).Trim().ToLowerInvariant();
-                if (string.IsNullOrWhiteSpace(kind))
-                {
-                    var u = user.Username.Trim().ToLowerInvariant();
-                    kind = u.StartsWith("bot_") ? u.Replace("bot_", "") : "";
-                }
-                if (!DefaultBotAvatarFiles.TryGetValue(kind, out file))
-                {
-                    file = DefaultBotAvatarFiles["dev"];
-                }
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(file)) return null;
-        var baseUrl = (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
-        return $"{baseUrl}/{AvatarPathPrefix}/{file}";
+        return AvatarUrlBuilder.Build(_cfg, user);
     }
 
     /// <summary>

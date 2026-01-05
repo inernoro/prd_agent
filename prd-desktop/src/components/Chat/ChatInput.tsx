@@ -49,18 +49,9 @@ function fallbackPrompts(role: UserRole): PromptItem[] {
   }));
 }
 
-// 演示模式的模拟回复
-const DEMO_RESPONSES = [
-  '根据PRD文档的描述，这个功能的核心目标是提升用户体验。让我为您详细解读一下相关内容...',
-  '从产品角度来看，这个需求的优先级较高。文档中提到的关键点包括：用户场景分析、功能边界定义、以及预期效果...',
-  '关于这个问题，PRD中有明确的说明。主要涉及以下几个方面：1) 业务流程设计 2) 数据流转逻辑 3) 异常处理机制...',
-  '这是一个很好的问题。根据文档内容，我们需要关注以下技术实现细节和业务约束条件...',
-  '让我查阅一下文档中的相关章节。根据PRD的描述，这个模块的设计考虑了可扩展性和易用性两个维度...',
-];
-
 export default function ChatInput() {
   const { sessionId, currentRole, document, prompts } = useSessionStore();
-  const { addUserMessageWithPendingAssistant, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage, ackPendingUserMessageRunId } = useMessageStore();
+  const { addUserMessageWithPendingAssistant, isStreaming, stopStreaming, ackPendingUserMessageRunId } = useMessageStore();
   const { user } = useAuthStore();
   const connectionStatus = useConnectionStore((s) => s.status);
   const isDisconnected = connectionStatus === 'disconnected';
@@ -70,8 +61,6 @@ export default function ChatInput() {
   const [inputHeight, setInputHeight] = useState(36);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 检测是否为演示模式
-  const isDemoMode = user?.userId === 'demo-user-001';
   const canChat = !!sessionId;
   const canChatNow = canChat && !isDisconnected;
 
@@ -111,29 +100,6 @@ export default function ChatInput() {
     return () => window.removeEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
   }, []);
 
-  // 演示模式下的模拟流式回复
-  const simulateStreamingResponse = async (question: string) => {
-    const streamingId = `demo-assistant-${Date.now()}`;
-    startStreaming({
-      id: streamingId,
-      role: 'Assistant',
-      content: '',
-      timestamp: new Date(),
-      viewRole: currentRole,
-    });
-    
-    // 随机选择一个回复模板
-    const baseResponse = DEMO_RESPONSES[Math.floor(Math.random() * DEMO_RESPONSES.length)];
-    const fullResponse = `${baseResponse}\n\n针对您的问题"${question.slice(0, 50)}${question.length > 50 ? '...' : ''}"，我的建议是结合实际业务场景进行分析，确保理解准确。如有疑问，可以继续提问。`;
-    
-    // 模拟流式输出
-    for (let i = 0; i < fullResponse.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 20 + Math.random() * 30));
-      appendToStreamingMessage(fullResponse[i]);
-    }
-    stopStreaming();
-  };
-
   const promptsForRole = useMemo(() => {
     const list = Array.isArray(prompts) ? prompts : [];
     const filtered = list
@@ -163,13 +129,6 @@ export default function ChatInput() {
       setIsSubmitting(true);
       const text = `【讲解】${p.title}`;
       const userMessage = pushSimulatedUserMessage(text);
-
-      // 演示模式：走本地模拟
-      if (isDemoMode) {
-        await waitForUiPaint();
-        await simulateStreamingResponse(userMessage.content);
-        return;
-      }
 
       await waitForUiPaint();
       const resp = await invoke<ApiResponse<any>>('create_chat_run', {
@@ -204,15 +163,7 @@ export default function ChatInput() {
 
     setIsSubmitting(true);
     addUserMessageWithPendingAssistant({ userMessage });
-    const questionContent = content.trim();
     setContent('');
-
-    // 演示模式：模拟回复
-    if (isDemoMode) {
-      await waitForUiPaint();
-      await simulateStreamingResponse(questionContent);
-      return;
-    }
 
     try {
       // 先让“用户消息 + loading 气泡 + 滚到底”完成渲染，再开始请求

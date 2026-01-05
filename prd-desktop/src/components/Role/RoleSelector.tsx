@@ -1,6 +1,5 @@
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useAuthStore } from '../../stores/authStore';
 import { UserRole, ApiResponse } from '../../types';
 
 // 角色图标组件
@@ -37,19 +36,9 @@ const roles: { value: UserRole; label: string }[] = [
 
 export default function RoleSelector() {
   const { sessionId, currentRole, setRole } = useSessionStore();
-  const { user } = useAuthStore();
-
-  // 检测是否为演示模式
-  const isDemoMode = user?.userId === 'demo-user-001';
 
   const handleChange = async (role: UserRole) => {
     if (!sessionId || role === currentRole) return;
-
-    // 演示模式：直接切换角色
-    if (isDemoMode) {
-      setRole(role);
-      return;
-    }
 
     try {
       const response = await invoke<ApiResponse<{ currentRole: string }>>('switch_role', {

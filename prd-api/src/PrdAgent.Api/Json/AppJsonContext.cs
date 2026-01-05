@@ -51,6 +51,8 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminRegenerateInviteResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminMessageDto>>))]
 [JsonSerializable(typeof(ApiResponse<HealthCheckResponse>))]
+// Desktop Branding
+[JsonSerializable(typeof(ApiResponse<DesktopBrandingResponse>))]
 // Desktop Assets
 [JsonSerializable(typeof(ApiResponse<DesktopSkinsResponse>))]
 [JsonSerializable(typeof(ApiResponse<List<AdminDesktopAssetSkinDto>>))]
@@ -65,6 +67,8 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<DataConfigImportResponse>))]
 [JsonSerializable(typeof(ApiResponse<DataSummaryResponse>))]
 [JsonSerializable(typeof(ApiResponse<DataPurgeResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminUsersPurgePreviewResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminUsersPurgeResponse>))]
 // 流式事件类型
 [JsonSerializable(typeof(ChatStreamEvent))]
 [JsonSerializable(typeof(StreamErrorEvent))]
@@ -97,9 +101,12 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(AdminCreateDesktopAssetSkinRequest))]
 [JsonSerializable(typeof(AdminUpdateDesktopAssetSkinRequest))]
 [JsonSerializable(typeof(AdminCreateDesktopAssetKeyRequest))]
+// Desktop Branding 请求
+[JsonSerializable(typeof(UpdateDesktopBrandingRequest))]
 // Admin Data 请求
 [JsonSerializable(typeof(DataConfigImportRequest))]
 [JsonSerializable(typeof(DataPurgeRequest))]
+[JsonSerializable(typeof(AdminUsersPurgeRequest))]
 // 预览提问请求
 [JsonSerializable(typeof(PreviewAskRequest))]
 // 密码验证响应
