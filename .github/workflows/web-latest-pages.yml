@@ -35,6 +35,20 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Get pnpm store directory
+        id: pnpm_store
+        shell: bash
+        run: |
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-web-latest-pages-${{ hashFiles('prd-admin/pnpm-lock.yaml', 'prd-admin/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-web-latest-pages-
+
       - name: Install deps
         working-directory: prd-admin
         run: pnpm install --frozen-lockfile

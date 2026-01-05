@@ -100,14 +100,15 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Get pnpm store directory
+        id: pnpm_store
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: ${{ env.STORE_PATH }}
+          path: ${{ steps.pnpm_store.outputs.path }}
           key: ${{ runner.os }}-pnpm-admin-${{ hashFiles('prd-admin/pnpm-lock.yaml', 'prd-admin/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-admin-
@@ -127,6 +128,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-22.04
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     defaults:
       run:
         working-directory: prd-desktop
@@ -146,14 +150,15 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Get pnpm store directory
+        id: pnpm_store
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: ${{ env.STORE_PATH }}
+          path: ${{ steps.pnpm_store.outputs.path }}
           key: ${{ runner.os }}-pnpm-desktop-${{ hashFiles('prd-desktop/pnpm-lock.yaml', 'prd-desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-desktop-
@@ -164,7 +169,12 @@ jobs:
       - name: Rust toolchain fingerprint
         id: rustc
         run: |
-          echo "fingerprint=$(rustc -Vv | sha256sum | cut -d ' ' -f1)" >> $GITHUB_OUTPUT
+          if command -v sha256sum >/dev/null 2>&1; then
+            FP="$(rustc -Vv | sha256sum | awk '{print $1}')"
+          else
+            FP="$(rustc -Vv | shasum -a 256 | awk '{print $1}')"
+          fi
+          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
 
       - name: glibc fingerprint (Linux)
         id: glibc
@@ -180,7 +190,9 @@ jobs:
             ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
+            ~/.cargo/registry/src/
             ~/.cargo/git/db/
+            ~/.cargo/git/checkouts/
           key: ${{ runner.os }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-
@@ -192,6 +204,13 @@ jobs:
           path: |
             prd-desktop/src-tauri/target/
           key: ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-${{ steps.glibc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-${{ steps.glibc.outputs.fingerprint }}-
+            ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-
+            ${{ runner.os }}-cargo-target-
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Install system dependencies (Linux)
         run: |
@@ -221,6 +240,14 @@ jobs:
       - name: Rust clippy
         working-directory: prd-desktop/src-tauri
         run: cargo clippy -- -D warnings
+
+      - name: sccache stats
+        if: always()
+        shell: bash
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats || true
+          fi
 
   # CI 状态汇总（用于 branch protection）
   ci-status:
