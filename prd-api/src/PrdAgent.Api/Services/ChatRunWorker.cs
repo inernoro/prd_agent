@@ -239,7 +239,10 @@ public sealed class ChatRunWorker : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            // 显式 stop：通过 cancelRequested 来判断
+            // 显式 stop：必须落状态，保证客户端重连可见“已取消”而非卡在 Running
+            meta.Status = RunStatuses.Cancelled;
+            meta.EndedAt = DateTime.UtcNow;
+            await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
             return;
         }
 
