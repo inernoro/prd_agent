@@ -694,24 +694,8 @@ jobs:
           
           # 生成 latest-{target}.json
           MANIFEST_FILE="latest-$TARGET.json"
-          cat > "$MANIFEST_FILE" << EOF
-{
-  "version": "$VERSION",
-  "notes": "Release $TAG",
-  "pub_date": "$PUB_DATE",
-  "platforms": {
-    "$PLATFORM": {
-      "signature": "$SIGNATURE",
-      "url": "$DOWNLOAD_URL"
-    }
-  }
-}
-EOF
-          
-          # 美化 JSON
-          if command -v jq &> /dev/null; then
-            jq '.' "$MANIFEST_FILE" > "${MANIFEST_FILE}.tmp" && mv "${MANIFEST_FILE}.tmp" "$MANIFEST_FILE"
-          fi
+          printf '{\n  "version": "%s",\n  "notes": "Release %s",\n  "pub_date": "%s",\n  "platforms": {\n    "%s": {\n      "signature": "%s",\n      "url": "%s"\n    }\n  }\n}\n' \
+            "$VERSION" "$TAG" "$PUB_DATE" "$PLATFORM" "$SIGNATURE" "$DOWNLOAD_URL" > "$MANIFEST_FILE"
           
           echo "[INFO] Generated manifest:"
           cat "$MANIFEST_FILE"
