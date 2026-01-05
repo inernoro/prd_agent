@@ -98,25 +98,43 @@ jobs:
           import fs from "fs";
           
           const v = process.argv[1];
-          if (!v) {
-            console.error("APP_VERSION is empty");
+          console.log(`[DEBUG] Received version argument: "${v}"`);
+          console.log(`[DEBUG] Version type: ${typeof v}`);
+          console.log(`[DEBUG] Version length: ${v ? v.length : 0}`);
+          
+          if (!v || v.trim() === "") {
+            console.error("Error: APP_VERSION is empty or whitespace");
             process.exit(1);
           }
+          
+          // 验证版本号格式（semver）
+          const semverRegex = /^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/;
+          if (!semverRegex.test(v)) {
+            console.error(`Error: Invalid semver format: "${v}"`);
+            console.error("Expected format: x.y.z or x.y.z-suffix or x.y.z+suffix");
+            process.exit(1);
+          }
+          
+          console.log(`[INFO] Updating version to: ${v}`);
           
           // package.json
           {
             const p = "package.json";
             const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            console.log(`[DEBUG] package.json current version: ${pkg.version}`);
             pkg.version = v;
             fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+            console.log(`[OK] Updated package.json version to: ${v}`);
           }
           
           // src-tauri/tauri.conf.json
           {
             const p = "src-tauri/tauri.conf.json";
             const conf = JSON.parse(fs.readFileSync(p, "utf8"));
+            console.log(`[DEBUG] tauri.conf.json current version: ${conf.version}`);
             conf.version = v;
             fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
+            console.log(`[OK] Updated tauri.conf.json version to: ${v}`);
           }
           
           // src-tauri/Cargo.toml ([package].version)
@@ -135,19 +153,54 @@ jobs:
                 continue;
               }
               if (inPackage && /^\s*version\s*=/.test(line)) {
+                const oldLine = lines[i];
                 lines[i] = `version = "${v}"`;
                 changed = true;
+                console.log(`[DEBUG] Cargo.toml old line: ${oldLine}`);
+                console.log(`[DEBUG] Cargo.toml new line: ${lines[i]}`);
                 break;
               }
             }
           
             if (!changed) {
-              console.error("Failed to update Cargo.toml version under [package]");
+              console.error("Error: Failed to update Cargo.toml version under [package]");
+              console.error("Could not find [package].version line");
               process.exit(1);
             }
           
             fs.writeFileSync(p, lines.join("\n"));
+            console.log(`[OK] Updated Cargo.toml [package].version to: ${v}`);
+            
+            // 验证更新后的内容
+            const updatedRaw = fs.readFileSync(p, "utf8");
+            const updatedLines = updatedRaw.split(/\r?\n/);
+            let foundVersion = false;
+            let inPackageCheck = false;
+            for (const line of updatedLines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                inPackageCheck = trimmed === "[package]";
+                continue;
+              }
+              if (inPackageCheck && /^\s*version\s*=/.test(line)) {
+                const match = line.match(/version\s*=\s*"([^"]+)"/);
+                if (match && match[1] === v) {
+                  foundVersion = true;
+                  console.log(`[VERIFY] Cargo.toml version verified: ${match[1]}`);
+                } else {
+                  console.error(`[ERROR] Cargo.toml version mismatch! Expected: ${v}, Found: ${match ? match[1] : 'none'}`);
+                  process.exit(1);
+                }
+                break;
+              }
+            }
+            if (!foundVersion) {
+              console.error("[ERROR] Failed to verify Cargo.toml version update");
+              process.exit(1);
+            }
           }
+          
+          console.log("[SUCCESS] All version files updated and verified successfully");
           NODE
 
       - name: Setup pnpm
@@ -287,6 +340,54 @@ jobs:
 
       - name: Generate Tauri icons
         run: pnpm tauri:icons
+
+      - name: Verify version sync
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          cd prd-desktop
+          # 从 tag 或 workflow_dispatch 输入提取版本号
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            EXPECTED_VERSION="${{ github.event.inputs.version }}"
+          else
+            echo "Error: Cannot determine expected version"
+            exit 1
+          fi
+          
+          if [[ -z "$EXPECTED_VERSION" ]]; then
+            echo "Error: Cannot determine expected version"
+            exit 1
+          fi
+          
+          echo "Verifying version sync for: $EXPECTED_VERSION"
+          
+          # 验证 package.json
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [[ "$PKG_VERSION" != "$EXPECTED_VERSION" ]]; then
+            echo "Error: package.json version mismatch: expected $EXPECTED_VERSION, got $PKG_VERSION"
+            exit 1
+          fi
+          echo "✓ package.json: $PKG_VERSION"
+          
+          # 验证 tauri.conf.json
+          TAURI_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [[ "$TAURI_VERSION" != "$EXPECTED_VERSION" ]]; then
+            echo "Error: tauri.conf.json version mismatch: expected $EXPECTED_VERSION, got $TAURI_VERSION"
+            exit 1
+          fi
+          echo "✓ tauri.conf.json: $TAURI_VERSION"
+          
+          # 验证 Cargo.toml
+          CARGO_VERSION=$(grep -A 10 "^\[package\]" src-tauri/Cargo.toml | grep "^version" | sed 's/.*version = "\(.*\)".*/\1/')
+          if [[ "$CARGO_VERSION" != "$EXPECTED_VERSION" ]]; then
+            echo "Error: Cargo.toml version mismatch: expected $EXPECTED_VERSION, got $CARGO_VERSION"
+            exit 1
+          fi
+          echo "✓ Cargo.toml: $CARGO_VERSION"
+          
+          echo "All version files are synchronized correctly"
 
       - name: Install NSIS (Windows)
         if: matrix.platform == 'windows-latest'
