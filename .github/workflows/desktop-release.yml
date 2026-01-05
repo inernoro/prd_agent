@@ -347,6 +347,45 @@ jobs:
           # 允许 codesign 访问
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+      # 诊断：验证签名密钥配置
+      - name: Verify updater signing config
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          echo "=== Updater Signing Diagnostics ==="
+          
+          # 检查私钥是否设置
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is NOT set in GitHub Secrets!"
+            echo "Please add the private key to repository secrets."
+            exit 1
+          else
+            echo "[OK] TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          fi
+          
+          # 读取并显示配置中的公钥 ID（不泄露完整公钥）
+          PUBKEY=$(node -p "require('./src-tauri/tauri.conf.json').plugins?.updater?.pubkey || 'NOT_CONFIGURED'")
+          if [[ "$PUBKEY" == "NOT_CONFIGURED" ]]; then
+            echo "::error::pubkey not configured in tauri.conf.json!"
+            exit 1
+          fi
+          
+          # 解码公钥并显示 key ID（base64 解码后第一行是注释，包含 key ID）
+          PUBKEY_DECODED=$(echo "$PUBKEY" | base64 -d 2>/dev/null || echo "DECODE_FAILED")
+          if [[ "$PUBKEY_DECODED" == "DECODE_FAILED" ]]; then
+            echo "::warning::Failed to decode pubkey (may be invalid base64)"
+          else
+            PUBKEY_ID=$(echo "$PUBKEY_DECODED" | head -n1 | grep -oE '[A-F0-9]{16}' || echo "UNKNOWN")
+            echo "[INFO] Configured pubkey ID: $PUBKEY_ID"
+          fi
+          
+          # 显示 updater endpoints
+          echo "[INFO] Updater endpoints:"
+          node -p "JSON.stringify(require('./src-tauri/tauri.conf.json').plugins?.updater?.endpoints, null, 2)"
+          
+          echo "=== End Diagnostics ==="
+
       - name: Install frontend dependencies
         run: pnpm install
 
@@ -452,6 +491,52 @@ jobs:
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }}
 
+      # 诊断：验证签名文件生成
+      - name: Verify signing artifacts
+        if: always()
+        shell: bash
+        run: |
+          echo "=== Signing Artifacts Diagnostics ==="
+          TARGET_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          
+          # 查找所有 .sig 文件
+          echo "[INFO] Looking for .sig files in $TARGET_DIR..."
+          SIG_FILES=$(find "$TARGET_DIR" -name "*.sig" 2>/dev/null || echo "")
+          
+          if [[ -z "$SIG_FILES" ]]; then
+            echo "::warning::No .sig files found! Signing may have failed."
+            echo "This could mean:"
+            echo "  1. TAURI_SIGNING_PRIVATE_KEY is missing or invalid"
+            echo "  2. TAURI_SIGNING_PRIVATE_KEY_PASSWORD is incorrect"
+            echo "  3. Build failed before signing step"
+          else
+            echo "[OK] Found .sig files:"
+            echo "$SIG_FILES" | while read -r f; do
+              if [[ -n "$f" ]]; then
+                SIZE=$(stat -f%z "$f" 2>/dev/null || stat --printf="%s" "$f" 2>/dev/null || echo "?")
+                echo "  - $f (${SIZE} bytes)"
+              fi
+            done
+          fi
+          
+          # 查找 latest*.json
+          echo ""
+          echo "[INFO] Looking for latest*.json files..."
+          LATEST_FILES=$(find "$TARGET_DIR" -name "latest*.json" 2>/dev/null || echo "")
+          if [[ -z "$LATEST_FILES" ]]; then
+            echo "[INFO] No latest*.json in bundle dir (normal - tauri-action generates these)"
+          else
+            echo "[OK] Found latest*.json:"
+            echo "$LATEST_FILES"
+          fi
+          
+          # 列出 bundle 目录结构
+          echo ""
+          echo "[INFO] Bundle directory structure:"
+          ls -la "$TARGET_DIR" 2>/dev/null || echo "Bundle directory not found"
+          
+          echo "=== End Signing Diagnostics ==="
+
       - name: sccache stats
         if: always()
         shell: bash
@@ -459,6 +544,66 @@ jobs:
           if command -v sccache >/dev/null 2>&1; then
             sccache --show-stats || true
           fi
+
+      # 诊断：验证 Release 资产（仅 tag 触发时）
+      - name: Verify release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Release Assets Diagnostics ==="
+          TAG="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+          
+          echo "[INFO] Checking release assets for $TAG..."
+          
+          # 获取 release 信息
+          RELEASE_INFO=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG" 2>/dev/null || echo "{}")
+          
+          if echo "$RELEASE_INFO" | grep -q '"message": "Not Found"'; then
+            echo "[INFO] Release not yet created (may be created by another matrix job)"
+          else
+            echo "[INFO] Release found. Checking assets..."
+            
+            # 列出所有资产
+            ASSETS=$(echo "$RELEASE_INFO" | node -p "
+              try {
+                const r = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
+                (r.assets || []).map(a => a.name).join('\n');
+              } catch { '' }
+            " 2>/dev/null || echo "")
+            
+            if [[ -n "$ASSETS" ]]; then
+              echo "[OK] Current assets:"
+              echo "$ASSETS" | while read -r asset; do
+                if [[ -n "$asset" ]]; then
+                  # 标记关键文件
+                  if [[ "$asset" == latest*.json ]]; then
+                    echo "  - $asset [UPDATER MANIFEST]"
+                  elif [[ "$asset" == *.sig ]]; then
+                    echo "  - $asset [SIGNATURE]"
+                  else
+                    echo "  - $asset"
+                  fi
+                fi
+              done
+              
+              # 检查是否有 latest.json
+              if echo "$ASSETS" | grep -q "latest.*\.json"; then
+                echo ""
+                echo "[OK] Updater manifest (latest*.json) found!"
+              else
+                echo ""
+                echo "[INFO] No latest*.json yet (may be uploaded by other matrix jobs)"
+              fi
+            else
+              echo "[INFO] No assets yet"
+            fi
+          fi
+          
+          echo "=== End Release Diagnostics ==="
 
       # 上传构建产物
       - name: Upload artifacts
