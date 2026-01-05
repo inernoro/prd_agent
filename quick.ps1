@@ -8,7 +8,7 @@
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("", "admin", "desktop", "all", "check", "help")]
+    [ValidateSet("", "admin", "desktop", "all", "check", "ci", "help")]
     [string]$Command = ""
 )
 
@@ -123,6 +123,33 @@ function Check-Desktop {
     Write-Success "Desktop check passed!"
 }
 
+# 本地跑一遍 CI（server + admin + desktop）
+function Check-CI {
+    Write-Info "Running local CI checks (server + admin + desktop)..."
+
+    # server checks (align with .github/workflows/ci.yml server-build)
+    Write-Info "Server: dotnet restore/build/test..."
+    $slnPath = Join-Path $ScriptDir "prd-api\PrdAgent.sln"
+    dotnet restore "$slnPath"
+    dotnet build "$slnPath" -c Release --no-restore
+    dotnet test "$slnPath" -c Release --no-build --verbosity normal
+
+    # admin checks (align with .github/workflows/ci.yml admin-build)
+    Write-Info "Admin: install/typecheck/build..."
+    $adminDir = Join-Path $ScriptDir "prd-admin"
+    if (-not (Test-Path (Join-Path $adminDir "node_modules"))) {
+        Write-Warn "node_modules not found, running pnpm install..."
+        pnpm -C "$adminDir" install
+    }
+    pnpm -C "$adminDir" tsc --noEmit
+    pnpm -C "$adminDir" build
+
+    # desktop checks (reuse existing)
+    Check-Desktop
+
+    Write-Success "Local CI checks passed!"
+}
+
 # 同时启动前后端
 function Start-All {
     Write-Info "Starting all services..."
@@ -228,6 +255,7 @@ function Show-Help {
     Write-Host "  desktop    Start desktop client (prd-desktop)"
     Write-Host "  all        Start backend + admin + desktop together (single console output)"
     Write-Host "  check      Run desktop CI-equivalent checks"
+    Write-Host "  ci         Run local CI checks (server + admin + desktop)"
     Write-Host "  help       Show this help message"
     Write-Host ""
 }
@@ -239,6 +267,7 @@ switch ($Command) {
     "desktop" { Start-Desktop }
     "all" { Start-All }
     "check" { Check-Desktop }
+    "ci" { Check-CI }
     "help" { Show-Help }
     default {
         Write-Error "Unknown command: $Command"
