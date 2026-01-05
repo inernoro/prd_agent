@@ -6,6 +6,7 @@ import type {
   CreateAdminUserContract,
   BulkCreateAdminUsersContract,
   UpdateUserPasswordContract,
+  UpdateUserAvatarContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
   UnlockUserContract,
@@ -64,6 +65,20 @@ export const updateUserPasswordReal: UpdateUserPasswordContract = async (userId:
   });
   if (!res.success) return res as unknown as ApiResponse<true>;
   return ok(true);
+};
+
+export const updateUserAvatarReal: UpdateUserAvatarContract = async (
+  userId: string,
+  avatarFileName: string | null
+): Promise<ApiResponse<{ userId: string; avatarFileName?: string | null; updatedAt?: string }>> => {
+  const res = await apiRequest<{ userId: string; avatarFileName?: string | null; updatedAt?: string }>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/avatar`,
+    {
+      method: 'PUT',
+      body: { avatarFileName: avatarFileName || null },
+    }
+  );
+  return res;
 };
 
 export const unlockUserReal: UnlockUserContract = async (userId: string): Promise<ApiResponse<true>> => {

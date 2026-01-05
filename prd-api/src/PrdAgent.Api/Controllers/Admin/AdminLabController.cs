@@ -203,7 +203,8 @@ public class AdminLabController : ControllerBase
                     await foreach (var _ in _chatService.SendMessageAsync(
                         session.SessionId,
                         userMessage.Content,
-                        userId: adminId))
+                        userId: adminId,
+                        cancellationToken: CancellationToken.None))
                     {
                         // 消费流式事件
                     }

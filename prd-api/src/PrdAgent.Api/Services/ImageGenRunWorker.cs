@@ -6,6 +6,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Api.Services;
 
@@ -17,13 +18,15 @@ public class ImageGenRunWorker : BackgroundService
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ImageGenRunWorker> _logger;
+    private readonly IRunEventStore _runStore;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public ImageGenRunWorker(MongoDbContext db, IServiceScopeFactory scopeFactory, ILogger<ImageGenRunWorker> logger)
+    public ImageGenRunWorker(MongoDbContext db, IServiceScopeFactory scopeFactory, IRunEventStore runStore, ILogger<ImageGenRunWorker> logger)
     {
         _db = db;
         _scopeFactory = scopeFactory;
+        _runStore = runStore;
         _logger = logger;
     }
 
@@ -357,30 +360,10 @@ public class ImageGenRunWorker : BackgroundService
         return cur?.CancelRequested == true;
     }
 
-    private async Task<long> NextSeqAsync(string runId, CancellationToken ct)
-    {
-        var filter = Builders<ImageGenRun>.Filter.Eq(x => x.Id, runId);
-        var update = Builders<ImageGenRun>.Update.Inc(x => x.LastSeq, 1);
-        var options = new FindOneAndUpdateOptions<ImageGenRun, ImageGenRun> { ReturnDocument = ReturnDocument.After };
-        var updated = await _db.ImageGenRuns.FindOneAndUpdateAsync(filter, update, options, ct);
-        if (updated == null) throw new InvalidOperationException("run not found");
-        return updated.LastSeq;
-    }
-
     private async Task AppendEventAsync(ImageGenRun run, string eventName, object payload, CancellationToken ct)
     {
-        var seq = await NextSeqAsync(run.Id, ct);
-        var json = JsonSerializer.Serialize(payload, JsonOptions);
-
-        await _db.ImageGenRunEvents.InsertOneAsync(new ImageGenRunEvent
-        {
-            OwnerAdminId = run.OwnerAdminId,
-            RunId = run.Id,
-            Seq = seq,
-            EventName = eventName,
-            PayloadJson = json,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken: ct);
+        // 高频事件：写入 RunStore（Redis），避免每个 delta 都更新 Mongo 的 LastSeq / events
+        _ = await _runStore.AppendEventAsync(RunKinds.ImageGen, run.Id, eventName, payload, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
     }
 
     private async Task UpsertRunItemAsync(

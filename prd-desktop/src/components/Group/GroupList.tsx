@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '../../lib/tauri';
 import { ApiResponse, Document, Session, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
@@ -22,6 +23,7 @@ export default function GroupList() {
   const { activeGroupId, setActiveGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
   const syncFromServer = useMessageStore((s) => s.syncFromServer);
   const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
+  const bindGroupContext = useMessageStore((s) => s.bindGroupContext);
   const [dissolveTarget, setDissolveTarget] = useState<null | { groupId: string; groupName: string }>(null);
   const [dissolveBusy, setDissolveBusy] = useState(false);
   const [dissolveError, setDissolveError] = useState('');
@@ -52,18 +54,10 @@ export default function GroupList() {
   const openGroup = async (group: (typeof groups)[number]) => {
     if (user?.userId === 'demo-user-001') return;
 
-    // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
-    // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）
-    // - syncFromServer 内部有 isSyncing 保护，重复触发开销很低
-    try {
-      await syncFromServer({ groupId: group.groupId, limit: 100 });
-    } catch {
-      // ignore（断连/权限由全局处理）
-    } finally {
-      triggerScrollToBottom();
-    }
-
-    // 切换群组必须先清空旧 session/document，避免串信息
+    // 切换群组：先重置消息/分页/滚动状态，再切换 session/document，避免残留状态导致：
+    // - 列表停留在旧的 range（看起来像“显示最旧消息”）
+    // - 错误显示“仅加载最近3轮…”
+    bindGroupContext(group.groupId);
     setActiveGroupContext(group.groupId);
 
     // 未绑定 PRD 的群组允许存在，但无法进入会话
@@ -102,6 +96,17 @@ export default function GroupList() {
       setSession(session, docResp.data);
       // 同步选中态（防止 setSession 的 groupId 为空时覆盖）
       setActiveGroupId(group.groupId);
+
+      // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
+      // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）
+      // - syncFromServer 内部有 isSyncing 保护，重复触发开销很低
+      try {
+        await syncFromServer({ groupId: group.groupId, limit: 100 });
+      } catch {
+        // ignore（断连/权限由全局处理）
+      } finally {
+        triggerScrollToBottom();
+      }
     } catch (err) {
       console.error('Failed to open group session:', err);
     }
@@ -148,6 +153,19 @@ export default function GroupList() {
     setDissolveError('');
     try {
       setDissolveBusy(true);
+      // 解散“当前正在订阅的群”时：先主动退出群上下文并取消订阅，避免出现可预期的“群消息订阅失败”居中提示
+      if (activeGroupId === dissolveTarget.groupId) {
+        try {
+          invoke('cancel_stream', { kind: 'group' }).catch(() => {});
+        } catch {
+          // ignore
+        }
+        try {
+          clearSession();
+        } catch {
+          // ignore
+        }
+      }
       const resp = await invoke<ApiResponse<any>>('dissolve_group', { groupId: dissolveTarget.groupId });
       if (!resp.success) {
         if (resp.error?.code === 'UNAUTHORIZED') {
@@ -159,10 +177,6 @@ export default function GroupList() {
         return;
       }
 
-      // 如果解散的是当前群：清空上下文，避免残留会话
-      if (activeGroupId === dissolveTarget.groupId) {
-        clearSession();
-      }
       await loadGroups();
       setDissolveTarget(null);
     } catch (err) {
@@ -288,48 +302,50 @@ export default function GroupList() {
       ))}
 
       {/* 解散群确认弹层 */}
-      {dissolveTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => (dissolveBusy ? null : setDissolveTarget(null))}
-          />
-          <div className="relative w-full max-w-md mx-4 ui-glass-modal">
-            <div className="px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
-              <div className="text-lg font-semibold text-text-primary">解散群组</div>
-              <div className="mt-1 text-sm text-text-secondary">
-                将永久删除群组与成员关系：<span className="text-text-primary">{dissolveTarget.groupName}</span>
-              </div>
-            </div>
-            <div className="p-6 space-y-3">
-              <div className="text-sm text-text-secondary">
-                确认后不可恢复。建议先通知群成员。
-              </div>
-              {dissolveError ? (
-                <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
-                  {dissolveError}
+      {dissolveTarget &&
+        (typeof document !== 'undefined'
+          ? createPortal(
+              <div className="fixed inset-0 z-[1000] flex items-center justify-center">
+                <div
+                  className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                  onClick={() => (dissolveBusy ? null : setDissolveTarget(null))}
+                />
+                <div className="relative w-full max-w-md mx-4 ui-glass-modal">
+                  <div className="px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+                    <div className="text-lg font-semibold text-text-primary">解散群组</div>
+                    <div className="mt-1 text-sm text-text-secondary">
+                      将永久删除群组与成员关系：<span className="text-text-primary">{dissolveTarget.groupName}</span>
+                    </div>
+                  </div>
+                  <div className="p-6 space-y-3">
+                    <div className="text-sm text-text-secondary">确认后不可恢复。建议先通知群成员。</div>
+                    {dissolveError ? (
+                      <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
+                        {dissolveError}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 ui-glass-bar">
+                    <button
+                      onClick={() => setDissolveTarget(null)}
+                      disabled={dissolveBusy}
+                      className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={confirmDissolve}
+                      disabled={dissolveBusy}
+                      className="flex-1 py-2.5 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {dissolveBusy ? '解散中...' : '确认解散'}
+                    </button>
+                  </div>
                 </div>
-              ) : null}
-            </div>
-            <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 ui-glass-bar">
-              <button
-                onClick={() => setDissolveTarget(null)}
-                disabled={dissolveBusy}
-                className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
-              >
-                取消
-              </button>
-              <button
-                onClick={confirmDissolve}
-                disabled={dissolveBusy}
-                className="flex-1 py-2.5 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                {dissolveBusy ? '解散中...' : '确认解散'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </div>,
+              document.body
+            )
+          : null)}
     </div>
   );
 }

@@ -28,6 +28,16 @@ pub fn run() {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
+
+            // macOS：使用“覆盖式/透明”标题栏，让 WebView 内容延伸到最顶部（类似无白色标题栏）
+            // 说明：这会让红绿灯悬浮在内容之上，前端需自行留出安全区并提供可拖拽区域。
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::TitleBarStyle;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -41,6 +51,9 @@ pub fn run() {
             commands::session::subscribe_group_messages,
             commands::session::switch_role,
             commands::session::send_message,
+            commands::session::create_chat_run,
+            commands::session::subscribe_chat_run,
+            commands::session::cancel_chat_run,
             commands::session::resend_message,
             commands::session::get_prompts,
             commands::session::cancel_stream,

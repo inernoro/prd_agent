@@ -191,6 +191,16 @@ struct SendMessageRequest {
     attachment_ids: Option<Vec<String>>,
 }
 
+#[derive(Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateChatRunResponse {
+    pub run_id: String,
+    pub user_message_id: String,
+    pub assistant_message_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_seq: Option<i64>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviewAskRequest {
@@ -460,6 +470,140 @@ pub async fn send_message(
     }
 
     Ok(())
+}
+
+#[command]
+pub async fn create_chat_run(
+    session_id: String,
+    content: String,
+    role: Option<String>,
+    prompt_key: Option<String>,
+    attachment_ids: Option<Vec<String>>,
+) -> Result<ApiResponse<CreateChatRunResponse>, String> {
+    let client = ApiClient::new();
+    let request = SendMessageRequest {
+        content,
+        role,
+        prompt_key,
+        attachment_ids,
+    };
+    client
+        .post(&format!("/sessions/{}/messages/run", session_id), &request)
+        .await
+}
+
+#[command]
+pub async fn subscribe_chat_run(
+    app: AppHandle,
+    cancel: State<'_, StreamCancelState>,
+    run_id: String,
+    after_seq: Option<i64>,
+) -> Result<(), String> {
+    let rid = run_id.trim().to_string();
+    if rid.is_empty() {
+        return Ok(());
+    }
+
+    let base_url = api_client::get_api_base_url();
+    let url = format!(
+        "{}/api/v1/chat-runs/{}/stream?afterSeq={}",
+        base_url,
+        rid,
+        after_seq.unwrap_or(0).max(0)
+    );
+
+    let client = api_client::build_streaming_client(&base_url);
+    let token = cancel.new_message_token();
+
+    tauri::async_runtime::spawn(async move {
+        let mut req = client.get(&url).header("Accept", "text/event-stream");
+        if let Some(token) = api_client::get_auth_token() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let mut response = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                emit_stream_error(&app, "message-chunk", format!("Request failed: {}", e));
+                return;
+            }
+        };
+
+        // access 过期：尝试 refresh 后重试一次
+        if response.status() == StatusCode::UNAUTHORIZED {
+            let ok = ApiClient::new().refresh_auth().await.unwrap_or(false);
+            if ok {
+                let mut retry = client.get(&url).header("Accept", "text/event-stream");
+                if let Some(token) = api_client::get_auth_token() {
+                    retry = retry.header("Authorization", format!("Bearer {}", token));
+                }
+                response = match retry.send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        emit_stream_error(&app, "message-chunk", format!("Request failed: {}", e));
+                        return;
+                    }
+                };
+            } else {
+                emit_auth_expired(&app);
+            }
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            emit_stream_error(&app, "message-chunk", format!("HTTP {}: {}", status, body));
+            return;
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut sse_buf = String::new();
+        let mut saw_any_data = false;
+
+        while let Some(chunk) = stream.next().await {
+            if token.is_cancelled() {
+                break;
+            }
+            match chunk {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    handle_sse_text(
+                        &app,
+                        "message-chunk",
+                        &mut sse_buf,
+                        &text,
+                        &mut saw_any_data,
+                    );
+                }
+                Err(e) => {
+                    emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[command]
+pub async fn cancel_chat_run(run_id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let rid = run_id.trim().to_string();
+    if rid.is_empty() {
+        return Ok(ApiResponse {
+            success: true,
+            data: Some(serde_json::json!({ "runId": "" })),
+            error: None,
+        });
+    }
+
+    let client = ApiClient::new();
+    client
+        .post::<serde_json::Value, serde_json::Value>(
+            &format!("/chat-runs/{}/cancel", rid),
+            &serde_json::json!({}),
+        )
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]

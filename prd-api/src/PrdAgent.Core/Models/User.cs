@@ -44,4 +44,10 @@ public class User
     
     /// <summary>最后登录时间</summary>
     public DateTime? LastLoginAt { get; set; }
+
+    /// <summary>
+    /// 头像文件名（仅文件名，不含路径/域名）。
+    /// 客户端应使用“可配置的头像基础 URL”拼接展示（避免把域名写死在数据库/代码中）。
+    /// </summary>
+    public string? AvatarFileName { get; set; }
 }

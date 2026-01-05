@@ -23,13 +23,15 @@ public class AdminUsersController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminUsersController> _logger;
     private readonly ILoginAttemptService _loginAttemptService;
+    private readonly IConfiguration _cfg;
     private static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
 
-    public AdminUsersController(MongoDbContext db, ILogger<AdminUsersController> logger, ILoginAttemptService loginAttemptService)
+    public AdminUsersController(MongoDbContext db, ILogger<AdminUsersController> logger, ILoginAttemptService loginAttemptService, IConfiguration cfg)
     {
         _db = db;
         _logger = logger;
         _loginAttemptService = loginAttemptService;
+        _cfg = cfg;
     }
 
     private string GetAdminId()
@@ -46,6 +48,30 @@ public class AdminUsersController : ControllerBase
         if (!UsernameRegex.IsMatch(username))
             return (false, "用户名只能包含字母、数字和下划线");
         return (true, null);
+    }
+
+    private static (bool ok, string? error) ValidateAvatarFileName(string? avatarFileName)
+    {
+        if (string.IsNullOrWhiteSpace(avatarFileName)) return (true, null); // 允许清空
+        var t = avatarFileName.Trim();
+        if (t.Length > 120) return (false, "头像文件名过长");
+        // 仅允许文件名，不允许路径/协议/查询串等
+        if (t.Contains('/') || t.Contains('\\')) return (false, "头像文件名不允许包含路径分隔符");
+        if (t.Contains("..")) return (false, "头像文件名不合法");
+        if (!Regex.IsMatch(t, @"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")) return (false, "头像文件名不合法（仅允许字母数字及 . _ -）");
+        return (true, null);
+    }
+
+    private string? BuildAvatarUrl(string? avatarFileName)
+    {
+        var file = (avatarFileName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(file)) return null;
+        // 全局约束：COS 对象 key 必须全小写；这里统一以小写拼接
+        file = file.ToLowerInvariant();
+
+        var baseUrl = (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+        return $"{baseUrl}/icon/backups/head/{file}";
     }
 
     /// <summary>
@@ -96,6 +122,10 @@ public class AdminUsersController : ControllerBase
                 DisplayName = u.DisplayName,
                 Role = u.Role.ToString(),
                 Status = u.Status.ToString(),
+                UserType = u.UserType.ToString(),
+                BotKind = u.UserType == UserType.Bot ? u.BotKind?.ToString() : null,
+                AvatarFileName = u.AvatarFileName,
+                AvatarUrl = BuildAvatarUrl(u.AvatarFileName),
                 CreatedAt = u.CreatedAt,
                 LastLoginAt = u.LastLoginAt,
                 IsLocked = remaining > 0,
@@ -135,6 +165,10 @@ public class AdminUsersController : ControllerBase
             DisplayName = user.DisplayName,
             Role = user.Role.ToString(),
             Status = user.Status.ToString(),
+            UserType = user.UserType.ToString(),
+            BotKind = user.UserType == UserType.Bot ? user.BotKind?.ToString() : null,
+            AvatarFileName = user.AvatarFileName,
+            AvatarUrl = BuildAvatarUrl(user.AvatarFileName),
             CreatedAt = user.CreatedAt,
             LastLoginAt = user.LastLoginAt,
             IsLocked = remaining > 0,
@@ -142,6 +176,35 @@ public class AdminUsersController : ControllerBase
         };
 
         return Ok(ApiResponse<UserDetailResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 更新用户头像（仅保存“头像文件名”，不保存域名/完整URL）
+    /// </summary>
+    [HttpPut("{userId}/avatar")]
+    public async Task<IActionResult> UpdateUserAvatar(string userId, [FromBody] UpdateAvatarRequest request, CancellationToken ct)
+    {
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        var fileName = (request?.AvatarFileName ?? string.Empty).Trim();
+        fileName = string.IsNullOrWhiteSpace(fileName) ? null : fileName.ToLowerInvariant();
+
+        var (ok2, err2) = ValidateAvatarFileName(fileName);
+        if (!ok2) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err2 ?? "头像文件名不合法"));
+
+        var update = Builders<User>.Update.Set(u => u.AvatarFileName, fileName);
+        await _db.Users.UpdateOneAsync(u => u.UserId == userId, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<UserAvatarUpdateResponse>.Ok(new UserAvatarUpdateResponse
+        {
+            UserId = userId,
+            AvatarFileName = fileName,
+            UpdatedAt = DateTime.UtcNow
+        }));
     }
 
     /// <summary>
@@ -604,6 +667,11 @@ public class GenerateInviteCodeRequest
 public class UpdatePasswordRequest
 {
     public string Password { get; set; } = string.Empty;
+}
+
+public class UpdateAvatarRequest
+{
+    public string? AvatarFileName { get; set; }
 }
 
 public class AdminCreateUserRequest

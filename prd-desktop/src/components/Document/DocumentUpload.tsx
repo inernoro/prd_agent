@@ -4,6 +4,7 @@ import { isSystemErrorCode } from '../../lib/systemError';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
+import { useRemoteAssetUrl } from '../../stores/remoteAssetsStore';
 import { ApiResponse, Document, Session } from '../../types';
 import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
@@ -19,6 +20,7 @@ export default function DocumentUpload() {
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const loadGifUrl = useRemoteAssetUrl('icon.desktop.load');
 
   // 检测是否为演示模式
   const isDemoMode = user?.userId === 'demo-user-001';
@@ -203,7 +205,12 @@ export default function DocumentUpload() {
       >
         {loading ? (
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <img
+              src={loadGifUrl}
+              alt="加载中"
+              className="w-12 h-12 mb-4 select-none pointer-events-none"
+              draggable={false}
+            />
             <p className="text-text-secondary">正在解析文档...</p>
           </div>
         ) : (

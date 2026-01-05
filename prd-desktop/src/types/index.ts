@@ -15,6 +15,10 @@ export interface User {
   username: string;
   displayName: string;
   role: UserRole;
+  userType?: 'Human' | 'Bot' | string;
+  botKind?: 'PM' | 'DEV' | 'QA' | string;
+  avatarFileName?: string | null;
+  avatarUrl?: string | null;
 }
 
 export interface Session {
@@ -58,6 +62,8 @@ export interface Message {
   citations?: DocCitation[];
   viewRole?: UserRole;
   timestamp: Date;
+  // 运行ID：用于断线恢复/观测订阅（Run 模式）
+  runId?: string;
   // 群内顺序键（用于断线续收/严格有序）
   groupSeq?: number;
   // 关联：assistant 回答哪条 user 消息（用于排错/一问多答）
@@ -109,6 +115,8 @@ export interface GroupMember {
   displayName: string;
   memberRole: UserRole;
   tags: GroupMemberTag[];
+  avatarFileName?: string | null;
+  avatarUrl?: string | null;
   joinedAt: string;
   isOwner: boolean;
 }

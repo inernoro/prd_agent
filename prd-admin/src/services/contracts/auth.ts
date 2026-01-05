@@ -7,6 +7,9 @@ export type LoginResponse = {
     username: string;
     displayName: string;
     role: UserRole;
+    userType?: 'Human' | 'Bot' | string;
+    botKind?: 'PM' | 'DEV' | 'QA' | string;
+    avatarFileName?: string | null;
   };
   accessToken: string;
   refreshToken: string;

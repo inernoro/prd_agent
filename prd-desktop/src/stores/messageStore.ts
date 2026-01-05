@@ -26,6 +26,8 @@ interface MessageState {
   isSyncing: boolean;          // 是否正在执行增量同步
   
   bindSession: (sessionId: string | null, groupId?: string | null) => void;
+  /** 切换群组：重置消息/分页/流式状态，但不要求已拿到 sessionId（sessionId 之后再 bindSession 即可） */
+  bindGroupContext: (groupId: string | null) => void;
   setPinnedToBottom: (pinned: boolean) => void;
   triggerScrollToBottom: () => void;
 
@@ -34,6 +36,7 @@ interface MessageState {
   addUserMessageWithPendingAssistant: (args: { userMessage: Message }) => void;
   clearPendingAssistant: () => void;
   ackPendingUserMessageTimestamp: (args: { receivedAt: Date }) => void;
+  ackPendingUserMessageRunId: (args: { runId: string }) => void;
   setMessages: (messages: Message[]) => void;
   mergeMessages: (messages: Message[]) => number; // 增量合并（不覆盖）
   prependMessages: (messages: Message[]) => number;
@@ -252,7 +255,51 @@ export const useMessageStore = create<MessageState>()(
       pendingAssistantId: null,
       pendingUserMessageId: null,
       isLoadingOlder: false,
-      hasMoreOlder: true,
+      // 未拉取任何历史前：先置为 false，避免 UI 错误展示“仅加载最近3轮…”
+      hasMoreOlder: false,
+      localMinSeq: null,
+      localMaxSeq: null,
+      isSyncing: false,
+    };
+  }),
+
+  // 仅切换群组上下文（无 sessionId）：
+  // - 立刻清空旧群消息，避免串话/旧 range 残留导致“显示最旧消息”
+  // - 分页状态重置：等待后续 syncFromServer 冷启动后再计算 hasMoreOlder
+  bindGroupContext: (groupId) => set(() => {
+    const gid = groupId ? String(groupId).trim() : null;
+    if (!gid) {
+      return {
+        boundSessionId: null,
+        boundGroupId: null,
+        isPinnedToBottom: true,
+        scrollToBottomSeq: 0,
+        messages: [],
+        isStreaming: false,
+        streamingMessageId: null,
+        streamingPhase: null,
+        pendingAssistantId: null,
+        pendingUserMessageId: null,
+        isLoadingOlder: false,
+        hasMoreOlder: false,
+        localMinSeq: null,
+        localMaxSeq: null,
+        isSyncing: false,
+      };
+    }
+    return {
+      boundSessionId: null,
+      boundGroupId: gid,
+      isPinnedToBottom: true,
+      scrollToBottomSeq: 0,
+      messages: [],
+      isStreaming: false,
+      streamingMessageId: null,
+      streamingPhase: null,
+      pendingAssistantId: null,
+      pendingUserMessageId: null,
+      isLoadingOlder: false,
+      hasMoreOlder: false,
       localMinSeq: null,
       localMaxSeq: null,
       isSyncing: false,
@@ -334,6 +381,15 @@ export const useMessageStore = create<MessageState>()(
         const next = state.messages.map((m) => (m.id === id ? { ...m, timestamp: d } : m));
         return { messages: next, pendingUserMessageId: null };
       }),
+
+      // Run 回填：把“本地插入的 userMessage”补上 runId（用于显式 stop）
+      ackPendingUserMessageRunId: ({ runId }) => set((state) => {
+        const id = state.pendingUserMessageId;
+        const rid = String(runId || '').trim();
+        if (!id || !rid) return state;
+        const next = state.messages.map((m) => (m.id === id ? { ...m, runId: rid } : m));
+        return { messages: next };
+      }),
   
   setMessages: (messages) => {
     const list = Array.isArray(messages) ? messages : [];
@@ -343,7 +399,8 @@ export const useMessageStore = create<MessageState>()(
       messages: sorted,
       localMinSeq: minSeq,
       localMaxSeq: maxSeq,
-      hasMoreOlder: sorted.length > 0, // 有消息就认为可能有更多历史
+      // 注意：是否还有更早历史应由调用方（基于 limit 命中情况）决定，这里仅做兜底
+      hasMoreOlder: sorted.length > 0,
     }));
   },
 
@@ -430,6 +487,7 @@ export const useMessageStore = create<MessageState>()(
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
+        runId: (m as any).runId ? String((m as any).runId) : undefined,
         senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
         senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
@@ -480,6 +538,7 @@ export const useMessageStore = create<MessageState>()(
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
+        runId: (m as any).runId ? String((m as any).runId) : undefined,
         senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
         senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
@@ -488,7 +547,8 @@ export const useMessageStore = create<MessageState>()(
       // 冷启动（本地无缓存）：直接设置
       if (!hasLocalMessages || !afterSeq) {
         get().setMessages(mapped);
-        set({ isSyncing: false });
+        // 冷启动：以“是否命中一页”判断是否还有更早历史
+        set({ isSyncing: false, hasMoreOlder: resp.data.length >= take });
         return { added: mapped.length, replaced: true };
       }
 

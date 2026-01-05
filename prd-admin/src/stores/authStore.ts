@@ -6,6 +6,9 @@ export type AuthUser = {
   username: string;
   displayName: string;
   role: 'PM' | 'DEV' | 'QA' | 'ADMIN';
+  userType?: 'Human' | 'Bot' | string;
+  botKind?: 'PM' | 'DEV' | 'QA' | string;
+  avatarFileName?: string | null;
 };
 
 type AuthState = {
@@ -16,6 +19,7 @@ type AuthState = {
   sessionKey: string | null;
   login: (user: AuthUser, token: string) => void;
   setTokens: (token: string, refreshToken: string, sessionKey: string) => void;
+  patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
 };
 
@@ -29,6 +33,8 @@ export const useAuthStore = create<AuthState>()(
       sessionKey: null,
       login: (user, token) => set({ isAuthenticated: true, user, token }),
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
+      patchUser: (patch) =>
+        set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => set({ isAuthenticated: false, user: null, token: null, refreshToken: null, sessionKey: null }),
     }),
     { name: 'prd-admin-auth' }

@@ -5,9 +5,15 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import { useAuthStore } from '../../stores/authStore';
 import type { ApiResponse, GroupMember, GroupMemberTag } from '../../types';
 
+function parseJoinedAtMs(value: unknown): number {
+  const t = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+}
+
 function tagTheme(tag: GroupMemberTag): string {
   const r = String(tag.role || '').trim().toLowerCase();
-  if (r === 'robot') return 'bg-slate-500/10 text-slate-700 border-slate-300/40 dark:bg-slate-500/15 dark:text-slate-200 dark:border-slate-400/30';
+  // 机器人：使用“实心填充”铭牌（绿色底 + 白字），让“机器人”显性标识
+  if (r === 'robot') return 'bg-green-600 text-white border-green-700/40 dark:bg-green-500 dark:text-white dark:border-green-300/30 font-semibold';
   if (r === 'pm') return 'bg-emerald-500/10 text-emerald-700 border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-400/30';
   if (r === 'dev') return 'bg-sky-500/10 text-sky-700 border-sky-300/40 dark:bg-sky-500/15 dark:text-sky-200 dark:border-sky-400/30';
   if (r === 'qa') return 'bg-violet-500/10 text-violet-700 border-violet-300/40 dark:bg-violet-500/15 dark:text-violet-200 dark:border-violet-400/30';
@@ -15,10 +21,87 @@ function tagTheme(tag: GroupMemberTag): string {
   return 'bg-black/5 text-text-secondary border-black/10 dark:bg-white/8 dark:text-white/70 dark:border-white/15';
 }
 
+function tagIcon(kindRaw: string) {
+  const kind = String(kindRaw || '').trim().toLowerCase();
+  const base = 'w-3 h-3 shrink-0';
+  if (kind === 'robot') {
+    return (
+      <svg className={base} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
+      </svg>
+    );
+  }
+  if (kind === 'pm') {
+    return (
+      <svg className={base} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 21l-7-4V7l7-4 7 4v10l-7 4z" />
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 11v10" />
+      </svg>
+    );
+  }
+  if (kind === 'dev') {
+    return (
+      <svg className={base} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+      </svg>
+    );
+  }
+  if (kind === 'qa') {
+    return (
+      <svg className={base} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M7 4h10a2 2 0 012 2v14l-3-2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
+      </svg>
+    );
+  }
+  if (kind === 'admin') {
+    return (
+      <svg className={base} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
+      </svg>
+    );
+  }
+  return null;
+}
+
+function ownerIcon() {
+  return (
+    <svg className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 8l4 4 4-6 4 6 4-4v10H4V8z" />
+    </svg>
+  );
+}
+
 function initials(name: string): string {
   const t = String(name || '').trim();
   if (!t) return '?';
   return t.slice(0, 1).toUpperCase();
+}
+
+function AvatarCircle(props: { name: string; avatarUrl?: string | null }) {
+  const [ok, setOk] = useState(false);
+  const [bad, setBad] = useState(false);
+  const url = (props.avatarUrl ?? '').trim();
+  const showImg = url && ok && !bad;
+
+  return (
+    <div className="relative w-12 h-12 rounded-full mx-auto overflow-hidden border border-white/10">
+      <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-white bg-gradient-to-br from-primary-500/70 to-sky-500/60">
+        {initials(props.name)}
+      </div>
+      {url ? (
+        <img
+          src={url}
+          alt={props.name}
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-150 ${showImg ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setOk(true)}
+          onError={() => setBad(true)}
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
+    </div>
+  );
 }
 
 export default function GroupInfoDrawer() {
@@ -39,6 +122,28 @@ export default function GroupInfoDrawer() {
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+
+  const sortedMembers = useMemo(() => {
+    const list = Array.isArray(members) ? [...members] : [];
+    list.sort((a, b) => {
+      // 1) 群主永远第一个
+      const ao = a?.isOwner ? 1 : 0;
+      const bo = b?.isOwner ? 1 : 0;
+      if (ao !== bo) return bo - ao;
+
+      // 2) 其余按加入时间正序（老的在前，避免“创建顺序颠倒”）
+      const at = parseJoinedAtMs(a?.joinedAt);
+      const bt = parseJoinedAtMs(b?.joinedAt);
+      if (at !== bt) return at - bt;
+
+      // 3) 兜底稳定排序
+      const an = String(a?.displayName || a?.username || '').trim();
+      const bn = String(b?.displayName || b?.username || '').trim();
+      if (an !== bn) return an.localeCompare(bn, 'zh-Hans-CN');
+      return String(a?.userId || '').localeCompare(String(b?.userId || ''));
+    });
+    return list;
+  }, [members]);
 
   const isOwnerOrAdmin = useMemo(() => {
     if (!currentUserId) return false;
@@ -188,22 +293,26 @@ export default function GroupInfoDrawer() {
               <div className="mt-3 text-sm text-red-700 dark:text-red-200">{error}</div>
             ) : (
               <div className="mt-3 grid grid-cols-4 gap-3">
-                {members.slice(0, 16).map((m) => (
+                {sortedMembers.slice(0, 16).map((m) => (
                   <div key={m.userId} className="min-w-0">
-                    <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center text-sm font-semibold text-white bg-gradient-to-br from-primary-500/70 to-sky-500/60 border border-white/10">
-                      {initials(m.displayName || m.username)}
-                    </div>
+                    <AvatarCircle name={m.displayName || m.username} avatarUrl={m.avatarUrl} />
                     <div className="mt-2 text-xs text-text-secondary text-center truncate" title={m.displayName || m.username}>
                       {m.displayName || m.username}
                     </div>
                     <div className="mt-1 flex flex-wrap justify-center gap-1">
                       {(m.tags || []).slice(0, 2).map((t, idx) => (
-                        <span key={`${m.userId}-t-${idx}`} className={`text-[10px] leading-4 px-1.5 rounded-full border ${tagTheme(t)}`}>
-                          {t.name}
+                        <span
+                          key={`${m.userId}-t-${idx}`}
+                          className={`inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 rounded-full border ${tagTheme(t)}`}
+                          title={t.name}
+                        >
+                          {tagIcon(t.role)}
+                          <span className="truncate max-w-[64px]">{t.name}</span>
                         </span>
                       ))}
                       {m.isOwner ? (
-                        <span className="text-[10px] leading-4 px-1.5 rounded-full border bg-amber-500/10 text-amber-700 border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/30">
+                        <span className="inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 rounded-full border bg-amber-500/10 text-amber-700 border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/30">
+                          {ownerIcon()}
                           群主
                         </span>
                       ) : null}

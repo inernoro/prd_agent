@@ -133,6 +133,9 @@ builder.Services.AddScoped<OpenAIImageClient>();
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
 
+// 对话 Run 后台任务执行器（断线不影响服务端闭环）
+builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {
@@ -205,6 +208,12 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);
 builder.Services.AddSingleton<ICacheManager>(new RedisCacheManager(redisConnectionString, sessionTimeout));
+
+// Run 事件存储（断线续传/观测）：生产用 Redis（高频写，避免 Mongo 写放大）
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
+    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
+    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
 
 // 配置JWT认证
 var jwtSecret = builder.Configuration["Jwt:Secret"];

@@ -31,8 +31,17 @@ public class GroupsController : ControllerBase
     private readonly ILogger<GroupsController> _logger;
     private readonly MongoDbContext _db;
     private readonly IGroupMessageStreamHub _groupMessageStreamHub;
+    private readonly IConfiguration _cfg;
 
     private static readonly TimeSpan GroupSessionExpiry = TimeSpan.FromMinutes(30);
+
+    private const string AvatarPathPrefix = "icon/backups/head";
+    private static readonly Dictionary<string, string> DefaultBotAvatarFiles = new()
+    {
+        ["pm"] = "bot_pm.gif",
+        ["dev"] = "bot_dev.gif",
+        ["qa"] = "bot_qa.gif",
+    };
 
     private static string? GetUserId(ClaimsPrincipal user)
     {
@@ -53,7 +62,8 @@ public class GroupsController : ControllerBase
         ICacheManager cache,
         ILogger<GroupsController> logger,
         MongoDbContext db,
-        IGroupMessageStreamHub groupMessageStreamHub)
+        IGroupMessageStreamHub groupMessageStreamHub,
+        IConfiguration cfg)
     {
         _groupService = groupService;
         _groupBotService = groupBotService;
@@ -65,6 +75,42 @@ public class GroupsController : ControllerBase
         _logger = logger;
         _db = db;
         _groupMessageStreamHub = groupMessageStreamHub;
+        _cfg = cfg;
+    }
+
+    private string? BuildAvatarUrl(User user)
+    {
+        if (user == null) return null;
+
+        // 1) 明确设置的头像文件名优先
+        var file = (user.AvatarFileName ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(file))
+        {
+            // COS 对象 key 统一小写（防止跨系统大小写不一致导致 404） [[memory:12726348]]
+            file = file.ToLowerInvariant();
+        }
+        else
+        {
+            // 2) 机器人账号：兜底默认头像（与后台展示保持一致）
+            if (user.UserType == UserType.Bot || user.Username.Trim().ToLowerInvariant().StartsWith("bot_"))
+            {
+                var kind = (user.BotKind?.ToString() ?? string.Empty).Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(kind))
+                {
+                    var u = user.Username.Trim().ToLowerInvariant();
+                    kind = u.StartsWith("bot_") ? u.Replace("bot_", "") : "";
+                }
+                if (!DefaultBotAvatarFiles.TryGetValue(kind, out file))
+                {
+                    file = DefaultBotAvatarFiles["dev"];
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(file)) return null;
+        var baseUrl = (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+        return $"{baseUrl}/{AvatarPathPrefix}/{file}";
     }
 
     /// <summary>
@@ -360,6 +406,8 @@ public class GroupsController : ControllerBase
                     MemberRole = member.MemberRole,
                     IsBot = user.UserType == UserType.Bot,
                     BotKind = user.UserType == UserType.Bot ? user.BotKind : null,
+                    AvatarFileName = user.AvatarFileName,
+                    AvatarUrl = BuildAvatarUrl(user),
                     Tags = tags.Select(t => new GroupMemberTagDto
                     {
                         Name = t.Name,
@@ -458,6 +506,8 @@ public class GroupsController : ControllerBase
                     MemberRole = m.MemberRole,
                     IsBot = true,
                     BotKind = u.BotKind,
+                    AvatarFileName = u.AvatarFileName,
+                    AvatarUrl = BuildAvatarUrl(u),
                     Tags = tags.Select(t => new GroupMemberTagDto { Name = t.Name, Role = t.Role }).ToList(),
                     JoinedAt = m.JoinedAt,
                     IsOwner = false

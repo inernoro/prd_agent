@@ -15,6 +15,9 @@ public interface IChatService
         string? promptKey = null,
         string? userId = null,
         List<string>? attachmentIds = null,
+        string? runId = null,
+        string? fixedUserMessageId = null,
+        string? fixedAssistantMessageId = null,
         CancellationToken cancellationToken = default);
     
     /// <summary>获取对话历史</summary>

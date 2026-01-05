@@ -80,6 +80,14 @@ pub struct UserInfo {
     pub username: String,
     pub display_name: String,
     pub role: String,
+    #[serde(default)]
+    pub user_type: Option<String>,
+    #[serde(default)]
+    pub bot_kind: Option<String>,
+    #[serde(default)]
+    pub avatar_file_name: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +115,10 @@ pub struct GroupMemberInfo {
     pub member_role: String,
     #[serde(default)]
     pub tags: Vec<GroupMemberTag>,
+    #[serde(default)]
+    pub avatar_file_name: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
     pub joined_at: String,
     pub is_owner: bool,
 }
@@ -153,6 +165,8 @@ pub struct MessageHistoryItem {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_seq: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

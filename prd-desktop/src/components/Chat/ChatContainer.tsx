@@ -18,6 +18,7 @@ function ChatContainerInner() {
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const groups = useGroupListStore((s) => s.groups);
   const openGroupDrawer = useGroupInfoDrawerStore((s) => s.open);
+  const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
   const loadGroupMembers = useUserDirectoryStore((s) => s.loadGroupMembers);
   const startStreaming = useMessageStore((s) => s.startStreaming);
   const appendToStreamingMessage = useMessageStore((s) => s.appendToStreamingMessage);
@@ -217,6 +218,8 @@ function ChatContainerInner() {
     const unlisten = listen<any>('group-message', (event) => {
       const p = event.payload || {};
       if (p?.type === 'error') {
+        // 若当前已不在任何群上下文（例如刚解散/退出），忽略订阅错误提示，避免“可预期噪声”
+        if (!useSessionStore.getState().activeGroupId) return;
         if (p?.errorMessage) {
           pushNotice(`群消息订阅失败：${String(p.errorMessage)}`, { level: 'warning', ttlMs: 10_000, signature: `group-stream-error:${String(p.errorMessage)}` });
         }
@@ -250,6 +253,7 @@ function ChatContainerInner() {
           content: String(m.content || ''),
           timestamp: new Date(m.timestamp || Date.now()),
           viewRole: (m.viewRole as any) || undefined,
+          runId: (m as any).runId ? String((m as any).runId) : undefined,
           senderId: m.senderId ? String(m.senderId) : undefined,
           senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
           senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
@@ -258,6 +262,12 @@ function ChatContainerInner() {
           resendOfMessageId: m.resendOfMessageId ? String(m.resendOfMessageId) : undefined,
         } as any,
       });
+
+      // 若这是一个携带 runId 的用户消息，则订阅对应的 ChatRun（群内所有成员可观测同一流）
+      const runId = (m as any).runId ? String((m as any).runId).trim() : '';
+      if (runId && m.role === 'User') {
+        invoke('subscribe_chat_run', { runId, afterSeq: 0 }).catch(() => {});
+      }
     }).catch(() => Promise.resolve((() => {}) as any));
 
     return () => {
@@ -286,6 +296,17 @@ function ChatContainerInner() {
     syncFromServer({ groupId: activeGroupId, limit: SYNC_LIMIT })
       .catch((err) => {
         console.error('Failed to sync messages from server:', err);
+      })
+      .finally(() => {
+        // 断线恢复（方案A）：如果最新 user 消息携带 runId 且尚未看到对应 assistant，
+        // 则主动订阅该 run（避免“跳转回来后只显示一点点”）。
+        const msgs = useMessageStore.getState().messages || [];
+        const latestUserWithRun = [...msgs].reverse().find((m) => m.role === 'User' && m.runId);
+        if (!latestUserWithRun?.runId) return;
+        const hasAssistant = msgs.some((m) => m.role === 'Assistant' && m.runId === latestUserWithRun.runId);
+        if (!hasAssistant) {
+          invoke('subscribe_chat_run', { runId: latestUserWithRun.runId, afterSeq: 0 }).catch(() => {});
+        }
       });
   }, [sessionId, activeGroupId, bindSession, syncFromServer]);
 
@@ -296,9 +317,14 @@ function ChatContainerInner() {
       {activeGroupId ? (
         <div className="h-12 px-4 flex items-center justify-between border-b ui-glass-bar">
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-text-primary truncate">
+            <button
+              type="button"
+              className="text-sm font-semibold text-text-primary truncate text-left hover:text-primary-600 dark:hover:text-primary-300"
+              title="回到最新消息"
+              onClick={() => triggerScrollToBottom()}
+            >
               {groups.find((g) => g.groupId === activeGroupId)?.groupName || '群组'}
-            </div>
+            </button>
           </div>
           <button
             type="button"

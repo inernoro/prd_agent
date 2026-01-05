@@ -3,8 +3,10 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser } from '@/services';
+import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar } from '@/services';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
+import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
+import { resolveAvatarUrl } from '@/lib/avatar';
 
 type UserRow = {
   userId: string;
@@ -12,6 +14,9 @@ type UserRow = {
   displayName: string;
   role: 'PM' | 'DEV' | 'QA' | 'ADMIN';
   status: 'Active' | 'Disabled';
+  userType?: 'Human' | 'Bot' | string;
+  botKind?: 'PM' | 'DEV' | 'QA' | string;
+  avatarFileName?: string | null;
   createdAt: string;
   lastLoginAt?: string;
   isLocked?: boolean;
@@ -116,6 +121,9 @@ export default function UsersPage() {
   const [forceTargets, setForceTargets] = useState<{ admin: boolean; desktop: boolean }>({ admin: true, desktop: true });
 
   const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
+
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [avatarTargetUser, setAvatarTargetUser] = useState<UserRow | null>(null);
 
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
@@ -311,6 +319,11 @@ export default function UsersPage() {
     setPwdOpen(true);
   };
 
+  const openChangeAvatar = (u: UserRow) => {
+    setAvatarTargetUser(u);
+    setAvatarOpen(true);
+  };
+
   const isLockedUser = (u: UserRow) => {
     const remaining = typeof u.lockoutRemainingSeconds === 'number' ? u.lockoutRemainingSeconds : 0;
     if (remaining > 0) return true;
@@ -479,8 +492,35 @@ export default function UsersPage() {
                 items.map((u) => (
                   <tr key={u.userId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                     <td className="px-4 py-3">
-                      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{u.username}</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{u.displayName}</div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0 cursor-pointer"
+                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
+                          title="点击修改头像"
+                          onClick={() => openChangeAvatar(u)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            openChangeAvatar(u);
+                          }}
+                        >
+                          {(() => {
+                            const url = resolveAvatarUrl({
+                              username: u.username,
+                              userType: u.userType,
+                              botKind: u.botKind,
+                              avatarFileName: u.avatarFileName ?? null,
+                            });
+                            return url ? <img src={url} alt="avatar" className="h-full w-full object-cover" /> : null;
+                          })()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{u.username}</div>
+                          <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <select
@@ -545,6 +585,9 @@ export default function UsersPage() {
                         )}
                         <Button variant="secondary" size="sm" onClick={() => openForceExpire(u)}>
                           一键过期
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => openChangeAvatar(u)}>
+                          修改头像
                         </Button>
                         <Button variant="secondary" size="sm" onClick={() => openChangePassword(u)}>
                           修改密码
@@ -753,6 +796,25 @@ export default function UsersPage() {
             </div>
           </div>
         }
+      />
+
+      <AvatarEditDialog
+        open={avatarOpen}
+        onOpenChange={(v) => {
+          setAvatarOpen(v);
+          if (!v) setAvatarTargetUser(null);
+        }}
+        title={avatarTargetUser ? `修改头像：${avatarTargetUser.username}` : '修改头像'}
+        description={avatarTargetUser ? `${avatarTargetUser.displayName} · ${avatarTargetUser.userId}` : undefined}
+        username={avatarTargetUser?.username}
+        userType={avatarTargetUser?.userType ?? null}
+        avatarFileName={avatarTargetUser?.avatarFileName ?? null}
+        onSave={async (avatarFileName) => {
+          if (!avatarTargetUser) return;
+          const res = await updateUserAvatar(avatarTargetUser.userId, avatarFileName);
+          if (!res.success) throw new Error(res.error?.message || '保存失败');
+          await load();
+        }}
       />
 
       <Dialog

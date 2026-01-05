@@ -60,6 +60,9 @@ public class ChatService : IChatService
         string? promptKey = null,
         string? userId = null,
         List<string>? attachmentIds = null,
+        string? runId = null,
+        string? fixedUserMessageId = null,
+        string? fixedAssistantMessageId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // 真实“用户输入时间”：以服务端收到请求并进入业务处理的时间为准（UTC）
@@ -111,8 +114,11 @@ public class ChatService : IChatService
             }
         }
 
-        // 生成消息ID
-        var messageId = Guid.NewGuid().ToString();
+        var effectiveRunId = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId.Trim();
+        var userMessageId = string.IsNullOrWhiteSpace(fixedUserMessageId) ? Guid.NewGuid().ToString("N") : fixedUserMessageId.Trim();
+
+        // 生成（或固定）assistant 消息ID
+        var messageId = string.IsNullOrWhiteSpace(fixedAssistantMessageId) ? Guid.NewGuid().ToString("N") : fixedAssistantMessageId.Trim();
 
         startAtUtc = DateTime.UtcNow;
         yield return new ChatStreamEvent
@@ -215,8 +221,10 @@ public class ChatService : IChatService
         // 先保存/广播用户消息（避免等 AI 结束才看到用户消息；并与 seq 分配语义一致）
         var userMessage = new Message
         {
+            Id = userMessageId,
             SessionId = sessionId,
             GroupId = session.GroupId ?? "",
+            RunId = effectiveRunId,
             SenderId = userId,
             Role = MessageRole.User,
             Content = content,
@@ -228,7 +236,8 @@ public class ChatService : IChatService
         };
         if (!string.IsNullOrEmpty(gidForSeq))
         {
-            userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+            // groupSeq 分配不应受 HTTP RequestAborted 影响（避免“客户端断线导致服务端闭环失败”）
+            userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
         }
         await _messageRepository.InsertManyAsync(new[] { userMessage });
         if (!string.IsNullOrEmpty(gidForSeq))
@@ -270,7 +279,7 @@ public class ChatService : IChatService
                         // AI 首字到达：分配 assistant seq（仅一次）
                         if (!string.IsNullOrEmpty(gidForSeq) && !assistantSeqAtFirstToken.HasValue)
                         {
-                            assistantSeqAtFirstToken = await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+                            assistantSeqAtFirstToken = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
                         }
                     }
                     fullResponse.Append(chunk.Content);
@@ -367,6 +376,7 @@ public class ChatService : IChatService
             Id = messageId,
             SessionId = sessionId,
             GroupId = session.GroupId ?? "",
+            RunId = effectiveRunId,
             Role = MessageRole.Assistant,
             Content = terminatedWithError
                 ? (string.IsNullOrWhiteSpace(terminatedErrorMessage) ? "LLM调用失败" : $"请求失败：{terminatedErrorMessage}")
@@ -395,7 +405,7 @@ public class ChatService : IChatService
         {
             // 若全程没有产生可见 token，则 assistantSeq 可能未分配；此时在落库前兜底分配一次
             assistantMessage.GroupSeq = assistantSeqAtFirstToken
-                ?? await _groupMessageSeqService.NextAsync(gidForSeq, cancellationToken);
+                ?? await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
         }
 
         await _messageRepository.InsertManyAsync(new[] { assistantMessage });
@@ -412,6 +422,13 @@ public class ChatService : IChatService
         // 失败也要占位：此处已完成 user+assistant（错误消息）落库与群广播；不再下发 citations/done
         if (terminatedWithError)
         {
+            yield return new ChatStreamEvent
+            {
+                Type = "error",
+                MessageId = messageId,
+                ErrorCode = ErrorCodes.LLM_ERROR,
+                ErrorMessage = string.IsNullOrWhiteSpace(terminatedErrorMessage) ? "LLM调用失败" : terminatedErrorMessage
+            };
             yield break;
         }
 

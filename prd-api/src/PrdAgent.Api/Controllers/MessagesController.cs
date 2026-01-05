@@ -82,7 +82,7 @@ public class MessagesController : ControllerBase
                 request.PromptKey,
                 userId,
                 request.AttachmentIds,
-                cancellationToken))
+                cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);
 
@@ -263,7 +263,7 @@ public class MessagesController : ControllerBase
                 request.PromptKey,
                 userId,
                 request.AttachmentIds,
-                cancellationToken))
+                cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);
 

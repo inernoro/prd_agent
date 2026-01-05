@@ -32,6 +32,7 @@ public class AdminImageGenController : ControllerBase
     private readonly IAppSettingsService _settingsService;
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IRunEventStore _runStore;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -43,7 +44,8 @@ public class AdminImageGenController : ControllerBase
         ILogger<AdminImageGenController> logger,
         IAppSettingsService settingsService,
         IAssetStorage assetStorage,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IRunEventStore runStore)
     {
         _db = db;
         _modelDomain = modelDomain;
@@ -53,6 +55,7 @@ public class AdminImageGenController : ControllerBase
         _settingsService = settingsService;
         _assetStorage = assetStorage;
         _httpClientFactory = httpClientFactory;
+        _runStore = runStore;
     }
 
     private string GetAdminId() =>
@@ -951,15 +954,19 @@ public class AdminImageGenController : ControllerBase
             return;
         }
 
+        // snapshot（可选）：用于断线恢复时快速拿到当前进度
+        var snap = await _runStore.GetSnapshotAsync(RunKinds.ImageGen, runId, cancellationToken);
+        if (snap != null && snap.Seq > afterSeq)
+        {
+            await WriteSseAsync(id: snap.Seq.ToString(), eventName: "run", dataJson: snap.SnapshotJson, cancellationToken);
+            afterSeq = snap.Seq;
+        }
+
         var lastKeepAliveAt = DateTime.UtcNow;
         while (!cancellationToken.IsCancellationRequested)
         {
             // 取一批事件，避免一次性刷太多
-            var evts = await _db.ImageGenRunEvents
-                .Find(x => x.RunId == runId && x.OwnerAdminId == adminId && x.Seq > afterSeq)
-                .SortBy(x => x.Seq)
-                .Limit(120)
-                .ToListAsync(cancellationToken);
+            var evts = await _runStore.GetEventsAsync(RunKinds.ImageGen, runId, afterSeq, limit: 120, cancellationToken);
 
             if (evts.Count > 0)
             {
@@ -985,7 +992,8 @@ public class AdminImageGenController : ControllerBase
                 if (run == null) break;
                 if (run.Status is ImageGenRunStatus.Completed or ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
                 {
-                    if (afterSeq >= run.LastSeq) break;
+                    // run.LastSeq 不再按事件频率更新（避免 Mongo 写放大）；改为“run 已结束且一段时间无新事件”就退出
+                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
                 }
 
                 await Task.Delay(650, cancellationToken);

@@ -11,6 +11,12 @@ export type WizardLoaderProps = {
    * - overlay：覆盖在动画下方（旧行为）
    */
   labelMode?: 'inline' | 'below' | 'overlay';
+  /**
+   * label 样式：
+   * - pill：胶囊/控件风格（默认，历史行为）
+   * - plain：纯文字（无边框/背景），字号继承父级（用于“思考中...”）
+   */
+  labelVariant?: 'pill' | 'plain';
   /** 控制整体大小（px） */
   size?: number;
 };
@@ -19,6 +25,7 @@ export default function WizardLoader({
   className,
   label,
   labelMode = 'inline',
+  labelVariant = 'pill',
   size = 120,
 }: WizardLoaderProps) {
   const s = Math.max(40, Math.min(180, Number(size) || 120));
@@ -37,11 +44,25 @@ export default function WizardLoader({
 
   const ariaLabel = useMemo(() => label || '处理中', [label]);
   const currentSrc = stage === 'skin' ? skinUrl : stage === 'base' ? baseUrl : null;
+  const isPlain = labelVariant === 'plain';
+  const labelEl = label
+    ? (isPlain
+      ? <div className="text-text-secondary text-[1em] leading-6">{label}</div>
+      : (
+        <div className="flex items-center h-9 px-3 rounded-xl ui-control">
+          <span className="text-sm text-text-secondary">{label}</span>
+        </div>
+      ))
+    : null;
+  // below 模式原本用 minHeight 预留“气泡内空白区”，但在纯文字 variant 下会造成明显多余留白
+  const belowMinHeightStyle = (labelMode === 'below' && !isPlain)
+    ? { minHeight: `${Math.round(s + 56)}px` }
+    : undefined;
 
   return (
     <div
       className={rootClass}
-      style={labelMode === 'below' ? { minHeight: `${Math.round(s + 56)}px` } : undefined}
+      style={belowMinHeightStyle}
       aria-label={ariaLabel}
       title={ariaLabel}
     >
@@ -77,18 +98,10 @@ export default function WizardLoader({
             <div className="absolute left-0 right-0 -bottom-4 text-xs text-text-secondary truncate">{label}</div>
           ) : null}
         </div>
-        {label && labelMode === 'inline' ? (
-          <div className="flex items-center h-9 px-3 rounded-xl ui-control">
-            <span className="text-sm text-text-secondary">{label}</span>
-          </div>
-        ) : null}
+        {labelMode === 'inline' ? labelEl : null}
       </div>
 
-      {label && labelMode === 'below' ? (
-        <div className="flex items-center h-9 px-3 rounded-xl ui-control">
-          <span className="text-sm text-text-secondary">{label}</span>
-        </div>
-      ) : null}
+      {labelMode === 'below' ? labelEl : null}
     </div>
   );
 }

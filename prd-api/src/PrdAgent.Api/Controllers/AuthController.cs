@@ -154,6 +154,13 @@ public class AuthController : ControllerBase
         var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, ct);
         var accessToken = _jwtService.GenerateAccessToken(user, ct, sessionKey, tokenVersion);
 
+        var baseUrl = (HttpContext.RequestServices.GetRequiredService<IConfiguration>()["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        string? avatarUrl = null;
+        if (!string.IsNullOrWhiteSpace(baseUrl) && !string.IsNullOrWhiteSpace(user.AvatarFileName))
+        {
+            avatarUrl = $"{baseUrl}/icon/backups/head/{user.AvatarFileName.Trim().ToLowerInvariant()}";
+        }
+
         var response = new LoginResponse
         {
             AccessToken = accessToken,
@@ -166,7 +173,11 @@ public class AuthController : ControllerBase
                 UserId = user.UserId,
                 Username = user.Username,
                 DisplayName = user.DisplayName,
-                Role = user.Role
+                Role = user.Role,
+                UserType = user.UserType,
+                BotKind = user.BotKind,
+                AvatarFileName = user.AvatarFileName,
+                AvatarUrl = avatarUrl
             }
         };
 
@@ -239,6 +250,13 @@ public class AuthController : ControllerBase
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
         var accessToken = _jwtService.GenerateAccessToken(user, ct, request.SessionKey, tokenVersion);
 
+        var baseUrl2 = (HttpContext.RequestServices.GetRequiredService<IConfiguration>()["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        string? avatarUrl2 = null;
+        if (!string.IsNullOrWhiteSpace(baseUrl2) && !string.IsNullOrWhiteSpace(user.AvatarFileName))
+        {
+            avatarUrl2 = $"{baseUrl2}/icon/backups/head/{user.AvatarFileName.Trim().ToLowerInvariant()}";
+        }
+
         var response = new LoginResponse
         {
             AccessToken = accessToken,
@@ -251,7 +269,11 @@ public class AuthController : ControllerBase
                 UserId = user.UserId,
                 Username = user.Username,
                 DisplayName = user.DisplayName,
-                Role = user.Role
+                Role = user.Role,
+                UserType = user.UserType,
+                BotKind = user.BotKind,
+                AvatarFileName = user.AvatarFileName,
+                AvatarUrl = avatarUrl2
             }
         };
 

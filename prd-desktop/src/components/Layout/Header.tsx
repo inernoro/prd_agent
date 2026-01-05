@@ -27,6 +27,13 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
   const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
   const isAdmin = user?.role === 'ADMIN';
+  const isMac = useMemo(() => {
+    try {
+      return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    } catch {
+      return false;
+    }
+  }, []);
 
   const canPreview = useMemo(() => {
     return groups.length > 0;
@@ -65,7 +72,12 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
 
   return (
     <>
-      <header className="h-14 px-4 flex items-center justify-between border-b ui-glass-bar">
+      <header
+        className={`relative px-4 flex items-center justify-between border-b ui-glass-bar ${isMac ? 'h-[84px] pt-[28px]' : 'h-14'}`}
+      >
+        {/* macOS 覆盖式标题栏：顶部留出“红绿灯 + 可拖拽区” */}
+        {isMac ? <div className="absolute inset-x-0 top-0 h-[28px]" data-tauri-drag-region /> : null}
+
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">P</span>

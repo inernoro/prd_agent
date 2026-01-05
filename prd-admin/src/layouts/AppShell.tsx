@@ -1,12 +1,15 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
+import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { updateUserAvatar } from '@/services';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode };
 
@@ -15,12 +18,14 @@ export default function AppShell() {
   const location = useLocation();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
+  const patchUser = useAuthStore((s) => s.patchUser);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
   const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
+  const [avatarOpen, setAvatarOpen] = useState(false);
 
   const items: NavItem[] = useMemo(
     () => [
@@ -181,9 +186,28 @@ export default function AppShell() {
             )}
                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             {!collapsed && (
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{user?.displayName || 'Admin'}</div>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>系统管理员</div>
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setAvatarOpen(true)}
+                  className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
+                  title="修改头像"
+                >
+                  {(() => {
+                    const url = resolveAvatarUrl({
+                      username: user?.username,
+                      userType: user?.userType,
+                      botKind: user?.botKind,
+                      avatarFileName: user?.avatarFileName ?? null,
+                    });
+                    return url ? <img src={url} alt="avatar" className="h-full w-full object-cover" /> : null;
+                  })()}
+                </button>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{user?.displayName || 'Admin'}</div>
+                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}</div>
+                </div>
               </div>
             )}
             <button
@@ -199,6 +223,22 @@ export default function AppShell() {
               {!collapsed && <span className="text-sm">退出</span>}
             </button>
           </div>
+
+          <AvatarEditDialog
+            open={avatarOpen}
+            onOpenChange={setAvatarOpen}
+            title="修改我的头像"
+            description={user ? `${user.displayName} · ${user.userId}` : undefined}
+            username={user?.username}
+            userType={user?.userType ?? null}
+            avatarFileName={user?.avatarFileName ?? null}
+            onSave={async (avatarFileName) => {
+              if (!user?.userId) return;
+              const res = await updateUserAvatar(user.userId, avatarFileName);
+              if (!res.success) throw new Error(res.error?.message || '保存失败');
+              patchUser({ avatarFileName: avatarFileName ?? null });
+            }}
+          />
         </aside>
 
         <main

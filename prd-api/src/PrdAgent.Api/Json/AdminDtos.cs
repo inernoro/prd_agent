@@ -23,6 +23,14 @@ public class UserListItem
     public string DisplayName { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    /// <summary>用户类型：Human/Bot</summary>
+    public string UserType { get; set; } = string.Empty;
+    /// <summary>机器人类型（仅当 UserType=Bot 时有值）：PM/DEV/QA</summary>
+    public string? BotKind { get; set; }
+    /// <summary>头像文件名（仅文件名，不含路径/域名）</summary>
+    public string? AvatarFileName { get; set; }
+    /// <summary>头像可直接渲染的 URL（服务端拼好）</summary>
+    public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
     /// <summary>是否处于登录锁定期（由 LoginAttemptService 动态计算）</summary>
@@ -41,10 +49,28 @@ public class UserDetailResponse
     public string DisplayName { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    /// <summary>用户类型：Human/Bot</summary>
+    public string UserType { get; set; } = string.Empty;
+    /// <summary>机器人类型（仅当 UserType=Bot 时有值）：PM/DEV/QA</summary>
+    public string? BotKind { get; set; }
+    /// <summary>头像文件名（仅文件名，不含路径/域名）</summary>
+    public string? AvatarFileName { get; set; }
+    /// <summary>头像可直接渲染的 URL（服务端拼好）</summary>
+    public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
     public bool IsLocked { get; set; }
     public int LockoutRemainingSeconds { get; set; }
+}
+
+/// <summary>
+/// 用户头像更新响应
+/// </summary>
+public class UserAvatarUpdateResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public string? AvatarFileName { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 /// <summary>

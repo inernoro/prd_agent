@@ -8,6 +8,12 @@ export type AdminUser = {
   displayName: string;
   role: UserRole;
   status: UserStatus;
+  /** 用户类型：Human/Bot（后端枚举字符串） */
+  userType?: 'Human' | 'Bot' | string;
+  /** 机器人类型：PM/DEV/QA（仅 Bot 有） */
+  botKind?: 'PM' | 'DEV' | 'QA' | string;
+  /** 头像文件名（仅文件名，不含路径/域名） */
+  avatarFileName?: string | null;
   createdAt: string;
   lastLoginAt?: string;
   /** 是否处于登录锁定期（后端动态计算） */

@@ -4,7 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useConnectionStore } from '../../stores/connectionStore';
-import { Message, PromptItem, UserRole } from '../../types';
+import { ApiResponse, Message, PromptItem, UserRole } from '../../types';
 
 function roleSuffix(role: UserRole) {
   if (role === 'DEV') return 'dev';
@@ -60,7 +60,7 @@ const DEMO_RESPONSES = [
 
 export default function ChatInput() {
   const { sessionId, currentRole, document, prompts } = useSessionStore();
-  const { addUserMessageWithPendingAssistant, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage } = useMessageStore();
+  const { addUserMessageWithPendingAssistant, isStreaming, startStreaming, stopStreaming, appendToStreamingMessage, ackPendingUserMessageRunId } = useMessageStore();
   const { user } = useAuthStore();
   const connectionStatus = useConnectionStore((s) => s.status);
   const isDisconnected = connectionStatus === 'disconnected';
@@ -172,12 +172,17 @@ export default function ChatInput() {
       }
 
       await waitForUiPaint();
-      await invoke('send_message', {
+      const resp = await invoke<ApiResponse<any>>('create_chat_run', {
         sessionId,
         content: userMessage.content,
         role: currentRole.toLowerCase(),
         promptKey: p.promptKey,
       });
+      const runId = resp?.success ? String((resp as any).data?.runId || '') : '';
+      if (runId) {
+        ackPendingUserMessageRunId({ runId });
+        await invoke('subscribe_chat_run', { runId, afterSeq: 0 });
+      }
     } catch (err) {
       console.error('Failed to send prompt explain:', err);
       setIsSubmitting(false);
@@ -222,11 +227,16 @@ export default function ChatInput() {
           role: currentRole.toLowerCase(),
         });
       } else {
-        await invoke('send_message', {
+        const resp = await invoke<ApiResponse<any>>('create_chat_run', {
           sessionId,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
         });
+        const runId = resp?.success ? String((resp as any).data?.runId || '') : '';
+        if (runId) {
+          ackPendingUserMessageRunId({ runId });
+          await invoke('subscribe_chat_run', { runId, afterSeq: 0 });
+        }
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -237,7 +247,16 @@ export default function ChatInput() {
   const handleCancel = async () => {
     if (!isStreaming) return;
     try {
-      await invoke('cancel_stream', { kind: 'all' });
+      // 显式停止：先请求服务端 cancel，再取消本地订阅
+      const lastUserRunId = useMessageStore
+        .getState()
+        .messages?.slice()
+        .reverse()
+        .find((m) => m.role === 'User' && m.runId)?.runId;
+      if (lastUserRunId) {
+        await invoke('cancel_chat_run', { runId: lastUserRunId });
+      }
+      await invoke('cancel_stream', { kind: 'message' });
     } catch (err) {
       console.error('Failed to cancel stream:', err);
     } finally {

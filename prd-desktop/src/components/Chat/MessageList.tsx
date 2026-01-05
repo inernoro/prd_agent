@@ -63,10 +63,10 @@ function initials(name?: string | null): string {
 }
 
 function ThinkingIndicator({ label }: { label?: string }) {
-  // 不展示文字：仅展示动画；aria/title 仍会使用 WizardLoader 内部默认值
-  const safeLabel = (label || '').trim() || undefined;
+  // 机器人回答时：图片在上、文案在下，整体左对齐（更符合聊天气泡的阅读节奏）
+  const safeLabel = (label || '').trim() || '思考中...';
   return (
-    <WizardLoader label={safeLabel} labelMode="overlay" size={92} />
+    <WizardLoader label={safeLabel} labelMode="below" labelVariant="plain" size={92} />
   );
 }
 
@@ -296,6 +296,46 @@ function MessageListInner() {
   const showScrollToBottomRef = useRef(false);
   showScrollToBottomRef.current = showScrollToBottom;
 
+  // 群组切换兜底：
+  // 目标：点击群组后默认定位到“最新消息”，而不是停留在顶部（最老消息）。
+  // 背景：切群时 messages 可能被清空/再填充，也可能复用缓存导致数组引用不变；
+  // 因此不应仅依赖“messages 变化”来触发滚动。
+  const pendingScrollOnGroupSwitchRef = useRef<string | null>(null);
+  // 切群首帧：抑制 onScroll 的 pinned 计算，避免“还没滚到底就把 pinned 改回 false”导致随机顶部/底部
+  const suppressPinnedByScrollRef = useRef(false);
+  useEffect(() => {
+    const gid = String(activeGroupId || '').trim();
+    if (!gid) {
+      pendingScrollOnGroupSwitchRef.current = null;
+      suppressPinnedByScrollRef.current = false;
+      return;
+    }
+    // 标记：等待该群组的消息变为非空后，再强制滚到底部
+    pendingScrollOnGroupSwitchRef.current = gid;
+    suppressPinnedByScrollRef.current = true;
+    // 重置窗口化/锚点状态，避免沿用上一个群组的 range 导致“看起来像从最老开始”
+    ensuredInitialRangeRef.current = false;
+    pendingAnchorRef.current = null;
+    setRange({ start: 0, end: 0 });
+    setPinnedToBottom(true);
+  }, [activeGroupId, setPinnedToBottom]);
+
+  useEffect(() => {
+    const gid = pendingScrollOnGroupSwitchRef.current;
+    if (!gid) return;
+    if (gid !== String(activeGroupId || '').trim()) return;
+    if (!messages || messages.length === 0) return;
+    // 让 DOM 先完成一次 paint，确保 bottomRef 在可滚动区域内
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      // 再等一帧，让 scrollTop 确定下来后再放开 pinned 计算
+      requestAnimationFrame(() => {
+        suppressPinnedByScrollRef.current = false;
+      });
+    });
+    pendingScrollOnGroupSwitchRef.current = null;
+  }, [activeGroupId, messages.length]);
+
   // 关键修复：避免“messages 已存在但 range 仍是 0”导致白屏（用户一滚动才触发 range 更新）
   // 这里用 layoutEffect，保证首帧就有可见消息；本身只是一次 setState，不涉及滚动/读布局。
   useLayoutEffect(() => {
@@ -371,6 +411,9 @@ function MessageListInner() {
   useLayoutEffect(() => {
     // 关键：用 layout effect 同步滚动，避免用户点击发送后“空等一帧甚至更久”
     if (!scrollToBottomSeq) return;
+    // 与“点击回到底部/刷新”的体验对齐：在滚动发生前短暂抑制 onScroll 的 pinned 误判，
+    // 避免出现“明明要回到底部却被瞬间判定为 pinned=false”的随机现象。
+    suppressPinnedByScrollRef.current = true;
     setPinnedToBottom(true);
     pendingScrollToBottomSeqRef.current = scrollToBottomSeq;
   }, [scrollToBottomSeq, setPinnedToBottom]);
@@ -385,6 +428,10 @@ function MessageListInner() {
     // 优先滚动到 pending assistant 元素（让 AI 加载动画完整显示），否则滚动到底部哨兵
     const scrollTarget = pendingAssistantRef.current || bottomRef.current;
     scrollTarget?.scrollIntoView({ behavior: shouldInstant ? 'auto' : 'smooth', block: 'end' });
+    // 释放抑制锁：让后续用户手动滚动可以正常更新 pinned/show 状态
+    requestAnimationFrame(() => {
+      suppressPinnedByScrollRef.current = false;
+    });
   }, [scrollToBottomSeq, messages.length, isStreaming, pendingAssistantId]);
 
   // 记录 streaming 状态切换时间：用于抑制“done 后 smooth 再滚一次”的晃动
@@ -490,6 +537,14 @@ function MessageListInner() {
       if (raf != null) return;
       raf = requestAnimationFrame(() => {
         raf = null;
+        // 切群首帧：避免 pinned 被 “distanceToBottom 很大” 的初始测量误判覆盖
+        if (suppressPinnedByScrollRef.current) {
+          const prevPinned = useMessageStore.getState().isPinnedToBottom;
+          if (!prevPinned) setPinnedToBottom(true);
+          const prevShow = showScrollToBottomRef.current;
+          if (prevShow) setShowScrollToBottom(false);
+          return;
+        }
         const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         // pinned：滞回
         const prevPinned = useMessageStore.getState().isPinnedToBottom;
@@ -1127,7 +1182,7 @@ function MessageListInner() {
             <WizardLoader label="正在加载更早消息…" labelMode="below" size={72} />
           </div>
         </div>
-      ) : hasMoreOlder && effectiveRange.start === 0 ? (
+      ) : (messages.length > 0 && hasMoreOlder && effectiveRange.start === 0) ? (
         <div className="flex justify-center">
           <button
             type="button"
@@ -1178,7 +1233,7 @@ function MessageListInner() {
 
         const isMessageStreaming = isStreaming && streamingMessageId === message.id;
         const showThinking = isMessageStreaming && !!streamingPhase && streamingPhase !== 'typing';
-        const thinkingLabel = ''; // 不展示阶段文案（仅动画）
+        const thinkingLabel = '思考中...';
 
         return (
           <MessageBubble
