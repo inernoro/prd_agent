@@ -5,6 +5,7 @@ import { rawInvoke } from '../lib/tauri';
 export type DesktopBranding = {
   desktopName: string;
   loginIconKey: string;
+  loginBackgroundKey: string;
   updatedAt?: string | null;
   source: 'local' | 'server';
 };
@@ -12,6 +13,7 @@ export type DesktopBranding = {
 const DEFAULT_BRANDING: DesktopBranding = {
   desktopName: 'PRD Agent',
   loginIconKey: 'login_icon.png',
+  loginBackgroundKey: '',
   updatedAt: null,
   source: 'local',
 };
@@ -45,7 +47,7 @@ export const useDesktopBrandingStore = create<BrandingState>()(
 
         try {
           // Tauri command：本地模式返回 null；在线模式返回 server 下发配置
-          const resp = await rawInvoke<{ desktopName: string; loginIconKey: string; updatedAt?: string | null } | null>(
+          const resp = await rawInvoke<{ desktopName: string; loginIconKey: string; loginBackgroundKey: string; updatedAt?: string | null } | null>(
             'fetch_desktop_branding'
           );
           if (!resp) {
@@ -54,10 +56,12 @@ export const useDesktopBrandingStore = create<BrandingState>()(
           }
           const name = String(resp.desktopName || '').trim() || DEFAULT_BRANDING.desktopName;
           const key = String(resp.loginIconKey || '').trim().toLowerCase() || DEFAULT_BRANDING.loginIconKey;
+          const bgKey = String(resp.loginBackgroundKey || '').trim().toLowerCase() || DEFAULT_BRANDING.loginBackgroundKey;
           set({
             branding: {
               desktopName: name,
               loginIconKey: key,
+              loginBackgroundKey: bgKey,
               updatedAt: resp.updatedAt ?? null,
               source: 'server',
             },

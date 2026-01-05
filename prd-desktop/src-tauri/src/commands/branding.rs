@@ -10,6 +10,8 @@ use crate::services::ApiClient;
 pub struct DesktopBranding {
     pub desktop_name: String,
     pub login_icon_key: String,
+    #[serde(default)]
+    pub login_background_key: String,
     pub updated_at: Option<String>,
 }
 

@@ -49,6 +49,14 @@ export default function LoginPage() {
     });
   }, [assetsBaseUrl, branding.loginIconKey, skin]);
 
+  const bgUrls = useMemo(() => {
+    return buildDesktopAssetUrl({
+      baseUrl: assetsBaseUrl,
+      key: branding.loginBackgroundKey,
+      skin: skin ?? null,
+    });
+  }, [assetsBaseUrl, branding.loginBackgroundKey, skin]);
+
   const [iconSrc, setIconSrc] = useState<string>('');
   useEffect(() => {
     if (branding.source !== 'server') {
@@ -58,6 +66,45 @@ export default function LoginPage() {
     // 先尝试 skin，再回落 base
     setIconSrc(iconUrls.skinUrl || iconUrls.baseUrl);
   }, [branding.source, iconUrls.baseUrl, iconUrls.skinUrl]);
+
+  const [bgSrc, setBgSrc] = useState<string>('');
+  useEffect(() => {
+    if (branding.source !== 'server') {
+      setBgSrc('');
+      return;
+    }
+    if (!branding.loginBackgroundKey) {
+      setBgSrc('');
+      return;
+    }
+    // 先尝试 skin，再回落 base
+    setBgSrc(bgUrls.skinUrl || bgUrls.baseUrl);
+  }, [branding.loginBackgroundKey, branding.source, bgUrls.baseUrl, bgUrls.skinUrl]);
+
+  // background 是 CSS 背景图，没有 onError：用预加载探测，并做 skin -> base -> 关闭 的回退
+  useEffect(() => {
+    if (!bgSrc) return;
+    if (branding.source !== 'server') return;
+    if (!branding.loginBackgroundKey) return;
+
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      // ok
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      if (bgSrc === bgUrls.skinUrl && bgUrls.baseUrl) {
+        setBgSrc(bgUrls.baseUrl);
+      } else {
+        setBgSrc('');
+      }
+    };
+    img.src = bgSrc;
+    return () => {
+      cancelled = true;
+    };
+  }, [bgSrc, bgUrls.baseUrl, bgUrls.skinUrl, branding.loginBackgroundKey, branding.source]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,6 +141,24 @@ export default function LoginPage() {
     <div className="h-screen flex items-center justify-center bg-background dark:bg-background relative overflow-hidden animate-fade-in motion-reduce:animate-none">
       {/* 桌面端：提供“整屏背景可拖拽”的拖拽层（避免顶部小条被层级盖住导致不可拖拽） */}
       {isTauri() ? <div className="absolute inset-0 z-0" data-tauri-drag-region /> : null}
+
+      {/* 服务端品牌背景图（可选；失败自动回退到内置背景） */}
+      {branding.source === 'server' && bgSrc ? (
+        <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url("${bgSrc}")`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+              filter: 'saturate(0.95) contrast(0.95)',
+            }}
+          />
+          {/* 轻遮罩，保证文本可读性（保持“黑白系”风格） */}
+          <div className="absolute inset-0 bg-white/40 dark:bg-black/35" />
+        </div>
+      ) : null}
 
       {/* 黑白系轻背景（两层柔和径向光晕，避免“彩色渐变”） */}
       <div
