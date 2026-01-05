@@ -114,6 +114,7 @@ public sealed class ChatRunWorker : BackgroundService
                 atts = new List<string>();
                 foreach (var it in a.EnumerateArray())
                 {
+                    if (it.ValueKind != JsonValueKind.String) continue;
                     var s = (it.GetString() ?? "").Trim();
                     if (!string.IsNullOrWhiteSpace(s)) atts.Add(s);
                 }

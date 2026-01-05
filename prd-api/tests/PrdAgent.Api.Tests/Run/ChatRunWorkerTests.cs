@@ -5,6 +5,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
+using Shouldly;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Run;
@@ -23,7 +24,7 @@ public class ChatRunWorkerTests
             string? runId = null,
             string? fixedUserMessageId = null,
             string? fixedAssistantMessageId = null,
-            CancellationToken cancellationToken = default)
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             yield return new ChatStreamEvent { Type = "start", MessageId = fixedAssistantMessageId ?? "a1" };
             yield return new ChatStreamEvent { Type = "blockStart", MessageId = fixedAssistantMessageId ?? "a1", BlockId = "b1", BlockKind = "paragraph" };
@@ -81,15 +82,15 @@ public class ChatRunWorkerTests
         }
 
         var final = await store.GetRunAsync(RunKinds.Chat, runId);
-        Assert.NotNull(final);
-        Assert.Equal(RunStatuses.Done, final!.Status);
+        final.ShouldNotBeNull();
+        final!.Status.ShouldBe(RunStatuses.Done);
 
         var events = await store.GetEventsAsync(RunKinds.Chat, runId, afterSeq: 0, limit: 50);
-        Assert.True(events.Count >= 2); // start + blockDelta + done
+        events.Count.ShouldBeGreaterThanOrEqualTo(2); // start + blockDelta + done
 
         var snapshot = await store.GetSnapshotAsync(RunKinds.Chat, runId);
-        Assert.NotNull(snapshot);
-        Assert.Contains("snapshot", snapshot!.SnapshotJson);
+        snapshot.ShouldNotBeNull();
+        snapshot!.SnapshotJson.ShouldContain("snapshot");
 
         await worker.StopAsync(CancellationToken.None);
     }

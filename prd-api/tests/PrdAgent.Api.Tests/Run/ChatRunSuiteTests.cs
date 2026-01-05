@@ -6,6 +6,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
+using Shouldly;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Run;
@@ -161,15 +162,15 @@ public class ChatRunSuiteTests
         await WaitRunAsync(store, runId, m => m?.Status == RunStatuses.Done, cts.Token);
 
         var meta = await store.GetRunAsync(RunKinds.Chat, runId, cts.Token);
-        Assert.NotNull(meta);
-        Assert.Equal(RunStatuses.Done, meta!.Status);
+        meta.ShouldNotBeNull();
+        meta!.Status.ShouldBe(RunStatuses.Done);
 
         var events = await store.GetEventsAsync(RunKinds.Chat, runId, afterSeq: 0, limit: 50, cts.Token);
-        Assert.Contains(events, e => e.PayloadJson.Contains("\"type\":\"done\"", StringComparison.OrdinalIgnoreCase));
+        events.ShouldContain(e => e.PayloadJson.Contains("\"type\":\"done\"", StringComparison.OrdinalIgnoreCase));
 
         var snap = await store.GetSnapshotAsync(RunKinds.Chat, runId, cts.Token);
-        Assert.NotNull(snap);
-        Assert.Contains("\"type\":\"snapshot\"", snap!.SnapshotJson, StringComparison.OrdinalIgnoreCase);
+        snap.ShouldNotBeNull();
+        snap!.SnapshotJson.ShouldContain("\"type\":\"snapshot\"");
 
         await worker.StopAsync(CancellationToken.None);
     }
@@ -192,11 +193,11 @@ public class ChatRunSuiteTests
         await WaitRunAsync(store, runId, m => m?.Status == RunStatuses.Error, cts.Token);
 
         var meta = await store.GetRunAsync(RunKinds.Chat, runId, cts.Token);
-        Assert.NotNull(meta);
-        Assert.Equal(RunStatuses.Error, meta!.Status);
+        meta.ShouldNotBeNull();
+        meta!.Status.ShouldBe(RunStatuses.Error);
 
         var events = await store.GetEventsAsync(RunKinds.Chat, runId, afterSeq: 0, limit: 50, cts.Token);
-        Assert.Contains(events, e => e.PayloadJson.Contains("\"type\":\"error\"", StringComparison.OrdinalIgnoreCase));
+        events.ShouldContain(e => e.PayloadJson.Contains("\"type\":\"error\"", StringComparison.OrdinalIgnoreCase));
 
         await worker.StopAsync(CancellationToken.None);
     }
@@ -220,8 +221,8 @@ public class ChatRunSuiteTests
         await WaitRunAsync(store, runId, m => m?.Status == RunStatuses.Cancelled, cts.Token);
 
         var meta = await store.GetRunAsync(RunKinds.Chat, runId, cts.Token);
-        Assert.NotNull(meta);
-        Assert.Equal(RunStatuses.Cancelled, meta!.Status);
+        meta.ShouldNotBeNull();
+        meta!.Status.ShouldBe(RunStatuses.Cancelled);
 
         await worker.StopAsync(CancellationToken.None);
     }
@@ -247,12 +248,12 @@ public class ChatRunSuiteTests
 
         await WaitRunAsync(store, runId, m => m?.Status == RunStatuses.Cancelled, cts.Token);
         var meta = await store.GetRunAsync(RunKinds.Chat, runId, cts.Token);
-        Assert.NotNull(meta);
-        Assert.Equal(RunStatuses.Cancelled, meta!.Status);
+        meta.ShouldNotBeNull();
+        meta!.Status.ShouldBe(RunStatuses.Cancelled);
 
         // 取消后不要求有 done；但应该至少有部分事件
         var events = await store.GetEventsAsync(RunKinds.Chat, runId, afterSeq: 0, limit: 200, cts.Token);
-        Assert.True(events.Count > 0);
+        events.Count.ShouldBeGreaterThan(0);
 
         await worker.StopAsync(CancellationToken.None);
     }

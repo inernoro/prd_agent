@@ -1,5 +1,6 @@
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
+using Shouldly;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Run;
@@ -18,17 +19,17 @@ public class InMemoryRunEventStoreTests
         var s2 = await store.AppendEventAsync(RunKinds.Chat, runId, "message", new { type = "blockDelta", content = "hi" });
         var s3 = await store.AppendEventAsync(RunKinds.Chat, runId, "message", new { type = "done" });
 
-        Assert.Equal(1, s1);
-        Assert.Equal(2, s2);
-        Assert.Equal(3, s3);
+        s1.ShouldBe(1);
+        s2.ShouldBe(2);
+        s3.ShouldBe(3);
 
         var all = await store.GetEventsAsync(RunKinds.Chat, runId, afterSeq: 0, limit: 10);
-        Assert.Equal(3, all.Count);
-        Assert.Equal(new long[] { 1, 2, 3 }, all.Select(x => x.Seq).ToArray());
+        all.Count.ShouldBe(3);
+        all.Select(x => x.Seq).ToArray().ShouldBe(new long[] { 1, 2, 3 });
 
         var after2 = await store.GetEventsAsync(RunKinds.Chat, runId, afterSeq: 2, limit: 10);
-        Assert.Single(after2);
-        Assert.Equal(3, after2[0].Seq);
+        after2.Count.ShouldBe(1);
+        after2[0].Seq.ShouldBe(3);
     }
 
     [Fact]
@@ -45,9 +46,9 @@ public class InMemoryRunEventStoreTests
         });
 
         var got = await store.GetSnapshotAsync(RunKinds.Chat, runId);
-        Assert.NotNull(got);
-        Assert.Equal(7, got!.Seq);
-        Assert.Contains("snapshot", got.SnapshotJson);
+        got.ShouldNotBeNull();
+        got!.Seq.ShouldBe(7);
+        got.SnapshotJson.ShouldContain("snapshot");
     }
 }
 
