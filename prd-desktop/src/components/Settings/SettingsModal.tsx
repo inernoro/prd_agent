@@ -262,11 +262,45 @@ export default function SettingsModal() {
     }
 
     setUpdateStatus('checking');
+    
+    // 调试日志：打印更新检查开始
+    console.log('[Updater] ========== UPDATE CHECK START ==========');
+    console.log('[Updater] Current app version:', appVersion);
+    // 注意：公钥是编译时嵌入的，这里打印的是源代码中的值，运行中的客户端可能不同
+    console.log('[Updater] Expected pubkey (from source):', 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2RThCQjIzRDhDOTAwQTIKUldTaUFNbllJN3ZvNWgxR3lnZWZNZ09ZbEZYMC9WVCthL0w3NW5CejRrdW53STEzc1FvcEE0dTUK');
+    // 打印配置的 endpoints（这是源代码中的值，编译后会嵌入到二进制中）
+    console.log('[Updater] Configured endpoints (from source):');
+    console.log('  1. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
+    console.log('  2. https://github.com/inernoro/prd_agent/releases/latest/download/latest.json');
+    console.log('[Updater] Note: {{target}} will be replaced with platform target, e.g., x86_64-pc-windows-msvc');
+    
+    // 手动测试 fetch manifest（绕过 Tauri updater）
+    const testUrl = 'https://github.com/inernoro/prd_agent/releases/latest/download/latest-x86_64-pc-windows-msvc.json';
+    console.log('[Updater] Testing direct fetch to:', testUrl);
     try {
+      const testResp = await fetch(testUrl);
+      console.log('[Updater] Direct fetch status:', testResp.status, testResp.statusText);
+      if (testResp.ok) {
+        const testJson = await testResp.json();
+        console.log('[Updater] Direct fetch result:', JSON.stringify(testJson, null, 2));
+      } else {
+        console.log('[Updater] Direct fetch failed, response:', await testResp.text());
+      }
+    } catch (fetchErr) {
+      console.error('[Updater] Direct fetch error:', fetchErr);
+    }
+    
+    try {
+      console.log('[Updater] Calling checkUpdate() via Tauri plugin...');
       const res: any = await checkUpdate();
+      console.log('[Updater] checkUpdate() response:', JSON.stringify(res, null, 2));
+      
       const available = Boolean(res?.available);
+      console.log('[Updater] Update available:', available);
+      
       if (!available) {
         setUpdateStatus('no-update');
+        console.log('[Updater] No update available, current version is latest');
         return;
       }
       setUpdateInfo({
@@ -274,9 +308,13 @@ export default function SettingsModal() {
         notes: typeof res?.body === 'string' ? res.body : typeof res?.notes === 'string' ? res.notes : undefined,
       });
       setUpdateStatus('available');
+      console.log('[Updater] Update available:', res?.version);
     } catch (e) {
       setUpdateStatus('error');
       const raw = String(e);
+      console.error('[Updater] Error:', raw);
+      console.error('[Updater] Full error object:', e);
+      
       // Tauri updater 常见报错：远端不是合法的 release manifest（通常是 404 / HTML / GitHub 错误 JSON）
       if (/valid release JSON/i.test(raw)) {
         setUpdateError(

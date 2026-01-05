@@ -645,28 +645,30 @@ jobs:
           echo "[INFO] Generating updater manifest for $TARGET"
           
           # 确定 updater 使用的文件和 URL
+          # Tauri 2.0 platform 标识符：使用 target triple 作为 key
+          # 参考: https://v2.tauri.app/plugin/updater/
           case "$TARGET" in
             aarch64-apple-darwin)
-              PLATFORM="darwin-aarch64"
+              PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
               SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
               ;;
             x86_64-apple-darwin)
-              PLATFORM="darwin-x86_64"
+              PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
               SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
               ;;
             x86_64-pc-windows-msvc)
-              PLATFORM="windows-x86_64"
+              PLATFORM="$TARGET"
               # Windows updater 使用 NSIS
               TARGZ=$(find "$BUNDLE_DIR/nsis" -name "*.exe" 2>/dev/null | head -1)
               SIG=$(find "$BUNDLE_DIR/nsis" -name "*.exe.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
               ;;
             x86_64-unknown-linux-gnu)
-              PLATFORM="linux-x86_64"
+              PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" 2>/dev/null | head -1)
               SIG=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
