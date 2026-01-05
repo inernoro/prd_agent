@@ -48,7 +48,7 @@ export default function GroupList() {
     if (!activeGroupId && groups.length > 0) {
       void openGroup(groups[0]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [groups, activeGroupId, user?.userId]);
 
   const openGroup = async (group: (typeof groups)[number]) => {

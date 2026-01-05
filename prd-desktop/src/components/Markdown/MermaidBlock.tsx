@@ -96,7 +96,7 @@ export default function MermaidBlock({ chart }: { chart: string }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [cleaned, isDark, isVisible]);
 
   if (error) {

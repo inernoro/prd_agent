@@ -153,7 +153,7 @@ export default function PrdPreviewPage(props?: {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [canPreview, effectiveDocumentId, effectiveGroupId, prdPreview?.documentId, prdPreview?.content]);
 
   // 注意：PrdPreviewPage 在 mode !== 'PrdPreview' 时会卸载（见 App.tsx），所以初始 state 已足够作为“进入页重置”。
@@ -579,7 +579,7 @@ export default function PrdPreviewPage(props?: {
     });
 
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [canPreview, prdPreviewLoading, prdPreviewError, prdPreview?.content]);
 
   // 内容渲染完成后：缓存 headings，并绑定 scrollspy

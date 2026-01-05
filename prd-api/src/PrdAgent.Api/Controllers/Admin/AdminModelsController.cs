@@ -115,7 +115,7 @@ public class AdminModelsController : ControllerBase
         var model = new LLMModel
         {
             Name = request.Name,
-            ModelName = request.ModelName,
+            ModelName = reqMid,
             ApiUrl = request.ApiUrl,
             ApiKeyEncrypted = string.IsNullOrEmpty(request.ApiKey) ? null : EncryptApiKey(request.ApiKey),
             PlatformId = request.PlatformId,

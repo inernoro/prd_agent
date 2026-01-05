@@ -69,7 +69,8 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
 
     public async Task SetRunAsync(string kind, RunMeta meta, TimeSpan? ttl = null, CancellationToken ct = default)
     {
-        var runId = Norm(meta?.RunId ?? string.Empty);
+        ArgumentNullException.ThrowIfNull(meta);
+        var runId = Norm(meta.RunId);
         if (string.IsNullOrWhiteSpace(runId)) throw new ArgumentException("runId 不能为空", nameof(meta));
         var k = MetaKey(kind, runId);
         var entries = new List<HashEntry>

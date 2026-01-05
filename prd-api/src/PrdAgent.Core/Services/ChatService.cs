@@ -142,7 +142,7 @@ public class ChatService : IChatService
 
         // 提示词（可选）：将提示词模板作为“聚焦指令”注入 system prompt
         string systemPrompt = baseSystemPrompt;
-        string llmUserContent = content;
+        string llmUserContent = content ?? string.Empty;
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(effectivePromptKey))
         {
@@ -227,7 +227,7 @@ public class ChatService : IChatService
             RunId = effectiveRunId,
             SenderId = userId,
             Role = MessageRole.User,
-            Content = content,
+            Content = content ?? string.Empty,
             LlmRequestId = llmRequestId,
             ViewRole = session.CurrentRole,
             AttachmentIds = attachmentIds ?? new List<string>(),

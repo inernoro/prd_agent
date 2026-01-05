@@ -79,7 +79,7 @@ function App() {
       };
       onChange();
       // Safari 老版本兼容
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line
       const anyMql = mql as any;
       if (typeof mql.addEventListener === 'function') {
         mql.addEventListener('change', onChange);

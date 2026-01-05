@@ -398,7 +398,7 @@ function MessageListInner() {
     const end = messages.length;
     const start = Math.max(0, end - pinnedWindowSize);
     setRange({ start, end });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [messages.length, pinnedWindowSize]);
 
   const pendingScrollToBottomSeqRef = useRef<number>(0);
@@ -602,7 +602,7 @@ function MessageListInner() {
       bottomRef.current?.scrollIntoView({ behavior: 'auto' });
     });
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   // 关键：pinned 时不要等 effect 更新 range，直接按最新尾部计算，确保“发送后立刻看到消息”
