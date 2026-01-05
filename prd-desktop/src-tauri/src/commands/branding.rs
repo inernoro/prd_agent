@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 
 use crate::models::ApiResponse;
-use crate::services::ApiClient;
 use crate::services::api_client;
+use crate::services::ApiClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,7 +18,10 @@ fn is_localhost_base_url(base_url: &str) -> bool {
         Ok(v) => v,
         Err(_) => return false,
     };
-    matches!(parsed.host_str(), Some("localhost") | Some("127.0.0.1") | Some("::1"))
+    matches!(
+        parsed.host_str(),
+        Some("localhost") | Some("127.0.0.1") | Some("::1")
+    )
 }
 
 /// 拉取 Desktop 品牌配置（在线模式使用；本地模式返回 None）
@@ -40,5 +43,3 @@ pub async fn fetch_desktop_branding() -> Result<Option<DesktopBranding>, String>
         Ok(None)
     }
 }
-
-
