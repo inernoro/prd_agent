@@ -54,14 +54,42 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-          if [[ -z "$VERSION" ]]; then
+          echo "Debug: github.event_name=${{ github.event_name }}"
+          echo "Debug: github.ref=${{ github.ref }}"
+          echo "Debug: GITHUB_REF_NAME=${{ github.ref_name }}"
+          echo "Debug: github.event.inputs.version=${{ github.event.inputs.version }}"
+          
+          # 如果是 workflow_dispatch，优先使用输入的版本号
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            if [[ -z "$VERSION" || "$VERSION" == "" ]]; then
+              echo "Error: workflow_dispatch requires a version input"
+              echo "  - Input version: '${{ github.event.inputs.version }}'"
+              exit 1
+            fi
+          # 如果是 tag 触发，从 tag 名称提取版本号
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          if [[ -z "$VERSION" ]]; then
-            echo "version is empty"
+            if [[ -z "$VERSION" ]]; then
+              echo "Error: failed to extract version from tag"
+              echo "  - Tag: ${{ github.ref_name }}"
+              exit 1
+            fi
+          else
+            echo "Error: unsupported trigger for version sync"
+            echo "  - Event: ${{ github.event_name }}"
+            echo "  - Ref: ${{ github.ref }}"
             exit 1
           fi
+          
+          echo "Debug: Final VERSION=$VERSION"
+          
+          # 验证版本号格式（基本格式：x.y.z）
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Warning: version format may be invalid: $VERSION"
+            echo "  Expected format: x.y.z or x.y.z-suffix"
+          fi
+          
           echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
           node - <<'NODE'
           import fs from "fs";
