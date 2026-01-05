@@ -307,7 +307,16 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            mold \
+            clang
+
+      # macOS 依赖 - 安装 lld 快速链接器
+      - name: Install macOS dependencies
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
 
       # macOS 签名证书配置
       - name: Import Apple certificates

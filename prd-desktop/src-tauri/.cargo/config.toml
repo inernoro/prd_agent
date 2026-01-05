@@ -1,0 +1,38 @@
+# 快速链接器配置 - 显著提升链接速度
+# Linux: mold (需要先安装: sudo apt-get install mold)
+# macOS: rust-lld (Rust 自带，nightly 默认启用，stable 需手动)
+# Windows: lld (随 Rust 工具链安装)
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# macOS Intel - 使用 lld 链接器加速
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=lld",
+    "-C", "link-arg=-Wl,-dead_strip",
+]
+
+# macOS Apple Silicon - 使用 lld 链接器加速
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=lld",
+    "-C", "link-arg=-Wl,-dead_strip",
+]
+
+# 优化网络请求
+[net]
+git-fetch-with-cli = true
+
+# 注册表协议（加速 crates.io 访问）
+[registries.crates-io]
+protocol = "sparse"
+

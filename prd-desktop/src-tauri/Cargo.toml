@@ -35,3 +35,31 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
+# ============================================
+# CI 构建优化 - 显著减少编译时间
+# ============================================
+
+# Release profile 优化（权衡：稍大的二进制，更快的编译）
+[profile.release]
+# opt-level = 3 太慢，用 2 足够（省 20-30% 编译时间）
+opt-level = 2
+# thin LTO 比 fat LTO 快很多，效果接近
+lto = "thin"
+# 增加 codegen-units 加速编译（默认 1 太慢）
+codegen-units = 16
+# 不嵌入调试符号（减小二进制体积，加快链接）
+strip = "symbols"
+# panic = "abort" 减少代码体积和编译时间
+panic = "abort"
+
+# 开发时用更快的配置
+[profile.dev]
+# 开发时不优化依赖
+opt-level = 0
+# 增量编译
+incremental = true
+
+# 开发时优化依赖编译（只优化依赖，自己的代码不优化）
+[profile.dev.package."*"]
+opt-level = 2
+
