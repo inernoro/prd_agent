@@ -1,10 +1,11 @@
-# PRD Agent 快速启动器 (Windows PowerShell)
-# 用法:
-#   .\quick.ps1          - 启动后端服务
-#   .\quick.ps1 admin    - 启动Web管理后台
-#   .\quick.ps1 desktop  - 启动桌面客户端
-#   .\quick.ps1 all      - 同时启动后端 + Web管理后台 + 桌面端（统一输出到同一控制台）
-#   .\quick.ps1 check    - 桌面端本地CI等价检查（fmt/clippy/icons等）
+# PRD Agent Quick Launcher (Windows PowerShell)
+# Usage:
+#   .\quick.ps1          - Start backend server
+#   .\quick.ps1 admin    - Start admin panel
+#   .\quick.ps1 desktop  - Start desktop client
+#   .\quick.ps1 all      - Start all services together
+#   .\quick.ps1 check    - Run desktop CI checks
+#   .\quick.ps1 ci       - Run full CI checks
 
 param(
     [Parameter(Position=0)]
@@ -15,7 +16,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# 统一控制台编码：尽量避免 Start-Job / Receive-Job + Node/Vite 输出中文乱码
+# Set console encoding to UTF-8
 try {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [Console]::InputEncoding = $utf8NoBom
@@ -40,7 +41,7 @@ function Write-Warn {
     Write-Host "[WARN] $Message" -ForegroundColor Yellow
 }
 
-function Write-Error {
+function Write-Err {
     param([string]$Message)
     Write-Host "[ERROR] $Message" -ForegroundColor Red
 }
@@ -62,25 +63,25 @@ function Ensure-PnpmInstalled {
     }
 
     if ($needInstall) {
-        Write-Warn "$Label node_modules 不完整，正在执行: pnpm install --frozen-lockfile"
+        Write-Warn "$Label node_modules incomplete, running: pnpm install --frozen-lockfile"
         pnpm -C $Dir install --frozen-lockfile
     }
 }
 
-# 启动后端服务
+# Start backend server
 function Start-Backend {
     Write-Info "Starting backend server..."
     dotnet run --project "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
 }
 
-# 启动Web管理后台
+# Start admin panel
 function Start-Admin {
     Write-Info "Starting admin panel..."
     Ensure-PnpmInstalled -Dir "$ScriptDir\prd-admin" -Label "admin" -MustExistRelativePaths @("node_modules")
     pnpm -C "$ScriptDir\prd-admin" dev
 }
 
-# 启动桌面客户端
+# Start desktop client
 function Start-Desktop {
     Write-Info "Starting desktop client..."
     Ensure-PnpmInstalled -Dir "$ScriptDir\prd-desktop" -Label "desktop" -MustExistRelativePaths @(
@@ -90,7 +91,7 @@ function Start-Desktop {
     pnpm -C "$ScriptDir\prd-desktop" tauri:dev
 }
 
-# 桌面端本地CI等价检查（避免 CI desktop 才爆）
+# Desktop CI-equivalent checks
 function Check-Desktop {
     Write-Info "Running desktop check (CI-equivalent)..."
     $desktopDir = "$ScriptDir\prd-desktop"
@@ -123,18 +124,18 @@ function Check-Desktop {
     Write-Success "Desktop check passed!"
 }
 
-# 本地跑一遍 CI（server + admin + desktop）
+# Local CI checks (server + admin + desktop)
 function Check-CI {
     Write-Info "Running local CI checks (server + admin + desktop)..."
 
-    # server checks (align with .github/workflows/ci.yml server-build)
+    # server checks
     Write-Info "Server: dotnet restore/build/test..."
     $slnPath = Join-Path $ScriptDir "prd-api\PrdAgent.sln"
     dotnet restore "$slnPath"
     dotnet build "$slnPath" -c Release --no-restore
     dotnet test "$slnPath" -c Release --no-build --verbosity normal
 
-    # admin checks (align with .github/workflows/ci.yml admin-build)
+    # admin checks
     Write-Info "Admin: install/typecheck/build..."
     $adminDir = Join-Path $ScriptDir "prd-admin"
     if (-not (Test-Path (Join-Path $adminDir "node_modules"))) {
@@ -144,17 +145,17 @@ function Check-CI {
     pnpm -C "$adminDir" tsc --noEmit
     pnpm -C "$adminDir" build
 
-    # desktop checks (reuse existing)
+    # desktop checks
     Check-Desktop
 
     Write-Success "Local CI checks passed!"
 }
 
-# 同时启动前后端
+# Start all services together
 function Start-All {
     Write-Info "Starting all services..."
     
-    # 后台启动后端
+    # Start backend in background
     Write-Info "Starting backend server in background..."
     $backendJob = Start-Job -ScriptBlock {
         param($projectPath)
@@ -168,7 +169,7 @@ function Start-All {
         dotnet run --project $projectPath 2>&1 | ForEach-Object { "[api] $_" }
     } -ArgumentList "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
 
-    # 后台启动管理后台
+    # Start admin in background
     Write-Info "Starting admin panel in background..."
     $adminJob = Start-Job -ScriptBlock {
         param($dir)
@@ -185,7 +186,7 @@ function Start-All {
         pnpm -C $dir dev 2>&1 | ForEach-Object { "[admin] $_" }
     } -ArgumentList "$ScriptDir\prd-admin"
 
-    # 后台启动桌面端
+    # Start desktop in background
     Write-Info "Starting desktop client in background..."
     $desktopJob = Start-Job -ScriptBlock {
         param($dir)
@@ -217,13 +218,13 @@ function Start-All {
     Write-Info "Press Ctrl+C to stop all services, or run: Stop-Job $($backendJob.Id),$($adminJob.Id),$($desktopJob.Id)"
     
     try {
-        # 持续输出job的输出
+        # Output job results continuously
         while ($true) {
             Receive-Job -Job $backendJob -ErrorAction SilentlyContinue
             Receive-Job -Job $adminJob -ErrorAction SilentlyContinue
             Receive-Job -Job $desktopJob -ErrorAction SilentlyContinue
             
-            # 检查job是否仍在运行
+            # Check if jobs are still running
             if ($backendJob.State -ne "Running" -and $adminJob.State -ne "Running" -and $desktopJob.State -ne "Running") {
                 break
             }
@@ -232,7 +233,7 @@ function Start-All {
         }
     }
     finally {
-        # 清理job
+        # Cleanup jobs
         Write-Info "Stopping services..."
         Stop-Job -Job $backendJob -ErrorAction SilentlyContinue
         Stop-Job -Job $adminJob -ErrorAction SilentlyContinue
@@ -243,7 +244,7 @@ function Start-All {
     }
 }
 
-# 显示帮助信息
+# Show help message
 function Show-Help {
     Write-Host "PRD Agent Quick Launcher (Windows)"
     Write-Host ""
@@ -260,7 +261,7 @@ function Show-Help {
     Write-Host ""
 }
 
-# 主逻辑
+# Main logic
 switch ($Command) {
     "" { Start-Backend }
     "admin" { Start-Admin }
@@ -270,9 +271,8 @@ switch ($Command) {
     "ci" { Check-CI }
     "help" { Show-Help }
     default {
-        Write-Error "Unknown command: $Command"
+        Write-Err "Unknown command: $Command"
         Show-Help
         exit 1
     }
 }
-
