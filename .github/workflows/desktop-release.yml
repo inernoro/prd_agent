@@ -20,9 +20,6 @@ jobs:
     name: Build Desktop (${{ matrix.artifact_name }})
     permissions:
       contents: write
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +49,75 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Sync app version (tag/workflow_dispatch)
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ -z "$VERSION" ]]; then
+            echo "version is empty"
+            exit 1
+          fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          node - <<'NODE'
+          import fs from "fs";
+          
+          const v = process.env.APP_VERSION;
+          if (!v) {
+            console.error("APP_VERSION is empty");
+            process.exit(1);
+          }
+          
+          // package.json
+          {
+            const p = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+          }
+          
+          // src-tauri/tauri.conf.json
+          {
+            const p = "src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(p, "utf8"));
+            conf.version = v;
+            fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
+          }
+          
+          // src-tauri/Cargo.toml ([package].version)
+          {
+            const p = "src-tauri/Cargo.toml";
+            const raw = fs.readFileSync(p, "utf8");
+            const lines = raw.split(/\r?\n/);
+            let inPackage = false;
+            let changed = false;
+          
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              const trimmed = line.trim();
+              if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                inPackage = trimmed === "[package]";
+                continue;
+              }
+              if (inPackage && /^\s*version\s*=/.test(line)) {
+                lines[i] = `version = "${v}"`;
+                changed = true;
+                break;
+              }
+            }
+          
+            if (!changed) {
+              console.error("Failed to update Cargo.toml version under [package]");
+              process.exit(1);
+            }
+          
+            fs.writeFileSync(p, lines.join("\n"));
+          }
+          NODE
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -131,6 +197,19 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+      
+      - name: Enable sccache (best effort)
+        shell: bash
+        run: |
+          set +e
+          SCCACHE_GHA_ENABLED=true sccache --start-server
+          if [ $? -eq 0 ]; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          else
+            echo "sccache unavailable (likely GH cache transient issue), fallback to plain rustc"
+          fi
+          set -e
 
       # Linux 依赖
       - name: Install Linux dependencies

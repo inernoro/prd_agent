@@ -398,7 +398,6 @@ function MessageListInner() {
     const end = messages.length;
     const start = Math.max(0, end - pinnedWindowSize);
     setRange({ start, end });
-    // eslint-disable-next-line
   }, [messages.length, pinnedWindowSize]);
 
   const pendingScrollToBottomSeqRef = useRef<number>(0);
@@ -602,7 +601,6 @@ function MessageListInner() {
       bottomRef.current?.scrollIntoView({ behavior: 'auto' });
     });
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line
   }, []);
 
   // 关键：pinned 时不要等 effect 更新 range，直接按最新尾部计算，确保“发送后立刻看到消息”
@@ -685,7 +683,7 @@ function MessageListInner() {
     const assistantContentStyle = useMemo(() => {
       // 仅对 Assistant 正文缩放（不影响气泡壳/头像/昵称行）
       const n = Number(assistantFontScale);
-      const safe = Number.isFinite(n) && n > 0 ? n : 1;
+      const safe = Number.isFinite(n) && n > 0 ? n : 0.8;
       return { fontSize: `${safe}em` } as const;
     }, [assistantFontScale]);
     const tsText = formatChatTime((message as any)?.timestamp);

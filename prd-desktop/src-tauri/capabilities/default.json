@@ -9,7 +9,8 @@
     "core:event:default",
     "shell:allow-open",
     "clipboard-manager:allow-write-text",
-    "clipboard-manager:allow-write-image"
+    "clipboard-manager:allow-write-image",
+    "updater:default"
   ]
 }
 

@@ -128,9 +128,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-22.04
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     defaults:
       run:
         working-directory: prd-desktop
@@ -211,6 +208,19 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+      
+      - name: Enable sccache (best effort)
+        shell: bash
+        run: |
+          set +e
+          SCCACHE_GHA_ENABLED=true sccache --start-server
+          if [ $? -eq 0 ]; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          else
+            echo "sccache unavailable (likely GH cache transient issue), fallback to plain rustc"
+          fi
+          set -e
 
       - name: Install system dependencies (Linux)
         run: |

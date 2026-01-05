@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 type UiPrefsState = {
-  /** AI（Assistant）回复正文缩放倍数：1.0 = 默认 */
+  /** AI（Assistant）回复正文缩放倍数：0.8 = 默认 */
   assistantFontScale: number;
   increaseAssistantFont: () => void;
   decreaseAssistantFont: () => void;
@@ -15,7 +15,7 @@ const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(ma
 const MIN_SCALE = 0.75;
 const MAX_SCALE = 1.25;
 const STEP = 0.05;
-const DEFAULT_SCALE = 1.0;
+const DEFAULT_SCALE = 0.8;
 
 export const useUiPrefsStore = create<UiPrefsState>()(
   persist(

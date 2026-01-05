@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 use crate::services::api_client;
 
+const DEFAULT_API_URL_DEV: &str = "http://localhost:5000";
+
 /// 应用配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,19 +80,52 @@ fn save_config_to_file(app: &tauri::AppHandle, config: &AppConfig) -> Result<(),
     fs::write(&config_path, content).map_err(|e| format!("Failed to write config file: {}", e))
 }
 
+fn sanitize_config_for_release(cfg: &mut AppConfig) -> bool {
+    // 发布版不允许使用“开发者模式”，也不允许默认/历史遗留的 localhost 配置影响线上使用。
+    // 仅在本地调试（debug_assertions）才允许开发者模式与 localhost。
+    if cfg!(debug_assertions) {
+        return false;
+    }
+
+    let mut changed = false;
+    if cfg.is_developer {
+        cfg.is_developer = false;
+        changed = true;
+    }
+
+    let trimmed = cfg.api_base_url.trim();
+    if trimmed == DEFAULT_API_URL_DEV || is_localhost_url(trimmed) {
+        cfg.api_base_url = api_client::get_default_api_url();
+        changed = true;
+    }
+
+    changed
+}
+
 /// 获取当前配置
 #[tauri::command]
 pub async fn get_config(app: tauri::AppHandle) -> Result<AppConfig, String> {
-    load_config_from_file(&app)
+    let mut cfg = load_config_from_file(&app)?;
+    if sanitize_config_for_release(&mut cfg) {
+        // 自动落盘：避免升级到发布版后仍读取到历史 dev 配置
+        let _ = save_config_to_file(&app, &cfg);
+        api_client::set_api_base_url(cfg.api_base_url.clone());
+        if !cfg.client_id.trim().is_empty() {
+            api_client::set_client_id(cfg.client_id.clone());
+        }
+    }
+    Ok(cfg)
 }
 
 /// 保存配置
 #[tauri::command]
 pub async fn save_config(app: tauri::AppHandle, config: AppConfig) -> Result<(), String> {
-    // 更新内存中的 API URL
-    api_client::set_api_base_url(config.api_base_url.clone());
-    // clientId：若前端未传（兼容旧版），则保留旧值或生成新值，避免写入空串导致 clientId 丢失
     let mut to_save = config.clone();
+    sanitize_config_for_release(&mut to_save);
+
+    // 更新内存中的 API URL
+    api_client::set_api_base_url(to_save.api_base_url.clone());
+    // clientId：若前端未传（兼容旧版），则保留旧值或生成新值，避免写入空串导致 clientId 丢失
     if to_save.client_id.trim().is_empty() {
         let existing = load_config_from_file(&app).ok();
         to_save.client_id = existing
@@ -215,13 +250,18 @@ pub fn init_config(app: &tauri::AppHandle) {
     //
     // 注意：debug 模式不再强制写死 localhost:5000，允许你本地/容器映射到其他端口。
     if let Ok(config) = load_config_from_file(app) {
-        let trimmed = config.api_base_url.trim().to_string();
+        let mut cfg = config;
+        if sanitize_config_for_release(&mut cfg) {
+            let _ = save_config_to_file(app, &cfg);
+        }
+
+        let trimmed = cfg.api_base_url.trim().to_string();
         if !trimmed.is_empty() {
             api_client::set_api_base_url(trimmed);
         }
 
-        if !config.client_id.trim().is_empty() {
-            api_client::set_client_id(config.client_id);
+        if !cfg.client_id.trim().is_empty() {
+            api_client::set_client_id(cfg.client_id);
         }
     }
 }
