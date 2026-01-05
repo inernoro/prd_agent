@@ -276,7 +276,23 @@ export default function SettingsModal() {
       setUpdateStatus('available');
     } catch (e) {
       setUpdateStatus('error');
-      setUpdateError(String(e));
+      const raw = String(e);
+      // Tauri updater 常见报错：远端不是合法的 release manifest（通常是 404 / HTML / GitHub 错误 JSON）
+      if (/valid release JSON/i.test(raw)) {
+        setUpdateError(
+          [
+            '检查更新失败：远端更新清单（release manifest）不可用或格式不正确。',
+            '如果你使用 GitHub Releases 作为更新源，请确认该 Release 资产中包含：',
+            '- latest-{{target}}.json 及其签名 latest-{{target}}.json.sig',
+            '(以及对应平台安装包的 .sig 文件)。',
+            '也可能是网络/防火墙导致无法访问 GitHub。',
+            '',
+            `原始错误：${raw}`,
+          ].join('\n')
+        );
+        return;
+      }
+      setUpdateError(raw);
     }
   };
 
