@@ -16,6 +16,11 @@ export function AvatarEditDialog(props: {
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const suggestedFileName = useMemo(() => {
+    const u = String(props.username ?? '').trim();
+    if (!u) return '';
+    return `${u}.png`;
+  }, [props.username]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -98,6 +103,29 @@ export function AvatarEditDialog(props: {
               <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                 只需要填 <span style={{ color: 'var(--text-secondary)' }}>用户名.ext</span>（ext 可为 png/gif 等），服务端会把头像 URL 分发给各端展示。
               </div>
+
+              {suggestedFileName && value.trim().length === 0 && (
+                <div
+                  className="mt-3 rounded-[14px] px-4 py-3 text-sm flex items-center justify-between gap-3"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>建议文件名</div>
+                    <div className="mt-1 text-sm font-semibold truncate">{suggestedFileName}</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={saving}
+                    onClick={() => {
+                      setValue(suggestedFileName);
+                      setError(null);
+                    }}
+                  >
+                    一键填充
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 

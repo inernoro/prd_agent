@@ -4,9 +4,11 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar } from '@/services';
-import { CheckCircle2, Circle, XCircle } from 'lucide-react';
+import { CheckCircle2, Circle, MoreVertical, XCircle } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { useNavigate } from 'react-router-dom';
 
 type UserRow = {
   userId: string;
@@ -68,6 +70,7 @@ const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => 
 ];
 
 export default function UsersPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<UserRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -582,30 +585,112 @@ export default function UsersPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {isLockedUser(u) && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={unlockingUserId === u.userId}
-                            onClick={() => onUnlock(u)}
-                            title={
-                              typeof u.lockoutRemainingSeconds === 'number' && u.lockoutRemainingSeconds > 0
-                                ? `当前锁定剩余 ${u.lockoutRemainingSeconds} 秒`
-                                : '解除登录锁定'
-                            }
-                          >
-                            {unlockingUserId === u.userId ? '解除中...' : '解除锁定'}
-                          </Button>
-                        )}
-                        <Button variant="secondary" size="sm" onClick={() => openForceExpire(u)}>
-                          一键过期
-                        </Button>
-                        <Button variant="secondary" size="sm" onClick={() => openChangeAvatar(u)}>
-                          修改头像
-                        </Button>
-                        <Button variant="secondary" size="sm" onClick={() => openChangePassword(u)}>
-                          修改密码
-                        </Button>
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
+                              style={{
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                color: 'var(--text-secondary)',
+                              }}
+                              aria-label="更多操作"
+                              title="更多操作"
+                            >
+                              <MoreVertical size={16} />
+                            </button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              side="bottom"
+                              align="end"
+                              sideOffset={8}
+                              className="rounded-[12px] p-1 min-w-[180px]"
+                              style={{
+                                zIndex: 90,
+                                background: 'var(--bg-elevated)',
+                                border: '1px solid var(--border-subtle)',
+                                boxShadow: 'var(--shadow-lg)',
+                              }}
+                            >
+                              {isLockedUser(u) && (
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  disabled={unlockingUserId === u.userId}
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    onUnlock(u);
+                                  }}
+                                  title={
+                                    typeof u.lockoutRemainingSeconds === 'number' && u.lockoutRemainingSeconds > 0
+                                      ? `当前锁定剩余 ${u.lockoutRemainingSeconds} 秒`
+                                      : '解除登录锁定'
+                                  }
+                                >
+                                  {unlockingUserId === u.userId ? '解除锁定（处理中…）' : '解除锁定'}
+                                </DropdownMenu.Item>
+                              )}
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  openForceExpire(u);
+                                }}
+                              >
+                                一键过期
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  openChangeAvatar(u);
+                                }}
+                              >
+                                修改头像
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  openChangePassword(u);
+                                }}
+                              >
+                                修改密码
+                              </DropdownMenu.Item>
+
+                              <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  navigate(`/llm-logs?tab=llm&userId=${encodeURIComponent(u.userId)}`);
+                                }}
+                              >
+                                查看 LLM 请求日志
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  navigate(`/llm-logs?tab=system&userId=${encodeURIComponent(u.userId)}`);
+                                }}
+                              >
+                                查看 系统请求日志
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Arrow
+                                className="fill-[color:var(--bg-elevated)]"
+                                style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }}
+                              />
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
                       </div>
                     </td>
                   </tr>
