@@ -27,7 +27,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             api_base_url: api_client::get_default_api_url(),
-            assets_base_url: "https://i.pa.759800.com".to_string(),
+            assets_base_url: "".to_string(), // 默认为空，由前端 SettingsModal 引导用户配置或后端下发
             is_developer: false,
             client_id: Uuid::new_v4().to_string(),
         }

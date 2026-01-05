@@ -23,9 +23,13 @@ const REQUIRED_ASSETS: AssetRow[] = [
 ];
 
 // 有“品牌配置”后，这两个 key 的单独行展示会显得重复（仍可通过品牌配置上传/或手动新建 key 上传）
+import { getAvatarBaseUrl } from '@/lib/avatar';
+
 const HIDDEN_ASSET_KEYS = new Set(['login_icon.png', 'login_logo.svg']);
 
-const BASE_ASSETS_URL = 'https://i.pa.759800.com';
+function getBaseAssetsUrl() {
+  return getAvatarBaseUrl() || 'https://i.pa.759800.com'; // 兜底旧域名，避免完全空白
+}
 
 function labelForSkin(name: string) {
   const s = String(name || '').trim().toLowerCase();
@@ -139,12 +143,12 @@ export default function AssetsManagePage() {
 
   const brandingPreviewUrl = useMemo(() => {
     const k = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
-    return buildIconUrl(BASE_ASSETS_URL, k || 'login_icon.png', null, cacheBust);
+    return buildIconUrl(getBaseAssetsUrl(), k || 'login_icon.png', null, cacheBust);
   }, [brandingIconKey, cacheBust]);
 
   const brandingBgPreviewUrl = useMemo(() => {
     const k = String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
-    return k ? buildIconUrl(BASE_ASSETS_URL, k, null, cacheBust) : '';
+    return k ? buildIconUrl(getBaseAssetsUrl(), k, null, cacheBust) : '';
   }, [brandingBgKey, cacheBust]);
 
   const saveBranding = async () => {
@@ -196,7 +200,7 @@ export default function AssetsManagePage() {
   }, [keys]);
 
   const desktopRoot = useMemo(() => {
-    const b = String(BASE_ASSETS_URL || '').trim().replace(/\/+$/, '');
+    const b = String(getBaseAssetsUrl() || '').trim().replace(/\/+$/, '');
     return b ? `${b}/icon/desktop` : '';
   }, []);
 
@@ -689,7 +693,7 @@ function RowBlock(props: {
 
       {columns.map((c) => {
         const skin = c === '__base__' ? null : c;
-        const url = buildIconUrl(BASE_ASSETS_URL, row.key, skin, cacheBust);
+        const url = buildIconUrl(getBaseAssetsUrl(), row.key, skin, cacheBust);
         const relPath = `${skin ? `${skin}/` : ''}${row.key}`;
         const id = `${row.key}@@${c}`;
         const isBroken = Boolean(broken?.[id]);

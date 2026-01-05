@@ -20,6 +20,7 @@ type UserRow = {
   userType?: 'Human' | 'Bot' | string;
   botKind?: 'PM' | 'DEV' | 'QA' | string;
   avatarFileName?: string | null;
+  avatarUrl?: string | null;
   createdAt: string;
   lastLoginAt?: string;
   isLocked?: boolean;
@@ -653,12 +654,13 @@ export default function UsersPage() {
                           }}
                         >
                           {(() => {
-                            const url = resolveAvatarUrl({
-                              username: u.username,
-                              userType: u.userType,
-                              botKind: u.botKind,
-                              avatarFileName: u.avatarFileName ?? null,
-                            });
+    const url = resolveAvatarUrl({
+      username: u.username,
+      userType: u.userType,
+      botKind: u.botKind,
+      avatarFileName: u.avatarFileName ?? null,
+      avatarUrl: u.avatarUrl,
+    });
                             const fallback = resolveNoHeadAvatarUrl();
                             return (
                               <img

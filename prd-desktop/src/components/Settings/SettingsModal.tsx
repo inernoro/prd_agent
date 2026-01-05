@@ -20,7 +20,7 @@ interface ApiTestResult {
 
 const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
-const DEFAULT_ASSETS_URL = 'https://i.pa.759800.com';
+const DEFAULT_ASSETS_URL = ''; // 默认为空（不写死旧域名），等待后端配置下发或用户手动输入
 
 function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;

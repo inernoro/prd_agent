@@ -25,7 +25,13 @@ export function resolveAvatarUrl(args: {
   userType?: string | null; // Human/Bot
   botKind?: string | null; // PM/DEV/QA
   avatarFileName?: string | null;
+  /** 服务端下发的完整 URL（若存在且非空，直接使用） */
+  avatarUrl?: string | null;
 }): string {
+  // 1. 优先使用服务端下发的完整 URL（如果有）
+  const directUrl = (args.avatarUrl ?? '').trim();
+  if (directUrl) return directUrl;
+
   // 头像 URL = TENCENT_COS_PUBLIC_BASE_URL + /icon/backups/head + /{file}
   // 不把域名/路径写入数据库；数据库只存 fileName。
   const cosBase = getAvatarBaseUrl();

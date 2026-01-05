@@ -54,7 +54,7 @@ type RemoteAssetEntry = RemoteAssetSpec & {
   metaByVariant?: Record<string, RemoteAssetMeta> | null;
 };
 
-const DEFAULT_BASE_URL = 'https://i.pa.759800.com';
+const DEFAULT_BASE_URL = ''; // 默认为空，等待从 settingsStore (后端配置) 拉取或用户手动配置
 
 const DEFAULT_ASSETS: Record<RemoteAssetId, RemoteAssetEntry> = {
   'icon.desktop.load': {

@@ -9,6 +9,8 @@ export type AuthUser = {
   userType?: 'Human' | 'Bot' | string;
   botKind?: 'PM' | 'DEV' | 'QA' | string;
   avatarFileName?: string | null;
+  /** 服务端下发的完整头像 URL（优先使用） */
+  avatarUrl?: string | null;
 };
 
 type AuthState = {

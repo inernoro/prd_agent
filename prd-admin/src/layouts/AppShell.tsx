@@ -207,6 +207,7 @@ export default function AppShell() {
                       userType: user?.userType,
                       botKind: user?.botKind,
                       avatarFileName: user?.avatarFileName ?? null,
+                      avatarUrl: user?.avatarUrl,
                     });
                     const fallback = resolveNoHeadAvatarUrl();
                     return (

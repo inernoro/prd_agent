@@ -10,6 +10,7 @@ export type LoginResponse = {
     userType?: 'Human' | 'Bot' | string;
     botKind?: 'PM' | 'DEV' | 'QA' | string;
     avatarFileName?: string | null;
+    avatarUrl?: string | null;
   };
   accessToken: string;
   refreshToken: string;
