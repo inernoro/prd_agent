@@ -28,7 +28,7 @@ export default function LoginPage() {
   const skin = useRemoteAssetsStore((s) => s.skin);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   const [form, setForm] = useState({
     username: '',
     password: '',
@@ -91,11 +91,23 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 via-purple-100 to-slate-200 dark:from-slate-900 dark:via-purple-900 dark:to-slate-900 relative">
+    <div className="h-screen flex items-center justify-center bg-background dark:bg-background relative overflow-hidden animate-fade-in motion-reduce:animate-none">
+      {/* 桌面端：提供“整屏背景可拖拽”的拖拽层（避免顶部小条被层级盖住导致不可拖拽） */}
+      {isTauri() ? <div className="absolute inset-0 z-0" data-tauri-drag-region /> : null}
+
+      {/* 黑白系轻背景（两层柔和径向光晕，避免“彩色渐变”） */}
+      <div
+        className="absolute inset-0 z-0 pointer-events-none"
+        aria-hidden="true"
+      >
+        <div className="absolute -inset-[35%] bg-[radial-gradient(900px_circle_at_25%_20%,rgba(0,0,0,0.06),transparent_55%)] dark:bg-[radial-gradient(900px_circle_at_25%_20%,rgba(255,255,255,0.09),transparent_55%)]" />
+        <div className="absolute -inset-[35%] bg-[radial-gradient(900px_circle_at_75%_80%,rgba(0,0,0,0.04),transparent_55%)] dark:bg-[radial-gradient(900px_circle_at_75%_80%,rgba(255,255,255,0.06),transparent_55%)]" />
+      </div>
+
       {/* 右上角设置按钮 */}
       <button
         onClick={openModal}
-        className="absolute top-4 right-4 p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105"
+        className="absolute top-4 right-4 z-20 p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105 motion-reduce:transition-none motion-reduce:hover:scale-100"
         title="设置"
       >
         <svg className="w-5 h-5 text-slate-700/80 dark:text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -107,9 +119,9 @@ export default function LoginPage() {
       {/* 设置模态框 */}
       <SettingsModal />
 
-      <div className="w-full max-w-md p-8 ui-glass-modal">
+      <div className="relative z-10 w-full max-w-md p-8 ui-login-card animate-slide-up motion-reduce:animate-none">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-gradient-to-r from-cyan-400 to-purple-500">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-slate-900 dark:bg-white">
             {branding.source === 'server' && iconSrc ? (
               <img
                 src={iconSrc}
@@ -125,7 +137,7 @@ export default function LoginPage() {
                 }}
               />
             ) : (
-              <span className="text-white font-bold text-2xl">P</span>
+              <span className="text-white dark:text-slate-900 font-bold text-2xl">P</span>
             )}
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{branding.desktopName || 'PRD Agent'}</h1>
@@ -133,7 +145,7 @@ export default function LoginPage() {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/25 rounded-lg text-red-700 dark:text-red-200 text-sm">
             {error}
           </div>
         )}
@@ -160,7 +172,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="w-full py-3 rounded-lg font-medium transition-all disabled:opacity-50 motion-reduce:transition-none active:scale-[0.99] motion-reduce:active:scale-100 bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
             {loading ? '请稍候...' : '登录'}
           </button>

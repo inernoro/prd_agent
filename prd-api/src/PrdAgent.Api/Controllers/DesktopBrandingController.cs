@@ -34,6 +34,9 @@ public class DesktopBrandingController : ControllerBase
         var key = (resp.LoginIconKey ?? string.Empty).Trim().ToLowerInvariant();
         resp.LoginIconKey = FileNameKeyRegex.IsMatch(key) ? key : "login_icon.png";
 
+        var bgKey = (resp.LoginBackgroundKey ?? string.Empty).Trim().ToLowerInvariant();
+        resp.LoginBackgroundKey = FileNameKeyRegex.IsMatch(bgKey) ? bgKey : string.Empty;
+
         return Ok(ApiResponse<DesktopBrandingResponse>.Ok(resp));
     }
 }

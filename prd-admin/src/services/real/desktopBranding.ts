@@ -9,6 +9,7 @@ export async function getDesktopBrandingSettings(): Promise<ApiResponse<DesktopB
 export async function updateDesktopBrandingSettings(input: {
   desktopName: string;
   loginIconKey: string;
+  loginBackgroundKey: string;
 }): Promise<ApiResponse<DesktopBrandingSettings>> {
   return await apiRequest<DesktopBrandingSettings>('/api/v1/admin/settings/desktop', { method: 'PUT', body: input });
 }

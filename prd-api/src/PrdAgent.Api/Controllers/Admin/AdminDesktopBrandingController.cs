@@ -63,10 +63,17 @@ public class AdminDesktopBrandingController : ControllerBase
             return Ok(ApiResponse<DesktopBrandingResponse>.Fail("INVALID_FORMAT", "loginIconKey 仅允许文件名（小写字母/数字/下划线/中划线/点），且不允许包含子目录"));
         }
 
+        var bgKey = (request.LoginBackgroundKey ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(bgKey) && !FileNameKeyRegex.IsMatch(bgKey))
+        {
+            return Ok(ApiResponse<DesktopBrandingResponse>.Fail("INVALID_FORMAT", "loginBackgroundKey 仅允许文件名（小写字母/数字/下划线/中划线/点），且不允许包含子目录；为空表示使用内置背景"));
+        }
+
         var now = DateTime.UtcNow;
         var update = Builders<AppSettings>.Update
             .Set(x => x.DesktopName, name)
             .Set(x => x.DesktopLoginIconKey, key)
+            .Set(x => x.DesktopLoginBackgroundKey, bgKey)
             .Set(x => x.UpdatedAt, now);
 
         await _db.AppSettings.UpdateOneAsync(x => x.Id == "global", update, new UpdateOptions { IsUpsert = true }, ct);

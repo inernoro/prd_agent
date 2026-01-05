@@ -103,6 +103,27 @@ html, body {
     -webkit-backdrop-filter: blur(14px);
   }
 
+  /* 登录页专用玻璃卡片：更“透”以便看到毛玻璃效果（需要背后有纹理/光晕） */
+  .ui-login-card {
+    background: rgba(255, 255, 255, 0.58);
+    border: 1px solid rgba(15, 23, 42, 0.10);
+    box-shadow:
+      0 20px 60px rgba(2, 6, 23, 0.10),
+      0 1px 0 rgba(255, 255, 255, 0.65) inset;
+    border-radius: 1.25rem; /* 20px */
+    backdrop-filter: blur(18px) saturate(135%);
+    -webkit-backdrop-filter: blur(18px) saturate(135%);
+  }
+  .dark .ui-login-card {
+    background: rgba(2, 6, 23, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 22px 70px rgba(0, 0, 0, 0.62),
+      0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    backdrop-filter: blur(18px) saturate(120%);
+    -webkit-backdrop-filter: blur(18px) saturate(120%);
+  }
+
   /* 输入控件：统一边界与 focus ring（避免亮边框跳变） */
   .ui-control {
     background: var(--control-bg);

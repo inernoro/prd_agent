@@ -36,6 +36,11 @@ public class AppSettings
     /// </summary>
     public string? DesktopLoginIconKey { get; set; }
 
+    /// <summary>
+    /// Desktop 登录页背景图资源 key（文件名，指向 /icon/desktop/&lt;key&gt;，允许任意图片格式；为空则使用内置背景）
+    /// </summary>
+    public string? DesktopLoginBackgroundKey { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
