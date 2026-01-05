@@ -310,6 +310,26 @@ jobs:
             patchelf \
             mold \
             clang
+          
+          # 移除本地 .cargo/config.toml 中的自定义链接器配置
+          # 让 Rust 使用默认链接器，避免 clang -fuse-ld=mold 兼容性问题
+          if [ -f "src-tauri/.cargo/config.toml" ]; then
+            echo "[INFO] Removing custom linker config for CI compatibility"
+            rm -f src-tauri/.cargo/config.toml
+          fi
+          
+          # 创建简化的 CI 配置（只保留网络优化）
+          mkdir -p src-tauri/.cargo
+          cat > src-tauri/.cargo/config.toml << 'EOF'
+          # CI config - use default linker for compatibility
+          [net]
+          git-fetch-with-cli = true
+          
+          [registries.crates-io]
+          protocol = "sparse"
+          EOF
+          
+          echo "[INFO] Created minimal .cargo/config.toml for CI"
 
       # macOS 依赖 - 安装 lld 快速链接器
       - name: Install macOS dependencies
@@ -317,6 +337,26 @@ jobs:
         run: |
           brew install llvm
           echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          
+          # 移除本地 .cargo/config.toml 中的自定义链接器配置
+          # 避免 -fuse-ld=lld 兼容性问题
+          if [ -f "src-tauri/.cargo/config.toml" ]; then
+            echo "[INFO] Removing custom linker config for CI compatibility"
+            rm -f src-tauri/.cargo/config.toml
+          fi
+          
+          # 创建简化的 CI 配置（只保留网络优化）
+          mkdir -p src-tauri/.cargo
+          cat > src-tauri/.cargo/config.toml << 'EOF'
+          # CI config - use default linker for compatibility
+          [net]
+          git-fetch-with-cli = true
+          
+          [registries.crates-io]
+          protocol = "sparse"
+          EOF
+          
+          echo "[INFO] Created minimal .cargo/config.toml for CI"
 
       # macOS 签名证书配置
       - name: Import Apple certificates
@@ -443,6 +483,30 @@ jobs:
       - name: Install NSIS (Windows)
         if: matrix.platform == 'windows-latest'
         run: choco install nsis --version=3.11 -y --no-progress
+
+      # Windows: 移除自定义链接器配置
+      - name: Remove custom linker config (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          # 移除本地 .cargo/config.toml 中的自定义链接器配置
+          if [ -f "src-tauri/.cargo/config.toml" ]; then
+            echo "[INFO] Removing custom linker config for CI compatibility"
+            rm -f src-tauri/.cargo/config.toml
+          fi
+          
+          # 创建简化的 CI 配置
+          mkdir -p src-tauri/.cargo
+          cat > src-tauri/.cargo/config.toml << 'EOF'
+          # CI config - use default linker for compatibility
+          [net]
+          git-fetch-with-cli = true
+          
+          [registries.crates-io]
+          protocol = "sparse"
+          EOF
+          
+          echo "[INFO] Created minimal .cargo/config.toml for CI"
 
       # 构建 Tauri 应用
       - name: Build Tauri app (tag release)
