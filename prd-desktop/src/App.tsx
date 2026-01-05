@@ -20,11 +20,31 @@ import { useConnectionStore } from './stores/connectionStore';
 import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
+const THEME_STORAGE_KEY = 'prd-desktop-theme';
+
+function readStoredTheme(): 'dark' | 'light' | null {
+  try {
+    const v = (localStorage.getItem(THEME_STORAGE_KEY) || '').trim().toLowerCase();
+    if (v === 'dark' || v === 'light') return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function App() {
   const { isAuthenticated, accessToken, refreshToken, sessionKey, user } = useAuthStore();
   const { setSession, mode, sessionId, clearSession, setPrompts } = useSessionStore();
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    const stored = readStoredTheme();
+    if (stored) return stored === 'dark';
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {
+      return false;
+    }
+  });
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
   const connectionStatus = useConnectionStore((s) => s.status);
 
@@ -49,10 +69,30 @@ function App() {
     return 'PM';
   }, [user?.role]);
 
+  // 若用户没有手动选择主题，则跟随系统主题变化
   useEffect(() => {
-    // 检测系统主题
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    setIsDark(prefersDark);
+    try {
+      const mql = window.matchMedia('(prefers-color-scheme: dark)');
+      const onChange = () => {
+        if (readStoredTheme()) return;
+        setIsDark(mql.matches);
+      };
+      onChange();
+      // Safari 老版本兼容
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const anyMql = mql as any;
+      if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', onChange);
+        return () => mql.removeEventListener('change', onChange);
+      }
+      if (typeof anyMql.addListener === 'function') {
+        anyMql.addListener(onChange);
+        return () => anyMql.removeListener(onChange);
+      }
+    } catch {
+      // ignore
+    }
+    return () => {};
   }, []);
 
   useEffect(() => {
@@ -67,6 +107,18 @@ function App() {
       useRemoteAssetsStore.getState().setSkin(desired);
     }
   }, [isDark]);
+
+  const onToggleTheme = () => {
+    setIsDark((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, next ? 'dark' : 'light');
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // 将持久化的 token 同步到 Rust（避免重启后 Rust 侧没有 token 导致请求 401）
   useEffect(() => {
@@ -250,7 +302,7 @@ function App() {
 
   return (
     <div className="h-full flex flex-col bg-background-light dark:bg-background-dark">
-      <Header isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} />
+      <Header isDark={isDark} onToggleTheme={onToggleTheme} />
       
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />

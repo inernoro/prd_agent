@@ -4,10 +4,28 @@ import App from './App';
 import './styles/globals.css';
 import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
 
-// 冷启动时根据系统主题设置默认皮肤（仅覆盖 dark/white/空值；若用户未来选择自定义皮肤，则不强行覆盖）
+const THEME_STORAGE_KEY = 'prd-desktop-theme';
+
+function readStoredTheme(): 'dark' | 'light' | null {
+  try {
+    const v = (localStorage.getItem(THEME_STORAGE_KEY) || '').trim().toLowerCase();
+    if (v === 'dark' || v === 'light') return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// 冷启动：优先使用用户选择的主题（若无则跟随系统）
 try {
+  const stored = readStoredTheme();
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const desired = prefersDark ? 'dark' : 'white';
+  const isDark = stored ? stored === 'dark' : prefersDark;
+
+  // 早于 React render 应用主题 class，避免闪烁
+  document.documentElement.classList.toggle('dark', isDark);
+
+  const desired = isDark ? 'dark' : 'white';
   const cur = useRemoteAssetsStore.getState().skin;
   if (!cur || cur === 'dark' || cur === 'white') {
     useRemoteAssetsStore.getState().setSkin(desired);
