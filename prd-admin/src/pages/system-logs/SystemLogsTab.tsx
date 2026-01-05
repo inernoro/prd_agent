@@ -6,6 +6,7 @@ import { getApiLogDetail, getApiLogs, getApiLogsMeta } from '@/services';
 import type { ApiLogsListItem, ApiRequestLog } from '@/services/contracts/apiLogs';
 import { CheckCircle, Clock, Copy, Filter, Hash, Loader2, RefreshCw, Server, Users, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 function codeBoxStyle(): React.CSSProperties {
   return {
@@ -51,13 +52,14 @@ async function copyToClipboard(text: string) {
 }
 
 export default function SystemLogsTab() {
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<ApiLogsListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(30);
 
-  const [qUserId, setQUserId] = useState('');
+  const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
   const [qPath, setQPath] = useState('');
   const [qRequestId, setQRequestId] = useState('');
 

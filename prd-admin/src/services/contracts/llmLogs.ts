@@ -11,6 +11,7 @@ export type GetLlmLogsParams = {
   requestId?: string;
   groupId?: string;
   sessionId?: string;
+  userId?: string;
   status?: string;
 };
 

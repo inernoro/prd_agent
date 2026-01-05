@@ -14,6 +14,7 @@ export type UpdateUserRoleContract = (userId: string, role: UserRole) => Promise
 export type UpdateUserStatusContract = (userId: string, status: UserStatus) => Promise<ApiResponse<true>>;
 export type UpdateUserPasswordContract = (userId: string, password: string) => Promise<ApiResponse<true>>;
 export type UpdateUserAvatarContract = (userId: string, avatarFileName: string | null) => Promise<ApiResponse<{ userId: string; avatarFileName?: string | null; updatedAt?: string }>>;
+export type UpdateUserDisplayNameContract = (userId: string, displayName: string) => Promise<ApiResponse<{ userId: string; displayName: string; updatedAt?: string }>>;
 export type UnlockUserContract = (userId: string) => Promise<ApiResponse<true>>;
 
 export type GenerateInviteCodesContract = (count: number) => Promise<ApiResponse<{ codes: string[] }>>;

@@ -112,8 +112,11 @@ export default function AppShell() {
         >
           <div
             className={cn(
-              'flex items-center transition-[padding,border-radius] duration-220 ease-out',
-              collapsed ? 'justify-center rounded-full p-2' : 'justify-between rounded-[14px] px-3 py-3'
+              'flex items-center transition-[padding,border-radius,width,height] duration-220 ease-out',
+              // 收拢态：强制正圆（避免 flex stretch 导致椭圆）
+              collapsed
+                ? 'justify-center rounded-full w-[50px] h-[50px] p-1.5 self-center shrink-0'
+                : 'justify-between rounded-[14px] px-3 py-3'
             )}
                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             {!collapsed && (
@@ -156,7 +159,8 @@ export default function AppShell() {
                   className={cn(
                     'relative flex items-center gap-3 rounded-[12px] px-3 py-2.5 transition-colors',
                     'hover:bg-white/4',
-                    collapsed && 'justify-center px-0'
+                    // 收拢态：按钮点击区为正方形圆角矩形（避免扁长）
+                    collapsed && 'justify-center px-0 py-0 w-[50px] h-[50px] self-center shrink-0'
                   )}
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent',
@@ -181,8 +185,11 @@ export default function AppShell() {
 
           <div
             className={cn(
-              'transition-[padding,border-radius] duration-220 ease-out',
-              collapsed ? 'rounded-full p-2' : 'rounded-[14px] p-3'
+              'transition-[padding,border-radius,width,height] duration-220 ease-out',
+              // 收拢态：强制正圆（避免 flex stretch 导致椭圆）
+              collapsed
+                ? 'rounded-full w-[50px] h-[50px] p-1.5 self-center shrink-0 flex items-center justify-center'
+                : 'rounded-[14px] p-3'
             )}
                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             {!collapsed && (

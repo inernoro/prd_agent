@@ -613,6 +613,51 @@ public class AdminUsersController : ControllerBase
     }
 
     /// <summary>
+    /// 修改用户显示名称（仅 Human；用于管理后台修正姓名展示）
+    /// </summary>
+    [HttpPut("{userId}/display-name")]
+    public async Task<IActionResult> UpdateDisplayName(string userId, [FromBody] UpdateDisplayNameRequest request, CancellationToken ct)
+    {
+        var uid = (userId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(uid))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userId 不能为空"));
+        }
+
+        var user = await _db.Users.Find(u => u.UserId == uid).FirstOrDefaultAsync(ct);
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        // 仅允许修改人类用户姓名（机器人账号为系统内置/服务账号，避免误改）
+        if (user.UserType != UserType.Human)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅人类用户允许修改姓名"));
+        }
+
+        var name = (request?.DisplayName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "姓名不能为空"));
+        }
+        if (name.Length > 50)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "姓名不能超过50字符"));
+        }
+
+        await _db.Users.UpdateOneAsync(u => u.UserId == uid, Builders<User>.Update.Set(u => u.DisplayName, name), cancellationToken: ct);
+        _logger.LogInformation("User {UserId} displayName updated by admin", uid);
+
+        return Ok(ApiResponse<UserDisplayNameUpdateResponse>.Ok(new UserDisplayNameUpdateResponse
+        {
+            UserId = uid,
+            DisplayName = name,
+            UpdatedAt = DateTime.UtcNow
+        }));
+    }
+
+    /// <summary>
     /// 生成邀请码
     /// </summary>
     [HttpPost("invite-codes")]
@@ -659,6 +704,11 @@ public class GenerateInviteCodeRequest
 public class UpdatePasswordRequest
 {
     public string Password { get; set; } = string.Empty;
+}
+
+public class UpdateDisplayNameRequest
+{
+    public string DisplayName { get; set; } = string.Empty;
 }
 
 public class UpdateAvatarRequest

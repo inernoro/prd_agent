@@ -8,6 +8,7 @@ import type {
   BulkCreateAdminUsersContract,
   UpdateUserPasswordContract,
   UpdateUserAvatarContract,
+  UpdateUserDisplayNameContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
   UnlockUserContract,
@@ -124,6 +125,7 @@ import {
   bulkCreateUsersReal,
   updateUserPasswordReal,
   updateUserAvatarReal,
+  updateUserDisplayNameReal,
   updateUserRoleReal,
   updateUserStatusReal,
   unlockUserReal,
@@ -245,6 +247,7 @@ export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleRea
 export const updateUserStatus: UpdateUserStatusContract = withAuth(updateUserStatusReal);
 export const updateUserPassword: UpdateUserPasswordContract = withAuth(updateUserPasswordReal);
 export const updateUserAvatar: UpdateUserAvatarContract = withAuth(updateUserAvatarReal);
+export const updateUserDisplayName: UpdateUserDisplayNameContract = withAuth(updateUserDisplayNameReal);
 export const unlockUser: UnlockUserContract = withAuth(unlockUserReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
 export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);

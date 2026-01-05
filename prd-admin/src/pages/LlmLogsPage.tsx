@@ -744,6 +744,7 @@ export default function LlmLogsPage() {
   const [qRequestId, setQRequestId] = useState(() => searchParams.get('requestId') ?? '');
   const [qGroupId, setQGroupId] = useState(() => searchParams.get('groupId') ?? '');
   const [qSessionId, setQSessionId] = useState(() => searchParams.get('sessionId') ?? '');
+  const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
 
   const [metaProviders, setMetaProviders] = useState<string[]>([]);
   const [metaModels, setMetaModels] = useState<string[]>([]);
@@ -868,6 +869,20 @@ export default function LlmLogsPage() {
     if (opts?.resetPage) setPage(1);
     setLoading(true);
     try {
+      const sp = new URLSearchParams(searchParams);
+      sp.set('provider', qProvider || '');
+      sp.set('model', qModel || '');
+      sp.set('status', qStatus || '');
+      sp.set('requestId', qRequestId || '');
+      sp.set('groupId', qGroupId || '');
+      sp.set('sessionId', qSessionId || '');
+      sp.set('userId', qUserId || '');
+      // 清理空参数（保持 URL 干净）
+      ['provider', 'model', 'status', 'requestId', 'groupId', 'sessionId', 'userId'].forEach((k) => {
+        if (!String(sp.get(k) ?? '').trim()) sp.delete(k);
+      });
+      setSearchParams(sp, { replace: true });
+
       const res = await getLlmLogs({
         page: opts?.resetPage ? 1 : page,
         pageSize,
@@ -877,6 +892,7 @@ export default function LlmLogsPage() {
         requestId: qRequestId || undefined,
         groupId: qGroupId || undefined,
         sessionId: qSessionId || undefined,
+        userId: qUserId || undefined,
       });
       if (res.success) {
         setItems(res.data.items);
@@ -1010,18 +1026,40 @@ export default function LlmLogsPage() {
     color: 'var(--text-primary)',
   };
 
+  const tabs = [
+    { key: 'llm' as const, label: '大模型日志', icon: <Sparkles size={14} /> },
+    { key: 'system' as const, label: '系统日志', icon: <Server size={14} /> },
+  ];
+
   if (tab === 'system') {
     return (
       <div className="h-full min-h-0 flex flex-col gap-4">
         <div className="flex items-center gap-2 shrink-0">
-          <Button variant="secondary" onClick={() => setTab('llm')}>
-            <Sparkles size={16} />
-            大模型日志
-          </Button>
-          <Button variant="primary" onClick={() => setTab('system')}>
-            <Server size={16} />
-            系统日志
-          </Button>
+          <div
+            className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
+            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+          >
+            {tabs.map((x) => {
+              const active = tab === x.key;
+              return (
+                <button
+                  key={x.key}
+                  type="button"
+                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                  style={{
+                    color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                    background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                    border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                  }}
+                  aria-pressed={active}
+                  onClick={() => setTab(x.key)}
+                >
+                  {x.icon}
+                  {x.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
         <div className="flex-1 min-h-0">
           <SystemLogsTab />
@@ -1042,14 +1080,31 @@ export default function LlmLogsPage() {
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
       <div className="flex items-center gap-2 shrink-0">
-        <Button variant="primary" onClick={() => setTab('llm')}>
-          <Sparkles size={16} />
-          大模型日志
-        </Button>
-        <Button variant="secondary" onClick={() => setTab('system')}>
-          <Server size={16} />
-          系统日志
-        </Button>
+        <div
+          className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
+          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+        >
+          {tabs.map((x) => {
+            const active = tab === x.key;
+            return (
+              <button
+                key={x.key}
+                type="button"
+                className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                style={{
+                  color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                  background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                  border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                }}
+                aria-pressed={active}
+                onClick={() => setTab(x.key)}
+              >
+                {x.icon}
+                {x.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div className="flex items-end justify-between gap-4">
         <div>
@@ -1110,6 +1165,16 @@ export default function LlmLogsPage() {
           <div className="relative">
             <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
+              value={qUserId}
+              onChange={(e) => setQUserId(e.target.value)}
+              className="h-9 w-full rounded-[12px] pl-9 pr-3 text-sm outline-none"
+              style={inputStyle}
+              placeholder="userId"
+            />
+          </div>
+          <div className="relative">
+            <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
               value={qGroupId}
               onChange={(e) => setQGroupId(e.target.value)}
               className="h-9 w-full rounded-[12px] pl-9 pr-3 text-sm outline-none"
@@ -1155,6 +1220,7 @@ export default function LlmLogsPage() {
                 setQModel('');
                 setQStatus('');
                 setQRequestId('');
+                setQUserId('');
                 setQGroupId('');
                 setQSessionId('');
                 setPage(1);

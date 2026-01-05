@@ -3,12 +3,13 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar } from '@/services';
-import { CheckCircle2, Circle, MoreVertical, XCircle } from 'lucide-react';
+import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName } from '@/services';
+import { CheckCircle2, Circle, KeyRound, MoreVertical, Pencil, XCircle } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigate } from 'react-router-dom';
+import { systemDialog } from '@/lib/systemDialog';
 
 type UserRow = {
   userId: string;
@@ -124,9 +125,17 @@ export default function UsersPage() {
   const [forceTargets, setForceTargets] = useState<{ admin: boolean; desktop: boolean }>({ admin: true, desktop: true });
 
   const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
+  const [roleUpdatingUserId, setRoleUpdatingUserId] = useState<string | null>(null);
+  const [statusUpdatingUserId, setStatusUpdatingUserId] = useState<string | null>(null);
 
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarTargetUser, setAvatarTargetUser] = useState<UserRow | null>(null);
+
+  const [nameOpen, setNameOpen] = useState(false);
+  const [nameTargetUser, setNameTargetUser] = useState<UserRow | null>(null);
+  const [nameValue, setNameValue] = useState('');
+  const [nameSubmitting, setNameSubmitting] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
@@ -327,6 +336,49 @@ export default function UsersPage() {
     setAvatarOpen(true);
   };
 
+  const isHumanUser = (u: UserRow) => {
+    const t = String(u?.userType ?? '').trim().toLowerCase();
+    if (!t) return true; // 兼容历史数据：默认视为人类
+    return t === 'human';
+  };
+
+  const openChangeDisplayName = (u: UserRow) => {
+    setNameTargetUser(u);
+    setNameValue(String(u.displayName ?? '').trim());
+    setNameError(null);
+    setNameSubmitting(false);
+    setNameOpen(true);
+  };
+
+  const submitChangeDisplayName = async () => {
+    const u = nameTargetUser;
+    if (!u) return;
+    if (!isHumanUser(u)) return;
+    const v = (nameValue ?? '').trim();
+    if (!v) {
+      setNameError('姓名不能为空');
+      return;
+    }
+    if (v.length > 50) {
+      setNameError('姓名不能超过 50 字符');
+      return;
+    }
+
+    setNameSubmitting(true);
+    setNameError(null);
+    try {
+      const res = await updateUserDisplayName(u.userId, v);
+      if (!res.success) {
+        setNameError(res.error?.message || '修改失败');
+        return;
+      }
+      setNameOpen(false);
+      await load();
+    } finally {
+      setNameSubmitting(false);
+    }
+  };
+
   const isLockedUser = (u: UserRow) => {
     const remaining = typeof u.lockoutRemainingSeconds === 'number' ? u.lockoutRemainingSeconds : 0;
     if (remaining > 0) return true;
@@ -342,6 +394,92 @@ export default function UsersPage() {
       await load();
     } finally {
       setUnlockingUserId(null);
+    }
+  };
+
+  const isGuestUser = (u: UserRow) => {
+    const ut = String(u?.userType ?? '').trim().toLowerCase();
+    const role = String(u?.role ?? '').trim().toLowerCase();
+    const un = String(u?.username ?? '').trim().toLowerCase();
+    if (ut === 'guest') return true;
+    if (role === 'guest') return true;
+    if (un.startsWith('guest')) return true;
+    return false;
+  };
+
+  const avatarRingColor = (u: UserRow) => {
+    // guest 白色 > 机器人绿色 > 管理员金色 > 普通用户蓝色
+    if (isGuestUser(u)) return 'rgba(255,255,255,0.88)';
+    if (String(u.userType ?? '').trim().toLowerCase() === 'bot') return 'rgba(34,197,94,0.92)';
+    if (String(u.role ?? '').trim().toUpperCase() === 'ADMIN') return 'rgba(250,204,21,0.95)';
+    return 'rgba(59,130,246,0.92)';
+  };
+
+  const confirmTwice = async (opts: { title: string; message: string; tone?: 'neutral' | 'danger' }) => {
+    const ok1 = await systemDialog.confirm({
+      title: opts.title,
+      message: opts.message,
+      tone: opts.tone ?? 'neutral',
+      confirmText: '继续',
+      cancelText: '取消',
+    });
+    if (!ok1) return false;
+    const ok2 = await systemDialog.confirm({
+      title: '再次确认',
+      message: opts.message,
+      tone: opts.tone ?? 'neutral',
+      confirmText: '确认执行',
+      cancelText: '取消',
+    });
+    return ok2;
+  };
+
+  const roleLabel = (r: UserRow['role']) => {
+    if (r === 'PM') return 'PM';
+    if (r === 'DEV') return 'DEV';
+    if (r === 'QA') return 'QA';
+    if (r === 'ADMIN') return 'ADMIN';
+    return String(r);
+  };
+
+  const onToggleStatus = async (u: UserRow) => {
+    if (!u?.userId) return;
+    if (statusUpdatingUserId) return;
+    const next: UserRow['status'] = u.status === 'Active' ? 'Disabled' : 'Active';
+    const actionLabel = next === 'Disabled' ? '停用' : '启用';
+    const ok = await confirmTwice({
+      title: '确认修改状态',
+      message: `用户：${u.username}\n操作：${actionLabel}\nuserId：${u.userId}`,
+      tone: next === 'Disabled' ? 'danger' : 'neutral',
+    });
+    if (!ok) return;
+
+    setStatusUpdatingUserId(u.userId);
+    try {
+      await updateUserStatus(u.userId, next);
+      await load();
+    } finally {
+      setStatusUpdatingUserId(null);
+    }
+  };
+
+  const onSetRole = async (u: UserRow, nextRole: UserRow['role']) => {
+    if (!u?.userId) return;
+    if (roleUpdatingUserId) return;
+    if (u.role === nextRole) return;
+    const ok = await confirmTwice({
+      title: '确认切换角色',
+      message: `用户：${u.username}\n角色：${roleLabel(u.role)} → ${roleLabel(nextRole)}\nuserId：${u.userId}`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    setRoleUpdatingUserId(u.userId);
+    try {
+      await updateUserRole(u.userId, nextRole);
+      await load();
+    } finally {
+      setRoleUpdatingUserId(null);
     }
   };
 
@@ -498,7 +636,12 @@ export default function UsersPage() {
                       <div className="flex items-center gap-3 min-w-0">
                         <div
                           className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0 cursor-pointer"
-                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
+                          style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            // 5px 内描边圈（不改变头像尺寸）
+                            boxShadow: `inset 0 0 0 5px ${avatarRingColor(u)}`,
+                            border: '1px solid rgba(255,255,255,0.10)',
+                          }}
                           title="点击修改头像"
                           onClick={() => openChangeAvatar(u)}
                           role="button"
@@ -534,40 +677,101 @@ export default function UsersPage() {
                           })()}
                         </div>
                         <div className="min-w-0">
-                          <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{u.username}</div>
-                          <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName}</div>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              {(u.displayName || u.username).trim()}
+                            </div>
+                            <div
+                              className="text-xs truncate max-w-[220px] shrink"
+                              style={{ color: 'var(--text-muted)' }}
+                              title={`用户名：${u.username}`}
+                            >
+                              @{u.username}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {/* Robot tag icon（对齐 desktop：机器人头） */}
+                              {String(u.userType ?? '').toLowerCase() === 'bot' ? (
+                                <span
+                                  className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
+                                  style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
+                                  title="机器人"
+                                >
+                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
+                                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
+                                  </svg>
+                                </span>
+                              ) : null}
+                              {/* Admin tag icon（对齐 desktop：盾牌） */}
+                              {String(u.role ?? '').toUpperCase() === 'ADMIN' ? (
+                                <span
+                                  className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
+                                  style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.28)', color: 'rgba(250,204,21,0.95)' }}
+                                  title="系统管理员"
+                                >
+                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
+                                  </svg>
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="mt-1">
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full px-2.5 h-6 text-[11px] font-semibold tracking-wide"
+                              style={{
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                color: 'var(--text-muted)',
+                              }}
+                              title={u.userId}
+                            >
+                              <KeyRound size={12} />
+                              <span className="truncate max-w-[320px]">{u.userId}</span>
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <select
-                        value={u.role}
-                        onChange={async (e) => {
-                          await updateUserRole(u.userId, e.target.value as UserRow['role']);
-                          await load();
-                        }}
-                        className="h-9 rounded-[12px] px-3 text-sm"
-                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                      <div
+                        className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
+                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
                       >
-                        <option value="PM">PM</option>
-                        <option value="DEV">DEV</option>
-                        <option value="QA">QA</option>
-                        <option value="ADMIN">ADMIN</option>
-                      </select>
+                        {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => {
+                          const active = u.role === r;
+                          const disabled = roleUpdatingUserId === u.userId || statusUpdatingUserId === u.userId;
+                          return (
+                            <button
+                              key={r}
+                              type="button"
+                              className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap disabled:opacity-60"
+                              style={{
+                                color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                                background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                                border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                              }}
+                              aria-pressed={active}
+                              disabled={disabled}
+                              onClick={() => onSetRole(u, r)}
+                            >
+                              {r}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
-                      <select
-                        value={u.status}
-                        onChange={async (e) => {
-                          await updateUserStatus(u.userId, e.target.value as UserRow['status']);
-                          await load();
-                        }}
-                        className="h-9 rounded-[12px] px-3 text-sm"
-                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                      <Button
+                        variant={u.status === 'Active' ? 'secondary' : 'primary'}
+                        size="sm"
+                        disabled={statusUpdatingUserId === u.userId || roleUpdatingUserId === u.userId}
+                        onClick={() => onToggleStatus(u)}
+                        title={u.status === 'Active' ? '点击停用' : '点击启用'}
+                        className="min-w-[92px]"
                       >
-                        <option value="Active">正常</option>
-                        <option value="Disabled">禁用</option>
-                      </select>
+                        {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用' : '启用'}
+                      </Button>
                     </td>
                     <td className="px-4 py-3">
                       {!u.lastLoginAt ? (
@@ -629,6 +833,19 @@ export default function UsersPage() {
                                   }
                                 >
                                   {unlockingUserId === u.userId ? '解除锁定（处理中…）' : '解除锁定'}
+                                </DropdownMenu.Item>
+                              )}
+                              {isHumanUser(u) && (
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    openChangeDisplayName(u);
+                                  }}
+                                >
+                                  <Pencil size={14} />
+                                  修改姓名
                                 </DropdownMenu.Item>
                               )}
                               <DropdownMenu.Item
@@ -914,6 +1131,57 @@ export default function UsersPage() {
           if (!res.success) throw new Error(res.error?.message || '保存失败');
           await load();
         }}
+      />
+
+      <Dialog
+        open={nameOpen}
+        onOpenChange={(v) => {
+          setNameOpen(v);
+          if (!v) {
+            setNameTargetUser(null);
+            setNameValue('');
+            setNameError(null);
+            setNameSubmitting(false);
+          }
+        }}
+        title={nameTargetUser ? `修改姓名：${nameTargetUser.username}` : '修改姓名'}
+        description={nameTargetUser ? `${nameTargetUser.userId}` : undefined}
+        content={
+          <div className="space-y-4">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>姓名</div>
+              <input
+                value={nameValue}
+                onChange={(e) => {
+                  setNameValue(e.target.value);
+                  setNameError(null);
+                }}
+                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="请输入姓名（1-50 字符）"
+                autoComplete="off"
+              />
+            </div>
+
+            {nameError && (
+              <div
+                className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+              >
+                {nameError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button variant="ghost" size="sm" onClick={() => setNameOpen(false)} disabled={nameSubmitting}>
+                取消
+              </Button>
+              <Button variant="primary" size="sm" onClick={submitChangeDisplayName} disabled={nameSubmitting}>
+                {nameSubmitting ? '保存中...' : '保存'}
+              </Button>
+            </div>
+          </div>
+        }
       />
 
       <Dialog

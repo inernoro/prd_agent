@@ -7,6 +7,7 @@ import type {
   BulkCreateAdminUsersContract,
   UpdateUserPasswordContract,
   UpdateUserAvatarContract,
+  UpdateUserDisplayNameContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
   UnlockUserContract,
@@ -76,6 +77,21 @@ export const updateUserAvatarReal: UpdateUserAvatarContract = async (
     {
       method: 'PUT',
       body: { avatarFileName: avatarFileName || null },
+    }
+  );
+  return res;
+};
+
+export const updateUserDisplayNameReal: UpdateUserDisplayNameContract = async (
+  userId: string,
+  displayName: string
+): Promise<ApiResponse<{ userId: string; displayName: string; updatedAt?: string }>> => {
+  const name = (displayName ?? '').trim();
+  const res = await apiRequest<{ userId: string; displayName: string; updatedAt?: string }>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/display-name`,
+    {
+      method: 'PUT',
+      body: { displayName: name },
     }
   );
   return res;

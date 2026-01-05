@@ -101,6 +101,16 @@ public class UserPasswordUpdateResponse
 }
 
 /// <summary>
+/// 用户显示名称更新响应
+/// </summary>
+public class UserDisplayNameUpdateResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
 /// 管理端解锁用户响应
 /// </summary>
 public class UnlockUserResponse
