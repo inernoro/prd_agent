@@ -270,20 +270,19 @@ export default function SettingsModal() {
     console.log('[Updater] Expected pubkey (from source):', 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2RThCQjIzRDhDOTAwQTIKUldTaUFNbllJN3ZvNWgxR3lnZWZNZ09ZbEZYMC9WVCthL0w3NW5CejRrdW53STEzc1FvcEE0dTUK');
     // 打印配置的 endpoints（这是源代码中的值，编译后会嵌入到二进制中）
     console.log('[Updater] Configured endpoints (from source):');
-    console.log('  1. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}-{{arch}}.json');
-    console.log('  2. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
-    console.log('  3. https://github.com/inernoro/prd_agent/releases/latest/download/latest.json');
-    console.log('[Updater] Note: In Tauri 2 updater: {{target}} = windows/darwin/linux, {{arch}} = x86_64/aarch64/...');
+    console.log('  1. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
+    console.log('  2. https://github.com/inernoro/prd_agent/releases/latest/download/latest.json');
+    console.log(
+      '[Updater] Note: In our build pipeline, {{target}} is set to Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
+    );
     
     // 手动测试 fetch manifest（绕过 Tauri updater；仅用于诊断网络/404/HTML）
     try {
       const platform = await invoke<{ target: string; arch: string; jsonTarget: string }>('get_updater_platform_info');
       const target = platform?.target || 'unknown';
-      const arch = platform?.arch || 'unknown';
       console.log('[Updater] Platform info:', platform);
 
       const candidates = [
-        `https://github.com/inernoro/prd_agent/releases/latest/download/latest-${target}-${arch}.json`,
         `https://github.com/inernoro/prd_agent/releases/latest/download/latest-${target}.json`,
         `https://github.com/inernoro/prd_agent/releases/latest/download/latest.json`,
       ];
@@ -342,9 +341,8 @@ export default function SettingsModal() {
           [
             '检查更新失败：远端更新清单（release manifest）不可用或格式不正确。',
             '如果你使用 GitHub Releases 作为更新源，请确认该 Release 资产中包含：',
-            '- latest-{{target}}-{{arch}}.json 及其签名 latest-{{target}}-{{arch}}.json.sig',
-            '(兼容旧命名：latest-{{target}}.json 及其 .sig；或使用全平台 latest.json 且 platforms 条目必须完整)',
-            '(以及对应平台安装包的 .sig 文件)。',
+            '- latest-{{target}}.json（{{target}} 为 Rust target triple，例如 aarch64-apple-darwin）',
+            '- 以及对应平台安装包与其 .sig 文件（如 PRD.Agent.app.tar.gz 与 PRD.Agent.app.tar.gz.sig）',
             '也可能是网络/防火墙导致无法访问 GitHub。',
             '',
             `原始错误：${raw}`,

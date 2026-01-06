@@ -18,6 +18,7 @@ import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
+import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
@@ -36,6 +37,7 @@ function App() {
   const { isAuthenticated, accessToken, refreshToken, sessionKey, user } = useAuthStore();
   const { setSession, mode, sessionId, clearSession, setPrompts } = useSessionStore();
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
+  const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const [isDark, setIsDark] = useState(() => {
     const stored = readStoredTheme();
     if (stored) return stored === 'dark';
@@ -47,6 +49,14 @@ function App() {
   });
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
   const connectionStatus = useConnectionStore((s) => s.status);
+
+  // 全局拉取 Desktop 品牌配置：覆盖“自动登录直达主界面”场景，确保 desktopName/logo/bg 能及时更新
+  useEffect(() => {
+    void refreshBranding('app-start');
+    const onFocus = () => void refreshBranding('focus');
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshBranding]);
 
   // SSE 场景下 Rust 侧可能通过事件通知登录已过期（401且 refresh 失败）
   useEffect(() => {

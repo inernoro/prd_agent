@@ -23,7 +23,6 @@ export default function LoginPage() {
   const loadConfig = useSettingsStore((s) => s.loadConfig);
   const branding = useDesktopBrandingStore((s) => s.branding);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
-  const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
   const assetsBaseUrl = useRemoteAssetsStore((s) => s.baseUrl);
   const skin = useRemoteAssetsStore((s) => s.skin);
   const [loading, setLoading] = useState(false);
@@ -59,32 +58,23 @@ export default function LoginPage() {
 
   const [iconSrc, setIconSrc] = useState<string>('');
   useEffect(() => {
-    if (branding.source !== 'server') {
-      setIconSrc('');
-      return;
-    }
     // 先尝试 skin，再回落 base
     setIconSrc(iconUrls.skinUrl || iconUrls.baseUrl);
-  }, [branding.source, iconUrls.baseUrl, iconUrls.skinUrl]);
+  }, [iconUrls.baseUrl, iconUrls.skinUrl]);
 
   const [bgSrc, setBgSrc] = useState<string>('');
   useEffect(() => {
-    if (branding.source !== 'server') {
-      setBgSrc('');
-      return;
-    }
     if (!branding.loginBackgroundKey) {
       setBgSrc('');
       return;
     }
     // 先尝试 skin，再回落 base
     setBgSrc(bgUrls.skinUrl || bgUrls.baseUrl);
-  }, [branding.loginBackgroundKey, branding.source, bgUrls.baseUrl, bgUrls.skinUrl]);
+  }, [branding.loginBackgroundKey, bgUrls.baseUrl, bgUrls.skinUrl]);
 
   // background 是 CSS 背景图，没有 onError：用预加载探测，并做 skin -> base -> 关闭 的回退
   useEffect(() => {
     if (!bgSrc) return;
-    if (branding.source !== 'server') return;
     if (!branding.loginBackgroundKey) return;
 
     let cancelled = false;
@@ -104,7 +94,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [bgSrc, bgUrls.baseUrl, bgUrls.skinUrl, branding.loginBackgroundKey, branding.source]);
+  }, [bgSrc, bgUrls.baseUrl, bgUrls.skinUrl, branding.loginBackgroundKey]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,7 +133,7 @@ export default function LoginPage() {
       {isTauri() ? <div className="absolute inset-0 z-0" data-tauri-drag-region /> : null}
 
       {/* 服务端品牌背景图（可选；失败自动回退到内置背景） */}
-      {branding.source === 'server' && bgSrc ? (
+      {bgSrc ? (
         <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
           <div
             className="absolute inset-0"
@@ -187,7 +177,7 @@ export default function LoginPage() {
       <div className="relative z-10 w-full max-w-md p-8 ui-login-card animate-slide-up motion-reduce:animate-none">
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-slate-900 dark:bg-white">
-            {branding.source === 'server' && iconSrc ? (
+      {iconSrc ? (
               <img
                 src={iconSrc}
                 alt="login icon"
@@ -196,8 +186,8 @@ export default function LoginPage() {
                   if (iconSrc === iconUrls.skinUrl && iconUrls.baseUrl) {
                     setIconSrc(iconUrls.baseUrl);
                   } else {
-                    // 回退到内置
-                    resetBranding();
+                    // 回退到内置（但不强制把 branding 置回 local，避免影响 desktopName/bgKey）
+                    setIconSrc('');
                   }
                 }}
               />

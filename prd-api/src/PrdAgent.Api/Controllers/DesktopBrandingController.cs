@@ -35,7 +35,9 @@ public class DesktopBrandingController : ControllerBase
         resp.LoginIconKey = FileNameKeyRegex.IsMatch(key) ? key : "login_icon.png";
 
         var bgKey = (resp.LoginBackgroundKey ?? string.Empty).Trim().ToLowerInvariant();
-        resp.LoginBackgroundKey = FileNameKeyRegex.IsMatch(bgKey) ? bgKey : string.Empty;
+        // 默认背景：若未配置，则使用 bg.png（要求资源侧确保存在）
+        if (string.IsNullOrWhiteSpace(bgKey)) bgKey = "bg.png";
+        resp.LoginBackgroundKey = FileNameKeyRegex.IsMatch(bgKey) ? bgKey : "bg.png";
 
         return Ok(ApiResponse<DesktopBrandingResponse>.Ok(resp));
     }

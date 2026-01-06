@@ -366,7 +366,7 @@ public class AdminDesktopAssetsController : ControllerBase
                         // 暂时串行删除，失败不阻断流程
                         try 
                         {
-                            await cos.DeleteObjectAsync(p, ct);
+                            await cos.DeleteAsync(p, ct);
                         }
                         catch (Exception ex)
                         {

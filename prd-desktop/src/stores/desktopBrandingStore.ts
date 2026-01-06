@@ -13,7 +13,7 @@ export type DesktopBranding = {
 const DEFAULT_BRANDING: DesktopBranding = {
   desktopName: 'PRD Agent',
   loginIconKey: 'login_icon.png',
-  loginBackgroundKey: '',
+  loginBackgroundKey: 'bg.png',
   updatedAt: null,
   source: 'local',
 };

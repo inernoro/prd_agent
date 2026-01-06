@@ -8,11 +8,40 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    fn updater_target_triple() -> &'static str {
+        // NOTE: our GitHub Release assets are named as `latest-<target-triple>.json`.
+        // Examples:
+        // - aarch64-apple-darwin
+        // - x86_64-apple-darwin
+        // - x86_64-pc-windows-msvc
+        // - x86_64-unknown-linux-gnu
+        if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+            "aarch64-apple-darwin"
+        } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+            "x86_64-apple-darwin"
+        } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+            "x86_64-pc-windows-msvc"
+        } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86") {
+            "i686-pc-windows-msvc"
+        } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+            "x86_64-unknown-linux-gnu"
+        } else if cfg!(target_os = "linux") && cfg!(target_arch = "aarch64") {
+            "aarch64-unknown-linux-gnu"
+        } else {
+            // fallback: keep the app running; updater will likely fail with a clear error message.
+            "unknown"
+        }
+    }
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                .target(updater_target_triple())
+                .build(),
+        )
         .setup(|app| {
             app.manage(StreamCancelState::default());
             // 初始化配置（从文件加载 API URL）

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, listDesktopAssetKeys, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset } from '@/services';
+import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, listDesktopAssetKeys, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { DesktopAssetKey, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 
 function cn(...xs: Array<string | false | null | undefined>) {
@@ -9,6 +9,7 @@ function cn(...xs: Array<string | false | null | undefined>) {
 type AssetKind = 'image' | 'audio' | 'video' | 'other';
 
 type AssetRow = {
+  id?: string;
   title: string;
   key: string;
   kind: AssetKind;
@@ -20,10 +21,25 @@ type AssetRow = {
 const REQUIRED_ASSETS: AssetRow[] = [
   { title: '冷启动加载', key: 'start_load.gif', kind: 'image', required: true },
   { title: '加载动画', key: 'load.gif', kind: 'image', required: true },
+  { title: '登录背景（bg.png）', key: 'bg.png', kind: 'image', required: true },
 ];
 
+// 已被 Desktop 端硬编码/默认配置引用的 key（这些 key 不能删除）
+// 来源：
+// - prd-desktop/src/stores/remoteAssetsStore.ts: /icon/desktop/load.gif, /icon/desktop/start_load.gif
+// - prd-desktop/src/stores/desktopBrandingStore.ts: 默认 loginIconKey=login_icon.png
+const USED_ASSET_KEYS = new Set<string>(['load.gif', 'start_load.gif', 'login_icon.png']);
+
 // 有“品牌配置”后，这两个 key 的单独行展示会显得重复（仍可通过品牌配置上传/或手动新建 key 上传）
-import { getAvatarBaseUrl } from '@/lib/avatar';
+import { getAvatarBaseUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+
+function appendCacheBust(url: string, cacheBust: number): string {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  const v = typeof cacheBust === 'number' && Number.isFinite(cacheBust) ? String(Math.floor(cacheBust)) : '';
+  if (!v) return u;
+  return u.includes('?') ? `${u}&v=${encodeURIComponent(v)}` : `${u}?v=${encodeURIComponent(v)}`;
+}
 
 const HIDDEN_ASSET_KEYS = new Set<string>([]);
 
@@ -95,6 +111,7 @@ async function copyText(s: string) {
 }
 
 export default function AssetsManagePage() {
+  const [activeTab, setActiveTab] = useState<'desktop' | 'single'>('desktop');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [keys, setKeys] = useState<DesktopAssetKey[]>([]);
   const [loading, setLoading] = useState(false);
@@ -114,7 +131,7 @@ export default function AssetsManagePage() {
   const [newKeyDesc, setNewKeyDesc] = useState('');
 
   const [uploadingId, setUploadingId] = useState<string>('');
-  const [uploadTarget, setUploadTarget] = useState<{ skin: string | null; key: string; mode?: 'matrix' | 'branding_icon' | 'branding_bg' } | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<{ skin: string | null; key: string; mode?: 'matrix' | 'nohead' } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const reload = async () => {
@@ -188,13 +205,23 @@ export default function AssetsManagePage() {
   const rows: AssetRow[] = useMemo(() => {
     const requiredMap = new Map(REQUIRED_ASSETS.map((r) => [r.key, r]));
     const extra: AssetRow[] = (Array.isArray(keys) ? keys : [])
-      .map((k) => ({
-        title: (k.description || '').trim() || k.key,
-        key: k.key,
-        kind: (k.kind as AssetKind) || 'image',
-        description: k.description ?? null,
-        required: requiredMap.has(k.key),
-      }))
+      .map((k) => {
+        const keyNorm = String(k.key || '')
+          .trim()
+          .toLowerCase()
+          .replace(/^\/+/, '')
+          .replace(/\\/g, '')
+          .replace(/\//g, '');
+        const isUsed = USED_ASSET_KEYS.has(keyNorm);
+        return ({
+          id: k.id,
+          title: (k.description || '').trim() || k.key,
+          key: keyNorm || k.key,
+          kind: (k.kind as AssetKind) || 'image',
+          description: k.description ?? null,
+          required: requiredMap.has(keyNorm) || isUsed,
+        });
+      })
       .filter((r) => !requiredMap.has(r.key))
       .filter((r) => !HIDDEN_ASSET_KEYS.has(String(r.key || '').trim().toLowerCase()));
       // 临时注释：放开过滤，允许用户看到并删除这些脏数据
@@ -230,6 +257,10 @@ export default function AssetsManagePage() {
     const b = String(getBaseAssetsUrl() || '').trim().replace(/\/+$/, '');
     return b ? `${b}/icon/desktop` : '';
   }, []);
+
+  const noHeadPreviewUrl = useMemo(() => appendCacheBust(resolveNoHeadAvatarUrl(), cacheBust), [cacheBust]);
+  const isNoHeadBroken = Boolean(broken?.['__nohead__']);
+  const isUploadingNoHead = uploadingId === '__nohead__';
 
   const onCreateSkin = async () => {
     const norm = normalizeSkinName(newSkin);
@@ -288,12 +319,39 @@ export default function AssetsManagePage() {
     el.click();
   };
 
+  const chooseNoHeadUpload = () => {
+    setErr('');
+    setUploadTarget({ skin: null, key: 'nohead.png', mode: 'nohead' });
+    const el = fileRef.current;
+    if (!el) return;
+    el.value = '';
+    el.click();
+  };
+
   const onPickedFile = async (file: File | null) => {
     if (!file) return;
     if (!uploadTarget) {
       setErr('未选择上传目标（skin/key）');
       return;
     }
+    const mode = uploadTarget.mode || 'matrix';
+
+    if (mode === 'nohead') {
+      setUploadingId('__nohead__');
+      setErr('');
+      try {
+        const res = await uploadNoHeadAvatar({ file });
+        if (!res.success) throw new Error(res.error?.message || '上传失败');
+        setCacheBust(Date.now());
+        setBroken((p) => ({ ...(p || {}), __nohead__: false }));
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e || '上传失败'));
+      } finally {
+        setUploadingId('');
+      }
+      return;
+    }
+
     const { skin } = uploadTarget;
     const key = uploadTarget.key;
 
@@ -321,9 +379,61 @@ export default function AssetsManagePage() {
     }
   };
 
-  const chooseBrandingIconUpload = () => { /* Removed */ };
+  const handleDeleteKey = async (row: AssetRow) => {
+    const keyRaw = String(row.key || '').trim();
+    const keyNorm = keyRaw
+      .toLowerCase()
+      .replace(/^\/+/, '')
+      .replace(/\\/g, '')
+      .replace(/\//g, '');
+    if (!keyNorm) return;
 
-  const chooseBrandingBgUpload = () => { /* Removed */ };
+    // 二次兜底：即使 rows 没带上 id，也尽量从 keys 列表里匹配出来
+    const id =
+      row.id ||
+      (Array.isArray(keys) ? keys : []).find((k) => {
+        const kNorm = String(k.key || '')
+          .trim()
+          .toLowerCase()
+          .replace(/^\/+/, '')
+          .replace(/\\/g, '')
+          .replace(/\//g, '');
+        return kNorm === keyNorm;
+      })?.id;
+
+    if (!id) {
+      setErr(`未找到 key=${keyRaw || keyNorm} 对应的 id，无法删除`);
+      return;
+    }
+
+    const ok = window.confirm(`确认删除 key：${keyRaw || keyNorm} ？\n将删除此 key 及其下所有文件（所有皮肤）。此操作不可恢复。`);
+    if (!ok) return;
+
+    setLoading(true);
+    setErr('');
+    try {
+      const res = await deleteDesktopAssetKey({ id });
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
+
+      // 清理本页“预览失败”标记（避免删除后仍显示红框）
+      setBroken((p) => {
+        const next = { ...(p || {}) };
+        Object.keys(next).forEach((k) => {
+          if (k.startsWith(`${keyNorm}@@`)) delete next[k];
+        });
+        return next;
+      });
+
+      // 触发预览强制刷新（绕过 CDN/浏览器缓存）
+      setCacheBust(Date.now());
+
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e || '删除失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const hardRefresh = async () => {
     setBroken({});
@@ -343,22 +453,32 @@ export default function AssetsManagePage() {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            Desktop 资源管理（诊断 + 上传）
+            资源管理（Desktop / 单文件）
           </div>
           <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
+            {activeTab === 'desktop' ? (
+              <>
+                规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
+              </>
+            ) : (
+              <>
+                单文件资源不区分皮肤：用于全局兜底（例如无头像 nohead.png）。
+              </>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
-            onClick={() => void reload()}
-            title="重新获取 skins/keys"
-          >
-            重新获取皮肤
-          </button>
+          {activeTab === 'desktop' ? (
+            <button
+              type="button"
+              className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
+              onClick={() => void reload()}
+              title="重新获取 skins/keys"
+            >
+              重新获取皮肤
+            </button>
+          ) : null}
           <button
             type="button"
             className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
@@ -368,6 +488,29 @@ export default function AssetsManagePage() {
             清空缓存并刷新
           </button>
         </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('desktop')}
+          className={cn(
+            'h-9 px-3 rounded-[12px] border text-sm',
+            activeTab === 'desktop' ? 'border-white/20 bg-white/5' : 'border-white/10 hover:bg-white/5'
+          )}
+        >
+          Desktop 资源矩阵（皮肤）
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('single')}
+          className={cn(
+            'h-9 px-3 rounded-[12px] border text-sm',
+            activeTab === 'single' ? 'border-white/20 bg-white/5' : 'border-white/10 hover:bg-white/5'
+          )}
+        >
+          单文件资源（不分皮肤）
+        </button>
       </div>
 
       {err ? (
@@ -383,6 +526,87 @@ export default function AssetsManagePage() {
         </div>
       ) : null}
 
+      {activeTab === 'single' ? (
+        <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                无头像兜底（required）：nohead.png
+              </div>
+              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                固定路径：<span className="font-mono">/icon/backups/head/nohead.png</span>（不分白天/黑夜；仅此一个文件）。
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', isUploadingNoHead && 'opacity-60 pointer-events-none')}
+                onClick={() => chooseNoHeadUpload()}
+              >
+                {isUploadingNoHead ? '上传中...' : '上传/替换'}
+              </button>
+              <button
+                type="button"
+                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm"
+                onClick={() => void copyText(noHeadPreviewUrl)}
+                disabled={!noHeadPreviewUrl}
+              >
+                复制地址
+              </button>
+              <button
+                type="button"
+                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm"
+                onClick={() => window.open(noHeadPreviewUrl, '_blank', 'noopener,noreferrer')}
+                disabled={!noHeadPreviewUrl}
+              >
+                查看
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-start gap-4">
+            <div
+              className={cn('rounded-[12px] border p-2', isNoHeadBroken ? 'border-red-500/40' : 'border-white/10')}
+              style={{ width: '120px', height: '120px', background: isNoHeadBroken ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)' }}
+              title={noHeadPreviewUrl || ''}
+            >
+              {noHeadPreviewUrl ? (
+                <img
+                  src={noHeadPreviewUrl}
+                  alt=""
+                  className="w-full h-full object-contain"
+                  onError={() => setBroken((m) => ({ ...(m || {}), __nohead__: true }))}
+                  onLoad={() => setBroken((m) => ({ ...(m || {}), __nohead__: false }))}
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                  无 URL
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                当前地址
+              </div>
+              <div className="mt-1 font-mono text-sm break-all" style={{ color: 'var(--text-primary)' }}>
+                {noHeadPreviewUrl || '-'}
+              </div>
+              {isNoHeadBroken ? (
+                <div className="mt-2 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
+                  缺失/不可用：请上传 nohead.png
+                </div>
+              ) : (
+                <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  建议尺寸：128x128 或更大；支持 png（推荐带透明通道）。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === 'desktop' ? (
+        <>
       <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="min-w-0">
@@ -601,7 +825,7 @@ export default function AssetsManagePage() {
                 onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
                 onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
                 onUpload={(skin, key) => chooseUpload(skin, key)}
-                onDelete={() => void onDeleteKey(row)}
+                onDelete={() => void handleDeleteKey(row)}
               />
             ))}
             {rows.length === 0 ? (
@@ -612,6 +836,8 @@ export default function AssetsManagePage() {
           </div>
         </div>
       </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -633,19 +859,21 @@ function RowBlock(props: {
   return (
     <>
       <div className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-start justify-between">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <div className="flex flex-col gap-2">
+          <div className="text-sm font-semibold break-all" style={{ color: 'var(--text-primary)' }}>
             {row.title}
           </div>
           {!row.required && (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="text-[10px] px-2 py-0.5 rounded border border-red-500/20 text-red-400 hover:bg-red-500/10"
-              title="删除此 Key 及其下所有文件"
-            >
-              删除
-            </button>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={onDelete}
+                className="text-[10px] px-2 py-0.5 rounded border border-red-500/20 text-red-400 hover:bg-red-500/10"
+                title="删除此 Key 及其下所有文件"
+              >
+                删除
+              </button>
+            </div>
           )}
         </div>
         <div className="mt-1 text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
