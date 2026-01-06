@@ -50,6 +50,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
+        "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}-{{arch}}.json",
         "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json",
         "https://github.com/inernoro/prd_agent/releases/latest/download/latest.json"
       ],

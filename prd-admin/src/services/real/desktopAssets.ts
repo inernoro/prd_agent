@@ -41,6 +41,13 @@ export async function createDesktopAssetKey(input: {
   return await apiRequest<DesktopAssetKey>('/api/v1/admin/assets/desktop/keys', { method: 'POST', body: input });
 }
 
+export async function deleteDesktopAssetKey(input: { id: string }): Promise<ApiResponse<{ deleted: boolean }>> {
+  return await apiRequest<{ deleted: boolean }>(`/api/v1/admin/assets/desktop/keys/${input.id}`, {
+    method: 'DELETE',
+    emptyResponseData: { deleted: true },
+  });
+}
+
 async function uploadDesktopAssetMultipart(args: {
   skin?: string | null;
   key: string;

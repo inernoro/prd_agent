@@ -316,6 +316,74 @@ public class AdminDesktopAssetsController : ControllerBase
         }));
     }
 
+    [HttpDelete("keys/{id}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DeleteKey([FromRoute] string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var kid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(kid))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        // 1. 获取 key 信息（为了删除对应的 COS 文件）
+        var record = await _db.DesktopAssetKeys.Find(x => x.Id == kid).FirstOrDefaultAsync(ct);
+        if (record == null)
+            return Ok(ApiResponse<object>.Ok(new { deleted = false, reason = "not found" }));
+
+        // 2. 删除数据库记录
+        var res = await _db.DesktopAssetKeys.DeleteOneAsync(x => x.Id == kid, ct);
+        if (res.DeletedCount > 0)
+        {
+            _logger.LogWarning("Admin deleted desktop asset key: {Key} id={Id}", record.Key, record.Id);
+            
+            // 3. 尝试删除 COS 文件（包括 base 和所有 skin 下的文件）
+            // 注意：DesktopAssetKeys 表只存了 key 定义，并不存该 key 下有哪些 skin 的文件。
+            // 这里只能通过枚举已知的 Skins + Base 来尝试删除。
+            try 
+            {
+                var skins = await _db.DesktopAssetSkins.Find(_ => true).ToListAsync(ct);
+                var pathsToDelete = new List<string>();
+                
+                // base path
+                pathsToDelete.Add(BuildDesktopIconObjectKey(null, record.Key));
+                
+                // skin paths
+                foreach(var s in skins)
+                {
+                    pathsToDelete.Add(BuildDesktopIconObjectKey(s.Name, record.Key));
+                }
+
+                // 批量删除（如果 Storage 支持批量，目前 TencentCosStorage 的 DeleteByShaAsync 是针对 sha 的，
+                // 这里的 DesktopAsset 并没有 sha 索引，是直接按路径存的。
+                // AdminImageMasterController 用的是 DeleteByShaAsync，但这里是直接覆盖写路径模式。
+                // 也就是我们需要 DeleteObjectAsync(key)。
+                
+                // 检查 _assetStorage 是否有 DeleteObjectAsync 接口，或者直接转换类型调用
+                if (_assetStorage is TencentCosStorage cos)
+                {
+                    foreach(var p in pathsToDelete)
+                    {
+                        // 暂时串行删除，失败不阻断流程
+                        try 
+                        {
+                            await cos.DeleteObjectAsync(p, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("Failed to delete COS object {Path}: {Msg}", p, ex.Message);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleanup COS files for key {Key}", record.Key);
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = res.DeletedCount > 0 }));
+    }
+
     // ---------------- Upload ----------------
 
     /// <summary>

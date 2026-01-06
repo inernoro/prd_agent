@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createDesktopAssetKey, createDesktopAssetSkin, getDesktopBrandingSettings, listDesktopAssetKeys, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset } from '@/services';
+import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, listDesktopAssetKeys, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset } from '@/services';
 import type { DesktopAssetKey, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 
 function cn(...xs: Array<string | false | null | undefined>) {
@@ -25,7 +25,7 @@ const REQUIRED_ASSETS: AssetRow[] = [
 // 有“品牌配置”后，这两个 key 的单独行展示会显得重复（仍可通过品牌配置上传/或手动新建 key 上传）
 import { getAvatarBaseUrl } from '@/lib/avatar';
 
-const HIDDEN_ASSET_KEYS = new Set(['login_icon.png', 'login_logo.svg']);
+const HIDDEN_ASSET_KEYS = new Set<string>([]);
 
 function getBaseAssetsUrl() {
   return getAvatarBaseUrl() || 'https://i.pa.759800.com'; // 兜底旧域名，避免完全空白
@@ -66,6 +66,7 @@ function normalizeDesktopKey(raw: string): { ok: boolean; value: string; error?:
   return { ok: true, value: s };
 }
 
+// 移除 deriveKeyFromUpload
 function buildIconUrl(baseUrl: string, key: string, skin?: string | null, cacheBust?: number | null): string {
   const b = String(baseUrl || '').trim().replace(/\/+$/, '');
   const k = String(key || '').trim().replace(/^\/+/, '');
@@ -196,8 +197,34 @@ export default function AssetsManagePage() {
       }))
       .filter((r) => !requiredMap.has(r.key))
       .filter((r) => !HIDDEN_ASSET_KEYS.has(String(r.key || '').trim().toLowerCase()));
-    return [...REQUIRED_ASSETS, ...extra];
-  }, [keys]);
+      // 临时注释：放开过滤，允许用户看到并删除这些脏数据
+      // .filter((r) => !/^[a-f0-9]{32}\.[a-z0-9]+$/i.test(r.key));
+
+    // 确保品牌配置的 key 也在列表中展示（如果未在 keys 列表中）
+    const allRows = [...REQUIRED_ASSETS, ...extra];
+    const existingKeys = new Set(allRows.map((r) => r.key));
+
+    const brandingKeys = [
+      { key: brandingIconKey, title: '登录图标（配置项）' },
+      { key: brandingBgKey, title: '登录背景（配置项）' },
+    ];
+
+    brandingKeys.forEach(({ key, title }) => {
+      const k = String(key || '').trim();
+      if (k && !existingKeys.has(k)) {
+        allRows.push({
+          title,
+          key: k,
+          kind: 'image',
+          description: '当前品牌配置使用的 Key',
+          required: true, // 标记为重要
+        });
+        existingKeys.add(k);
+      }
+    });
+
+    return allRows;
+  }, [keys, brandingIconKey, brandingBgKey]);
 
   const desktopRoot = useMemo(() => {
     const b = String(getBaseAssetsUrl() || '').trim().replace(/\/+$/, '');
@@ -267,31 +294,8 @@ export default function AssetsManagePage() {
       setErr('未选择上传目标（skin/key）');
       return;
     }
-    const { skin, mode } = uploadTarget;
-    let key = uploadTarget.key;
-
-    // 品牌配置：登录图标 key 不允许手填，自动取上传文件名作为 key（并强制全小写/仅文件名）
-    if (mode === 'branding_icon') {
-      const norm = normalizeDesktopKey(file.name);
-      if (!norm.ok) {
-        setErr(norm.error || '登录图标文件名不合法（将作为 key 使用）');
-        return;
-      }
-      key = norm.value;
-      setBrandingIconKey(norm.value);
-    }
-
-    // 品牌配置：背景图允许手填，但上传时也做一次兜底规范化（若为空则按文件名）
-    if (mode === 'branding_bg') {
-      const raw = String(brandingBgKey || '').trim();
-      const norm = normalizeDesktopKey(raw || file.name);
-      if (!norm.ok) {
-        setErr(norm.error || '背景图 key/文件名不合法');
-        return;
-      }
-      key = norm.value;
-      setBrandingBgKey(norm.value);
-    }
+    const { skin } = uploadTarget;
+    const key = uploadTarget.key;
 
     const id = `${key}@@${skin || '__base__'}`;
     setUploadingId(id);
@@ -317,25 +321,9 @@ export default function AssetsManagePage() {
     }
   };
 
-  const chooseBrandingIconUpload = () => {
-    setErr('');
-    setUploadTarget({ skin: null, key: '', mode: 'branding_icon' });
-    const el = fileRef.current;
-    if (!el) return;
-    el.value = '';
-    el.click();
-  };
+  const chooseBrandingIconUpload = () => { /* Removed */ };
 
-  const chooseBrandingBgUpload = () => {
-    const raw = String(brandingBgKey || '').trim();
-    setErr('');
-    // 允许为空：为空则上传时使用文件名作为 key
-    setUploadTarget({ skin: null, key: raw, mode: 'branding_bg' });
-    const el = fileRef.current;
-    if (!el) return;
-    el.value = '';
-    el.click();
-  };
+  const chooseBrandingBgUpload = () => { /* Removed */ };
 
   const hardRefresh = async () => {
     setBroken({});
@@ -484,30 +472,6 @@ export default function AssetsManagePage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              className={cn(
-                'px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90',
-                uploadingId === `${String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '') || 'login_icon.png'}@@__base__` &&
-                  'opacity-60 pointer-events-none'
-              )}
-              onClick={() => chooseBrandingIconUpload()}
-              title="上传当前登录图标 key 对应的文件到 /icon/desktop/<key>"
-              type="button"
-            >
-              上传图标
-            </button>
-            <button
-              className={cn(
-                'px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90',
-                uploadingId === `${String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '')}@@__base__` &&
-                  'opacity-60 pointer-events-none'
-              )}
-              onClick={() => chooseBrandingBgUpload()}
-              title="上传当前背景图 key 对应的文件到 /icon/desktop/<key>"
-              type="button"
-            >
-              上传背景
-            </button>
-            <button
               className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
               onClick={() => void saveBranding()}
               disabled={brandingSaving}
@@ -519,9 +483,9 @@ export default function AssetsManagePage() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Desktop 名称</div>
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>Desktop 名称</div>
             <input
               className="w-full px-3 py-2 rounded-xl ui-control"
               value={brandingName}
@@ -529,82 +493,67 @@ export default function AssetsManagePage() {
               placeholder="PRD Agent"
             />
           </div>
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>登录图标 key（文件名，自动）</div>
-            <div className="w-full px-3 py-2 rounded-xl ui-control font-mono flex items-center justify-between gap-2">
-              <span className="truncate">{brandingIconKey || '（未生成）'}</span>
-              <button
-                type="button"
-                className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs shrink-0"
-                onClick={() => void copyText(brandingIconKey)}
-                title="复制 key"
+
+          <div className="md:col-span-1 flex flex-col gap-2">
+            <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>登录图标</div>
+            <div className="flex items-start gap-3">
+              <div 
+                className="h-12 w-12 rounded-xl border shrink-0 bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden"
+                style={{ borderColor: 'var(--border-subtle)' }}
               >
-                复制
-              </button>
-            </div>
-            <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              说明：点击“上传图标”后，会自动使用上传文件名作为 key（仅文件名、自动转全小写）。
-            </div>
-          </div>
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>背景图 key（文件名，可空）</div>
-            <input
-              className="w-full px-3 py-2 rounded-xl ui-control font-mono"
-              value={brandingBgKey}
-              onChange={(e) => setBrandingBgKey(e.target.value)}
-              placeholder="例如 login_bg.png（可留空）"
-            />
-          </div>
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>预览（base）</div>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-3">
-                <img
-                  src={brandingPreviewUrl}
-                  alt="login icon preview"
-                  className="h-10 w-10 rounded-xl border"
-                  style={{ borderColor: 'var(--border-subtle)' }}
-                  onError={() => setBroken((p) => ({ ...p, __branding__: true }))}
+                {brandingPreviewUrl ? (
+                  <img
+                    src={brandingPreviewUrl}
+                    alt="icon"
+                    className="w-full h-full object-contain"
+                    onError={() => setBroken((p) => ({ ...p, __branding__: true }))}
+                  />
+                ) : null}
+              </div>
+              <div className="min-w-0 flex-1">
+                <input
+                  className="w-full px-3 py-2 rounded-xl ui-control font-mono text-sm mb-1"
+                  value={brandingIconKey}
+                  onChange={(e) => setBrandingIconKey(e.target.value)}
+                  placeholder="login_icon.png"
                 />
-                <div className="min-w-0">
-                  <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
-                    {brandingPreviewUrl}
-                  </div>
+                <div className="text-[10px]" style={{ color: broken.__branding__ ? 'var(--danger, #ef4444)' : 'var(--text-muted)' }}>
+                  {broken.__branding__ ? '预览失败：请在下方矩阵上传' : '对应下方资源矩阵中的 Key'}
                 </div>
               </div>
+            </div>
+          </div>
 
-              {brandingBgPreviewUrl ? (
-                <div className="flex items-center gap-3">
+          <div className="md:col-span-1 flex flex-col gap-2">
+            <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>登录背景图</div>
+            <div className="flex items-start gap-3">
+              <div 
+                className="h-12 w-20 rounded-xl border shrink-0 bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden"
+                style={{ borderColor: 'var(--border-subtle)' }}
+              >
+                {brandingBgPreviewUrl ? (
                   <img
                     src={brandingBgPreviewUrl}
-                    alt="login background preview"
-                    className="h-10 w-[80px] rounded-xl border"
-                    style={{ borderColor: 'var(--border-subtle)', objectFit: 'cover' }}
+                    alt="bg"
+                    className="w-full h-full object-cover"
                     onError={() => setBroken((p) => ({ ...p, __branding_bg__: true }))}
                   />
-                  <div className="min-w-0">
-                    <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
-                      {brandingBgPreviewUrl}
-                    </div>
-                  </div>
+                ) : (
+                  <span className="text-[10px] text-gray-400">默认</span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <input
+                  className="w-full px-3 py-2 rounded-xl ui-control font-mono text-sm mb-1"
+                  value={brandingBgKey}
+                  onChange={(e) => setBrandingBgKey(e.target.value)}
+                  placeholder="可留空（使用默认）"
+                />
+                <div className="text-[10px]" style={{ color: broken.__branding_bg__ ? 'var(--danger, #ef4444)' : 'var(--text-muted)' }}>
+                  {broken.__branding_bg__ ? '预览失败：请在下方矩阵上传' : '对应下方资源矩阵中的 Key'}
                 </div>
-              ) : (
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  背景图未配置：使用内置背景
-                </div>
-              )}
+              </div>
             </div>
-
-            {broken.__branding__ ? (
-              <div className="mt-1 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
-                图标预览加载失败：请确认该 key 已在本页上传（或已存在于 COS）。
-              </div>
-            ) : null}
-            {broken.__branding_bg__ ? (
-              <div className="mt-1 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
-                背景预览加载失败：请确认该 key 已在本页上传（或已存在于 COS）。
-              </div>
-            ) : null}
           </div>
         </div>
       </div>
@@ -652,6 +601,7 @@ export default function AssetsManagePage() {
                 onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
                 onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
                 onUpload={(skin, key) => chooseUpload(skin, key)}
+                onDelete={() => void onDeleteKey(row)}
               />
             ))}
             {rows.length === 0 ? (
@@ -675,15 +625,28 @@ function RowBlock(props: {
   onBroken: (id: string) => void;
   onRecovered: (id: string) => void;
   onUpload: (skin: string | null, key: string) => void;
+  onDelete: () => void;
 }) {
-  const { row, columns, cacheBust, broken, uploadingId, onBroken, onRecovered, onUpload } = props;
+  const { row, columns, cacheBust, broken, uploadingId, onBroken, onRecovered, onUpload, onDelete } = props;
   const BOX = 96;
 
   return (
     <>
       <div className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {row.title}
+        <div className="flex items-start justify-between">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {row.title}
+          </div>
+          {!row.required && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="text-[10px] px-2 py-0.5 rounded border border-red-500/20 text-red-400 hover:bg-red-500/10"
+              title="删除此 Key 及其下所有文件"
+            >
+              删除
+            </button>
+          )}
         </div>
         <div className="mt-1 text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
           {row.key}

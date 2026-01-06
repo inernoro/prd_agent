@@ -357,6 +357,7 @@ export const updateDesktopAssetSkin: UpdateDesktopAssetSkinContract = withAuth(u
 export const deleteDesktopAssetSkin: DeleteDesktopAssetSkinContract = withAuth(deleteDesktopAssetSkinReal);
 export const listDesktopAssetKeys: ListDesktopAssetKeysContract = withAuth(listDesktopAssetKeysReal);
 export const createDesktopAssetKey: CreateDesktopAssetKeyContract = withAuth(createDesktopAssetKeyReal);
+export const deleteDesktopAssetKey: DeleteDesktopAssetKeyContract = withAuth(deleteDesktopAssetKeyReal);
 export const uploadDesktopAsset: UploadDesktopAssetContract = withAuth(uploadDesktopAssetReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);

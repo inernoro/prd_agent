@@ -83,6 +83,7 @@ pub fn run() {
             commands::preview_ask_history::clear_preview_ask_history,
             commands::preview_ask_history::clear_all_preview_ask_history,
             commands::preview_ask_history::get_preview_ask_history_stats,
+            commands::updater::get_updater_platform_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

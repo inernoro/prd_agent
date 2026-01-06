@@ -32,6 +32,7 @@ export type DeleteDesktopAssetSkinContract = (input: { id: string }) => Promise<
 
 export type ListDesktopAssetKeysContract = () => Promise<ApiResponse<DesktopAssetKey[]>>;
 export type CreateDesktopAssetKeyContract = (input: { key: string; kind?: string; description?: string | null }) => Promise<ApiResponse<DesktopAssetKey>>;
+export type DeleteDesktopAssetKeyContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 export type UploadDesktopAssetContract = (input: { skin?: string | null; key: string; file: File }) => Promise<ApiResponse<AdminDesktopAssetUploadResponse>>;
 
