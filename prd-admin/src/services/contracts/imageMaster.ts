@@ -30,6 +30,8 @@ export type ImageAsset = {
   url: string;
   prompt?: string | null;
   createdAt: string;
+  articleInsertionIndex?: number | null;
+  originalMarkerText?: string | null;
 };
 
 export type ImageMasterCanvas = {
@@ -46,6 +48,7 @@ export type ImageMasterWorkspace = {
   id: string;
   ownerUserId: string;
   title: string;
+  scenarioType?: 'image-gen' | 'article-illustration' | 'other';
   memberUserIds: string[];
   coverAssetId?: string | null;
   coverAssetIds?: string[];
@@ -60,6 +63,8 @@ export type ImageMasterWorkspace = {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string | null;
+  articleContent?: string | null;
+  articleContentWithMarkers?: string | null;
 };
 
 export type ImageMasterViewport = {
@@ -80,12 +85,14 @@ export type GetImageMasterCanvasContract = (input: { id: string }) => Promise<Ap
 export type SaveImageMasterCanvasContract = (input: { id: string; schemaVersion?: number; payloadJson: string; idempotencyKey?: string }) => Promise<ApiResponse<{ canvas: ImageMasterCanvas }>>;
 
 export type ListImageMasterWorkspacesContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: ImageMasterWorkspace[] }>>;
-export type CreateImageMasterWorkspaceContract = (input: { title?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: ImageMasterWorkspace }>>;
+export type CreateImageMasterWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: ImageMasterWorkspace }>>;
 export type UpdateImageMasterWorkspaceContract = (input: {
   id: string;
   title?: string;
   memberUserIds?: string[];
   coverAssetId?: string | null;
+  articleContent?: string;
+  scenarioType?: string;
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ workspace: ImageMasterWorkspace }>>;
 export type DeleteImageMasterWorkspaceContract = (input: { id: string; idempotencyKey?: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
@@ -155,4 +162,31 @@ export type DeleteImageMasterWorkspaceAssetContract = (input: { id: string; asse
 export type RefreshImageMasterWorkspaceCoverContract = (input: { id: string; limit?: number; idempotencyKey?: string }) => Promise<
   ApiResponse<{ workspace: ImageMasterWorkspace }>
 >;
+
+// -------- 文章配图场景专用接口 --------
+
+export type ArticleMarker = {
+  index: number;
+  text: string;
+  startPos: number;
+  endPos: number;
+};
+
+export type GenerateArticleMarkersContract = (input: {
+  id: string;
+  articleContent: string;
+  userInstruction?: string;
+  idempotencyKey?: string;
+}) => AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string }>;
+
+export type ExtractArticleMarkersContract = (input: {
+  id: string;
+  articleContentWithMarkers: string;
+}) => Promise<ApiResponse<{ markers: ArticleMarker[] }>>;
+
+export type ExportArticleContract = (input: {
+  id: string;
+  useCdn: boolean;
+  exportFormat?: string;
+}) => Promise<ApiResponse<{ content: string; format: string; assetCount: number }>>;
 

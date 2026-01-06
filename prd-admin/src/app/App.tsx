@@ -13,6 +13,7 @@ import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentWorkspaceListPage from '@/pages/visual-agent/VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from '@/pages/visual-agent/VisualAgentWorkspaceEditorPage';
+import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -62,6 +63,8 @@ export default function App() {
         <Route path="ai-chat" element={<AiChatPage />} />
         <Route path="visual-agent" element={<VisualAgentWorkspaceListPage />} />
         <Route path="visual-agent/:workspaceId" element={<VisualAgentWorkspaceEditorPage />} />
+        <Route path="literary-agent" element={<LiteraryAgentWorkspaceListPage />} />
+        <Route path="literary-agent/:workspaceId" element={<LiteraryAgentEditorPageWrapper />} />
         <Route path="llm-logs" element={<LlmLogsPage />} />
         <Route path="data" element={<DataManagePage />} />
         <Route path="prompts" element={<PromptStagesPage />} />

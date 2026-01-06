@@ -26,6 +26,7 @@ public class AdminImageMasterController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ICacheManager _cache;
     private readonly ILogger<AdminImageMasterController> _logger;
+    private readonly IModelDomainService _modelDomain;
 
     private static readonly TimeSpan IdemExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -49,13 +50,15 @@ public class AdminImageMasterController : ControllerBase
         IAssetStorage assetStorage,
         IHttpClientFactory httpClientFactory,
         ICacheManager cache,
-        ILogger<AdminImageMasterController> logger)
+        ILogger<AdminImageMasterController> logger,
+        IModelDomainService modelDomain)
     {
         _db = db;
         _assetStorage = assetStorage;
         _httpClientFactory = httpClientFactory;
         _cache = cache;
         _logger = logger;
+        _modelDomain = modelDomain;
     }
 
     private string GetAdminId() =>
@@ -216,6 +219,7 @@ public class AdminImageMasterController : ControllerBase
                 id = ws.Id,
                 ownerUserId = ws.OwnerUserId,
                 title = ws.Title,
+                scenarioType = ws.ScenarioType,
                 memberUserIds = ws.MemberUserIds ?? new List<string>(),
                 coverAssetId = ws.CoverAssetId,
                 coverAssetIds = ws.CoverAssetIds ?? new List<string>(),
@@ -228,7 +232,9 @@ public class AdminImageMasterController : ControllerBase
                 coverUpdatedAt = ws.CoverUpdatedAt,
                 createdAt = ws.CreatedAt,
                 updatedAt = ws.UpdatedAt,
-                lastOpenedAt = ws.LastOpenedAt
+                lastOpenedAt = ws.LastOpenedAt,
+                articleContent = ws.ArticleContent,
+                articleContentWithMarkers = ws.ArticleContentWithMarkers
             };
         }).ToList();
 
@@ -251,6 +257,9 @@ public class AdminImageMasterController : ControllerBase
         if (string.IsNullOrWhiteSpace(title)) title = "未命名";
         if (title.Length > 40) title = title[..40].Trim();
 
+        var scenarioType = (request?.ScenarioType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(scenarioType)) scenarioType = "image-gen";
+
         var now = DateTime.UtcNow;
         var assetsHash = Guid.NewGuid().ToString("N");
         var canvasHash = string.Empty;
@@ -260,6 +269,7 @@ public class AdminImageMasterController : ControllerBase
             Id = Guid.NewGuid().ToString("N"),
             OwnerUserId = adminId,
             Title = title,
+            ScenarioType = scenarioType,
             MemberUserIds = new List<string>(),
             AssetsHash = assetsHash,
             CanvasHash = canvasHash,
@@ -314,6 +324,8 @@ public class AdminImageMasterController : ControllerBase
             .Set(x => x.MemberUserIds, memberIds);
         if (!string.IsNullOrWhiteSpace(title)) update = update.Set(x => x.Title, title);
         if (request?.CoverAssetId != null) update = update.Set(x => x.CoverAssetId, string.IsNullOrWhiteSpace(coverAssetId) ? null : coverAssetId);
+        if (!string.IsNullOrWhiteSpace(request?.ArticleContent)) update = update.Set(x => x.ArticleContent, request.ArticleContent);
+        if (!string.IsNullOrWhiteSpace(request?.ScenarioType)) update = update.Set(x => x.ScenarioType, request.ScenarioType);
 
         await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
         var next = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
@@ -1607,6 +1619,188 @@ public class AdminImageMasterController : ControllerBase
         await stream.CopyToAsync(ms, ct);
         return (ms.ToArray(), mime);
     }
+
+    // ---------------------------
+    // 文章配图场景专用接口
+    // ---------------------------
+
+    /// <summary>
+    /// 文章配图场景：调用 LLM 在文章中插入配图提示词标记（流式返回）
+    /// </summary>
+    [HttpPost("workspaces/{id}/article/generate-markers")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task GenerateArticleMarkers(string id, [FromBody] PrdAgent.Api.Models.Requests.GenerateArticleMarkersRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid))
+        {
+            await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"), StatusCodes.Status400BadRequest, ct);
+            return;
+        }
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null)
+        {
+            await WriteJsonResponseAsync(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"), StatusCodes.Status404NotFound, ct);
+            return;
+        }
+        if (ws.OwnerUserId == "__FORBIDDEN__")
+        {
+            await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"), StatusCodes.Status403Forbidden, ct);
+            return;
+        }
+
+        var articleContent = (request?.ArticleContent ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(articleContent))
+        {
+            await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "articleContent 不能为空"), StatusCodes.Status400BadRequest, ct);
+            return;
+        }
+
+        var userInstruction = (request?.UserInstruction ?? string.Empty).Trim();
+
+        // 设置 SSE 响应头
+        Response.ContentType = "text/event-stream";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        try
+        {
+            // 调用主模型 LLM
+            var client = await _modelDomain.GetClientAsync(ModelPurpose.MainChat, ct);
+            var systemPrompt = PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.SystemPrompt;
+            var userPrompt = PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.BuildUserPrompt(articleContent, userInstruction);
+
+            var messages = new List<LLMMessage>
+            {
+                new() { Role = "user", Content = userPrompt }
+            };
+
+            var fullResponse = new StringBuilder();
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, ct))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullResponse.Append(chunk.Content);
+                    var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
+                    await Response.WriteAsync($"data: {eventData}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                }
+                else if (chunk.Type == "error")
+                {
+                    var errorData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage }, JsonOptions);
+                    await Response.WriteAsync($"data: {errorData}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                    return;
+                }
+            }
+
+            // 保存生成的内容到 workspace
+            var now = DateTime.UtcNow;
+            var generatedContent = fullResponse.ToString();
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == wid,
+                Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.ArticleContentWithMarkers, generatedContent)
+                    .Set(x => x.UpdatedAt, now),
+                cancellationToken: ct);
+
+            // 发送完成事件
+            var doneData = JsonSerializer.Serialize(new { type = "done", fullText = generatedContent }, JsonOptions);
+            await Response.WriteAsync($"data: {doneData}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GenerateArticleMarkers failed for workspace {WorkspaceId}", wid);
+            var errorData = JsonSerializer.Serialize(new { type = "error", message = "生成失败" }, JsonOptions);
+            await Response.WriteAsync($"data: {errorData}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// 文章配图场景：提取所有 [[...]] 标记并返回位置信息
+    /// </summary>
+    [HttpPost("workspaces/{id}/article/extract-markers")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExtractArticleMarkers(string id, [FromBody] PrdAgent.Api.Models.Requests.ExtractArticleMarkersRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var content = (request?.ArticleContentWithMarkers ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(content)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "articleContentWithMarkers 不能为空"));
+
+        var markers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(content);
+        var dto = markers.Select(m => new
+        {
+            index = m.Index,
+            text = m.Text,
+            startPos = m.StartPos,
+            endPos = m.EndPos
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { markers = dto }));
+    }
+
+    /// <summary>
+    /// 文章配图场景：导出文章（替换 [[...]] 为实际图片 CDN URL）
+    /// </summary>
+    [HttpPost("workspaces/{id}/article/export")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportArticle(string id, [FromBody] PrdAgent.Api.Models.Requests.ExportArticleRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        // 获取 workspace 的所有 assets（按 articleInsertionIndex 排序）
+        var assets = await _db.ImageAssets
+            .Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null)
+            .SortBy(x => x.ArticleInsertionIndex)
+            .ToListAsync(ct);
+
+        var content = ws.ArticleContentWithMarkers ?? ws.ArticleContent ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(content)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "文章内容为空"));
+
+        // 替换标记为图片链接
+        var exportedContent = PrdAgent.Core.Services.ArticleMarkerExtractor.ReplaceMarkersWithImages(content, assets);
+
+        var exportFormat = (request?.ExportFormat ?? "markdown").Trim().ToLowerInvariant();
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            content = exportedContent,
+            format = exportFormat,
+            assetCount = assets.Count
+        }));
+    }
+
+    private async Task WriteJsonResponseAsync(object data, int statusCode, CancellationToken ct)
+    {
+        Response.StatusCode = statusCode;
+        Response.ContentType = "application/json";
+        await Response.WriteAsync(JsonSerializer.Serialize(data, JsonOptions), ct);
+    }
 }
 
 public class CreateWorkspaceImageGenRunRequest
@@ -1641,6 +1835,7 @@ public class AddMessageRequest
 public class CreateWorkspaceRequest
 {
     public string? Title { get; set; }
+    public string? ScenarioType { get; set; }
 }
 
 public class UpdateWorkspaceRequest
@@ -1648,6 +1843,8 @@ public class UpdateWorkspaceRequest
     public string? Title { get; set; }
     public List<string>? MemberUserIds { get; set; }
     public string? CoverAssetId { get; set; }
+    public string? ArticleContent { get; set; }
+    public string? ScenarioType { get; set; }
 }
 
 public class UploadAssetRequest

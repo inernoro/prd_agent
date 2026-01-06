@@ -145,7 +145,9 @@ export default function VisualAgentWorkspaceListPage() {
         return;
       }
       const list = Array.isArray(res.data?.items) ? res.data.items : [];
-      setItems(list);
+      // 只显示非文章配图类型（排除文学创作的数据）
+      const filtered = list.filter((item) => item.scenarioType !== 'article-illustration');
+      setItems(filtered);
     } finally {
       setLoading(false);
     }

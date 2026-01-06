@@ -850,13 +850,15 @@ function MessageListInner() {
         const otherUser = message.role === 'User' ? resolveUser(message.senderId) : null;
         const otherAvatarUrl = (() => {
           if (message.role !== 'User') return null;
-          // 如果是当前用户的消息，使用 authStore 中的头像
+          // 优先从 userDirectory 获取（包含当前用户），因为 loadGroupMembers 会加载所有成员的最新头像
+          // 如果 userDirectory 中没有，再回退到 authStore（兼容未加载群成员的场景）
+          const fromDirectory = String(otherUser?.avatarUrl || '').trim();
+          if (fromDirectory) return fromDirectory;
+          // 回退：如果是当前用户且 authStore 有头像，使用 authStore
           if (isMine && currentUser?.avatarUrl) {
             return String(currentUser.avatarUrl).trim() || null;
           }
-          // 否则从 userDirectory 中获取
-          const url = String(otherUser?.avatarUrl || '').trim();
-          return url || null;
+          return null;
         })();
 
         return (

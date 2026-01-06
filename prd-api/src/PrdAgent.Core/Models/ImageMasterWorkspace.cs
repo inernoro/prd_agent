@@ -53,12 +53,21 @@ public class ImageMasterWorkspace
     public DateTime? LastOpenedAt { get; set; }
 
     /// <summary>
-    /// 视口偏好（按 ADMIN userId 存储）：用于保存“缩放比例/画布视角”等 UI 状态。
+    /// 视口偏好（按 ADMIN userId 存储）：用于保存"缩放比例/画布视角"等 UI 状态。
     /// - 注意：这是用户 UI 偏好，不应影响 workspace 的 UpdatedAt（避免列表排序抖动）。
     /// - 该字段不应直接下发给前端（会泄露共享成员的 UI 偏好）；由接口按当前登录用户挑选并返回。
     /// </summary>
     [JsonIgnore]
     public Dictionary<string, ImageMasterViewport> ViewportByUserId { get; set; } = new();
+
+    /// <summary>场景类型：image-gen(原图片生成) | article-illustration(文章配图) | other(其他)</summary>
+    public string ScenarioType { get; set; } = "image-gen";
+
+    /// <summary>文章配图场景专用：原始文章内容(Markdown)</summary>
+    public string? ArticleContent { get; set; }
+
+    /// <summary>文章配图场景专用：LLM 生成的带配图标记的文章内容</summary>
+    public string? ArticleContentWithMarkers { get; set; }
 }
 
 

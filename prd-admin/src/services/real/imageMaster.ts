@@ -116,7 +116,10 @@ export const createImageMasterWorkspaceReal: CreateImageMasterWorkspaceContract 
   return await apiRequest<{ workspace: ImageMasterWorkspace }>('/api/v1/admin/image-master/workspaces', {
     method: 'POST',
     headers,
-    body: { title: input.title },
+    body: { 
+      title: input.title,
+      scenarioType: input.scenarioType,
+    },
   });
 };
 
@@ -245,5 +248,105 @@ export const refreshImageMasterWorkspaceCoverReal: RefreshImageMasterWorkspaceCo
     { method: 'POST', headers }
   );
 };
+
+// -------- 文章配图场景专用接口 --------
+
+export async function* generateArticleMarkersReal(input: {
+  id: string;
+  articleContent: string;
+  userInstruction?: string;
+  idempotencyKey?: string;
+}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string }> {
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  };
+  
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+
+  // 从 authStore 获取 token
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/article/generate-markers`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      articleContent: input.articleContent,
+      userInstruction: input.userInstruction,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data.trim()) {
+            try {
+              const parsed = JSON.parse(data);
+              yield parsed;
+            } catch {
+              // ignore parse errors
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function extractArticleMarkersReal(input: {
+  id: string;
+  articleContentWithMarkers: string;
+}) {
+  return await apiRequest<{ markers: Array<{ index: number; text: string; startPos: number; endPos: number }> }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/article/extract-markers`,
+    {
+      method: 'POST',
+      body: {
+        articleContentWithMarkers: input.articleContentWithMarkers,
+      },
+    }
+  );
+}
+
+export async function exportArticleReal(input: {
+  id: string;
+  useCdn: boolean;
+  exportFormat?: string;
+}) {
+  return await apiRequest<{ content: string; format: string; assetCount: number }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(input.id)}/article/export`,
+    {
+      method: 'POST',
+      body: {
+        useCdn: input.useCdn,
+        exportFormat: input.exportFormat,
+      },
+    }
+  );
+}
 
 

@@ -188,6 +188,9 @@ import {
   deleteImageMasterWorkspaceAssetReal,
   updateImageMasterWorkspaceReal,
   createWorkspaceImageGenRunReal,
+  generateArticleMarkersReal,
+  extractArticleMarkersReal,
+  exportArticleReal,
 } from '@/services/real/imageMaster';
 import {
   exportConfigReal,
@@ -396,6 +399,10 @@ export const uploadImageMasterWorkspaceAsset: UploadImageMasterWorkspaceAssetCon
 export const deleteImageMasterWorkspaceAsset: DeleteImageMasterWorkspaceAssetContract = withAuth(deleteImageMasterWorkspaceAssetReal);
 export const createWorkspaceImageGenRun: CreateWorkspaceImageGenRunContract = withAuth(createWorkspaceImageGenRunReal);
 export const refreshImageMasterWorkspaceCover: RefreshImageMasterWorkspaceCoverContract = withAuth(refreshImageMasterWorkspaceCoverReal);
+
+export const generateArticleMarkers = generateArticleMarkersReal;
+export const extractArticleMarkers = extractArticleMarkersReal;
+export const exportArticle = exportArticleReal;
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);
