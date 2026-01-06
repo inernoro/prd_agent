@@ -557,7 +557,9 @@ export default function SettingsModal() {
               </div>
 
               {updateStatus === 'no-update' && (
-                <p className="mt-2 text-xs text-text-secondary">已是最新版本</p>
+                <p className="mt-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  已是最新版本
+                </p>
               )}
 
               {(updateStatus === 'available' || updateStatus === 'installing') && (

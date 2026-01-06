@@ -52,13 +52,17 @@ function App() {
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
   const connectionStatus = useConnectionStore((s) => s.status);
 
-  // 全局拉取 Desktop 品牌配置：覆盖“自动登录直达主界面”场景，确保 desktopName/logo/bg 能及时更新
+  // 全局拉取 Desktop 品牌配置：覆盖"自动登录直达主界面"场景，确保 desktopName/logo/bg 能及时更新
   useEffect(() => {
-    void refreshBranding('app-start');
-    const onFocus = () => void refreshBranding('focus');
+    const skin = isDark ? 'dark' : 'white';
+    void refreshBranding('app-start', skin);
+    const onFocus = () => {
+      const currentSkin = isDark ? 'dark' : 'white';
+      void refreshBranding('focus', currentSkin);
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [refreshBranding]);
+  }, [refreshBranding, isDark]);
 
   // 将窗口标题与服务器下发配置对齐（若未下发则由 store 默认值兜底）
   useEffect(() => {

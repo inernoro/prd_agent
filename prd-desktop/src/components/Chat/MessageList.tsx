@@ -82,6 +82,46 @@ function ThinkingIndicator({ label }: { label?: string }) {
   );
 }
 
+function StreamingIndicator() {
+  const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl);
+  const loadUrl = getAssetUrl('load');
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  // 当 URL 变化时重置状态
+  useEffect(() => {
+    setImgLoaded(false);
+    setImgError(false);
+  }, [loadUrl]);
+
+  const showFallback = !loadUrl || imgError || !imgLoaded;
+
+  return (
+    <>
+      {loadUrl && !imgError ? (
+        <img
+          src={loadUrl}
+          alt=""
+          className="inline-block align-middle ml-1"
+          style={{ 
+            width: '1em', 
+            height: '1em', 
+            verticalAlign: 'middle',
+            display: imgLoaded ? 'inline-block' : 'none'
+          }}
+          onLoad={() => setImgLoaded(true)}
+          onError={() => setImgError(true)}
+        />
+      ) : null}
+      {showFallback ? (
+        <span className="inline-flex items-center align-middle ml-1" style={{ width: '1em', height: '1em', verticalAlign: 'middle' }}>
+          <span className="inline-block rounded-full border-2 border-current border-t-transparent animate-spin" style={{ width: '100%', height: '100%' }} />
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function formatChatTime(ts: unknown): string {
   const d =
     ts instanceof Date
@@ -1005,28 +1045,30 @@ function MessageListInner() {
                     />
                   ) : (
                     <div className="space-y-2" style={assistantContentStyle}>
-                      {message.blocks.map((b: MessageBlock) => (
-                        <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none" style={assistantContentStyle}>
-                          {b.kind === 'codeBlock' ? (
-                            // 如果后端/模型标记为 markdown 代码块，用户通常期望“按 Markdown 渲染”而不是当代码展示
-                            (b.language === 'markdown' || b.language === 'md') ? (
-                              <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                      {message.blocks.map((b: MessageBlock) => {
+                        return (
+                          <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none" style={assistantContentStyle}>
+                            {b.kind === 'codeBlock' ? (
+                              // 如果后端/模型标记为 markdown 代码块，用户通常期望"按 Markdown 渲染"而不是当代码展示
+                              (b.language === 'markdown' || b.language === 'md') ? (
+                                <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                              ) : (
+                                <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
+                                  <code className="whitespace-pre">{b.content}</code>
+                                </pre>
+                              )
                             ) : (
-                              <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
-                                <code className="whitespace-pre">{b.content}</code>
-                              </pre>
-                            )
-                          ) : (
-                            // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式“缺一截”
-                            // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
-                            b.isComplete === false ? (
-                              <p className="whitespace-pre-wrap break-words">{b.content}</p>
-                            ) : (
-                              <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
-                            )
-                          )}
-                        </div>
-                      ))}
+                              // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式"缺一截"
+                              // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
+                              b.isComplete === false ? (
+                                <p className="whitespace-pre-wrap break-words">{b.content}</p>
+                              ) : (
+                                <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                              )
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )
                 ) : (
@@ -1165,6 +1207,14 @@ function MessageListInner() {
               </div>
             ) : null}
 
+            {/* 流式输出加载指示器：固定在内容下方 */}
+            {isMessageStreaming && !showThinking ? (
+              <div className="mt-2 flex items-center gap-2">
+                <StreamingIndicator />
+                <span className="text-xs text-text-secondary">正在输出...</span>
+              </div>
+            ) : null}
+
             {/* 时间 + seq：贴近气泡底部（气泡内固定一行） */}
             {showMeta ? (
               <div
@@ -1179,11 +1229,6 @@ function MessageListInner() {
                 <span className="min-w-0 flex-1 text-right truncate">{metaRightText}</span>
               </div>
             ) : null}
-
-        {/* 非 typing 阶段已经有“接收/请求”提示，不要再渲染光标块占位（会挡住文案的目标位置） */}
-        {isMessageStreaming && !showThinking && (
-              <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1" />
-            )}
             
               </div>
 
