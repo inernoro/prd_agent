@@ -8,7 +8,6 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 
 interface ApiTestResult {
@@ -67,7 +66,6 @@ export default function SettingsModal() {
   const clearSession = useSessionStore((s) => s.clearSession);
   const clearGroups = useGroupListStore((s) => s.clear);
   const clearMessages = useMessageStore((s) => s.clearMessages);
-  const resetAssets = useRemoteAssetsStore((s) => s.resetLocalCacheAndRefresh);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
   const [apiUrl, setApiUrl] = useState('');
@@ -180,8 +178,6 @@ export default function SettingsModal() {
     
     try {
       await saveConfig({ apiBaseUrl: urlToSave, assetsBaseUrl: assetsToSave, isDeveloper });
-      // 资源域名切换后：清空本地缓存并重新获取 skins/etag（不影响登录态）
-      void resetAssets();
       // 切换服务地址/资源域名后，刷新一次 Desktop 品牌配置（在线模式）
       void refreshBranding('save');
       closeModal();

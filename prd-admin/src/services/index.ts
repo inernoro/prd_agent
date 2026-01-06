@@ -228,6 +228,7 @@ import {
   listDesktopAssetSkins as listDesktopAssetSkinsReal,
   updateDesktopAssetSkin as updateDesktopAssetSkinReal,
   uploadDesktopAsset as uploadDesktopAssetReal,
+  getDesktopAssetsMatrix as getDesktopAssetsMatrixReal,
 } from '@/services/real/desktopAssets';
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
@@ -363,6 +364,7 @@ export const listDesktopAssetKeys: ListDesktopAssetKeysContract = withAuth(listD
 export const createDesktopAssetKey: CreateDesktopAssetKeyContract = withAuth(createDesktopAssetKeyReal);
 export const deleteDesktopAssetKey: DeleteDesktopAssetKeyContract = withAuth(deleteDesktopAssetKeyReal);
 export const uploadDesktopAsset: UploadDesktopAssetContract = withAuth(uploadDesktopAssetReal);
+export const getDesktopAssetsMatrix = withAuth(getDesktopAssetsMatrixReal);
 
 export const uploadNoHeadAvatar: UploadNoHeadAvatarContract = withAuth(uploadNoHeadAvatarReal);
 

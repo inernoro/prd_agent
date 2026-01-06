@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -20,6 +21,8 @@ public class MessagesController : ControllerBase
     private readonly IMessageRepository _messageRepository;
     private readonly ICacheManager _cache;
     private readonly IGroupMessageStreamHub _groupMessageStreamHub;
+    private readonly ISessionService _sessionService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<MessagesController> _logger;
     private readonly MongoDbContext _db;
 
@@ -28,6 +31,8 @@ public class MessagesController : ControllerBase
         IMessageRepository messageRepository,
         ICacheManager cache,
         IGroupMessageStreamHub groupMessageStreamHub,
+        ISessionService sessionService,
+        IConfiguration configuration,
         MongoDbContext db,
         ILogger<MessagesController> logger)
     {
@@ -35,6 +40,8 @@ public class MessagesController : ControllerBase
         _messageRepository = messageRepository;
         _cache = cache;
         _groupMessageStreamHub = groupMessageStreamHub;
+        _sessionService = sessionService;
+        _configuration = configuration;
         _db = db;
         _logger = logger;
     }
@@ -310,7 +317,7 @@ public class MessagesController : ControllerBase
         // 历史回放：走 MongoDB 分页（持久化），而不是 cache（cache 仅用于 LLM 上下文拼接）
         var messages = await _messageRepository.FindBySessionAsync(sessionId, before, limit);
 
-        // 批量补齐 senderName（避免 N+1）
+        // 批量补齐 User 消息的 senderName（避免 N+1）
         var senderIds = messages
             .Select(m => m.SenderId)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -337,6 +344,51 @@ public class MessagesController : ControllerBase
                 }
             }
         }
+
+        // 批量补齐 Assistant 消息的机器人信息（避免 N+1）
+        var assistantUserIds = messages
+            .Where(m => m.Role == MessageRole.Assistant)
+            .Select(m => m.AssistantUserId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+        
+        var assistantInfoMap = new Dictionary<string, (string DisplayName, string Username, string? AvatarUrl)>(StringComparer.Ordinal);
+        if (assistantUserIds.Count > 0)
+        {
+            var assistantUsers = await _db.Users
+                .Find(u => assistantUserIds.Contains(u.UserId))
+                .ToListAsync();
+            foreach (var u in assistantUsers)
+            {
+                if (!string.IsNullOrWhiteSpace(u.UserId))
+                {
+                    assistantInfoMap[u.UserId] = (
+                        u.DisplayName ?? u.Username ?? string.Empty,
+                        u.Username ?? string.Empty,
+                        AvatarUrlBuilder.Build(_configuration, u)
+                    );
+                }
+            }
+        }
+
+        // 批量获取群成员标签（用于 Assistant 消息）
+        var session = await _sessionService.GetByIdAsync(sessionId);
+        var assistantTagsMap = new Dictionary<string, List<GroupMemberTag>>(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(session?.GroupId) && assistantUserIds.Count > 0)
+        {
+            var members = await _db.GroupMembers
+                .Find(gm => gm.GroupId == session.GroupId && assistantUserIds.Contains(gm.UserId))
+                .Project(gm => new { gm.UserId, gm.Tags })
+                .ToListAsync();
+            foreach (var m in members)
+            {
+                if (!string.IsNullOrWhiteSpace(m.UserId) && m.Tags != null)
+                {
+                    assistantTagsMap[m.UserId] = m.Tags;
+                }
+            }
+        }
         
         var response = messages.Select(m => new MessageResponse
         {
@@ -352,7 +404,13 @@ public class MessagesController : ControllerBase
             ResendOfMessageId = m.ResendOfMessageId,
             ViewRole = m.ViewRole,
             Timestamp = m.Timestamp,
-            TokenUsage = m.TokenUsage
+            TokenUsage = m.TokenUsage,
+            // Assistant 消息专用字段
+            AssistantUserId = m.AssistantUserId,
+            AssistantDisplayName = m.AssistantUserId != null && assistantInfoMap.TryGetValue(m.AssistantUserId, out var aInfo) ? aInfo.DisplayName : null,
+            AssistantUsername = m.AssistantUserId != null && assistantInfoMap.TryGetValue(m.AssistantUserId, out var aInfo2) ? aInfo2.Username : null,
+            AssistantAvatarUrl = m.AssistantUserId != null && assistantInfoMap.TryGetValue(m.AssistantUserId, out var aInfo3) ? aInfo3.AvatarUrl : null,
+            AssistantTags = m.AssistantUserId != null && assistantTagsMap.TryGetValue(m.AssistantUserId, out var aTags) ? aTags : null
         }).ToList();
 
         return Ok(ApiResponse<List<MessageResponse>>.Ok(response));
@@ -377,6 +435,13 @@ public class MessageResponse
     public UserRole? ViewRole { get; set; }
     public DateTime Timestamp { get; set; }
     public TokenUsage? TokenUsage { get; set; }
+    
+    // Assistant 消息专用字段
+    public string? AssistantUserId { get; set; }
+    public string? AssistantDisplayName { get; set; }
+    public string? AssistantUsername { get; set; }
+    public string? AssistantAvatarUrl { get; set; }
+    public List<GroupMemberTag>? AssistantTags { get; set; }
 }
 
 

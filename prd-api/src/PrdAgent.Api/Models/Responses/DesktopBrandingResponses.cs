@@ -9,6 +9,9 @@ public class DesktopBrandingResponse
     public string WindowTitle { get; set; } = "PRD Agent";
     public string LoginIconKey { get; set; } = "login_icon.png";
     public string LoginBackgroundKey { get; set; } = "";
+    public string? LoginIconUrl { get; set; } // 完整 URL（带回退逻辑）
+    public string? LoginBackgroundUrl { get; set; } // 完整 URL（带回退逻辑）
+    public Dictionary<string, string> Assets { get; set; } = new(); // 所有资源的 key -> URL 映射（带回退逻辑）
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public static DesktopBrandingResponse From(AppSettings settings)

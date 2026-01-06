@@ -305,26 +305,22 @@ export default function DataManagePage() {
                 </div>
               </div>
 
-              <Tooltip content="该操作不可恢复" side="top" align="end">
-                <span className="inline-flex shrink-0">
-                  <ConfirmTip
-                    title="确认执行开发清库？"
-                    description="将删除除 users / llmplatforms / 启用 llmmodels 外的所有数据，并清掉相关缓存（不可恢复）。"
-                    confirmText="确认删除"
-                    onConfirm={async () => {
-                      await doPurge(['devReset']);
-                    }}
-                    disabled={loading}
-                    side="top"
-                    align="end"
-                  >
-                    <Button variant="danger" size="sm" disabled={loading}>
-                      <Trash2 size={16} />
-                      一键删除
-                    </Button>
-                  </ConfirmTip>
-                </span>
-              </Tooltip>
+              <ConfirmTip
+                title="确认执行开发清库？"
+                description="将删除除 users / llmplatforms / 启用 llmmodels 外的所有数据，并清掉相关缓存（不可恢复）。"
+                confirmText="确认删除"
+                onConfirm={async () => {
+                  await doPurge(['devReset']);
+                }}
+                disabled={loading}
+                side="top"
+                align="end"
+              >
+                <Button variant="danger" size="sm" disabled={loading}>
+                  <Trash2 size={16} />
+                  一键删除
+                </Button>
+              </ConfirmTip>
             </div>
             <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
               将删除除 users/llmplatforms/启用 llmmodels 外的所有集合；并删除未启用模型。

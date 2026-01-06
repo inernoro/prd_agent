@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { invoke, isTauri } from '../../lib/tauri';
 import { useAuthStore } from '../../stores/authStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ApiResponse, User } from '../../types';
 import SettingsModal from '../Settings/SettingsModal';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
-import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
-import { buildDesktopAssetUrl } from '../../lib/desktopAssetUrl';
 
 interface LoginResponse {
   accessToken: string;
@@ -24,8 +22,7 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
   const loadConfig = useSettingsStore((s) => s.loadConfig);
   const branding = useDesktopBrandingStore((s) => s.branding);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
-  const assetsBaseUrl = useRemoteAssetsStore((s) => s.baseUrl);
-  const skin = useRemoteAssetsStore((s) => s.skin);
+  // const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl); // 可用于获取其他资源 URL
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,45 +35,46 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
   useEffect(() => {
     if (!isTauri()) return;
     void loadConfig();
-    void refreshBranding('startup');
-  }, [loadConfig, refreshBranding]);
+    // 传递当前主题，获取对应皮肤的资源
+    const skin = isDark ? 'dark' : 'white';
+    void refreshBranding('startup', skin);
+  }, [loadConfig, refreshBranding, isDark]);
 
-  const iconUrls = useMemo(() => {
-    return buildDesktopAssetUrl({
-      baseUrl: assetsBaseUrl,
-      key: branding.loginIconKey,
-      skin: skin ?? null,
-    });
-  }, [assetsBaseUrl, branding.loginIconKey, skin]);
-
-  const bgUrls = useMemo(() => {
-    return buildDesktopAssetUrl({
-      baseUrl: assetsBaseUrl,
-      key: branding.loginBackgroundKey,
-      skin: skin ?? null,
-    });
-  }, [assetsBaseUrl, branding.loginBackgroundKey, skin]);
-
+  // 直接使用后端返回的 URL（已包含回退逻辑）
+  // 方式1：使用特定的 URL 字段（推荐用于品牌配置的资源）
   const [iconSrc, setIconSrc] = useState<string>('');
   useEffect(() => {
-    // 先尝试 skin，再回落 base
-    setIconSrc(iconUrls.skinUrl || iconUrls.baseUrl);
-  }, [iconUrls.baseUrl, iconUrls.skinUrl]);
+    setIconSrc(branding.loginIconUrl || '');
+  }, [branding.loginIconUrl]);
+
+  // 方式2：使用 getAssetUrl 通过 key 获取任意资源（推荐用于其他资源）
+  // 例如：const loadUrl = getAssetUrl('load'); // 获取加载动画 URL
+  // 例如：const startLoadUrl = getAssetUrl('start_load'); // 获取启动加载 URL
 
   const [bgSrc, setBgSrc] = useState<string>('');
+  const [bgType, setBgType] = useState<'image' | 'video' | null>(null);
+
   useEffect(() => {
-    if (!branding.loginBackgroundKey) {
+    const url = branding.loginBackgroundUrl || '';
+    if (!url) {
       setBgSrc('');
+      setBgType(null);
       return;
     }
-    // 先尝试 skin，再回落 base
-    setBgSrc(bgUrls.skinUrl || bgUrls.baseUrl);
-  }, [branding.loginBackgroundKey, bgUrls.baseUrl, bgUrls.skinUrl]);
+    setBgSrc(url);
+    
+    // 根据 URL 扩展名判断类型
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.mov')) {
+      setBgType('video');
+    } else {
+      setBgType('image');
+    }
+  }, [branding.loginBackgroundUrl]);
 
-  // background 是 CSS 背景图，没有 onError：用预加载探测，并做 skin -> base -> 关闭 的回退
+  // 图片背景：用预加载探测，失败则清空
   useEffect(() => {
-    if (!bgSrc) return;
-    if (!branding.loginBackgroundKey) return;
+    if (!bgSrc || bgType !== 'image') return;
 
     let cancelled = false;
     const img = new Image();
@@ -85,17 +83,14 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
     };
     img.onerror = () => {
       if (cancelled) return;
-      if (bgSrc === bgUrls.skinUrl && bgUrls.baseUrl) {
-        setBgSrc(bgUrls.baseUrl);
-      } else {
-        setBgSrc('');
-      }
+      setBgSrc('');
+      setBgType(null);
     };
     img.src = bgSrc;
     return () => {
       cancelled = true;
     };
-  }, [bgSrc, bgUrls.baseUrl, bgUrls.skinUrl, branding.loginBackgroundKey]);
+  }, [bgSrc, bgType]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,8 +128,8 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
       {/* 桌面端：提供“整屏背景可拖拽”的拖拽层（避免顶部小条被层级盖住导致不可拖拽） */}
       {isTauri() ? <div className="absolute inset-0 z-0" data-tauri-drag-region /> : null}
 
-      {/* 服务端品牌背景图（可选；失败自动回退到内置背景） */}
-      {bgSrc ? (
+      {/* 服务端品牌背景图/视频（可选；失败自动回退到内置背景） */}
+      {bgSrc && bgType === 'image' ? (
         <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
           <div
             className="absolute inset-0"
@@ -146,7 +141,28 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
               filter: 'saturate(0.95) contrast(0.95)',
             }}
           />
-          {/* 轻遮罩，保证文本可读性（保持“黑白系”风格） */}
+          {/* 轻遮罩，保证文本可读性（保持"黑白系"风格） */}
+          <div className="absolute inset-0 bg-white/40 dark:bg-black/35" />
+        </div>
+      ) : bgSrc && bgType === 'video' ? (
+        <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
+          <video
+            src={bgSrc}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{
+              filter: 'saturate(0.95) contrast(0.95)',
+            }}
+            onError={() => {
+              // 视频加载失败，清空
+              setBgSrc('');
+              setBgType(null);
+            }}
+          />
+          {/* 轻遮罩，保证文本可读性（保持"黑白系"风格） */}
           <div className="absolute inset-0 bg-white/40 dark:bg-black/35" />
         </div>
       ) : null}
@@ -196,23 +212,21 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
 
       <div className="relative z-10 w-full max-w-md p-8 ui-login-card animate-slide-up motion-reduce:animate-none">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-slate-900 dark:bg-white">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-transparent">
       {iconSrc ? (
               <img
                 src={iconSrc}
                 alt="login icon"
-                className="w-16 h-16 object-cover"
+                className="w-full h-full object-contain"
                 onError={() => {
-                  if (iconSrc === iconUrls.skinUrl && iconUrls.baseUrl) {
-                    setIconSrc(iconUrls.baseUrl);
-                  } else {
-                    // 回退到内置（但不强制把 branding 置回 local，避免影响 desktopName/bgKey）
-                    setIconSrc('');
-                  }
+                  // 回退到内置（但不强制把 branding 置回 local，避免影响 desktopName/bgKey）
+                  setIconSrc('');
                 }}
               />
             ) : (
-              <span className="text-white dark:text-slate-900 font-bold text-2xl">P</span>
+              <div className="w-full h-full rounded-2xl bg-slate-900 dark:bg-white flex items-center justify-center">
+                <span className="text-white dark:text-slate-900 font-bold text-2xl">P</span>
+              </div>
             )}
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{branding.desktopName || 'PRD Agent'}</h1>

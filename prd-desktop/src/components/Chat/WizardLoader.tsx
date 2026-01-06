@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useIsSkinVariantUnavailable, useRemoteAssetsStore, useRemoteAssetUrlPair } from '../../stores/remoteAssetsStore';
+import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 
 export type WizardLoaderProps = {
   className?: string;
@@ -30,20 +30,16 @@ export default function WizardLoader({
 }: WizardLoaderProps) {
   const s = Math.max(40, Math.min(180, Number(size) || 120));
   const rootClass = `flex items-center gap-3 ${labelMode === 'below' ? 'flex-col items-start gap-2' : ''} ${className || ''}`.trim();
-  const { skinUrl, baseUrl } = useRemoteAssetUrlPair('icon.desktop.load');
-  const { skin, unavailable } = useIsSkinVariantUnavailable('icon.desktop.load');
-  const [stage, setStage] = useState<'skin' | 'base' | 'local'>(() => {
-    if (unavailable) return 'base';
-    return skinUrl && skinUrl !== baseUrl ? 'skin' : 'base';
-  });
+  const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl);
+  const [currentSrc, setCurrentSrc] = useState<string>('');
 
-  // 当 URL 发生变化（etag/lastModified 更新、baseUrl/skin 变更）时，重新按优先级尝试远端资源
   useEffect(() => {
-    setStage(unavailable ? 'base' : (skinUrl && skinUrl !== baseUrl ? 'skin' : 'base'));
-  }, [skinUrl, baseUrl, unavailable]);
+    // 直接从 branding 获取 load 资源 URL
+    const url = getAssetUrl('load');
+    setCurrentSrc(url || '');
+  }, [getAssetUrl]);
 
   const ariaLabel = useMemo(() => label || '处理中', [label]);
-  const currentSrc = stage === 'skin' ? skinUrl : stage === 'base' ? baseUrl : null;
   const isPlain = labelVariant === 'plain';
   const labelEl = label
     ? (isPlain
@@ -78,13 +74,8 @@ export default function WizardLoader({
               className="block select-none pointer-events-none"
               style={{ imageRendering: 'auto' }}
               onError={() => {
-                if (stage === 'skin' && baseUrl && baseUrl !== skinUrl) {
-                  // 皮肤资源缺失：记住并直接跳过，避免下次再次先撞 404 再回退
-                  useRemoteAssetsStore.getState().markSkinVariantUnavailable('icon.desktop.load', skin);
-                  setStage('base');
-                } else {
-                  setStage('local');
-                }
+                // 加载失败，清空 URL 显示 fallback spinner
+                setCurrentSrc('');
               }}
             />
           ) : (

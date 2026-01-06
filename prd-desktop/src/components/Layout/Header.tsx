@@ -9,8 +9,6 @@ import { assistantFontScaleBounds, useUiPrefsStore } from '../../stores/uiPrefsS
 import { useConnectionStore } from '../../stores/connectionStore';
 import RoleSelector from '../Role/RoleSelector';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
-import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
-import { buildDesktopAssetUrl } from '../../lib/desktopAssetUrl';
 
 interface HeaderProps {
   isDark: boolean;
@@ -31,22 +29,12 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
   const isAdmin = user?.role === 'ADMIN';
   const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
-  const logoKey = useDesktopBrandingStore((s) => s.branding.loginIconKey);
-  const assetsBaseUrl = useRemoteAssetsStore((s) => s.baseUrl);
-  const skin = useRemoteAssetsStore((s) => s.skin);
-
-  const logoUrls = useMemo(() => {
-    return buildDesktopAssetUrl({
-      baseUrl: assetsBaseUrl,
-      key: logoKey,
-      skin: skin ?? null,
-    });
-  }, [assetsBaseUrl, logoKey, skin]);
+  const loginIconUrl = useDesktopBrandingStore((s) => s.branding.loginIconUrl);
 
   const [logoSrc, setLogoSrc] = useState<string>('');
   useEffect(() => {
-    setLogoSrc(logoUrls.skinUrl || logoUrls.baseUrl);
-  }, [logoUrls.baseUrl, logoUrls.skinUrl]);
+    setLogoSrc(loginIconUrl || '');
+  }, [loginIconUrl]);
   const isMac = useMemo(() => {
     try {
       return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -72,17 +60,23 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
       // ignore
     }
 
-    try {
-      // 清理服务端上下文缓存（群组会话优先）
-      if (activeGroupId) {
+    // 先尽力清理服务端上下文（失败也不应阻止本地清空，否则用户会觉得“点了没反应”）
+    if (activeGroupId) {
+      try {
         const resp = await invoke<any>('clear_group_context', { groupId: activeGroupId });
         const ok = Boolean(resp?.success);
         const code = String(resp?.error?.code ?? '').trim();
         if (!ok && code === 'UNAUTHORIZED') {
+          // token 失效：回到登录页；本地清空仍会继续执行（best-effort）
           logout();
-          return;
         }
+      } catch {
+        // ignore
       }
+    }
+
+    // 无论服务端是否成功，都清空本地对话视图（不回填历史，符合“清理上下文”的用户预期）
+    try {
       clearChatContext(sessionId);
       clearContext();
     } catch {
@@ -99,22 +93,21 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
         {isMac ? <div className="absolute inset-x-0 top-0 h-[28px]" data-tauri-drag-region /> : null}
 
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center overflow-hidden">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden bg-transparent">
             {logoSrc ? (
               <img
                 src={logoSrc}
                 alt="app logo"
-                className="w-8 h-8 object-cover"
+                className="w-full h-full object-contain"
                 onError={() => {
-                  if (logoSrc === logoUrls.skinUrl && logoUrls.baseUrl) {
-                    setLogoSrc(logoUrls.baseUrl);
-                  } else {
-                    setLogoSrc('');
-                  }
+                  // 后端已处理回退逻辑，如果加载失败则清空显示默认图标
+                  setLogoSrc('');
                 }}
               />
             ) : (
-              <span className="text-white font-bold text-sm">P</span>
+              <div className="w-full h-full rounded-lg bg-primary-500 flex items-center justify-center">
+                <span className="text-white font-bold text-sm">P</span>
+              </div>
             )}
           </div>
           <h1 className="text-lg font-semibold">{desktopName || 'PRD Agent'}</h1>

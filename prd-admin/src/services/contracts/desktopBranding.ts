@@ -6,6 +6,9 @@ export type DesktopBrandingSettings = {
   windowTitle: string;
   loginIconKey: string;
   loginBackgroundKey: string;
+  loginIconUrl?: string | null;
+  loginBackgroundUrl?: string | null;
+  assets?: Record<string, string>; // 所有资源的 key -> URL 映射
   updatedAt: string;
 };
 

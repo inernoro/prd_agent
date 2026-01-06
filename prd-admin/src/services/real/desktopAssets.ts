@@ -3,6 +3,7 @@ import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
   AdminDesktopAssetUploadResponse,
+  AdminDesktopAssetMatrixRow,
   DesktopAssetKey,
   DesktopAssetSkin,
 } from '@/services/contracts/desktopAssets';
@@ -83,6 +84,10 @@ export async function uploadDesktopAsset(input: {
   file: File;
 }): Promise<ApiResponse<AdminDesktopAssetUploadResponse>> {
   return await uploadDesktopAssetMultipart(input);
+}
+
+export async function getDesktopAssetsMatrix(): Promise<ApiResponse<AdminDesktopAssetMatrixRow[]>> {
+  return await apiRequest<AdminDesktopAssetMatrixRow[]>('/api/v1/admin/assets/desktop/matrix');
 }
 
 

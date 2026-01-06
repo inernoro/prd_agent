@@ -17,7 +17,6 @@ import AssetsDiagPage from './components/Assets/AssetsDiagPage';
 import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
-import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
@@ -40,6 +39,7 @@ function App() {
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const windowTitle = useDesktopBrandingStore((s) => s.branding.windowTitle);
+  const [isThemeTransitioning, setIsThemeTransitioning] = useState(false);
   const [isDark, setIsDark] = useState(() => {
     const stored = readStoredTheme();
     if (stored) return stored === 'dark';
@@ -122,25 +122,56 @@ function App() {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
-  // 同步当前皮肤（dark/white）到远端资源表：供 “皮肤专有 icon” 解析优先级使用
+  // 主题切换时重新获取对应皮肤的资源
   useEffect(() => {
-    const desired = isDark ? 'dark' : 'white';
-    const cur = useRemoteAssetsStore.getState().skin;
-    if (!cur || cur === 'dark' || cur === 'white') {
-      useRemoteAssetsStore.getState().setSkin(desired);
-    }
+    const skin = isDark ? 'dark' : 'white';
+    const refreshBranding = useDesktopBrandingStore.getState().refresh;
+    void refreshBranding('theme_change', skin);
   }, [isDark]);
 
+  const applyTheme = (nextIsDark: boolean) => {
+    setIsDark(nextIsDark);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextIsDark ? 'dark' : 'light');
+    } catch {
+      // ignore
+    }
+  };
+
   const onToggleTheme = () => {
-    setIsDark((prev) => {
-      const next = !prev;
+    // 过渡进行中则忽略，避免连点造成状态错乱
+    if (isThemeTransitioning) return;
+
+    // 无动画偏好：直接切换
+    try {
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduce) {
+        applyTheme(!isDark);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    // 直接线性过渡到目标主题颜色：不使用遮罩，避免“白->黑->白”闪烁
+    const DURATION_MS = 520;
+    setIsThemeTransitioning(true);
+    try {
+      document.documentElement.classList.add('theme-transitioning');
+    } catch {
+      // ignore
+    }
+
+    applyTheme(!isDark);
+
+    window.setTimeout(() => {
       try {
-        localStorage.setItem(THEME_STORAGE_KEY, next ? 'dark' : 'light');
+        document.documentElement.classList.remove('theme-transitioning');
       } catch {
         // ignore
       }
-      return next;
-    });
+      setIsThemeTransitioning(false);
+    }, DURATION_MS);
   };
 
   // 将持久化的 token 同步到 Rust（避免重启后 Rust 侧没有 token 导致请求 401）

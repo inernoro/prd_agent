@@ -40,8 +40,11 @@ public class Message
     /// </summary>
     public string? RunId { get; set; }
     
-    /// <summary>发送者用户ID（AI消息为null）</summary>
+    /// <summary>发送者用户ID（User消息的发送者；AI消息为null）</summary>
     public string? SenderId { get; set; }
+
+    /// <summary>AI消息的机器人用户ID（Assistant消息专用；User消息为null）</summary>
+    public string? AssistantUserId { get; set; }
     
     /// <summary>消息角色</summary>
     public MessageRole Role { get; set; } = MessageRole.User;

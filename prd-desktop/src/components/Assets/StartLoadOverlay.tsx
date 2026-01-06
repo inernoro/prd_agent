@@ -1,23 +1,18 @@
-import { useEffect, useState } from 'react';
-import { useIsSkinVariantUnavailable, useRemoteAssetsStore, useRemoteAssetUrlPair } from '../../stores/remoteAssetsStore';
+import { useState, useEffect } from 'react';
+import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 
 export default function StartLoadOverlay(props: { open: boolean }) {
   const { open } = props;
-  const { skinUrl, baseUrl } = useRemoteAssetUrlPair('icon.desktop.startLoad');
-  const { skin, unavailable } = useIsSkinVariantUnavailable('icon.desktop.startLoad');
-  const [stage, setStage] = useState<'skin' | 'base' | 'local'>(() => {
-    if (unavailable) return 'base';
-    return skinUrl && skinUrl !== baseUrl ? 'skin' : 'base';
-  });
+  const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl);
+  const [currentSrc, setCurrentSrc] = useState<string>('');
 
   useEffect(() => {
-    if (!open) return;
-    setStage(unavailable ? 'base' : (skinUrl && skinUrl !== baseUrl ? 'skin' : 'base'));
-  }, [open, skinUrl, baseUrl, unavailable]);
+    // 直接从 branding 获取 start_load 资源 URL
+    const url = getAssetUrl('start_load');
+    setCurrentSrc(url || '');
+  }, [getAssetUrl]);
 
   if (!open) return null;
-
-  const currentSrc = stage === 'skin' ? skinUrl : stage === 'base' ? baseUrl : null;
 
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-background-light dark:bg-background-dark">
@@ -34,11 +29,8 @@ export default function StartLoadOverlay(props: { open: boolean }) {
             height={160}
             className="block select-none pointer-events-none"
             onError={() => {
-              if (stage === 'skin' && baseUrl && baseUrl !== skinUrl) {
-                useRemoteAssetsStore.getState().markSkinVariantUnavailable('icon.desktop.startLoad', skin);
-                setStage('base');
-              }
-              else setStage('local');
+              // 加载失败，清空 URL 显示 fallback spinner
+              setCurrentSrc('');
             }}
           />
         ) : (
