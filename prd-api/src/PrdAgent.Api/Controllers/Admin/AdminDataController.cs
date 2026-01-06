@@ -788,23 +788,23 @@ public class AdminDataController : ControllerBase
         if (requested.Contains("llmlogs") || requested.Contains("llmrequestlogs") || requested.Contains("logs"))
         {
             matchedAny = true;
-            var res = await _db.LlmRequestLogs.DeleteManyAsync(_ => true);
-            payload.LlmRequestLogs = res.DeletedCount;
+            await _db.Database.DropCollectionAsync("llmrequestlogs");
+            payload.LlmRequestLogs = 0; // drop 操作无法返回删除数量
         }
 
         // sessions/messages
         if (requested.Contains("sessionsmessages") || requested.Contains("sessions") || requested.Contains("messages"))
         {
             matchedAny = true;
-            var msg = await _db.Messages.DeleteManyAsync(_ => true);
-            var ims = await _db.ImageMasterSessions.DeleteManyAsync(_ => true);
-            var imm = await _db.ImageMasterMessages.DeleteManyAsync(_ => true);
+            await _db.Database.DropCollectionAsync("messages");
+            await _db.Database.DropCollectionAsync("image_master_sessions");
+            await _db.Database.DropCollectionAsync("image_master_messages");
 
-            payload.Messages = msg.DeletedCount;
-            payload.ImageMasterSessions = ims.DeletedCount;
-            payload.ImageMasterMessages = imm.DeletedCount;
+            payload.Messages = 0;
+            payload.ImageMasterSessions = 0;
+            payload.ImageMasterMessages = 0;
 
-            // 清掉会话/聊天缓存（避免 UI 看到“幽灵数据”）
+            // 清掉会话/聊天缓存（避免 UI 看到"幽灵数据"）
             await _cache.RemoveByPatternAsync($"{CacheKeys.Session}*");
             await _cache.RemoveByPatternAsync($"{CacheKeys.ChatHistory}*");
             await _cache.RemoveByPatternAsync($"{CacheKeys.GroupChatHistory}*");
@@ -815,15 +815,15 @@ public class AdminDataController : ControllerBase
         if (requested.Contains("documents") || requested.Contains("docs") || requested.Contains("knowledgebase") || requested.Contains("kb"))
         {
             matchedAny = true;
-            var docs = await _db.Documents.DeleteManyAsync(_ => true);
-            var atts = await _db.Attachments.DeleteManyAsync(_ => true);
-            var gaps = await _db.ContentGaps.DeleteManyAsync(_ => true);
-            var comments = await _db.PrdComments.DeleteManyAsync(_ => true);
+            await _db.Database.DropCollectionAsync("documents");
+            await _db.Database.DropCollectionAsync("attachments");
+            await _db.Database.DropCollectionAsync("contentgaps");
+            await _db.Database.DropCollectionAsync("prdcomments");
 
-            payload.Documents = docs.DeletedCount;
-            payload.Attachments = atts.DeletedCount;
-            payload.ContentGaps = gaps.DeletedCount;
-            payload.PrdComments = comments.DeletedCount;
+            payload.Documents = 0;
+            payload.Attachments = 0;
+            payload.ContentGaps = 0;
+            payload.PrdComments = 0;
 
             await _cache.RemoveByPatternAsync($"{CacheKeys.Document}*");
         }
@@ -837,46 +837,45 @@ public class AdminDataController : ControllerBase
             var delDisabledModels = await _db.LLMModels.DeleteManyAsync(x => !x.Enabled);
             payload.DisabledModelsDeleted = delDisabledModels.DeletedCount;
 
-            // 2) 清掉“配置/提示词/日志/会话/业务数据/图片/实验”等全部非核心集合
-            long other = 0;
-            other += (await _db.Groups.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.GroupMembers.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.GroupMessageCounters.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.Messages.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.Documents.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.Attachments.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ContentGaps.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.PrdComments.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.InviteCodes.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.LLMConfigs.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.AppSettings.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.Prompts.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.SystemPrompts.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.LlmRequestLogs.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ApiRequestLogs.DeleteManyAsync(_ => true)).DeletedCount;
+            // 2) 清掉"配置/提示词/日志/会话/业务数据/图片/实验"等全部非核心集合（使用 drop 而非 remove）
+            await _db.Database.DropCollectionAsync("groups");
+            await _db.Database.DropCollectionAsync("groupmembers");
+            await _db.Database.DropCollectionAsync("group_message_counters");
+            await _db.Database.DropCollectionAsync("messages");
+            await _db.Database.DropCollectionAsync("documents");
+            await _db.Database.DropCollectionAsync("attachments");
+            await _db.Database.DropCollectionAsync("contentgaps");
+            await _db.Database.DropCollectionAsync("prdcomments");
+            await _db.Database.DropCollectionAsync("invitecodes");
+            await _db.Database.DropCollectionAsync("llmconfigs");
+            await _db.Database.DropCollectionAsync("appsettings");
+            await _db.Database.DropCollectionAsync("promptstages");
+            await _db.Database.DropCollectionAsync("systemprompts");
+            await _db.Database.DropCollectionAsync("llmrequestlogs");
+            await _db.Database.DropCollectionAsync("apirequestlogs");
 
-            other += (await _db.ModelLabExperiments.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ModelLabRuns.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ModelLabRunItems.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ModelLabModelSets.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ModelLabGroups.DeleteManyAsync(_ => true)).DeletedCount;
+            await _db.Database.DropCollectionAsync("model_lab_experiments");
+            await _db.Database.DropCollectionAsync("model_lab_runs");
+            await _db.Database.DropCollectionAsync("model_lab_run_items");
+            await _db.Database.DropCollectionAsync("model_lab_model_sets");
+            await _db.Database.DropCollectionAsync("model_lab_groups");
 
-            other += (await _db.ImageMasterSessions.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageMasterMessages.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageAssets.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageMasterCanvases.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageMasterWorkspaces.DeleteManyAsync(_ => true)).DeletedCount;
+            await _db.Database.DropCollectionAsync("image_master_sessions");
+            await _db.Database.DropCollectionAsync("image_master_messages");
+            await _db.Database.DropCollectionAsync("image_assets");
+            await _db.Database.DropCollectionAsync("image_master_canvases");
+            await _db.Database.DropCollectionAsync("image_master_workspaces");
 
-            other += (await _db.ImageGenSizeCaps.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageGenRuns.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageGenRunItems.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.ImageGenRunEvents.DeleteManyAsync(_ => true)).DeletedCount;
+            await _db.Database.DropCollectionAsync("image_gen_size_caps");
+            await _db.Database.DropCollectionAsync("image_gen_runs");
+            await _db.Database.DropCollectionAsync("image_gen_run_items");
+            await _db.Database.DropCollectionAsync("image_gen_run_events");
 
-            other += (await _db.UploadArtifacts.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.AdminPromptOverrides.DeleteManyAsync(_ => true)).DeletedCount;
-            other += (await _db.AdminIdempotencyRecords.DeleteManyAsync(_ => true)).DeletedCount;
+            await _db.Database.DropCollectionAsync("upload_artifacts");
+            await _db.Database.DropCollectionAsync("admin_prompt_overrides");
+            await _db.Database.DropCollectionAsync("admin_idempotency");
 
-            payload.OtherDeleted = other;
+            payload.OtherDeleted = 0; // drop 操作无法返回删除数量
 
             // 3) cache 清理：尽量清空相关前缀（避免 UI 看到幽灵数据）
             await _cache.RemoveByPatternAsync($"{CacheKeys.Session}*");

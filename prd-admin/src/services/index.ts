@@ -67,6 +67,7 @@ import type {
   GetAdminImageGenPlanPromptOverrideContract,
   PutAdminImageGenPlanPromptOverrideContract,
 } from '@/services/contracts/promptOverrides';
+import type { UploadNoHeadAvatarContract } from '@/services/contracts/avatarAssets';
 import type {
   AddImageMasterMessageContract,
   AddImageMasterWorkspaceMessageContract,
@@ -93,6 +94,7 @@ import type {
 import type {
   CreateDesktopAssetKeyContract,
   CreateDesktopAssetSkinContract,
+  DeleteDesktopAssetKeyContract,
   DeleteDesktopAssetSkinContract,
   ListDesktopAssetKeysContract,
   ListDesktopAssetSkinsContract,
@@ -222,10 +224,13 @@ import {
   createDesktopAssetSkin as createDesktopAssetSkinReal,
   deleteDesktopAssetSkin as deleteDesktopAssetSkinReal,
   listDesktopAssetKeys as listDesktopAssetKeysReal,
+  deleteDesktopAssetKey as deleteDesktopAssetKeyReal,
   listDesktopAssetSkins as listDesktopAssetSkinsReal,
   updateDesktopAssetSkin as updateDesktopAssetSkinReal,
   uploadDesktopAsset as uploadDesktopAssetReal,
+  getDesktopAssetsMatrix as getDesktopAssetsMatrixReal,
 } from '@/services/real/desktopAssets';
+import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -357,7 +362,11 @@ export const updateDesktopAssetSkin: UpdateDesktopAssetSkinContract = withAuth(u
 export const deleteDesktopAssetSkin: DeleteDesktopAssetSkinContract = withAuth(deleteDesktopAssetSkinReal);
 export const listDesktopAssetKeys: ListDesktopAssetKeysContract = withAuth(listDesktopAssetKeysReal);
 export const createDesktopAssetKey: CreateDesktopAssetKeyContract = withAuth(createDesktopAssetKeyReal);
+export const deleteDesktopAssetKey: DeleteDesktopAssetKeyContract = withAuth(deleteDesktopAssetKeyReal);
 export const uploadDesktopAsset: UploadDesktopAssetContract = withAuth(uploadDesktopAssetReal);
+export const getDesktopAssetsMatrix = withAuth(getDesktopAssetsMatrixReal);
+
+export const uploadNoHeadAvatar: UploadNoHeadAvatarContract = withAuth(uploadNoHeadAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);

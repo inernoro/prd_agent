@@ -370,6 +370,16 @@ public class ChatService : IChatService
         // 保存用户消息
         // userMessage 已在请求开始阶段落库/广播，这里仅复用变量参与缓存拼接与关联
 
+        // 获取对应角色的机器人用户ID
+        var botUsername = session.CurrentRole switch
+        {
+            UserRole.PM => "bot_pm",
+            UserRole.DEV => "bot_dev",
+            UserRole.QA => "bot_qa",
+            _ => "bot_dev" // 默认使用 DEV 机器人
+        };
+        var botUser = await _userService.GetByUsernameAsync(botUsername);
+
         // 保存AI回复
         var assistantMessage = new Message
         {
@@ -378,6 +388,7 @@ public class ChatService : IChatService
             GroupId = session.GroupId ?? "",
             RunId = effectiveRunId,
             Role = MessageRole.Assistant,
+            AssistantUserId = botUser?.UserId, // 记录机器人用户ID
             Content = terminatedWithError
                 ? (string.IsNullOrWhiteSpace(terminatedErrorMessage) ? "LLM调用失败" : $"请求失败：{terminatedErrorMessage}")
                 : fullResponse.ToString(),

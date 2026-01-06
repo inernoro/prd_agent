@@ -25,6 +25,24 @@ export type AdminDesktopAssetUploadResponse = {
   sizeBytes: number;
 };
 
+export type AdminDesktopAssetMatrixRow = {
+  id?: string | null; // DesktopAssetKey 的 ID（用于删除操作）
+  key: string;
+  name: string;
+  kind: string;
+  description?: string | null;
+  required: boolean; // 是否为必需资源
+  cells: Record<string, AdminDesktopAssetCell>;
+};
+
+export type AdminDesktopAssetCell = {
+  url?: string | null;
+  exists: boolean;
+  isFallback: boolean;
+  mime?: string | null;
+  sizeBytes?: number | null;
+};
+
 export type ListDesktopAssetSkinsContract = () => Promise<ApiResponse<DesktopAssetSkin[]>>;
 export type CreateDesktopAssetSkinContract = (input: { name: string; enabled?: boolean }) => Promise<ApiResponse<DesktopAssetSkin>>;
 export type UpdateDesktopAssetSkinContract = (input: { id: string; enabled?: boolean }) => Promise<ApiResponse<DesktopAssetSkin>>;
@@ -32,6 +50,7 @@ export type DeleteDesktopAssetSkinContract = (input: { id: string }) => Promise<
 
 export type ListDesktopAssetKeysContract = () => Promise<ApiResponse<DesktopAssetKey[]>>;
 export type CreateDesktopAssetKeyContract = (input: { key: string; kind?: string; description?: string | null }) => Promise<ApiResponse<DesktopAssetKey>>;
+export type DeleteDesktopAssetKeyContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 export type UploadDesktopAssetContract = (input: { skin?: string | null; key: string; file: File }) => Promise<ApiResponse<AdminDesktopAssetUploadResponse>>;
 

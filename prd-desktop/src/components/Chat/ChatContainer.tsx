@@ -68,7 +68,7 @@ function ChatContainerInner() {
       };
       
       if (type === 'start') {
-        // 真实 start 到达：移除本地“请求中”占位气泡
+        // 真实 start 到达：移除本地"请求中"占位气泡
         clearPendingAssistant();
         const dRecv = parseUtc(requestReceivedAtUtc);
         const dStart = parseUtc(startAtUtc) || dRecv;
@@ -76,6 +76,11 @@ function ChatContainerInner() {
           // 用户消息发送时间：以服务端 requestReceivedAtUtc 为准（与 DB 保持一致）
           ackPendingUserMessageTimestamp({ receivedAt: dRecv });
         }
+        
+        // 根据 viewRole 获取对应的机器人信息（用于流式消息显示）
+        const resolveRobotForViewRole = useUserDirectoryStore.getState().resolveRobotForViewRole;
+        const assistantUser = resolveRobotForViewRole(currentRole);
+        
         startStreaming({
           id: messageId || `assistant-${Date.now()}`,
           role: 'Assistant',
@@ -85,6 +90,12 @@ function ChatContainerInner() {
           serverStartAtUtc: dStart || undefined,
           viewRole: currentRole,
           blocks: [],
+          // 填充 Assistant 机器人信息（用于刷新后仍能正确显示）
+          assistantUserId: assistantUser?.userId,
+          assistantDisplayName: assistantUser?.displayName,
+          assistantUsername: assistantUser?.username,
+          assistantAvatarUrl: assistantUser?.avatarUrl ?? undefined,
+          assistantTags: assistantUser?.tags,
         });
         // 交给 store：startStreaming 默认 phase=requesting；后续 phase 事件会更新；
         // 一旦进入 typing（收到首包 delta/blockDelta），将不再被 phase 覆盖（见 messageStore.setStreamingPhase）
@@ -211,7 +222,8 @@ function ChatContainerInner() {
   // 首次进入群组：拉一次成员列表并缓存（用于把 senderId 显示成 username）
   useEffect(() => {
     if (!activeGroupId) return;
-    loadGroupMembers(activeGroupId).catch(() => {});
+    // 默认打开群：强制拉一次成员信息，保证机器人/用户头像/昵称/tag 最新
+    loadGroupMembers(activeGroupId, { force: true }).catch(() => {});
   }, [activeGroupId, loadGroupMembers]);
 
   useEffect(() => {
@@ -238,6 +250,22 @@ function ChatContainerInner() {
       const m = p.message;
       const gid = String(m.groupId || '').trim();
       const seq = Number(m.groupSeq || 0);
+
+      // 兜底：若消息携带 senderId，但本地没有该用户信息，则强制刷新一次群成员列表（批量补齐）
+      try {
+        const sid = m.senderId ? String(m.senderId).trim() : '';
+        if (sid && useSessionStore.getState().activeGroupId) {
+          const exists = !!useUserDirectoryStore.getState().resolveUser(sid);
+          if (!exists) {
+            const active = useSessionStore.getState().activeGroupId;
+            if (active && String(active) === gid) {
+              useUserDirectoryStore.getState().loadGroupMembers(active, { force: true }).catch(() => {});
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
 
       // 不再做“跳号补洞”：群组 seq 仅表示顺序，不保证连续可见（删除/软删会产生空洞），
       // 离线/重连一致性通过“订阅后快照校准 + 历史拉取”来保证。

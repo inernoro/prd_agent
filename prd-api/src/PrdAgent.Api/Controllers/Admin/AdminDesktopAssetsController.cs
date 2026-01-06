@@ -68,7 +68,31 @@ public class AdminDesktopAssetsController : ControllerBase
         if (k.EndsWith(".svg", StringComparison.Ordinal)) return "image/svg+xml";
         if (k.EndsWith(".jpg", StringComparison.Ordinal) || k.EndsWith(".jpeg", StringComparison.Ordinal)) return "image/jpeg";
         if (k.EndsWith(".ico", StringComparison.Ordinal)) return "image/x-icon";
+        if (k.EndsWith(".mp4", StringComparison.Ordinal)) return "video/mp4";
+        if (k.EndsWith(".webm", StringComparison.Ordinal)) return "video/webm";
+        if (k.EndsWith(".mov", StringComparison.Ordinal)) return "video/quicktime";
         return "application/octet-stream";
+    }
+
+    private static string ExtractExtensionFromFileName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return "png";
+        var ext = Path.GetExtension(fileName)?.TrimStart('.').ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(ext) ? "png" : ext;
+    }
+
+    private static string GuessExtensionFromMime(string mime)
+    {
+        var m = (mime ?? string.Empty).Trim().ToLowerInvariant();
+        if (m.Contains("gif")) return "gif";
+        if (m.Contains("png")) return "png";
+        if (m.Contains("webp")) return "webp";
+        if (m.Contains("svg")) return "svg";
+        if (m.Contains("jpeg") || m.Contains("jpg")) return "jpg";
+        if (m.Contains("mp4")) return "mp4";
+        if (m.Contains("webm")) return "webm";
+        if (m.Contains("quicktime") || m.Contains("mov")) return "mov";
+        return "png";
     }
 
     // 注意：Desktop 访问规则固定为 /icon/desktop/...；这里用固定前缀写 COS 对象 key（必须全小写）
@@ -316,6 +340,74 @@ public class AdminDesktopAssetsController : ControllerBase
         }));
     }
 
+    [HttpDelete("keys/{id}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DeleteKey([FromRoute] string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var kid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(kid))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        // 1. 获取 key 信息（为了删除对应的 COS 文件）
+        var record = await _db.DesktopAssetKeys.Find(x => x.Id == kid).FirstOrDefaultAsync(ct);
+        if (record == null)
+            return Ok(ApiResponse<object>.Ok(new { deleted = false, reason = "not found" }));
+
+        // 2. 删除数据库记录
+        var res = await _db.DesktopAssetKeys.DeleteOneAsync(x => x.Id == kid, ct);
+        if (res.DeletedCount > 0)
+        {
+            _logger.LogWarning("Admin deleted desktop asset key: {Key} id={Id}", record.Key, record.Id);
+            
+            // 3. 尝试删除 COS 文件（包括 base 和所有 skin 下的文件）
+            // 注意：DesktopAssetKeys 表只存了 key 定义，并不存该 key 下有哪些 skin 的文件。
+            // 这里只能通过枚举已知的 Skins + Base 来尝试删除。
+            try 
+            {
+                var skins = await _db.DesktopAssetSkins.Find(_ => true).ToListAsync(ct);
+                var pathsToDelete = new List<string>();
+                
+                // base path
+                pathsToDelete.Add(BuildDesktopIconObjectKey(null, record.Key));
+                
+                // skin paths
+                foreach(var s in skins)
+                {
+                    pathsToDelete.Add(BuildDesktopIconObjectKey(s.Name, record.Key));
+                }
+
+                // 批量删除（如果 Storage 支持批量，目前 TencentCosStorage 的 DeleteByShaAsync 是针对 sha 的，
+                // 这里的 DesktopAsset 并没有 sha 索引，是直接按路径存的。
+                // AdminImageMasterController 用的是 DeleteByShaAsync，但这里是直接覆盖写路径模式。
+                // 也就是我们需要 DeleteObjectAsync(key)。
+                
+                // 检查 _assetStorage 是否有 DeleteObjectAsync 接口，或者直接转换类型调用
+                if (_assetStorage is TencentCosStorage cos)
+                {
+                    foreach(var p in pathsToDelete)
+                    {
+                        // 暂时串行删除，失败不阻断流程
+                        try 
+                        {
+                            await cos.DeleteAsync(p, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("Failed to delete COS object {Path}: {Msg}", p, ex.Message);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleanup COS files for key {Key}", record.Key);
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = res.DeletedCount > 0 }));
+    }
+
     // ---------------- Upload ----------------
 
     /// <summary>
@@ -338,6 +430,10 @@ public class AdminDesktopAssetsController : ControllerBase
         var (kOk, kErr, keyNorm) = NormalizeAssetKey(key);
         if (!kOk) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, kErr ?? "资源 key 不合法"));
 
+        // 禁止 key 中包含扩展名（业务标识不应包含 .png/.mp4 等）
+        if (keyNorm.Contains('.'))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "资源 key 不允许包含扩展名（如 .png/.mp4），请使用纯业务标识（如 bg, login_icon）"));
+
         if (file == null || file.Length <= 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 不能为空"));
         if (file.Length > MaxUploadBytes)
@@ -353,13 +449,26 @@ public class AdminDesktopAssetsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 内容为空"));
 
         var mime = (file.ContentType ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(mime) || mime == "application/octet-stream")
+        
+        // 从文件名提取扩展名
+        var ext = ExtractExtensionFromFileName(file.FileName);
+        if (string.IsNullOrWhiteSpace(ext) || ext == "png")
         {
-            mime = GuessMimeByKey(keyNorm);
+            // 回退：从 MIME 推断
+            ext = GuessExtensionFromMime(mime);
         }
 
+        // 更新 MIME（如果空或不准确）
+        if (string.IsNullOrWhiteSpace(mime) || mime == "application/octet-stream")
+        {
+            mime = GuessMimeByKey($"{keyNorm}.{ext}");
+        }
+
+        // 完整的文件名：key + 扩展名
+        var fullKey = $"{keyNorm}.{ext}";
+
         // 强约束：COS key 必须全小写（目录 + 文件名）
-        var objectKey = BuildDesktopIconObjectKey(string.IsNullOrWhiteSpace(skinFinal) ? null : skinFinal, keyNorm);
+        var objectKey = BuildDesktopIconObjectKey(string.IsNullOrWhiteSpace(skinFinal) ? null : skinFinal, fullKey);
 
         // 目前生产强制使用 TencentCosStorage；这里做显式类型检查，避免未来替换实现时 silent fail
         if (_assetStorage is not TencentCosStorage cos)
@@ -367,32 +476,69 @@ public class AdminDesktopAssetsController : ControllerBase
 
         await cos.UploadBytesAsync(objectKey, bytes, mime, ct);
 
-        // 更新/创建 key 元数据（不存文件内容）
         var now = DateTime.UtcNow;
-        var existed = await _db.DesktopAssetKeys.Find(x => x.Key == keyNorm).Limit(1).FirstOrDefaultAsync(ct);
-        if (existed == null)
+        
+        // 1. 更新/创建 key 元数据（不存文件内容，仅用于管理后台展示 key 列表）
+        var existedKey = await _db.DesktopAssetKeys.Find(x => x.Key == keyNorm).Limit(1).FirstOrDefaultAsync(ct);
+        if (existedKey == null)
         {
-            var rec = new DesktopAssetKey
+            var keyRec = new DesktopAssetKey
             {
                 Id = Guid.NewGuid().ToString("N"),
                 Key = keyNorm,
-                Kind = "image",
+                Kind = mime.StartsWith("video") ? "video" : "image",
                 CreatedByAdminId = adminId,
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            await _db.DesktopAssetKeys.InsertOneAsync(rec, cancellationToken: ct);
+            await _db.DesktopAssetKeys.InsertOneAsync(keyRec, cancellationToken: ct);
         }
         else
         {
-            await _db.DesktopAssetKeys.UpdateOneAsync(x => x.Id == existed.Id,
+            await _db.DesktopAssetKeys.UpdateOneAsync(x => x.Id == existedKey.Id,
                 Builders<DesktopAssetKey>.Update.Set(x => x.UpdatedAt, now),
                 cancellationToken: ct);
         }
 
-        // 返回给管理端用于复制/预览的 URL：按固定规则拼接
-        // 说明：Desktop 端也按同规则拼接，不需要后端下发地址规则
+        // 2. 更新/创建 DesktopAsset 实际资源记录（key + skin 唯一）
         var url = "https://i.pa.759800.com/" + objectKey;
+        var skinForQuery = string.IsNullOrWhiteSpace(skinFinal) ? null : skinFinal;
+        var existedAsset = await _db.DesktopAssets
+            .Find(x => x.Key == keyNorm && x.Skin == skinForQuery)
+            .Limit(1)
+            .FirstOrDefaultAsync(ct);
+
+        if (existedAsset == null)
+        {
+            var assetRec = new DesktopAsset
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Key = keyNorm,
+                Skin = skinForQuery,
+                RelativePath = objectKey,
+                Url = url,
+                Mime = mime,
+                SizeBytes = bytes.LongLength,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            await _db.DesktopAssets.InsertOneAsync(assetRec, cancellationToken: ct);
+        }
+        else
+        {
+            await _db.DesktopAssets.UpdateOneAsync(
+                x => x.Id == existedAsset.Id,
+                Builders<DesktopAsset>.Update
+                    .Set(x => x.RelativePath, objectKey)
+                    .Set(x => x.Url, url)
+                    .Set(x => x.Mime, mime)
+                    .Set(x => x.SizeBytes, bytes.LongLength)
+                    .Set(x => x.UpdatedAt, now),
+                cancellationToken: ct);
+        }
+
+        _logger.LogInformation("Uploaded desktop asset: key={Key} skin={Skin} ext={Ext} size={Size}",
+            keyNorm, skinFinal, ext, bytes.LongLength);
 
         return Ok(ApiResponse<AdminDesktopAssetUploadResponse>.Ok(new AdminDesktopAssetUploadResponse
         {
@@ -402,6 +548,143 @@ public class AdminDesktopAssetsController : ControllerBase
             Mime = mime,
             SizeBytes = bytes.LongLength
         }));
+    }
+
+    /// <summary>
+    /// 查询资源矩阵（带回退逻辑）：返回用户会看到的资源
+    /// </summary>
+    [HttpGet("matrix")]
+    [ProducesResponseType(typeof(ApiResponse<List<AdminDesktopAssetMatrixRow>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAssetsMatrix(CancellationToken ct)
+    {
+        // 1. 查询所有数据
+        var allAssets = await _db.DesktopAssets.Find(_ => true).ToListAsync(ct);
+        var keys = await _db.DesktopAssetKeys.Find(_ => true).ToListAsync(ct);
+        var skins = await _db.DesktopAssetSkins.Find(x => x.Enabled).ToListAsync(ct);
+
+        // 1.1 确保必需资源的 key 定义存在（即使数据库中没有）
+        var requiredAssets = new[]
+        {
+            new { Key = "start_load", Description = "冷启动加载", Kind = "image", Required = true },
+            new { Key = "load", Description = "加载动画", Kind = "image", Required = true },
+            new { Key = "bg", Description = "登录背景", Kind = "image", Required = true },
+            new { Key = "login_icon", Description = "登录图标", Kind = "image", Required = true }
+        };
+
+        // 构建默认 description 映射
+        var defaultDescriptions = requiredAssets.ToDictionary(
+            r => r.Key,
+            r => r.Description,
+            StringComparer.OrdinalIgnoreCase
+        );
+
+        var existingKeys = new HashSet<string>(keys.Select(k => k.Key ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+        var missingKeys = requiredAssets.Where(r => !existingKeys.Contains(r.Key)).ToList();
+        
+        // 添加缺失的必需资源
+        if (missingKeys.Any())
+        {
+            foreach (var missing in missingKeys)
+            {
+                keys.Add(new DesktopAssetKey
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Key = missing.Key,
+                    Description = missing.Description,
+                    Kind = missing.Kind,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+        }
+
+        // 为已存在但 description 为空的必需资源补充默认 description
+        foreach (var keyDef in keys)
+        {
+            var k = keyDef.Key ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(keyDef.Description) && defaultDescriptions.ContainsKey(k))
+            {
+                keyDef.Description = defaultDescriptions[k];
+            }
+        }
+
+        // 2. 皮肤列表：固定展示 base/white/dark + 其他启用的皮肤
+        var skinNames = new List<string> { "", "white", "dark" };
+        var additionalSkins = skins
+            .Select(s => (s.Name ?? string.Empty).Trim())
+            .Where(n => !string.IsNullOrWhiteSpace(n) && n != "white" && n != "dark")
+            .Distinct()
+            .OrderBy(n => n);
+        skinNames.AddRange(additionalSkins);
+
+        // 3. 构建矩阵：每个 key 一行，每个 skin 一列
+        var requiredKeySet = new HashSet<string>(requiredAssets.Select(r => r.Key), StringComparer.OrdinalIgnoreCase);
+        var result = new List<AdminDesktopAssetMatrixRow>();
+        foreach (var keyDef in keys)
+        {
+            var k = keyDef.Key ?? string.Empty;
+            var row = new AdminDesktopAssetMatrixRow
+            {
+                Id = keyDef.Id,
+                Key = k,
+                Name = keyDef.Description ?? k,
+                Kind = keyDef.Kind ?? "image",
+                Description = keyDef.Description,
+                Required = requiredKeySet.Contains(k),
+                Cells = new Dictionary<string, AdminDesktopAssetCell>()
+            };
+
+            // 获取默认资源（回退基准）
+            var defaultAsset = allAssets.FirstOrDefault(a => a.Key == k && string.IsNullOrWhiteSpace(a.Skin));
+
+            // 遍历所有皮肤列
+            foreach (var skinName in skinNames)
+            {
+                var normalizedSkin = string.IsNullOrWhiteSpace(skinName) ? null : skinName;
+                var skinAsset = allAssets.FirstOrDefault(a => a.Key == k && a.Skin == normalizedSkin);
+
+                if (skinAsset != null)
+                {
+                    // 该皮肤下存在资源
+                    row.Cells[skinName] = new AdminDesktopAssetCell
+                    {
+                        Url = skinAsset.Url,
+                        Exists = true,
+                        IsFallback = false,
+                        Mime = skinAsset.Mime,
+                        SizeBytes = skinAsset.SizeBytes
+                    };
+                }
+                else if (defaultAsset != null && !string.IsNullOrWhiteSpace(skinName))
+                {
+                    // 该皮肤下不存在，回退到默认
+                    row.Cells[skinName] = new AdminDesktopAssetCell
+                    {
+                        Url = defaultAsset.Url,
+                        Exists = false,
+                        IsFallback = true,
+                        Mime = defaultAsset.Mime,
+                        SizeBytes = defaultAsset.SizeBytes
+                    };
+                }
+                else
+                {
+                    // 默认也不存在
+                    row.Cells[skinName] = new AdminDesktopAssetCell
+                    {
+                        Url = null,
+                        Exists = false,
+                        IsFallback = false,
+                        Mime = null,
+                        SizeBytes = null
+                    };
+                }
+            }
+
+            result.Add(row);
+        }
+
+        return Ok(ApiResponse<List<AdminDesktopAssetMatrixRow>>.Ok(result));
     }
 }
 

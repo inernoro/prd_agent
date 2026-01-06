@@ -79,9 +79,16 @@ export interface Message {
   serverDoneAtUtc?: Date;
   ttftMs?: number;
   totalMs?: number;
+  // User 消息字段
   senderId?: string;
   senderName?: string;
   senderRole?: UserRole;
+  // Assistant 消息字段
+  assistantUserId?: string;
+  assistantDisplayName?: string;
+  assistantUsername?: string;
+  assistantAvatarUrl?: string;
+  assistantTags?: GroupMemberTag[];
 }
 
 export type MessageBlockKind = 'paragraph' | 'heading' | 'listItem' | 'codeBlock';

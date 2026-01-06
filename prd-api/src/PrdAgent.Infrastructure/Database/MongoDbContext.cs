@@ -11,6 +11,11 @@ public class MongoDbContext
 {
     private readonly IMongoDatabase _database;
 
+    /// <summary>
+    /// 暴露底层 IMongoDatabase 实例（用于 DropCollectionAsync 等高级操作）
+    /// </summary>
+    public IMongoDatabase Database => _database;
+
     public MongoDbContext(string connectionString, string databaseName)
     {
         // 注册 BSON 类映射（替代注解方式）
@@ -71,6 +76,7 @@ public class MongoDbContext
     public IMongoCollection<AdminIdempotencyRecord> AdminIdempotencyRecords => _database.GetCollection<AdminIdempotencyRecord>("admin_idempotency");
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
     public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
+    public IMongoCollection<DesktopAsset> DesktopAssets => _database.GetCollection<DesktopAsset>("desktop_assets");
 
     private void CreateIndexes()
     {
@@ -480,5 +486,26 @@ public class MongoDbContext
         DesktopAssetKeys.Indexes.CreateOne(new CreateIndexModel<DesktopAssetKey>(
             Builders<DesktopAssetKey>.IndexKeys.Ascending(x => x.Key),
             new CreateIndexOptions { Name = "idx_desktop_asset_keys_key" }));
+        
+        // DesktopAssets：实际资源表，Key + Skin 唯一（使用 partial filter 避免 null skin 冲突）
+        try
+        {
+            DesktopAssets.Indexes.CreateOne(new CreateIndexModel<DesktopAsset>(
+                Builders<DesktopAsset>.IndexKeys.Ascending(x => x.Key).Ascending(x => x.Skin),
+                new CreateIndexOptions<DesktopAsset>
+                {
+                    Name = "uniq_desktop_assets_key_skin",
+                    // 仅对存在 Skin 字段的文档生效（null 视为默认，多个 null 共存）
+                    PartialFilterExpression = new BsonDocument("Skin", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // 按 Key 查询所有皮肤的资源（用于回退逻辑）
+        DesktopAssets.Indexes.CreateOne(new CreateIndexModel<DesktopAsset>(
+            Builders<DesktopAsset>.IndexKeys.Ascending(x => x.Key),
+            new CreateIndexOptions { Name = "idx_desktop_assets_key" }));
     }
 }

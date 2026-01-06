@@ -119,6 +119,11 @@ function reviveMessage(m: any): Message {
     senderId: m?.senderId ?? undefined,
     senderName: m?.senderName ?? undefined,
     senderRole: m?.senderRole ?? undefined,
+    assistantUserId: m?.assistantUserId ?? undefined,
+    assistantDisplayName: m?.assistantDisplayName ?? undefined,
+    assistantUsername: m?.assistantUsername ?? undefined,
+    assistantAvatarUrl: m?.assistantAvatarUrl ?? undefined,
+    assistantTags: Array.isArray(m?.assistantTags) ? m.assistantTags : undefined,
   };
 }
 
@@ -542,6 +547,11 @@ export const useMessageStore = create<MessageState>()(
         senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
         senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
+        assistantUserId: (m as any).assistantUserId ? String((m as any).assistantUserId) : undefined,
+        assistantDisplayName: (m as any).assistantDisplayName ? String((m as any).assistantDisplayName) : undefined,
+        assistantUsername: (m as any).assistantUsername ? String((m as any).assistantUsername) : undefined,
+        assistantAvatarUrl: (m as any).assistantAvatarUrl ? String((m as any).assistantAvatarUrl) : undefined,
+        assistantTags: Array.isArray((m as any).assistantTags) ? (m as any).assistantTags : undefined,
       }));
 
       // 冷启动（本地无缓存）：直接设置

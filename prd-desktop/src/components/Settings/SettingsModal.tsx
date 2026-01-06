@@ -8,7 +8,6 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 
 interface ApiTestResult {
@@ -67,7 +66,6 @@ export default function SettingsModal() {
   const clearSession = useSessionStore((s) => s.clearSession);
   const clearGroups = useGroupListStore((s) => s.clear);
   const clearMessages = useMessageStore((s) => s.clearMessages);
-  const resetAssets = useRemoteAssetsStore((s) => s.resetLocalCacheAndRefresh);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
   const [apiUrl, setApiUrl] = useState('');
@@ -180,8 +178,6 @@ export default function SettingsModal() {
     
     try {
       await saveConfig({ apiBaseUrl: urlToSave, assetsBaseUrl: assetsToSave, isDeveloper });
-      // 资源域名切换后：清空本地缓存并重新获取 skins/etag（不影响登录态）
-      void resetAssets();
       // 切换服务地址/资源域名后，刷新一次 Desktop 品牌配置（在线模式）
       void refreshBranding('save');
       closeModal();
@@ -272,22 +268,52 @@ export default function SettingsModal() {
     console.log('[Updater] Configured endpoints (from source):');
     console.log('  1. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
     console.log('  2. https://github.com/inernoro/prd_agent/releases/latest/download/latest.json');
-    console.log('[Updater] Note: {{target}} will be replaced with platform target, e.g., x86_64-pc-windows-msvc');
+    console.log(
+      '[Updater] Note: In our build pipeline, {{target}} is set to Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
+    );
     
-    // 手动测试 fetch manifest（绕过 Tauri updater）
-    const testUrl = 'https://github.com/inernoro/prd_agent/releases/latest/download/latest-x86_64-pc-windows-msvc.json';
-    console.log('[Updater] Testing direct fetch to:', testUrl);
+    // 手动测试 fetch manifest（绕过 Tauri updater；仅用于诊断网络/404/HTML）
     try {
-      const testResp = await fetch(testUrl);
-      console.log('[Updater] Direct fetch status:', testResp.status, testResp.statusText);
-      if (testResp.ok) {
-        const testJson = await testResp.json();
-        console.log('[Updater] Direct fetch result:', JSON.stringify(testJson, null, 2));
-      } else {
-        console.log('[Updater] Direct fetch failed, response:', await testResp.text());
+      const platform = await invoke<{ target: string; arch: string; jsonTarget: string }>('get_updater_platform_info');
+      const target = platform?.target || 'unknown';
+      console.log('[Updater] Platform info:', platform);
+
+      const candidates = [
+        `https://github.com/inernoro/prd_agent/releases/latest/download/latest-${target}.json`,
+        `https://github.com/inernoro/prd_agent/releases/latest/download/latest.json`,
+      ];
+      console.log('[Updater] Testing direct fetch candidates:');
+      candidates.forEach((u, idx) => console.log(`  ${idx + 1}. ${u}`));
+
+      for (const u of candidates) {
+        console.log('[Updater] Direct fetch ->', u);
+        try {
+          const resp = await fetch(u, { headers: { Accept: 'application/json' } });
+          console.log('[Updater] status:', resp.status, resp.statusText);
+          if (!resp.ok) {
+            const text = await resp.text();
+            console.log('[Updater] response (non-OK):', text.slice(0, 800));
+            continue;
+          }
+          const json = await resp.json();
+          console.log('[Updater] response (json):', JSON.stringify(json, null, 2).slice(0, 2000));
+          // 如果是静态 manifest 格式，打印当前平台的下载 URL（下载 404 时最关键）
+          try {
+            const plats = (json as any)?.platforms;
+            const p = plats?.[target];
+            if (p?.url) {
+              console.log('[Updater] manifest.platforms[target].url:', String(p.url));
+            }
+          } catch {
+            // ignore
+          }
+          break;
+        } catch (err) {
+          console.error('[Updater] fetch error:', err);
+        }
       }
-    } catch (fetchErr) {
-      console.error('[Updater] Direct fetch error:', fetchErr);
+    } catch (e) {
+      console.warn('[Updater] Unable to get platform info for direct fetch debug:', e);
     }
     
     try {
@@ -321,8 +347,8 @@ export default function SettingsModal() {
           [
             '检查更新失败：远端更新清单（release manifest）不可用或格式不正确。',
             '如果你使用 GitHub Releases 作为更新源，请确认该 Release 资产中包含：',
-            '- latest-{{target}}.json 及其签名 latest-{{target}}.json.sig',
-            '(以及对应平台安装包的 .sig 文件)。',
+            '- latest-{{target}}.json（{{target}} 为 Rust target triple，例如 aarch64-apple-darwin）',
+            '- 以及对应平台安装包与其 .sig 文件（如 PRD.Agent.app.tar.gz 与 PRD.Agent.app.tar.gz.sig）',
             '也可能是网络/防火墙导致无法访问 GitHub。',
             '',
             `原始错误：${raw}`,
@@ -359,7 +385,21 @@ export default function SettingsModal() {
       alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
     } catch (e) {
       setUpdateStatus('error');
-      setUpdateError(String(e));
+      const raw = String(e);
+      // 下载阶段 404：通常是 manifest 里写的安装包 URL 与 Release 实际资产文件名不一致（空格/点号/大小写）
+      if (/status:\s*404/i.test(raw) || /\b404\b/.test(raw)) {
+        setUpdateError(
+          [
+            '下载失败：远端安装包返回 404 Not Found。',
+            '这通常意味着：Release 的 manifest JSON 中 platforms[当前平台].url 指向了一个不存在的资产文件名。',
+            '常见情况：`PRD Agent.app.tar.gz`（空格） vs `PRD.Agent.app.tar.gz`（点号）。',
+            '',
+            `原始错误：${raw}`,
+          ].join('\n')
+        );
+        return;
+      }
+      setUpdateError(raw);
     }
   };
 

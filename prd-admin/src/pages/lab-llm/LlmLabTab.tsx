@@ -46,6 +46,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { clearLlmLabImagesForUser, getLlmLabImageBlob, putLlmLabImageBlob } from '@/lib/llmLabImageDb';
 import { emitBackdropBusyEnd, emitBackdropBusyStart, waitForBackdropBusyStopped } from '@/lib/backdropBusy';
 import { systemDialog } from '@/lib/systemDialog';
+import { ASPECT_OPTIONS as NEW_ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 
 type ViewRunItem = {
   itemId: string;
@@ -73,7 +74,7 @@ type ViewRunItem = {
 type SortBy = 'ttft' | 'total' | 'imagePlanItemsDesc';
 
 type MainMode = 'infer' | 'image';
-type ImageSubMode = 'single' | 'batch';
+type ImageSubMode = 'single' | 'batch' | 'fullSize';
 
 type ImageViewItem = {
   key: string;
@@ -963,6 +964,11 @@ export default function LlmLabTab() {
   const batchStopRequestedRef = useRef(false);
   const [batchActiveModelLabel, setBatchActiveModelLabel] = useState<string>('');
 
+  // 全尺寸模式：30 种尺寸（10 比例 × 3 档）
+  const [fullSizeRunning, setFullSizeRunning] = useState(false);
+  const [fullSizeItems, setFullSizeItems] = useState<Record<string, ImageViewItem>>({});
+  const fullSizeAbortRef = useRef<AbortController | null>(null);
+
   const [imageGridEl, setImageGridEl] = useState<HTMLDivElement | null>(null);
   const imageGridRef = useCallback((el: HTMLDivElement | null) => setImageGridEl(el), []);
   const [imageThumbHeight, setImageThumbHeight] = useState(220);
@@ -1119,7 +1125,7 @@ export default function LlmLabTab() {
       setSuite(normalizeSavedSuite((data as any).suite));
       if (data.sortBy === 'ttft' || data.sortBy === 'total' || data.sortBy === 'imagePlanItemsDesc') setSortBy(data.sortBy);
       if (data.disabledModelKeys && typeof data.disabledModelKeys === 'object') setDisabledModelKeys(data.disabledModelKeys as any);
-      if (data.imageSubMode === 'single' || data.imageSubMode === 'batch') setImageSubMode(data.imageSubMode);
+      if (data.imageSubMode === 'single' || data.imageSubMode === 'batch' || data.imageSubMode === 'fullSize') setImageSubMode(data.imageSubMode);
       if (typeof data.imgSize === 'string' && data.imgSize.trim()) setImgSize(data.imgSize.trim());
       if (typeof data.singleN === 'number') setSingleN(Math.max(1, Math.min(20, Number(data.singleN || 1))));
       if (typeof data.promptText === 'string') setPromptText(data.promptText);
@@ -1732,6 +1738,71 @@ export default function LlmLabTab() {
     } finally {
     setImageRunning(false);
       emitBackdropBusyEnd();
+    }
+  };
+
+  const startFullSizeGeneration = async () => {
+    const prompt = (promptText ?? '').trim();
+    if (!prompt) {
+      await systemDialog.alert('请输入图片描述');
+      return;
+    }
+    if (imageGenModels.length === 0) {
+      await systemDialog.alert('请先在左侧选择至少 1 个模型');
+      return;
+    }
+
+    // 生成 30 种尺寸（10 比例 × 3 档）
+    const allSizes: Array<{ aspectId: string; tier: string; size: string }> = [];
+    for (const opt of NEW_ASPECT_OPTIONS) {
+      allSizes.push({ aspectId: opt.id, tier: '1k', size: opt.size1k });
+      allSizes.push({ aspectId: opt.id, tier: '2k', size: opt.size2k });
+      allSizes.push({ aspectId: opt.id, tier: '4k', size: opt.size4k });
+    }
+
+    const ok = await systemDialog.confirm(`将使用 ${imageGenModels.length} 个模型生成 30 × ${imageGenModels.length} = ${30 * imageGenModels.length} 张图片，是否继续？`);
+    if (!ok) return;
+
+    setFullSizeRunning(true);
+    setFullSizeItems({});
+
+    try {
+      for (const m of imageGenModels) {
+        for (const { size, aspectId, tier } of allSizes) {
+          if (fullSizeAbortRef.current?.signal.aborted) break;
+          
+          const key = `full_${m.modelId}_${aspectId}_${tier}_${Date.now()}`;
+          const newItem: ImageViewItem = {
+            key,
+            groupId: 'fullSize',
+            status: 'running',
+            prompt,
+            createdAt: Date.now(),
+            sourceModelId: m.modelId,
+            sourceModelName: m.modelName,
+            sourceDisplayName: m.displayName,
+            size,
+          };
+          
+          setFullSizeItems((prev) => ({ ...prev, [key]: newItem }));
+
+          try {
+            const res = await generateImageGen({ prompt, n: 1, size, modelId: m.modelId });
+            if (!res.success) throw new Error(res.error?.message || '生成失败');
+            
+            const asset = (res.data as any)?.asset;
+            const url = asset?.url || (res.data as any)?.url || '';
+            const updated: ImageViewItem = { ...newItem, status: 'done', url };
+            setFullSizeItems((prev) => ({ ...prev, [key]: updated }));
+          } catch (err: any) {
+            const updated: ImageViewItem = { ...newItem, status: 'error', errorMessage: String(err?.message || err || '生成失败') };
+            setFullSizeItems((prev) => ({ ...prev, [key]: updated }));
+          }
+        }
+        if (fullSizeAbortRef.current?.signal.aborted) break;
+      }
+    } finally {
+      setFullSizeRunning(false);
     }
   };
 
@@ -2847,6 +2918,14 @@ export default function LlmLabTab() {
                       >
                         批量
                       </Button>
+                      <Button
+                        size="xs"
+                        variant={imageSubMode === 'fullSize' ? 'primary' : 'secondary'}
+                        className="shrink-0"
+                        onClick={() => setImageSubMode('fullSize')}
+                      >
+                        全尺寸(所有)
+                      </Button>
                     </div>
                     {imageSubMode === 'single' ? (
                       <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -3006,7 +3085,7 @@ export default function LlmLabTab() {
                     清空
                   </Button>
                 </>
-              ) : (
+              ) : imageSubMode === 'batch' ? (
                 <Button
                   variant={batchRunning ? 'danger' : 'primary'}
                   size="md"
@@ -3016,6 +3095,28 @@ export default function LlmLabTab() {
                   <Sparkles size={16} />
                   {batchRunning ? '停止' : planLoading ? '解析中' : '解析并预览'}
                 </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() => void startFullSizeGeneration()}
+                    disabled={fullSizeRunning}
+                  >
+                    <Layers size={16} />
+                    {fullSizeRunning ? '生成中' : '生成全部 30 张'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => {
+                      setFullSizeItems({});
+                    }}
+                    disabled={fullSizeRunning || Object.keys(fullSizeItems).length === 0}
+                  >
+                    清空
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -3024,7 +3125,7 @@ export default function LlmLabTab() {
           <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
             {mainMode === 'infer'
               ? `当前：推理 · 类型：${mode === 'intent' ? '意图' : mode === 'imageGenPlan' ? '生图意图' : mode}`
-              : `当前：生图 · ${imageSubMode === 'single' ? '单张' : '批量'}${imageSubMode === 'single' ? ` · 比例：${imgSize}` : ''}`}
+              : `当前：生图 · ${imageSubMode === 'single' ? '单张' : imageSubMode === 'batch' ? '批量' : '全尺寸'}${imageSubMode === 'single' ? ` · 比例：${imgSize}` : ''}`}
           </div>
 
           {/* Row 3: 按钮一排 -> 标题一排 -> 文本框一排 */}
@@ -3166,7 +3267,7 @@ export default function LlmLabTab() {
                         border: '1px solid rgba(255,255,255,0.12)',
                         color: 'var(--text-primary)',
                       }}
-                      placeholder={mainMode === 'infer' ? '输入或粘贴内容' : imageSubMode === 'single' ? '输入图片描述' : '输入需求描述'}
+                      placeholder={mainMode === 'infer' ? '输入或粘贴内容' : imageSubMode === 'single' ? '输入图片描述' : imageSubMode === 'batch' ? '输入需求描述' : '输入图片描述（将生成 10 比例 × 3 档 = 30 张）'}
                     />
                   </div>
                 </div>

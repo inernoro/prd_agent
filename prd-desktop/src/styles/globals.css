@@ -169,6 +169,35 @@ html, body {
   .bg-background { background-color: var(--color-background); }
 }
 
+/* =========================================
+ * Theme linear transition (desktop)
+ * - 目标：直接线性过渡到目标主题颜色（避免白->黑->白闪烁）
+ * - 实现：切换主题时临时给 html 加 theme-transitioning
+ * ========================================= */
+
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning #root,
+html.theme-transitioning * {
+  transition:
+    background-color 520ms linear,
+    color 520ms linear,
+    border-color 520ms linear,
+    box-shadow 520ms linear,
+    fill 520ms linear,
+    stroke 520ms linear,
+    opacity 520ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitioning,
+  html.theme-transitioning body,
+  html.theme-transitioning #root,
+  html.theme-transitioning * {
+    transition: none !important;
+  }
+}
+
 /* 等宽字体栈：
  * - 优先 Maple Mono（若用户已安装则生效）
  * - Windows 默认兜底 Consolas
@@ -218,6 +247,8 @@ html, body {
     transform: translateY(0);
   }
 }
+
+/* 旧的 prd-theme-fade 遮罩过渡已弃用（改为线性过渡），保留为空避免老版本残留 class 报错 */
 
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out;

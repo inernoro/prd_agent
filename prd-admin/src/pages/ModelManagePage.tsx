@@ -317,12 +317,12 @@ export default function ModelManagePage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   useEffect(() => {
     void loadModelStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // 主模型选中后的瞬时动效（行闪一下 + 星星弹一下）

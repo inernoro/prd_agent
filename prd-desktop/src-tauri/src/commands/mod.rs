@@ -8,3 +8,4 @@ pub mod intent;
 pub mod prd_comments;
 pub mod preview_ask_history;
 pub mod session;
+pub mod updater;

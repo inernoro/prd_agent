@@ -18,6 +18,7 @@ import {
 } from '@/services';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
+import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
@@ -533,7 +534,7 @@ function truncateLabelFront(s: string, maxChars: number): string {
 function renderMentionHighlights(text: string) {
   const s = String(text ?? '');
   // 仅高亮“原子 tag”：@model(...) / @vision(...) / @imgN
-  const rx = /@model\([^)]+\)|@vision\([^)]+\)|@img\d+/g;
+  const rx = /@model\([^)]+\)|@vision\([^)]+\)|@img\d+|\(\s*@size\s*:\s*\d{2,5}\s*[xX×＊*]\s*\d{2,5}\s*\)/g;
   const out: Array<JSX.Element | string> = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -560,6 +561,72 @@ function renderMentionHighlights(text: string) {
   }
   if (last < s.length) out.push(s.slice(last));
   return out.length > 0 ? out : [''];
+}
+
+const SIZE_TOKEN_RE_SRC = String.raw`\(\s*@size\s*:\s*(\d{2,5}\s*[xX×＊*]\s*\d{2,5})\s*\)\s*`;
+
+function makeSizeTokenRx() {
+  return new RegExp(SIZE_TOKEN_RE_SRC, 'g');
+}
+
+function extractSizeToken(raw: string): { size: string | null; cleanText: string } {
+  const text = String(raw ?? '');
+  if (!text) return { size: null, cleanText: '' };
+  let lastSize: string | null = null;
+  const matches = Array.from(text.matchAll(makeSizeTokenRx()));
+  for (const m of matches) {
+    const sizeRaw = String(m?.[1] ?? '').trim();
+    const parsed = tryParseWxH(sizeRaw);
+    lastSize = parsed ? `${parsed.w}x${parsed.h}` : sizeRaw.replace(/\s+/g, '');
+  }
+  const cleanText = text.replace(makeSizeTokenRx(), '').replace(/\s{2,}/g, ' ').trim();
+  return { size: lastSize, cleanText };
+}
+
+function gcd(a: number, b: number) {
+  let x = Math.abs(Math.round(a));
+  let y = Math.abs(Math.round(b));
+  while (y !== 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x || 1;
+}
+
+function aspectIconDimsFromSize(size: string | null | undefined): { w: number; h: number } {
+  const parsed = tryParseWxH(size);
+  const w0 = parsed?.w ?? 1;
+  const h0 = parsed?.h ?? 1;
+  const g = gcd(w0, h0);
+  const a = Math.max(1, Math.round(w0 / g));
+  const b = Math.max(1, Math.round(h0 / g));
+  const ratioId = `${a}:${b}` as any;
+  const match = ASPECT_OPTIONS.find((x) => x.id === ratioId);
+  if (match) return { w: match.iconW, h: match.iconH };
+  // fallback：按比例缩放到一个小盒子里
+  const r = w0 / h0;
+  const base = 18;
+  if (!Number.isFinite(r) || r <= 0) return { w: 18, h: 18 };
+  if (r >= 1) return { w: base, h: Math.max(8, Math.round(base / r)) };
+  return { w: Math.max(8, Math.round(base * r)), h: base };
+}
+
+/** 比例小图形（外框按比例适配，内框纯比例矩形） */
+function AspectIcon({ size }: { size: string | null | undefined }) {
+  const dims = aspectIconDimsFromSize(size);
+  return (
+    <span
+      className="rounded-[5px] flex items-center justify-center shrink-0"
+      style={{
+        width: dims.w,
+        height: dims.h,
+        border: '2px solid rgba(255,255,255,0.22)',
+        background: 'rgba(255,255,255,0.02)',
+      }}
+      aria-hidden="true"
+    />
+  );
 }
 
 function firstEnabledImageModel(models: Model[]): Model | null {
@@ -653,6 +720,76 @@ function tryParseWxH(size: string | null | undefined): { w: number; h: number } 
   return { w: Math.round(w), h: Math.round(h) };
 }
 
+// 检测参照图的分辨率档位（1K/2K/4K）
+function detectTierFromRefImage(w: number, h: number): '1k' | '2k' | '4k' {
+  const area = w * h;
+  if (area >= 8_000_000) return '4k'; // ~4096² = 16,777,216
+  if (area >= 2_500_000) return '2k'; // ~2048² = 4,194,304
+  return '1k';
+}
+
+// 从尺寸字符串检测档位
+function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
+  const s = (size || '').trim().toLowerCase();
+  for (const opt of ASPECT_OPTIONS) {
+    if (opt.size4k.toLowerCase() === s) return '4k';
+    if (opt.size2k.toLowerCase() === s) return '2k';
+    if (opt.size1k.toLowerCase() === s) return '1k';
+  }
+  return '1k';
+}
+
+// 从尺寸字符串检测比例
+function detectAspectFromSize(size: string): string {
+  const s = (size || '').trim().toLowerCase();
+  for (const opt of ASPECT_OPTIONS) {
+    if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
+      return opt.id;
+    }
+  }
+  return '1:1';
+}
+
+// 从白名单中找到最接近的尺寸（基于比例和像素面积）
+function findClosestSize(requestedSize: string, allowedSizes: string[]): string | null {
+  if (allowedSizes.length === 0) return null;
+  
+  const parseSize = (s: string) => {
+    const m = /(\d+)\s*[xX×]\s*(\d+)/.exec(s);
+    if (!m) return null;
+    return { w: Number(m[1]), h: Number(m[2]) };
+  };
+  
+  const req = parseSize(requestedSize);
+  if (!req) return null;
+  
+  const reqRatio = req.w / req.h;
+  const reqArea = req.w * req.h;
+  
+  let bestMatch: string | null = null;
+  let bestScore = Infinity;
+  
+  for (const allowed of allowedSizes) {
+    const a = parseSize(allowed);
+    if (!a) continue;
+    
+    const aRatio = a.w / a.h;
+    const aArea = a.w * a.h;
+    
+    // 评分：比例差异权重 0.7，面积差异权重 0.3
+    const ratioDiff = Math.abs(reqRatio - aRatio) / reqRatio;
+    const areaDiff = Math.abs(reqArea - aArea) / reqArea;
+    const score = ratioDiff * 0.7 + areaDiff * 0.3;
+    
+    if (score < bestScore) {
+      bestScore = score;
+      bestMatch = allowed;
+    }
+  }
+  
+  return bestMatch;
+}
+
 function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | undefined): string | null {
   if (!ref || !ref.w || !ref.h) return null;
   const w0 = Math.max(1, Math.round(ref.w));
@@ -660,10 +797,48 @@ function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | u
   const r = w0 / h0;
   if (!Number.isFinite(r) || r <= 0) return null;
 
-  // 目标：保持原图比例；并尽量让“生成尺寸”贴近参考图的像素规模（便于画布上对齐比较）。
-  // 约束：短边 >= 1024，长边 <= 1792（与常见 OpenAI 生图尺寸相容），并做 8 对齐。
-  const minSide = 1024;
-  const maxSide = 1792;
+  // 智能档位选择：根据参照图分辨率推断档位（1K/2K/4K）
+  const tier = detectTierFromRefImage(w0, h0);
+
+  // 先尝试比例容差匹配（优先，避免 GCD 简化后无法匹配常见比例）
+  const actualRatio = w0 / h0;
+  let bestMatch: typeof ASPECT_OPTIONS[0] | null = null;
+  let bestRatioDiff = Infinity;
+  
+  for (const opt of ASPECT_OPTIONS) {
+    // 解析该比例的标准宽高比
+    const [rw, rh] = opt.id.split(':').map(Number);
+    if (!rw || !rh) continue;
+    const optRatio = rw / rh;
+    const diff = Math.abs(actualRatio - optRatio);
+    
+    // 容差 5%：如果实际比例与预定义比例相差小于 5%，视为匹配
+    if (diff / optRatio < 0.05 && diff < bestRatioDiff) {
+      bestRatioDiff = diff;
+      bestMatch = opt;
+    }
+  }
+  
+  if (bestMatch) {
+    // 返回对应档位的尺寸
+    return tier === '1k' ? bestMatch.size1k : tier === '2k' ? bestMatch.size2k : bestMatch.size4k;
+  }
+
+  // 回退：精确 GCD 匹配
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const g = gcd(w0, h0);
+  const a = Math.max(1, Math.round(w0 / g));
+  const b = Math.max(1, Math.round(h0 / g));
+  const ratioId = `${a}:${b}` as any;
+
+  const exactMatch = ASPECT_OPTIONS.find((x) => x.id === ratioId);
+  if (exactMatch) {
+    return tier === '1k' ? exactMatch.size1k : tier === '2k' ? exactMatch.size2k : exactMatch.size4k;
+  }
+
+  // 未匹配到预定义比例：回退到旧版逻辑（自动计算）
+  const minSide = tier === '1k' ? 1024 : tier === '2k' ? 2048 : 4096;
+  const maxSide = tier === '1k' ? 1792 : tier === '2k' ? 3584 : 7168;
 
   const round8 = (n: number) => Math.max(8, Math.round(n / 8) * 8);
   const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -722,6 +897,13 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+type ImageGenRunStreamPayload = {
+  type?: unknown;
+  errorMessage?: unknown;
+  asset?: { id?: unknown; sha256?: unknown; url?: unknown } | null;
+  url?: unknown;
+};
+
 function buildTemplate(name: string) {
   if (name === 'wine') {
     return `为一家精品红酒商店设计一张海报：\n- 风格：高级、克制、现代\n- 主色：深酒红 + 金色点缀\n- 文案：Wine List / 2026 Spring Collection\n- 版式：留白，中心主视觉\n请输出：设计要点 + 生图提示词`;
@@ -777,6 +959,26 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     return byId ?? serverDefaultModel;
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
+  // 白名单检测：获取当前模型支持的尺寸列表（用于禁用不支持的档位）
+  const [allowedSizes, setAllowedSizes] = useState<string[]>([]);
+  useEffect(() => {
+    const modelId = effectiveModel?.id;
+    if (!modelId) {
+      setAllowedSizes([]);
+      return;
+    }
+    fetch('/api/v1/admin/image-gen/size-caps?includeFallback=true', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const caps = (data?.data ?? []).find((x: any) => x.modelId === modelId);
+        const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
+        setAllowedSizes(sizes.map((s: string) => String(s).trim().toLowerCase()));
+      })
+      .catch(() => setAllowedSizes([]));
+  }, [effectiveModel?.id]);
+
   const [messages, setMessages] = useState<UiMsg[]>([
     {
       id: 'assistant-hello',
@@ -817,6 +1019,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const quickInputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeComposerRef = useRef<'right' | 'quick'>('right');
   const composingRef = useRef(false);
+  const [composerSize, setComposerSize] = useState<string | null>(null);
+  const composerSizeAutoRef = useRef(true);
   const inputPanelRef = useRef<HTMLDivElement | null>(null);
   const highlightRef = useRef<HTMLDivElement | null>(null);
   const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
@@ -837,6 +1041,51 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const primarySelectedKey = selectedKeys[0] ?? '';
   const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
+
+  const selectedSingleImageForComposer = useMemo(() => {
+    if (selectedKeys.length !== 1) return null;
+    const it = selected;
+    if (!it) return null;
+    if ((it.kind ?? 'image') !== 'image') return null;
+    const src = String(it.src ?? '').trim();
+    if (!src) return null;
+    return it;
+  }, [selected, selectedKeys.length]);
+
+  const autoSizeForSelectedImage = useMemo(() => {
+    const it = selectedSingleImageForComposer;
+    if (!it) return null;
+    const dim =
+      it.naturalW && it.naturalH
+        ? { w: Math.max(1, Math.round(it.naturalW)), h: Math.max(1, Math.round(it.naturalH)) }
+        : null;
+    return computeRequestedSizeByRefRatio(dim) ?? '1024x1024';
+  }, [selectedSingleImageForComposer]);
+
+  // 单选图片时：默认尺寸随选中图自动推断；用户手动更换后，仅对本次发送有效
+  const composerRefKeyRef = useRef<string>('');
+  useEffect(() => {
+    const k = selectedSingleImageForComposer?.key ?? '';
+    const autoSize = autoSizeForSelectedImage ?? '1024x1024';
+    if (!k) {
+      composerRefKeyRef.current = '';
+      composerSizeAutoRef.current = true;
+      setComposerSize(null);
+      return;
+    }
+    if (composerRefKeyRef.current !== k) {
+      composerRefKeyRef.current = k;
+      composerSizeAutoRef.current = true;
+      setComposerSize(autoSize);
+      return;
+    }
+    // 同一张图：仅在“自动模式”下跟随像素尺寸变化（例如图片 onLoad 后 naturalW/H 刚补齐）
+    if (composerSizeAutoRef.current) setComposerSize(autoSize);
+  }, [autoSizeForSelectedImage, selectedSingleImageForComposer?.key]);
+
+  // chip 作为内联元素，只需要很小的上边距（让按钮和文字更好地融合）
+  // 按钮高度 20px（减小2px），上边距 6px，让按钮更贴近文字基线
+  const composerMetaPadTop = selectedSingleImageForComposer ? 28 : 0;
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
@@ -1347,6 +1596,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     requestText: string;
     primaryRef: CanvasImageItem | null;
     seedSelectedKey: string;
+    sizeOverride?: string | null;
   };
   const pendingJobsRef = useRef<GenJob[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
@@ -2270,6 +2520,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       /@model\([^)]+\)\s?/g,
       /@vision\([^)]+\)\s?/g,
       /@img\d+\s?/g,
+      /\(\s*@size\s*:\s*\d{2,5}\s*[xX×＊*]\s*\d{2,5}\s*\)\s?/g,
     ];
     for (const rx of patterns) {
       let m: RegExpExecArray | null;
@@ -2393,7 +2644,13 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     return () => window.removeEventListener('resize', onResize);
   }, [recomputeTextareaHeight]);
 
-  const runFromText = async (displayText: string, requestText: string, primaryRef: CanvasImageItem | null, seedSelectedKey?: string) => {
+  const runFromText = async (
+    displayText: string,
+    requestText: string,
+    primaryRef: CanvasImageItem | null,
+    seedSelectedKey?: string,
+    sizeOverride?: string | null
+  ) => {
     const display = String(displayText ?? '').trim();
     // 直连模式：解析 @model(...) 只用于“强制选模型”，不应当把标记本身发给生图 prompt
     const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -2415,7 +2672,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     const refForUi = (primaryRef ?? selectedAtSend) as CanvasImageItem | null;
     const refSrc = String(refForUi?.src ?? '').trim();
     const inlineRefToken = buildInlineImageToken(refSrc, guessRefName(refForUi));
-    pushMsg('User', `${inlineRefToken}${display || reqText}`);
+    const forcedSize = (() => {
+      const s = String(sizeOverride ?? '').trim();
+      if (!s) return null;
+      const parsed = tryParseWxH(s);
+      return parsed ? `${parsed.w}x${parsed.h}` : s;
+    })();
+    const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
+    pushMsg('User', `${inlineRefToken}${uiSizeToken}${display || reqText}`);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -2453,7 +2717,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     const refDim =
       (primaryRef?.naturalW && primaryRef?.naturalH ? { w: primaryRef.naturalW, h: primaryRef.naturalH } : null) ??
       (selectedAtSend?.naturalW && selectedAtSend?.naturalH ? { w: selectedAtSend.naturalW, h: selectedAtSend.naturalH } : null);
-    const resolvedSizeForGen = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+    const resolvedSizeForGen = forcedSize ?? computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
 
     // 用户要求移除右侧“本次使用模型/直连模式/参考图...”类提示，不再 push 该类 Assistant 消息
 
@@ -2703,11 +2967,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
           } catch {
             return;
           }
-          const o = obj as { type?: unknown; errorMessage?: unknown; asset?: any; url?: unknown };
+          const o = obj as ImageGenRunStreamPayload;
           const t = String(o.type ?? '');
           if (t === 'imageDone') {
-            const asset = (o as any).asset as { id?: string; sha256?: string; url?: string } | null | undefined;
-            const u = String(asset?.url ?? (o as any).url ?? '');
+            const assetRaw = o.asset ?? null;
+            const asset = assetRaw
+              ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? '') }
+              : null;
+            const u = String(asset?.url ?? o.url ?? '');
             if (!u) return;
             setCanvas((prev) =>
               prev.map((x) =>
@@ -2717,8 +2984,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                       kind: 'image',
                       status: 'done',
                       src: u,
-                      assetId: asset?.id || x.assetId,
-                      sha256: asset?.sha256 || x.sha256,
+                      assetId: (asset?.id || '').trim() || x.assetId,
+                      sha256: (asset?.sha256 || '').trim() || x.sha256,
                       syncStatus: 'synced',
                       syncError: null,
                     }
@@ -2726,7 +2993,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
               )
             );
           } else if (t === 'imageError' || t === 'error') {
-            const msg = String((o as any).errorMessage ?? '生成失败');
+            const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
           }
         },
@@ -2817,7 +3084,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
       void (async () => {
         try {
-          await runFromText(job.displayText, job.requestText, job.primaryRef, job.seedSelectedKey);
+          await runFromText(job.displayText, job.requestText, job.primaryRef, job.seedSelectedKey, job.sizeOverride);
         } finally {
           runningCountRef.current = Math.max(0, runningCountRef.current - 1);
           setRunningCount(runningCountRef.current);
@@ -2832,14 +3099,19 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const sendText = async (rawText: string) => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
-    const { requestText, primaryRef } = buildRequestTextWithRefs(raw);
+    const sized = extractSizeToken(raw);
+    const cleanDisplay = String(sized.cleanText ?? '').trim();
+    if (!cleanDisplay) return;
+    const { requestText, primaryRef } = buildRequestTextWithRefs(cleanDisplay);
     const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
+    const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      displayText: raw,
+      displayText: cleanDisplay,
       requestText,
       primaryRef,
       seedSelectedKey,
+      sizeOverride,
     };
     pendingJobsRef.current.push(job);
     setPendingCount(pendingJobsRef.current.length);
@@ -2849,14 +3121,23 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const onSend = async () => {
     const raw = input.trim();
     if (!raw) return;
+    // 只有 (@size:...) 而没有实际内容时，不应清空输入
+    const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
+    if (!clean) return;
     setInput('');
+    composerSizeAutoRef.current = true;
+    if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
     await sendText(raw);
   };
 
   const onSendQuick = async () => {
     const raw = quickInput.trim();
     if (!raw) return;
+    const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
+    if (!clean) return;
     setQuickInput('');
+    composerSizeAutoRef.current = true;
+    if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
     await sendText(raw);
   };
 
@@ -3898,7 +4179,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                               <div className="text-[16px] font-extrabold" style={{ color: 'rgba(255,255,255,0.90)' }}>
                                 图片加载失败
                               </div>
-                              <div className="text-[14px]" style={{ color: 'rgba(255,255,255,0.70)' }}>
+                              <div
+                                className="text-[14px]"
+                                style={{
+                                  color: 'rgba(255,255,255,0.70)',
+                                  maxWidth: '100%',
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                  overflowWrap: 'anywhere',
+                                }}
+                              >
                                 {String(it.errorMessage || '图片不可用（可能已删除或地址失效）')}
                               </div>
                             </div>
@@ -5133,8 +5423,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 const parsed = isUser ? extractInlineImageToken(m.content) : null;
                 const refSrc = parsed?.src ? String(parsed.src).trim() : '';
                 const refNameFull = String(parsed?.name ?? '').trim();
-                const refName = truncateLabelFront(refNameFull || '参照图', 18) || '参照图';
+                // 只显示前 6 个字符，其余用 "..."（n=9 => 6 + "..."）
+                const refName = truncateLabelFront(refNameFull || '参照图', 9) || '参照图';
                 const contentText = parsed ? parsed.clean : m.content;
+                const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
+                const msgSize = String(sizedMsg.size ?? '').trim();
+                const msgBody = String(sizedMsg.cleanText ?? '');
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
@@ -5150,62 +5444,96 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         wordBreak: 'break-word',
                       }}
                     >
-                      {isUser && refSrc ? (
+                      {isUser && (refSrc || msgSize) ? (
                         <span className="flex flex-wrap items-center gap-x-1.5">
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1.5"
-                            style={{
-                              height: 20,
-                              maxWidth: 240,
-                              paddingLeft: 6,
-                              paddingRight: 8,
-                              borderRadius: 999,
-                              overflow: 'hidden',
-                              border: '1px solid var(--border-subtle)',
-                              // 与用户气泡（金色系）更协调：更亮、更“贴”背景
-                              background: 'color-mix(in srgb, var(--accent-gold) 14%, rgba(255,255,255,0.04))',
-                            }}
-                            title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
-                            aria-label="预览参考图"
-                            onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
-                          >
-                            <span
+                          {refSrc ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1.5"
                               style={{
-                                width: 18,
-                                height: 18,
-                                borderRadius: 5,
+                                height: 20,
+                                maxWidth: 240,
+                                paddingLeft: 6,
+                                paddingRight: 8,
+                                borderRadius: 4,
                                 overflow: 'hidden',
-                                border: '1px solid rgba(255,255,255,0.22)',
-                                background: 'rgba(255,255,255,0.06)',
-                                display: 'inline-flex',
-                                flex: '0 0 auto',
+                                border: '1px solid var(--border-subtle)',
+                                // 与用户气泡（金色系）更协调：更亮、更“贴”背景
+                                background: 'color-mix(in srgb, var(--accent-gold) 14%, rgba(255,255,255,0.04))',
                               }}
+                              title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
+                              aria-label="预览参考图"
+                              onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
                             >
-                              <img
-                                src={refSrc}
-                                alt={refName || '参照图'}
-                                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                              />
-                            </span>
-                            <span
-                              style={{
-                                fontSize: 14,
-                                lineHeight: '20px',
-                                color: 'rgba(255,255,255,0.82)',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                maxWidth: 200,
-                              }}
-                            >
+                              <span
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: 4,
+                                  overflow: 'hidden',
+                                  border: '1px solid rgba(255,255,255,0.22)',
+                                  background: 'rgba(255,255,255,0.06)',
+                                  display: 'inline-flex',
+                                  flex: '0 0 auto',
+                                }}
+                              >
+                                <img
+                                  src={refSrc}
+                                  alt={refName || '参照图'}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                />
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 14,
+                                  lineHeight: '20px',
+                                  color: 'rgba(255,255,255,0.82)',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  maxWidth: 200,
+                                }}
+                              >
                               {refName}
-                            </span>
-                          </button>
-                          <span style={{ lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{contentText}</span>
+                              </span>
+                            </button>
+                          ) : null}
+
+                          {msgSize ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1.5"
+                              style={{
+                                height: 20,
+                                paddingLeft: 6,
+                                paddingRight: 8,
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                border: '1px solid var(--border-subtle)',
+                                background: 'color-mix(in srgb, var(--accent-gold) 10%, rgba(255,255,255,0.04))',
+                              }}
+                              aria-label="尺寸"
+                              title={`尺寸：${msgSize}`}
+                            >
+                              <AspectIcon size={msgSize} />
+                              <span
+                                className="tabular-nums"
+                                style={{
+                                  fontSize: 14,
+                                  lineHeight: '20px',
+                                  color: 'rgba(255,255,255,0.82)',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {msgSize}
+                              </span>
+                            </button>
+                          ) : null}
+
+                          <span style={{ lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msgBody}</span>
                         </span>
                       ) : (
-                        contentText
+                        msgBody
                       )}
                     </div>
                   </div>
@@ -5247,6 +5575,264 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 </div>
               ) : null}
 
+              {/* 输入框 meta chip（视觉上"在 textarea 内"）：参照图 + 尺寸 */}
+              {selectedSingleImageForComposer ? (
+                <div
+                  className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
+                  style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
+                >
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5"
+                    style={{
+                      height: 20,
+                      maxWidth: 260,
+                      paddingLeft: 6,
+                      paddingRight: 8,
+                      borderRadius: 4,
+                      overflow: 'hidden',
+                      border: '1px solid var(--border-subtle)',
+                      background: 'rgba(255,255,255,0.02)',
+                      color: 'rgba(255,255,255,0.82)',
+                    }}
+                    title={guessRefName(selectedSingleImageForComposer) ? `参照图：${guessRefName(selectedSingleImageForComposer)}` : '参照图'}
+                    aria-label="预览参考图"
+                    onClick={() =>
+                      setPreview({
+                        open: true,
+                        src: String(selectedSingleImageForComposer.src ?? ''),
+                        prompt: guessRefName(selectedSingleImageForComposer) || '参照图',
+                      })
+                    }
+                  >
+                    <span
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 3,
+                        overflow: 'hidden',
+                        border: '1px solid rgba(255,255,255,0.22)',
+                        background: 'rgba(255,255,255,0.06)',
+                        display: 'inline-flex',
+                        flex: '0 0 auto',
+                      }}
+                    >
+                      <img
+                        src={String(selectedSingleImageForComposer.src ?? '')}
+                        alt={guessRefName(selectedSingleImageForComposer) || '参照图'}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        lineHeight: '18px',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        maxWidth: 180,
+                      }}
+                    >
+                      {truncateLabelFront(guessRefName(selectedSingleImageForComposer) || '参照图', 9) || '参照图'}
+                    </span>
+                  </button>
+
+                  {/* 档位选择器（1K/2K/4K） */}
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-0.5"
+                        style={{
+                          height: 20,
+                          paddingLeft: 6,
+                          paddingRight: 6,
+                          borderRadius: 4,
+                          overflow: 'hidden',
+                          border: '1px solid var(--border-subtle)',
+                          background: 'rgba(255,255,255,0.02)',
+                          color: 'rgba(255,255,255,0.82)',
+                        }}
+                        title="选择档位"
+                        aria-label="选择档位"
+                      >
+                        {(() => {
+                          const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                          const tier = detectTierFromSize(size);
+                          return (
+                            <>
+                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
+                                {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
+                              </span>
+                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                ▾
+                              </span>
+                            </>
+                          );
+                        })()}
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                        className="rounded-[12px] p-1 min-w-[80px]"
+                        style={{
+                          outline: 'none',
+                          zIndex: 90,
+                          background: 'var(--bg-elevated)',
+                          border: '1px solid var(--border-subtle)',
+                          boxShadow: 'var(--shadow-lg)',
+                        }}
+                      >
+                        {(['1k', '2k', '4k'] as const).map((tier) => {
+                          const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                          const currentTier = detectTierFromSize(currentSize);
+                          const isSelected = currentTier === tier;
+                          const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                          
+                          return (
+                            <DropdownMenu.Item
+                              key={tier}
+                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                              style={{
+                                color: 'var(--text-primary)',
+                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                              }}
+                              onSelect={() => {
+                                const currentAspect = detectAspectFromSize(currentSize);
+                                const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                                if (!targetOpt) return;
+                                
+                                const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
+                                const sizeKey = newSize.trim().toLowerCase();
+                                const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                                
+                                if (!supported) {
+                                  const fallback = findClosestSize(newSize, allowedSizes);
+                                  if (fallback) {
+                                    composerSizeAutoRef.current = false;
+                                    setComposerSize(fallback);
+                                  }
+                                } else {
+                                  composerSizeAutoRef.current = false;
+                                  setComposerSize(newSize);
+                                }
+                                requestAnimationFrame(() => inputRef.current?.focus());
+                              }}
+                            >
+                              <span className="font-semibold">{label}</span>
+                            </DropdownMenu.Item>
+                          );
+                        })}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+
+                  {/* 比例选择器 */}
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-0.5"
+                        style={{
+                          height: 20,
+                          paddingLeft: 6,
+                          paddingRight: 6,
+                          borderRadius: 4,
+                          overflow: 'hidden',
+                          border: '1px solid var(--border-subtle)',
+                          background: 'rgba(255,255,255,0.02)',
+                          color: 'rgba(255,255,255,0.82)',
+                        }}
+                        title="选择比例"
+                        aria-label="选择比例"
+                      >
+                        {(() => {
+                          const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                          const aspect = detectAspectFromSize(size);
+                          return (
+                            <>
+                              <AspectIcon size={size} />
+                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
+                                {aspect || '1:1'}
+                              </span>
+                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                ▾
+                              </span>
+                            </>
+                          );
+                        })()}
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                        className="rounded-[12px] p-1 min-w-[120px]"
+                        style={{
+                          outline: 'none',
+                          zIndex: 90,
+                          background: 'var(--bg-elevated)',
+                          border: '1px solid var(--border-subtle)',
+                          boxShadow: 'var(--shadow-lg)',
+                        }}
+                      >
+                        {ASPECT_OPTIONS.map((opt) => {
+                          const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                          const currentAspect = detectAspectFromSize(currentSize);
+                          const currentTier = detectTierFromSize(currentSize);
+                          const isSelected = currentAspect === opt.id;
+                          
+                          const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+                          const sizeKey = targetSize.trim().toLowerCase();
+                          const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                          
+                          return (
+                            <DropdownMenu.Item
+                              key={opt.id}
+                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                              style={{
+                                color: 'var(--text-primary)',
+                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                                opacity: supported ? 1 : 0.5,
+                              }}
+                              onSelect={() => {
+                                if (!supported) {
+                                  const fallback = findClosestSize(targetSize, allowedSizes);
+                                  if (fallback) {
+                                    composerSizeAutoRef.current = false;
+                                    setComposerSize(fallback);
+                                  }
+                                } else {
+                                  composerSizeAutoRef.current = false;
+                                  setComposerSize(targetSize);
+                                }
+                                requestAnimationFrame(() => inputRef.current?.focus());
+                              }}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <AspectIcon size={targetSize} />
+                                <span className="font-semibold">{opt.label}</span>
+                              </div>
+                              {!supported && (
+                                <span className="text-[9px]" style={{ color: 'rgba(251, 146, 60, 0.8)' }}>
+                                  ×
+                                </span>
+                              )}
+                            </DropdownMenu.Item>
+                          );
+                        })}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                </div>
+              ) : null}
+
               {/* 图6 控制条（v1：先作为输入条上方的一行） */}
               {/* 已移除：输入框上方 4 个控制按钮（模型/参考/大小/比例）与其右侧“生成”按钮；保持输入区极简 */}
 
@@ -5261,6 +5847,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                   maxHeight: '50%',
                   overflow: 'auto',
                   pointerEvents: 'none',
+                  paddingTop: composerMetaPadTop,
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
                   fontSize: 14,
@@ -5337,13 +5924,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                   const ta = e.currentTarget;
                   refreshMention(ta.value, ta.selectionStart ?? ta.value.length);
                 }}
-                placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
+                placeholder={selectedSingleImageForComposer ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
                 className="w-full resize-none rounded-none px-0 py-0 text-sm outline-none focus:outline-none focus-visible:outline-none"
                 style={{
                   height: taHeight,
                   minHeight: MIN_TA_HEIGHT,
                   maxHeight: '50%',
                   overflowY: 'auto',
+                  paddingTop: composerMetaPadTop,
                   background: 'transparent',
                   border: 'none',
                   color: 'var(--text-primary)',
@@ -5466,21 +6054,6 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                       );
                     })()}
                   </div>
-                </div>
-              ) : null}
-
-              {selectedKeys.some((k) => (canvas.find((x) => x.key === k)?.kind ?? 'image') === 'image') ? (
-                <div className="mt-1 text-[12px] whitespace-pre-line" style={{ color: 'var(--text-muted)' }}>
-                  {selectedKeys
-                    .slice(0, 6)
-                    .map((k, i) => {
-                      const it = canvas.find((x) => x.key === k);
-                      if (!it || (it.kind ?? 'image') !== 'image') return null;
-                      const title = it?.prompt || '（无描述）';
-                      return `选中图${i + 1}: ${title}`;
-                    })
-                    .filter(Boolean)
-                    .join('\n')}
                 </div>
               ) : null}
 

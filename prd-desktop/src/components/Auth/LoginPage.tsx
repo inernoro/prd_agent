@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { invoke, isTauri } from '../../lib/tauri';
 import { useAuthStore } from '../../stores/authStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ApiResponse, User } from '../../types';
 import SettingsModal from '../Settings/SettingsModal';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
-import { useRemoteAssetsStore } from '../../stores/remoteAssetsStore';
-import { buildDesktopAssetUrl } from '../../lib/desktopAssetUrl';
 
 interface LoginResponse {
   accessToken: string;
@@ -17,15 +15,14 @@ interface LoginResponse {
   user: User;
 }
 
-export default function LoginPage() {
+export default function LoginPage(props: { isDark: boolean; onToggleTheme: () => void }) {
+  const { isDark, onToggleTheme } = props;
   const { login } = useAuthStore();
   const { openModal } = useSettingsStore();
   const loadConfig = useSettingsStore((s) => s.loadConfig);
   const branding = useDesktopBrandingStore((s) => s.branding);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
-  const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
-  const assetsBaseUrl = useRemoteAssetsStore((s) => s.baseUrl);
-  const skin = useRemoteAssetsStore((s) => s.skin);
+  // const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl); // 可用于获取其他资源 URL
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,54 +35,46 @@ export default function LoginPage() {
   useEffect(() => {
     if (!isTauri()) return;
     void loadConfig();
-    void refreshBranding('startup');
-  }, [loadConfig, refreshBranding]);
+    // 传递当前主题，获取对应皮肤的资源
+    const skin = isDark ? 'dark' : 'white';
+    void refreshBranding('startup', skin);
+  }, [loadConfig, refreshBranding, isDark]);
 
-  const iconUrls = useMemo(() => {
-    return buildDesktopAssetUrl({
-      baseUrl: assetsBaseUrl,
-      key: branding.loginIconKey,
-      skin: skin ?? null,
-    });
-  }, [assetsBaseUrl, branding.loginIconKey, skin]);
-
-  const bgUrls = useMemo(() => {
-    return buildDesktopAssetUrl({
-      baseUrl: assetsBaseUrl,
-      key: branding.loginBackgroundKey,
-      skin: skin ?? null,
-    });
-  }, [assetsBaseUrl, branding.loginBackgroundKey, skin]);
-
+  // 直接使用后端返回的 URL（已包含回退逻辑）
+  // 方式1：使用特定的 URL 字段（推荐用于品牌配置的资源）
   const [iconSrc, setIconSrc] = useState<string>('');
   useEffect(() => {
-    if (branding.source !== 'server') {
-      setIconSrc('');
-      return;
-    }
-    // 先尝试 skin，再回落 base
-    setIconSrc(iconUrls.skinUrl || iconUrls.baseUrl);
-  }, [branding.source, iconUrls.baseUrl, iconUrls.skinUrl]);
+    setIconSrc(branding.loginIconUrl || '');
+  }, [branding.loginIconUrl]);
+
+  // 方式2：使用 getAssetUrl 通过 key 获取任意资源（推荐用于其他资源）
+  // 例如：const loadUrl = getAssetUrl('load'); // 获取加载动画 URL
+  // 例如：const startLoadUrl = getAssetUrl('start_load'); // 获取启动加载 URL
 
   const [bgSrc, setBgSrc] = useState<string>('');
-  useEffect(() => {
-    if (branding.source !== 'server') {
-      setBgSrc('');
-      return;
-    }
-    if (!branding.loginBackgroundKey) {
-      setBgSrc('');
-      return;
-    }
-    // 先尝试 skin，再回落 base
-    setBgSrc(bgUrls.skinUrl || bgUrls.baseUrl);
-  }, [branding.loginBackgroundKey, branding.source, bgUrls.baseUrl, bgUrls.skinUrl]);
+  const [bgType, setBgType] = useState<'image' | 'video' | null>(null);
 
-  // background 是 CSS 背景图，没有 onError：用预加载探测，并做 skin -> base -> 关闭 的回退
   useEffect(() => {
-    if (!bgSrc) return;
-    if (branding.source !== 'server') return;
-    if (!branding.loginBackgroundKey) return;
+    const url = branding.loginBackgroundUrl || '';
+    if (!url) {
+      setBgSrc('');
+      setBgType(null);
+      return;
+    }
+    setBgSrc(url);
+    
+    // 根据 URL 扩展名判断类型
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.mov')) {
+      setBgType('video');
+    } else {
+      setBgType('image');
+    }
+  }, [branding.loginBackgroundUrl]);
+
+  // 图片背景：用预加载探测，失败则清空
+  useEffect(() => {
+    if (!bgSrc || bgType !== 'image') return;
 
     let cancelled = false;
     const img = new Image();
@@ -94,17 +83,14 @@ export default function LoginPage() {
     };
     img.onerror = () => {
       if (cancelled) return;
-      if (bgSrc === bgUrls.skinUrl && bgUrls.baseUrl) {
-        setBgSrc(bgUrls.baseUrl);
-      } else {
-        setBgSrc('');
-      }
+      setBgSrc('');
+      setBgType(null);
     };
     img.src = bgSrc;
     return () => {
       cancelled = true;
     };
-  }, [bgSrc, bgUrls.baseUrl, bgUrls.skinUrl, branding.loginBackgroundKey, branding.source]);
+  }, [bgSrc, bgType]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,8 +128,8 @@ export default function LoginPage() {
       {/* 桌面端：提供“整屏背景可拖拽”的拖拽层（避免顶部小条被层级盖住导致不可拖拽） */}
       {isTauri() ? <div className="absolute inset-0 z-0" data-tauri-drag-region /> : null}
 
-      {/* 服务端品牌背景图（可选；失败自动回退到内置背景） */}
-      {branding.source === 'server' && bgSrc ? (
+      {/* 服务端品牌背景图/视频（可选；失败自动回退到内置背景） */}
+      {bgSrc && bgType === 'image' ? (
         <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
           <div
             className="absolute inset-0"
@@ -155,7 +141,28 @@ export default function LoginPage() {
               filter: 'saturate(0.95) contrast(0.95)',
             }}
           />
-          {/* 轻遮罩，保证文本可读性（保持“黑白系”风格） */}
+          {/* 轻遮罩，保证文本可读性（保持"黑白系"风格） */}
+          <div className="absolute inset-0 bg-white/40 dark:bg-black/35" />
+        </div>
+      ) : bgSrc && bgType === 'video' ? (
+        <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
+          <video
+            src={bgSrc}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{
+              filter: 'saturate(0.95) contrast(0.95)',
+            }}
+            onError={() => {
+              // 视频加载失败，清空
+              setBgSrc('');
+              setBgType(null);
+            }}
+          />
+          {/* 轻遮罩，保证文本可读性（保持"黑白系"风格） */}
           <div className="absolute inset-0 bg-white/40 dark:bg-black/35" />
         </div>
       ) : null}
@@ -169,44 +176,61 @@ export default function LoginPage() {
         <div className="absolute -inset-[35%] bg-[radial-gradient(900px_circle_at_75%_80%,rgba(0,0,0,0.04),transparent_55%)] dark:bg-[radial-gradient(900px_circle_at_75%_80%,rgba(255,255,255,0.06),transparent_55%)]" />
       </div>
 
-      {/* 右上角设置按钮 */}
-      <button
-        onClick={openModal}
-        className="absolute top-4 right-4 z-20 p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105 motion-reduce:transition-none motion-reduce:hover:scale-100"
-        title="设置"
-      >
-        <svg className="w-5 h-5 text-slate-700/80 dark:text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      </button>
+      {/* 右上角：夜晚模式 + 设置 */}
+      <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+        <button
+          onClick={onToggleTheme}
+          className="p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105 motion-reduce:transition-none motion-reduce:hover:scale-100"
+          title={isDark ? '切换到亮色模式' : '切换到暗色模式'}
+          type="button"
+        >
+          {isDark ? (
+            <svg className="w-5 h-5 text-slate-700/80 dark:text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5 text-slate-700/80 dark:text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+          )}
+        </button>
+        <button
+          onClick={openModal}
+          className="p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105 motion-reduce:transition-none motion-reduce:hover:scale-100"
+          title="设置"
+          type="button"
+        >
+          <svg className="w-5 h-5 text-slate-700/80 dark:text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      </div>
 
       {/* 设置模态框 */}
       <SettingsModal />
 
       <div className="relative z-10 w-full max-w-md p-8 ui-login-card animate-slide-up motion-reduce:animate-none">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-slate-900 dark:bg-white">
-            {branding.source === 'server' && iconSrc ? (
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden bg-transparent">
+      {iconSrc ? (
               <img
                 src={iconSrc}
                 alt="login icon"
-                className="w-16 h-16 object-cover"
+                className="w-full h-full object-contain"
                 onError={() => {
-                  if (iconSrc === iconUrls.skinUrl && iconUrls.baseUrl) {
-                    setIconSrc(iconUrls.baseUrl);
-                  } else {
-                    // 回退到内置
-                    resetBranding();
-                  }
+                  // 回退到内置（但不强制把 branding 置回 local，避免影响 desktopName/bgKey）
+                  setIconSrc('');
                 }}
               />
             ) : (
-              <span className="text-white dark:text-slate-900 font-bold text-2xl">P</span>
+              <div className="w-full h-full rounded-2xl bg-slate-900 dark:bg-white flex items-center justify-center">
+                <span className="text-white dark:text-slate-900 font-bold text-2xl">P</span>
+              </div>
             )}
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{branding.desktopName || 'PRD Agent'}</h1>
-          <p className="text-slate-600 dark:text-white/60 text-sm mt-2">智能PRD解读助手</p>
+          <p className="text-slate-600 dark:text-white/60 text-sm mt-2">{branding.desktopSubtitle || '智能PRD解读助手'}</p>
         </div>
 
         {error && (

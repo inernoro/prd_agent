@@ -7,7 +7,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 import { useUserDirectoryStore } from '../../stores/userDirectoryStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
-import type { Message, MessageBlock } from '../../types';
+import type { GroupMemberTag, Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyText } from '../../lib/clipboard';
@@ -61,6 +61,17 @@ function initials(name?: string | null): string {
   if (!t) return '?';
   // 中文/英文统一取首字符（避免复杂分词）
   return t.slice(0, 1).toUpperCase();
+}
+
+function tagTheme(tag: GroupMemberTag): string {
+  const r = String(tag?.role || '').trim().toLowerCase();
+  // 机器人：使用“实心填充”铭牌（绿色底 + 白字），让“机器人”显性标识
+  if (r === 'robot') return 'bg-green-600 text-white border-green-700/40 dark:bg-green-500 dark:text-white dark:border-green-300/30 font-semibold';
+  if (r === 'pm') return 'bg-emerald-500/10 text-emerald-700 border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-400/30';
+  if (r === 'dev') return 'bg-sky-500/10 text-sky-700 border-sky-300/40 dark:bg-sky-500/15 dark:text-sky-200 dark:border-sky-400/30';
+  if (r === 'qa') return 'bg-violet-500/10 text-violet-700 border-violet-300/40 dark:bg-violet-500/15 dark:text-violet-200 dark:border-violet-400/30';
+  if (r === 'admin') return 'bg-amber-500/10 text-amber-700 border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/30';
+  return 'bg-black/5 text-text-secondary border-black/10 dark:bg-white/8 dark:text-white/70 dark:border-white/15';
 }
 
 function ThinkingIndicator({ label }: { label?: string }) {
@@ -681,6 +692,8 @@ function MessageListInner() {
     const currentUserId = currentUser?.userId ?? null;
     const resolveUsername = useUserDirectoryStore((s) => s.resolveUsername);
     const resolveRole = useUserDirectoryStore((s) => s.resolveRole);
+    const resolveUser = useUserDirectoryStore((s) => s.resolveUser);
+    const resolveRobotForViewRole = useUserDirectoryStore((s) => s.resolveRobotForViewRole);
     const assistantFontScale = useUiPrefsStore((s) => s.assistantFontScale);
     const assistantContentStyle = useMemo(() => {
       // 仅对 Assistant 正文缩放（不影响气泡壳/头像/昵称行）
@@ -746,8 +759,19 @@ function MessageListInner() {
 
         const showMeta = !!(metaSeq || metaRightText);
 
+        // Assistant 消息：优先使用消息中的 Assistant 字段（历史消息），回退到 userDirectory（流式消息）
+        const assistantUser =
+          message.role === 'Assistant'
+            ? (resolveUser(message.assistantUserId) || resolveRobotForViewRole(message.viewRole || null))
+            : null;
+
         const senderDisplayName = (() => {
-          if (message.role === 'Assistant') return desktopName || 'PRD Agent';
+          if (message.role === 'Assistant') {
+            // 优先使用消息中的字段（历史消息已包含完整信息）
+            const n1 = String(message.assistantDisplayName || '').trim();
+            const n2 = (assistantUser?.displayName || assistantUser?.username || '').trim();
+            return n1 || n2 || desktopName || 'PRD Agent';
+          }
           if (isMine) return (currentUser?.displayName || (currentUser as any)?.username || '我') as string;
           // 优先显示 username（由 get_group_members 拉取一次后缓存）
           const fromDir = resolveUsername(message.senderId);
@@ -765,6 +789,36 @@ function MessageListInner() {
 
         const theme = roleTheme(message.role === 'Assistant' ? String(message.viewRole || '') : String((message as any).senderRole || ''));
 
+        const assistantTags = (() => {
+          if (message.role !== 'Assistant') return [];
+          // 优先使用消息中的 tags（历史消息），回退到 userDirectory（流式消息）
+          const tags = Array.isArray(message.assistantTags) 
+            ? message.assistantTags 
+            : (Array.isArray(assistantUser?.tags) ? assistantUser?.tags : []);
+          // 当前需求：至少展示"机器人"标识；其它 tag 先不铺开，避免气泡头过长
+          const robotTags = tags.filter((t) => String(t?.role || '').trim().toLowerCase() === 'robot');
+          return robotTags.slice(0, 2);
+        })();
+
+        const assistantAvatarUrl = (() => {
+          if (message.role !== 'Assistant') return null;
+          // 优先使用消息中的 avatarUrl（历史消息），回退到 userDirectory（流式消息）
+          const url = String(message.assistantAvatarUrl || assistantUser?.avatarUrl || '').trim();
+          return url || null;
+        })();
+
+        const otherUser = message.role === 'User' ? resolveUser(message.senderId) : null;
+        const otherAvatarUrl = (() => {
+          if (message.role !== 'User') return null;
+          // 如果是当前用户的消息，使用 authStore 中的头像
+          if (isMine && currentUser?.avatarUrl) {
+            return String(currentUser.avatarUrl).trim() || null;
+          }
+          // 否则从 userDirectory 中获取
+          const url = String(otherUser?.avatarUrl || '').trim();
+          return url || null;
+        })();
+
         return (
           <div
         data-msg-id={message.id}
@@ -780,7 +834,32 @@ function MessageListInner() {
             {(!isMine || message.role === 'Assistant') ? (
               <div className="shrink-0 mr-3 mt-1">
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white ${theme.avatarBgClass} border border-black/10 dark:border-white/15 shadow-sm`}>
-                  {message.role === 'Assistant' ? 'AI' : initials(senderDisplayName)}
+                  {/* 你的要求：必须展示真实 src=xxx（只要有 URL）；不允许字符回退；不允许人为塞“假 src”制造破图 */}
+                  {message.role === 'Assistant' ? (
+                    assistantAvatarUrl ? (
+                      <img
+                        src={assistantAvatarUrl}
+                        alt={senderDisplayName || 'assistant'}
+                        className="w-9 h-9 rounded-full object-cover"
+                        draggable={false}
+                        title={assistantAvatarUrl}
+                      />
+                    ) : (
+                      <span className="w-9 h-9 rounded-full" aria-hidden="true" />
+                    )
+                  ) : (
+                    otherAvatarUrl ? (
+                      <img
+                        src={otherAvatarUrl}
+                        alt={senderDisplayName || 'user'}
+                        className="w-9 h-9 rounded-full object-cover"
+                        draggable={false}
+                        title={otherAvatarUrl}
+                      />
+                    ) : (
+                      <span className="w-9 h-9 rounded-full" aria-hidden="true" />
+                    )
+                  )}
                 </div>
               </div>
             ) : null}
@@ -798,6 +877,19 @@ function MessageListInner() {
                   <span className={`text-[11px] leading-5 px-2 rounded-full border ${theme.badgeClass}`}>
                     {badgeText}
                   </span>
+                ) : null}
+                {message.role === 'Assistant' && assistantTags.length > 0 ? (
+                  <div className="flex items-center gap-1 min-w-0">
+                    {assistantTags.map((t, idx) => (
+                      <span
+                        key={`assistant-tag-${String(message.senderId || 'unknown')}-${idx}`}
+                        className={`inline-flex items-center text-[10px] leading-5 px-2 rounded-full border ${tagTheme(t)}`}
+                        title={t.name}
+                      >
+                        {String(t.name || '').trim() || '机器人'}
+                      </span>
+                    ))}
+                  </div>
                 ) : null}
               </div>
 
@@ -822,6 +914,8 @@ function MessageListInner() {
                     // 当输出 ASCII 表格（依赖空格对齐）时，必须用等宽字体，否则右侧会错乱
                     fontFamily: 'var(--font-mono)',
                     fontVariantLigatures: 'none',
+                    // 用户消息也跟随 Assistant 字体缩放设置
+                    ...assistantContentStyle,
                   }}
                 >
                   {message.content}
@@ -1074,11 +1168,12 @@ function MessageListInner() {
             {/* 时间 + seq：贴近气泡底部（气泡内固定一行） */}
             {showMeta ? (
               <div
-                className={`absolute left-4 right-4 bottom-1 flex items-center justify-between gap-2 text-[10px] leading-4 select-none min-w-0 ${
+                className={`absolute left-4 right-4 bottom-1 flex items-center justify-between gap-2 text-xs leading-4 select-none min-w-0 ${
                   message.role === 'User'
                     ? (isMine ? 'text-white/70' : 'text-text-secondary')
                     : 'text-text-secondary'
                 }`}
+                style={message.role === 'Assistant' ? assistantContentStyle : undefined}
               >
                 <span className="opacity-60 shrink-0">{metaSeq}</span>
                 <span className="min-w-0 flex-1 text-right truncate">{metaRightText}</span>

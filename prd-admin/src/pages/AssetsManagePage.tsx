@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createDesktopAssetKey, createDesktopAssetSkin, getDesktopBrandingSettings, listDesktopAssetKeys, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset } from '@/services';
-import type { DesktopAssetKey, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
+import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
+import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -9,6 +9,7 @@ function cn(...xs: Array<string | false | null | undefined>) {
 type AssetKind = 'image' | 'audio' | 'video' | 'other';
 
 type AssetRow = {
+  id?: string;
   title: string;
   key: string;
   kind: AssetKind;
@@ -16,16 +17,24 @@ type AssetRow = {
   required?: boolean;
 };
 
-// 诊断页固定要求的资源（仅保留“启动/加载”这类真正刚需；登录图标由品牌配置 loginIconKey 决定）
-const REQUIRED_ASSETS: AssetRow[] = [
-  { title: '冷启动加载', key: 'start_load.gif', kind: 'image', required: true },
-  { title: '加载动画', key: 'load.gif', kind: 'image', required: true },
-];
+// 已被 Desktop 端硬编码/默认配置引用的 key（这些 key 不能删除）
+// 来源：
+// - prd-desktop/src/stores/remoteAssetsStore.ts: load, start_load
+// - prd-desktop/src/stores/desktopBrandingStore.ts: 默认 loginIconKey=login_icon
+const USED_ASSET_KEYS = new Set<string>(['load', 'start_load', 'login_icon']);
 
 // 有“品牌配置”后，这两个 key 的单独行展示会显得重复（仍可通过品牌配置上传/或手动新建 key 上传）
-import { getAvatarBaseUrl } from '@/lib/avatar';
+import { getAvatarBaseUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 
-const HIDDEN_ASSET_KEYS = new Set(['login_icon.png', 'login_logo.svg']);
+function appendCacheBust(url: string, cacheBust: number): string {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  const v = typeof cacheBust === 'number' && Number.isFinite(cacheBust) ? String(Math.floor(cacheBust)) : '';
+  if (!v) return u;
+  return u.includes('?') ? `${u}&v=${encodeURIComponent(v)}` : `${u}?v=${encodeURIComponent(v)}`;
+}
+
+const HIDDEN_ASSET_KEYS = new Set<string>([]);
 
 function getBaseAssetsUrl() {
   return getAvatarBaseUrl() || 'https://i.pa.759800.com'; // 兜底旧域名，避免完全空白
@@ -66,16 +75,6 @@ function normalizeDesktopKey(raw: string): { ok: boolean; value: string; error?:
   return { ok: true, value: s };
 }
 
-function buildIconUrl(baseUrl: string, key: string, skin?: string | null, cacheBust?: number | null): string {
-  const b = String(baseUrl || '').trim().replace(/\/+$/, '');
-  const k = String(key || '').trim().replace(/^\/+/, '');
-  const s = String(skin || '').trim().replace(/^\/+|\/+$/g, '');
-  if (!b || !k) return '';
-  const url = s ? `${b}/icon/desktop/${s}/${k}` : `${b}/icon/desktop/${k}`;
-  const v = typeof cacheBust === 'number' && Number.isFinite(cacheBust) ? String(Math.floor(cacheBust)) : '';
-  return v ? `${url}?v=${encodeURIComponent(v)}` : url;
-}
-
 async function copyText(s: string) {
   const text = String(s || '');
   if (!text) return;
@@ -94,41 +93,55 @@ async function copyText(s: string) {
 }
 
 export default function AssetsManagePage() {
+  const [activeTab, setActiveTab] = useState<'desktop' | 'single'>('desktop');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
-  const [keys, setKeys] = useState<DesktopAssetKey[]>([]);
+  const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
   const [brandingName, setBrandingName] = useState('PRD Agent');
-  const [brandingIconKey, setBrandingIconKey] = useState('login_icon.png');
-  const [brandingBgKey, setBrandingBgKey] = useState('');
+  const [brandingSubtitle, setBrandingSubtitle] = useState('智能PRD解读助手');
+  const [brandingWindowTitle, setBrandingWindowTitle] = useState('PRD Agent');
+  const [brandingIconKey, setBrandingIconKey] = useState('login_icon');
+  const [brandingBgKey, setBrandingBgKey] = useState('bg');
   const [brandingSaving, setBrandingSaving] = useState(false);
 
   const [cacheBust, setCacheBust] = useState<number>(() => Date.now());
   const [broken, setBroken] = useState<Record<string, boolean>>({});
 
   const [newSkin, setNewSkin] = useState('white');
-  const [newKey, setNewKey] = useState('load.gif');
+  const [newKey, setNewKey] = useState('load');
   const [newKeyKind, setNewKeyKind] = useState<AssetKind>('image');
   const [newKeyDesc, setNewKeyDesc] = useState('');
 
   const [uploadingId, setUploadingId] = useState<string>('');
-  const [uploadTarget, setUploadTarget] = useState<{ skin: string | null; key: string; mode?: 'matrix' | 'branding_icon' | 'branding_bg' } | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<{ skin: string | null; key: string; mode?: 'matrix' | 'nohead' } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const reload = async () => {
     setLoading(true);
     setErr('');
     try {
-      const [sRes, kRes, bRes] = await Promise.all([listDesktopAssetSkins(), listDesktopAssetKeys(), getDesktopBrandingSettings()]);
+      const [sRes, bRes, mRes] = await Promise.all([
+        listDesktopAssetSkins(),
+        getDesktopBrandingSettings(),
+        getDesktopAssetsMatrix(),
+      ]);
       if (!sRes.success) throw new Error(sRes.error?.message || '加载 skins 失败');
-      if (!kRes.success) throw new Error(kRes.error?.message || '加载 keys 失败');
       setSkins(Array.isArray(sRes.data) ? sRes.data : []);
-      setKeys(Array.isArray(kRes.data) ? kRes.data : []);
+      setMatrixData(Array.isArray(mRes.data) ? mRes.data : []);
       if (bRes.success && bRes.data) {
         setBrandingName(String(bRes.data.desktopName || 'PRD Agent'));
-        setBrandingIconKey(String(bRes.data.loginIconKey || 'login_icon.png'));
-        setBrandingBgKey(String(bRes.data.loginBackgroundKey || ''));
+        setBrandingSubtitle(String(bRes.data.desktopSubtitle || '智能PRD解读助手'));
+        setBrandingWindowTitle(String(bRes.data.windowTitle || bRes.data.desktopName || 'PRD Agent'));
+        // 自动移除扩展名
+        let iconKey = String(bRes.data.loginIconKey || 'login_icon');
+        if (iconKey.includes('.')) iconKey = iconKey.substring(0, iconKey.lastIndexOf('.'));
+        setBrandingIconKey(iconKey);
+        
+        let bgKey = String(bRes.data.loginBackgroundKey || 'bg');
+        if (bgKey.includes('.')) bgKey = bgKey.substring(0, bgKey.lastIndexOf('.'));
+        setBrandingBgKey(bgKey);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e || '加载失败'));
@@ -141,27 +154,27 @@ export default function AssetsManagePage() {
     void reload();
   }, []);
 
-  const brandingPreviewUrl = useMemo(() => {
-    const k = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
-    return buildIconUrl(getBaseAssetsUrl(), k || 'login_icon.png', null, cacheBust);
-  }, [brandingIconKey, cacheBust]);
-
-  const brandingBgPreviewUrl = useMemo(() => {
-    const k = String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
-    return k ? buildIconUrl(getBaseAssetsUrl(), k, null, cacheBust) : '';
-  }, [brandingBgKey, cacheBust]);
-
   const saveBranding = async () => {
     setBrandingSaving(true);
     setErr('');
     try {
       const name = String(brandingName || '').trim();
-      const key = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
-      const bgKey = String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
+      const subtitle = String(brandingSubtitle || '').trim();
+      const winTitle = String(brandingWindowTitle || '').trim();
+      
+      // 自动移除扩展名
+      let key = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
+      if (key.includes('.')) key = key.substring(0, key.lastIndexOf('.'));
+      
+      let bgKey = String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
+      if (bgKey.includes('.')) bgKey = bgKey.substring(0, bgKey.lastIndexOf('.'));
+      
       const res = await updateDesktopBrandingSettings({
         desktopName: name || 'PRD Agent',
-        loginIconKey: key || 'login_icon.png',
-        loginBackgroundKey: bgKey || '',
+        desktopSubtitle: subtitle || '智能PRD解读助手',
+        windowTitle: winTitle || (name || 'PRD Agent'),
+        loginIconKey: key || 'login_icon',
+        loginBackgroundKey: bgKey || 'bg',
       });
       if (!res.success) throw new Error(res.error?.message || '保存失败');
       // 刷新，确保与后端最终值一致（含截断/规范化）
@@ -185,24 +198,50 @@ export default function AssetsManagePage() {
   }, [enabledSkins]);
 
   const rows: AssetRow[] = useMemo(() => {
-    const requiredMap = new Map(REQUIRED_ASSETS.map((r) => [r.key, r]));
-    const extra: AssetRow[] = (Array.isArray(keys) ? keys : [])
-      .map((k) => ({
-        title: (k.description || '').trim() || k.key,
-        key: k.key,
-        kind: (k.kind as AssetKind) || 'image',
-        description: k.description ?? null,
-        required: requiredMap.has(k.key),
+    // 直接从 matrixData 构建 rows（后端已返回所有资源，包括必需的）
+    const allRows: AssetRow[] = matrixData
+      .map((m) => ({
+        id: m.id || undefined,
+        key: m.key,
+        title: m.description || m.name || m.key,
+        kind: (m.kind as AssetKind) || 'image',
+        description: m.description || null,
+        required: m.required || USED_ASSET_KEYS.has(m.key),
       }))
-      .filter((r) => !requiredMap.has(r.key))
       .filter((r) => !HIDDEN_ASSET_KEYS.has(String(r.key || '').trim().toLowerCase()));
-    return [...REQUIRED_ASSETS, ...extra];
-  }, [keys]);
+
+    // 确保品牌配置的 key 也在列表中展示（如果 matrixData 中没有）
+    const existingKeys = new Set(allRows.map((r) => r.key));
+    const brandingKeys = [
+      { key: brandingIconKey, title: '登录图标（配置项）', description: '当前品牌配置使用的 Key' },
+      { key: brandingBgKey, title: '登录背景（配置项）', description: '当前品牌配置使用的 Key' },
+    ];
+
+    brandingKeys.forEach(({ key, title, description }) => {
+      const k = String(key || '').trim();
+      if (k && !existingKeys.has(k)) {
+        allRows.push({
+          title,
+          key: k,
+          kind: 'image',
+          description,
+          required: true,
+        });
+        existingKeys.add(k);
+      }
+    });
+
+    return allRows;
+  }, [matrixData, brandingIconKey, brandingBgKey]);
 
   const desktopRoot = useMemo(() => {
     const b = String(getBaseAssetsUrl() || '').trim().replace(/\/+$/, '');
     return b ? `${b}/icon/desktop` : '';
   }, []);
+
+  const noHeadPreviewUrl = useMemo(() => appendCacheBust(resolveNoHeadAvatarUrl(), cacheBust), [cacheBust]);
+  const isNoHeadBroken = Boolean(broken?.['__nohead__']);
+  const isUploadingNoHead = uploadingId === '__nohead__';
 
   const onCreateSkin = async () => {
     const norm = normalizeSkinName(newSkin);
@@ -224,7 +263,13 @@ export default function AssetsManagePage() {
   };
 
   const onCreateKey = async () => {
-    const norm = normalizeDesktopKey(newKey);
+    // 自动移除扩展名
+    let key = newKey.trim().toLowerCase();
+    if (key.includes('.')) {
+      key = key.substring(0, key.lastIndexOf('.'));
+    }
+    
+    const norm = normalizeDesktopKey(key);
     if (!norm.ok) {
       setErr(norm.error || 'key 不合法');
       return;
@@ -247,7 +292,13 @@ export default function AssetsManagePage() {
   };
 
   const chooseUpload = (skin: string | null, keyRaw: string) => {
-    const norm = normalizeDesktopKey(keyRaw);
+    // 自动移除扩展名
+    let key = keyRaw.trim().toLowerCase();
+    if (key.includes('.')) {
+      key = key.substring(0, key.lastIndexOf('.'));
+    }
+    
+    const norm = normalizeDesktopKey(key);
     if (!norm.ok) {
       setErr(norm.error || 'key 不合法');
       return;
@@ -261,37 +312,41 @@ export default function AssetsManagePage() {
     el.click();
   };
 
+  const chooseNoHeadUpload = () => {
+    setErr('');
+    setUploadTarget({ skin: null, key: 'nohead.png', mode: 'nohead' });
+    const el = fileRef.current;
+    if (!el) return;
+    el.value = '';
+    el.click();
+  };
+
   const onPickedFile = async (file: File | null) => {
     if (!file) return;
     if (!uploadTarget) {
       setErr('未选择上传目标（skin/key）');
       return;
     }
-    const { skin, mode } = uploadTarget;
-    let key = uploadTarget.key;
+    const mode = uploadTarget.mode || 'matrix';
 
-    // 品牌配置：登录图标 key 不允许手填，自动取上传文件名作为 key（并强制全小写/仅文件名）
-    if (mode === 'branding_icon') {
-      const norm = normalizeDesktopKey(file.name);
-      if (!norm.ok) {
-        setErr(norm.error || '登录图标文件名不合法（将作为 key 使用）');
-        return;
+    if (mode === 'nohead') {
+      setUploadingId('__nohead__');
+      setErr('');
+      try {
+        const res = await uploadNoHeadAvatar({ file });
+        if (!res.success) throw new Error(res.error?.message || '上传失败');
+        setCacheBust(Date.now());
+        setBroken((p) => ({ ...(p || {}), __nohead__: false }));
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e || '上传失败'));
+      } finally {
+        setUploadingId('');
       }
-      key = norm.value;
-      setBrandingIconKey(norm.value);
+      return;
     }
 
-    // 品牌配置：背景图允许手填，但上传时也做一次兜底规范化（若为空则按文件名）
-    if (mode === 'branding_bg') {
-      const raw = String(brandingBgKey || '').trim();
-      const norm = normalizeDesktopKey(raw || file.name);
-      if (!norm.ok) {
-        setErr(norm.error || '背景图 key/文件名不合法');
-        return;
-      }
-      key = norm.value;
-      setBrandingBgKey(norm.value);
-    }
+    const { skin } = uploadTarget;
+    const key = uploadTarget.key;
 
     const id = `${key}@@${skin || '__base__'}`;
     setUploadingId(id);
@@ -317,24 +372,47 @@ export default function AssetsManagePage() {
     }
   };
 
-  const chooseBrandingIconUpload = () => {
-    setErr('');
-    setUploadTarget({ skin: null, key: '', mode: 'branding_icon' });
-    const el = fileRef.current;
-    if (!el) return;
-    el.value = '';
-    el.click();
-  };
+  const handleDeleteKey = async (row: AssetRow) => {
+    const keyRaw = String(row.key || '').trim();
+    const keyNorm = keyRaw
+      .toLowerCase()
+      .replace(/^\/+/, '')
+      .replace(/\\/g, '')
+      .replace(/\//g, '');
+    if (!keyNorm) return;
 
-  const chooseBrandingBgUpload = () => {
-    const raw = String(brandingBgKey || '').trim();
+    if (!row.id) {
+      setErr(`未找到 key=${keyRaw || keyNorm} 对应的 id，无法删除`);
+      return;
+    }
+
+    const ok = window.confirm(`确认删除 key：${keyRaw || keyNorm} ？\n将删除此 key 及其下所有文件（所有皮肤）。此操作不可恢复。`);
+    if (!ok) return;
+
+    setLoading(true);
     setErr('');
-    // 允许为空：为空则上传时使用文件名作为 key
-    setUploadTarget({ skin: null, key: raw, mode: 'branding_bg' });
-    const el = fileRef.current;
-    if (!el) return;
-    el.value = '';
-    el.click();
+    try {
+      const res = await deleteDesktopAssetKey({ id: row.id });
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
+
+      // 清理本页“预览失败”标记（避免删除后仍显示红框）
+      setBroken((p) => {
+        const next = { ...(p || {}) };
+        Object.keys(next).forEach((k) => {
+          if (k.startsWith(`${keyNorm}@@`)) delete next[k];
+        });
+        return next;
+      });
+
+      // 触发预览强制刷新（绕过 CDN/浏览器缓存）
+      setCacheBust(Date.now());
+
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e || '删除失败'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const hardRefresh = async () => {
@@ -355,22 +433,32 @@ export default function AssetsManagePage() {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            Desktop 资源管理（诊断 + 上传）
+            资源管理（Desktop / 单文件）
           </div>
           <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
+            {activeTab === 'desktop' ? (
+              <>
+                规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
+              </>
+            ) : (
+              <>
+                单文件资源不区分皮肤：用于全局兜底（例如无头像 nohead.png）。
+              </>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
-            onClick={() => void reload()}
-            title="重新获取 skins/keys"
-          >
-            重新获取皮肤
-          </button>
+          {activeTab === 'desktop' ? (
+            <button
+              type="button"
+              className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
+              onClick={() => void reload()}
+              title="重新获取 skins/keys"
+            >
+              重新获取皮肤
+            </button>
+          ) : null}
           <button
             type="button"
             className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
@@ -380,6 +468,29 @@ export default function AssetsManagePage() {
             清空缓存并刷新
           </button>
         </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('desktop')}
+          className={cn(
+            'h-9 px-3 rounded-[12px] border text-sm',
+            activeTab === 'desktop' ? 'border-white/20 bg-white/5' : 'border-white/10 hover:bg-white/5'
+          )}
+        >
+          Desktop 资源矩阵（皮肤）
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('single')}
+          className={cn(
+            'h-9 px-3 rounded-[12px] border text-sm',
+            activeTab === 'single' ? 'border-white/20 bg-white/5' : 'border-white/10 hover:bg-white/5'
+          )}
+        >
+          单文件资源（不分皮肤）
+        </button>
       </div>
 
       {err ? (
@@ -395,6 +506,87 @@ export default function AssetsManagePage() {
         </div>
       ) : null}
 
+      {activeTab === 'single' ? (
+        <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                无头像兜底（required）：nohead.png
+              </div>
+              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                固定路径：<span className="font-mono">/icon/backups/head/nohead.png</span>（不分白天/黑夜；仅此一个文件）。
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', isUploadingNoHead && 'opacity-60 pointer-events-none')}
+                onClick={() => chooseNoHeadUpload()}
+              >
+                {isUploadingNoHead ? '上传中...' : '上传/替换'}
+              </button>
+              <button
+                type="button"
+                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm"
+                onClick={() => void copyText(noHeadPreviewUrl)}
+                disabled={!noHeadPreviewUrl}
+              >
+                复制地址
+              </button>
+              <button
+                type="button"
+                className="h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm"
+                onClick={() => window.open(noHeadPreviewUrl, '_blank', 'noopener,noreferrer')}
+                disabled={!noHeadPreviewUrl}
+              >
+                查看
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-start gap-4">
+            <div
+              className={cn('rounded-[12px] border p-2', isNoHeadBroken ? 'border-red-500/40' : 'border-white/10')}
+              style={{ width: '120px', height: '120px', background: isNoHeadBroken ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)' }}
+              title={noHeadPreviewUrl || ''}
+            >
+              {noHeadPreviewUrl ? (
+                <img
+                  src={noHeadPreviewUrl}
+                  alt=""
+                  className="w-full h-full object-contain"
+                  onError={() => setBroken((m) => ({ ...(m || {}), __nohead__: true }))}
+                  onLoad={() => setBroken((m) => ({ ...(m || {}), __nohead__: false }))}
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                  无 URL
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                当前地址
+              </div>
+              <div className="mt-1 font-mono text-sm break-all" style={{ color: 'var(--text-primary)' }}>
+                {noHeadPreviewUrl || '-'}
+              </div>
+              {isNoHeadBroken ? (
+                <div className="mt-2 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
+                  缺失/不可用：请上传 nohead.png
+                </div>
+              ) : (
+                <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  建议尺寸：128x128 或更大；支持 png（推荐带透明通道）。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === 'desktop' ? (
+        <>
       <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="min-w-0">
@@ -437,7 +629,7 @@ export default function AssetsManagePage() {
                   value={newKey}
                   onChange={(e) => setNewKey(e.target.value)}
                   className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
-                  placeholder="例如 load.gif"
+                  placeholder="例如 load（不含扩展名）"
                 />
                 <select
                   value={newKeyKind}
@@ -484,30 +676,6 @@ export default function AssetsManagePage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              className={cn(
-                'px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90',
-                uploadingId === `${String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '') || 'login_icon.png'}@@__base__` &&
-                  'opacity-60 pointer-events-none'
-              )}
-              onClick={() => chooseBrandingIconUpload()}
-              title="上传当前登录图标 key 对应的文件到 /icon/desktop/<key>"
-              type="button"
-            >
-              上传图标
-            </button>
-            <button
-              className={cn(
-                'px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90',
-                uploadingId === `${String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '')}@@__base__` &&
-                  'opacity-60 pointer-events-none'
-              )}
-              onClick={() => chooseBrandingBgUpload()}
-              title="上传当前背景图 key 对应的文件到 /icon/desktop/<key>"
-              type="button"
-            >
-              上传背景
-            </button>
-            <button
               className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
               onClick={() => void saveBranding()}
               disabled={brandingSaving}
@@ -519,9 +687,10 @@ export default function AssetsManagePage() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Desktop 名称</div>
+        {/* 三个文本 */}
+        <div className="mt-3 grid grid-cols-3 gap-4">
+          <div>
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>大标题</div>
             <input
               className="w-full px-3 py-2 rounded-xl ui-control"
               value={brandingName}
@@ -529,82 +698,25 @@ export default function AssetsManagePage() {
               placeholder="PRD Agent"
             />
           </div>
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>登录图标 key（文件名，自动）</div>
-            <div className="w-full px-3 py-2 rounded-xl ui-control font-mono flex items-center justify-between gap-2">
-              <span className="truncate">{brandingIconKey || '（未生成）'}</span>
-              <button
-                type="button"
-                className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs shrink-0"
-                onClick={() => void copyText(brandingIconKey)}
-                title="复制 key"
-              >
-                复制
-              </button>
-            </div>
-            <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              说明：点击“上传图标”后，会自动使用上传文件名作为 key（仅文件名、自动转全小写）。
-            </div>
-          </div>
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>背景图 key（文件名，可空）</div>
+
+          <div>
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>小标题</div>
             <input
-              className="w-full px-3 py-2 rounded-xl ui-control font-mono"
-              value={brandingBgKey}
-              onChange={(e) => setBrandingBgKey(e.target.value)}
-              placeholder="例如 login_bg.png（可留空）"
+              className="w-full px-3 py-2 rounded-xl ui-control"
+              value={brandingSubtitle}
+              onChange={(e) => setBrandingSubtitle(e.target.value)}
+              placeholder="智能PRD解读助手"
             />
           </div>
-          <div className="md:col-span-1">
-            <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>预览（base）</div>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-3">
-                <img
-                  src={brandingPreviewUrl}
-                  alt="login icon preview"
-                  className="h-10 w-10 rounded-xl border"
-                  style={{ borderColor: 'var(--border-subtle)' }}
-                  onError={() => setBroken((p) => ({ ...p, __branding__: true }))}
-                />
-                <div className="min-w-0">
-                  <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
-                    {brandingPreviewUrl}
-                  </div>
-                </div>
-              </div>
 
-              {brandingBgPreviewUrl ? (
-                <div className="flex items-center gap-3">
-                  <img
-                    src={brandingBgPreviewUrl}
-                    alt="login background preview"
-                    className="h-10 w-[80px] rounded-xl border"
-                    style={{ borderColor: 'var(--border-subtle)', objectFit: 'cover' }}
-                    onError={() => setBroken((p) => ({ ...p, __branding_bg__: true }))}
-                  />
-                  <div className="min-w-0">
-                    <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
-                      {brandingBgPreviewUrl}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  背景图未配置：使用内置背景
-                </div>
-              )}
-            </div>
-
-            {broken.__branding__ ? (
-              <div className="mt-1 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
-                图标预览加载失败：请确认该 key 已在本页上传（或已存在于 COS）。
-              </div>
-            ) : null}
-            {broken.__branding_bg__ ? (
-              <div className="mt-1 text-xs" style={{ color: 'var(--danger, #ef4444)' }}>
-                背景预览加载失败：请确认该 key 已在本页上传（或已存在于 COS）。
-              </div>
-            ) : null}
+          <div>
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>窗口标题（title）</div>
+            <input
+              className="w-full px-3 py-2 rounded-xl ui-control"
+              value={brandingWindowTitle}
+              onChange={(e) => setBrandingWindowTitle(e.target.value)}
+              placeholder="PRD Agent"
+            />
           </div>
         </div>
       </div>
@@ -646,12 +758,13 @@ export default function AssetsManagePage() {
                 key={row.key}
                 row={row}
                 columns={columns}
-                cacheBust={cacheBust}
                 broken={broken}
                 uploadingId={uploadingId}
+                matrixData={matrixData}
                 onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
                 onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
                 onUpload={(skin, key) => chooseUpload(skin, key)}
+                onDelete={() => void handleDeleteKey(row)}
               />
             ))}
             {rows.length === 0 ? (
@@ -662,6 +775,8 @@ export default function AssetsManagePage() {
           </div>
         </div>
       </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -669,21 +784,40 @@ export default function AssetsManagePage() {
 function RowBlock(props: {
   row: AssetRow;
   columns: string[];
-  cacheBust: number;
   broken: Record<string, boolean>;
   uploadingId: string;
+  matrixData: AdminDesktopAssetMatrixRow[];
   onBroken: (id: string) => void;
   onRecovered: (id: string) => void;
   onUpload: (skin: string | null, key: string) => void;
+  onDelete: () => void;
 }) {
-  const { row, columns, cacheBust, broken, uploadingId, onBroken, onRecovered, onUpload } = props;
+  const { row, columns, broken, uploadingId, matrixData, onBroken, onRecovered, onUpload, onDelete } = props;
   const BOX = 96;
+
+  // 从 matrixData 中查找当前 row 的 description
+  const matrixRow = matrixData.find(m => m.key === row.key);
+  const displayTitle = matrixRow?.description || row.title;
 
   return (
     <>
       <div className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {row.title}
+        <div className="flex flex-col gap-2">
+          <div className="text-sm font-semibold break-all" style={{ color: 'var(--text-primary)' }}>
+            {displayTitle}
+          </div>
+          {!row.required && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={onDelete}
+                className="text-[10px] px-2 py-0.5 rounded border border-red-500/20 text-red-400 hover:bg-red-500/10"
+                title="删除此 Key 及其下所有文件"
+              >
+                删除
+              </button>
+            </div>
+          )}
         </div>
         <div className="mt-1 text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }}>
           {row.key}
@@ -693,11 +827,25 @@ function RowBlock(props: {
 
       {columns.map((c) => {
         const skin = c === '__base__' ? null : c;
-        const url = buildIconUrl(getBaseAssetsUrl(), row.key, skin, cacheBust);
-        const relPath = `${skin ? `${skin}/` : ''}${row.key}`;
+        const skinKey = c === '__base__' ? '' : c;
+        
+        // 从 matrixData 中查找对应的单元格数据
+        const matrixRow = matrixData.find(m => m.key === row.key);
+        const cell = matrixRow?.cells?.[skinKey];
+        const url = cell?.url || '';
+        const isFallback = cell?.isFallback ?? false;
+        
         const id = `${row.key}@@${c}`;
-        const isBroken = Boolean(broken?.[id]);
+        const isBroken = !url || Boolean(broken?.[id]);
         const isUploading = uploadingId === `${row.key}@@${skin || '__base__'}`;
+        
+        // 从 URL 中提取文件名（含扩展名）
+        const fileName = url ? url.split('/').pop()?.split('?')[0] || row.key : row.key;
+        
+        // 判断是否为视频文件
+        const isVideo = fileName.toLowerCase().endsWith('.mp4') || 
+                       fileName.toLowerCase().endsWith('.webm') || 
+                       fileName.toLowerCase().endsWith('.mov');
 
         return (
           <div key={id} className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -705,32 +853,47 @@ function RowBlock(props: {
               <div
                 className={cn(
                   'rounded-[12px] border p-2',
-                  isBroken ? 'border-red-500/40' : 'border-white/10'
+                  isBroken ? 'border-red-500/40' : (isFallback ? 'border-yellow-500/40 border-dashed' : 'border-white/10')
                 )}
-                style={{ width: `${BOX}px`, height: `${BOX}px`, background: isBroken ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)' }}
-                title={url || ''}
+                style={{ width: `${BOX}px`, height: `${BOX}px`, background: isBroken ? 'rgba(239,68,68,0.08)' : (isFallback ? 'rgba(234,179,8,0.05)' : 'rgba(255,255,255,0.02)') }}
+                title={url || '未上传'}
               >
                 {url ? (
-                  <img
-                    src={url}
-                    alt=""
-                    className="block w-full h-full select-none pointer-events-none"
-                    style={{ objectFit: 'contain' }}
-                    onError={() => onBroken(id)}
-                    onLoad={() => onRecovered(id)}
-                  />
+                  isVideo ? (
+                    <video
+                      src={url}
+                      className="block w-full h-full select-none pointer-events-none"
+                      style={{ objectFit: 'contain' }}
+                      muted
+                      loop
+                      autoPlay
+                      playsInline
+                      onError={() => onBroken(id)}
+                      onLoadedData={() => onRecovered(id)}
+                    />
+                  ) : (
+                    <img
+                      src={url}
+                      alt=""
+                      className="block w-full h-full select-none pointer-events-none"
+                      style={{ objectFit: 'contain' }}
+                      onError={() => onBroken(id)}
+                      onLoad={() => onRecovered(id)}
+                    />
+                  )
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                    无 URL
+                    未上传
                   </div>
                 )}
               </div>
 
-              <div className="text-xs" style={{ color: isBroken ? 'rgba(248,113,113,0.95)' : 'var(--text-muted)' }}>
-                {isBroken ? '缺失/不可用' : '正常'}
+              <div className="text-xs" style={{ color: isBroken ? 'rgba(248,113,113,0.95)' : (isFallback ? 'rgba(234,179,8,0.85)' : 'var(--text-muted)') }}>
+                {isBroken ? '缺失/不可用' : (isFallback ? '回退' : '正常')}
               </div>
-              <div className="text-xs font-mono break-all" style={{ color: 'var(--text-muted)' }} title={url || ''}>
-                {relPath}
+              <div className="text-xs font-mono break-all flex items-center gap-1" style={{ color: 'var(--text-muted)' }} title={url || ''}>
+                <span>{fileName}</span>
+                {skin && <span className="text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>{skin}</span>}
               </div>
 
               <div className="flex items-center gap-2">
