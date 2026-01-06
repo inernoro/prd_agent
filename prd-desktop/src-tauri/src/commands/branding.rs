@@ -30,12 +30,14 @@ pub struct DesktopBranding {
 /// - skin: 可选，white/dark，用于获取对应皮肤的资源 URL（带回退逻辑）
 /// - 拉取失败：返回 None（桌面端使用内置默认图标/名称）
 #[tauri::command]
-pub async fn fetch_desktop_branding(skin: Option<String>) -> Result<Option<DesktopBranding>, String> {
+pub async fn fetch_desktop_branding(
+    skin: Option<String>,
+) -> Result<Option<DesktopBranding>, String> {
     // best-effort：拉取失败回退到 None
     let _ = api_client::get_api_base_url();
 
     let client = ApiClient::new();
-    
+
     // 构建 URL，如果有 skin 参数则添加查询参数
     let url = if let Some(s) = skin {
         let s_normalized = s.trim().to_lowercase();
@@ -47,7 +49,7 @@ pub async fn fetch_desktop_branding(skin: Option<String>) -> Result<Option<Deskt
     } else {
         "/desktop/branding".to_string()
     };
-    
+
     let resp: ApiResponse<DesktopBranding> = client.get(&url).await?;
     if resp.success {
         Ok(resp.data)

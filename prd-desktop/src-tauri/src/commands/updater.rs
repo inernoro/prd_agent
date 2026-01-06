@@ -57,5 +57,3 @@ pub async fn get_updater_platform_info() -> UpdaterPlatformInfo {
         json_target,
     }
 }
-
-
