@@ -53,6 +53,26 @@ public class AdminDesktopBrandingController : ControllerBase
             name = name[..64];
         }
 
+        var subtitle = (request.DesktopSubtitle ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(subtitle))
+        {
+            subtitle = "智能PRD解读助手";
+        }
+        if (subtitle.Length > 64)
+        {
+            subtitle = subtitle[..64];
+        }
+
+        var windowTitle = (request.WindowTitle ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(windowTitle))
+        {
+            windowTitle = name;
+        }
+        if (windowTitle.Length > 64)
+        {
+            windowTitle = windowTitle[..64];
+        }
+
         var key = (request.LoginIconKey ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(key))
         {
@@ -72,6 +92,8 @@ public class AdminDesktopBrandingController : ControllerBase
         var now = DateTime.UtcNow;
         var update = Builders<AppSettings>.Update
             .Set(x => x.DesktopName, name)
+            .Set(x => x.DesktopSubtitle, subtitle)
+            .Set(x => x.DesktopWindowTitle, windowTitle)
             .Set(x => x.DesktopLoginIconKey, key)
             .Set(x => x.DesktopLoginBackgroundKey, bgKey)
             .Set(x => x.UpdatedAt, now);

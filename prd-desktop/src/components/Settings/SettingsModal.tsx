@@ -301,6 +301,16 @@ export default function SettingsModal() {
           }
           const json = await resp.json();
           console.log('[Updater] response (json):', JSON.stringify(json, null, 2).slice(0, 2000));
+          // 如果是静态 manifest 格式，打印当前平台的下载 URL（下载 404 时最关键）
+          try {
+            const plats = (json as any)?.platforms;
+            const p = plats?.[target];
+            if (p?.url) {
+              console.log('[Updater] manifest.platforms[target].url:', String(p.url));
+            }
+          } catch {
+            // ignore
+          }
           break;
         } catch (err) {
           console.error('[Updater] fetch error:', err);
@@ -379,7 +389,21 @@ export default function SettingsModal() {
       alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
     } catch (e) {
       setUpdateStatus('error');
-      setUpdateError(String(e));
+      const raw = String(e);
+      // 下载阶段 404：通常是 manifest 里写的安装包 URL 与 Release 实际资产文件名不一致（空格/点号/大小写）
+      if (/status:\s*404/i.test(raw) || /\b404\b/.test(raw)) {
+        setUpdateError(
+          [
+            '下载失败：远端安装包返回 404 Not Found。',
+            '这通常意味着：Release 的 manifest JSON 中 platforms[当前平台].url 指向了一个不存在的资产文件名。',
+            '常见情况：`PRD Agent.app.tar.gz`（空格） vs `PRD.Agent.app.tar.gz`（点号）。',
+            '',
+            `原始错误：${raw}`,
+          ].join('\n')
+        );
+        return;
+      }
+      setUpdateError(raw);
     }
   };
 

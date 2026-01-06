@@ -118,6 +118,8 @@ export default function AssetsManagePage() {
   const [err, setErr] = useState('');
 
   const [brandingName, setBrandingName] = useState('PRD Agent');
+  const [brandingSubtitle, setBrandingSubtitle] = useState('智能PRD解读助手');
+  const [brandingWindowTitle, setBrandingWindowTitle] = useState('PRD Agent');
   const [brandingIconKey, setBrandingIconKey] = useState('login_icon.png');
   const [brandingBgKey, setBrandingBgKey] = useState('');
   const [brandingSaving, setBrandingSaving] = useState(false);
@@ -145,6 +147,8 @@ export default function AssetsManagePage() {
       setKeys(Array.isArray(kRes.data) ? kRes.data : []);
       if (bRes.success && bRes.data) {
         setBrandingName(String(bRes.data.desktopName || 'PRD Agent'));
+        setBrandingSubtitle(String(bRes.data.desktopSubtitle || '智能PRD解读助手'));
+        setBrandingWindowTitle(String(bRes.data.windowTitle || bRes.data.desktopName || 'PRD Agent'));
         setBrandingIconKey(String(bRes.data.loginIconKey || 'login_icon.png'));
         setBrandingBgKey(String(bRes.data.loginBackgroundKey || ''));
       }
@@ -174,10 +178,14 @@ export default function AssetsManagePage() {
     setErr('');
     try {
       const name = String(brandingName || '').trim();
+      const subtitle = String(brandingSubtitle || '').trim();
+      const winTitle = String(brandingWindowTitle || '').trim();
       const key = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
       const bgKey = String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
       const res = await updateDesktopBrandingSettings({
         desktopName: name || 'PRD Agent',
+        desktopSubtitle: subtitle || '智能PRD解读助手',
+        windowTitle: winTitle || (name || 'PRD Agent'),
         loginIconKey: key || 'login_icon.png',
         loginBackgroundKey: bgKey || '',
       });
@@ -707,9 +715,10 @@ export default function AssetsManagePage() {
           </div>
         </div>
 
+        {/* 三个文本 */}
         <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-1">
-            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>Desktop 名称</div>
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>大标题</div>
             <input
               className="w-full px-3 py-2 rounded-xl ui-control"
               value={brandingName}
@@ -718,10 +727,33 @@ export default function AssetsManagePage() {
             />
           </div>
 
-          <div className="md:col-span-1 flex flex-col gap-2">
-            <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>登录图标</div>
+          <div className="md:col-span-1">
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>小标题</div>
+            <input
+              className="w-full px-3 py-2 rounded-xl ui-control"
+              value={brandingSubtitle}
+              onChange={(e) => setBrandingSubtitle(e.target.value)}
+              placeholder="智能PRD解读助手"
+            />
+          </div>
+
+          <div className="md:col-span-1">
+            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>窗口标题（title）</div>
+            <input
+              className="w-full px-3 py-2 rounded-xl ui-control"
+              value={brandingWindowTitle}
+              onChange={(e) => setBrandingWindowTitle(e.target.value)}
+              placeholder="PRD Agent"
+            />
+          </div>
+        </div>
+
+        {/* 两个图片 */}
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>App Logo（登录图标）</div>
             <div className="flex items-start gap-3">
-              <div 
+              <div
                 className="h-12 w-12 rounded-xl border shrink-0 bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden"
                 style={{ borderColor: 'var(--border-subtle)' }}
               >
@@ -736,22 +768,24 @@ export default function AssetsManagePage() {
               </div>
               <div className="min-w-0 flex-1">
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control font-mono text-sm mb-1"
+                  className="w-full px-3 py-2 rounded-xl ui-control font-mono text-sm"
                   value={brandingIconKey}
                   onChange={(e) => setBrandingIconKey(e.target.value)}
                   placeholder="login_icon.png"
                 />
-                <div className="text-[10px]" style={{ color: broken.__branding__ ? 'var(--danger, #ef4444)' : 'var(--text-muted)' }}>
-                  {broken.__branding__ ? '预览失败：请在下方矩阵上传' : '对应下方资源矩阵中的 Key'}
-                </div>
+                {broken.__branding__ ? (
+                  <div className="text-[10px] mt-1" style={{ color: 'var(--danger, #ef4444)' }}>
+                    预览失败：请在下方矩阵上传对应 key
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
 
-          <div className="md:col-span-1 flex flex-col gap-2">
+          <div className="flex flex-col gap-2">
             <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>登录背景图</div>
             <div className="flex items-start gap-3">
-              <div 
+              <div
                 className="h-12 w-20 rounded-xl border shrink-0 bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden"
                 style={{ borderColor: 'var(--border-subtle)' }}
               >
@@ -768,14 +802,16 @@ export default function AssetsManagePage() {
               </div>
               <div className="min-w-0 flex-1">
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control font-mono text-sm mb-1"
+                  className="w-full px-3 py-2 rounded-xl ui-control font-mono text-sm"
                   value={brandingBgKey}
                   onChange={(e) => setBrandingBgKey(e.target.value)}
-                  placeholder="可留空（使用默认）"
+                  placeholder="bg.png（可留空使用默认）"
                 />
-                <div className="text-[10px]" style={{ color: broken.__branding_bg__ ? 'var(--danger, #ef4444)' : 'var(--text-muted)' }}>
-                  {broken.__branding_bg__ ? '预览失败：请在下方矩阵上传' : '对应下方资源矩阵中的 Key'}
-                </div>
+                {broken.__branding_bg__ ? (
+                  <div className="text-[10px] mt-1" style={{ color: 'var(--danger, #ef4444)' }}>
+                    预览失败：请在下方矩阵上传对应 key
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

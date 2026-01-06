@@ -8,6 +8,10 @@ use crate::services::ApiClient;
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBranding {
     pub desktop_name: String,
+    #[serde(default)]
+    pub desktop_subtitle: String,
+    #[serde(default)]
+    pub window_title: String,
     pub login_icon_key: String,
     #[serde(default)]
     pub login_background_key: String,

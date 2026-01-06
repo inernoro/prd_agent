@@ -39,6 +39,16 @@ public class DesktopBrandingController : ControllerBase
         if (string.IsNullOrWhiteSpace(bgKey)) bgKey = "bg.png";
         resp.LoginBackgroundKey = FileNameKeyRegex.IsMatch(bgKey) ? bgKey : "bg.png";
 
+        // 文本兜底与截断（避免异常配置导致 UI 爆布局）
+        resp.DesktopName = string.IsNullOrWhiteSpace(resp.DesktopName) ? "PRD Agent" : resp.DesktopName.Trim();
+        if (resp.DesktopName.Length > 64) resp.DesktopName = resp.DesktopName[..64];
+
+        resp.DesktopSubtitle = string.IsNullOrWhiteSpace(resp.DesktopSubtitle) ? "智能PRD解读助手" : resp.DesktopSubtitle.Trim();
+        if (resp.DesktopSubtitle.Length > 64) resp.DesktopSubtitle = resp.DesktopSubtitle[..64];
+
+        resp.WindowTitle = string.IsNullOrWhiteSpace(resp.WindowTitle) ? resp.DesktopName : resp.WindowTitle.Trim();
+        if (resp.WindowTitle.Length > 64) resp.WindowTitle = resp.WindowTitle[..64];
+
         return Ok(ApiResponse<DesktopBrandingResponse>.Ok(resp));
     }
 }

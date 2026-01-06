@@ -19,6 +19,7 @@ import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useRemoteAssetsStore } from './stores/remoteAssetsStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
@@ -38,6 +39,7 @@ function App() {
   const { setSession, mode, sessionId, clearSession, setPrompts } = useSessionStore();
   const { loadGroups, groups, loading: groupsLoading } = useGroupListStore();
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
+  const windowTitle = useDesktopBrandingStore((s) => s.branding.windowTitle);
   const [isDark, setIsDark] = useState(() => {
     const stored = readStoredTheme();
     if (stored) return stored === 'dark';
@@ -57,6 +59,17 @@ function App() {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [refreshBranding]);
+
+  // 将窗口标题与服务器下发配置对齐（若未下发则由 store 默认值兜底）
+  useEffect(() => {
+    const title = String(windowTitle || '').trim();
+    if (!title) return;
+    try {
+      void getCurrentWindow().setTitle(title);
+    } catch {
+      // ignore
+    }
+  }, [windowTitle]);
 
   // SSE 场景下 Rust 侧可能通过事件通知登录已过期（401且 refresh 失败）
   useEffect(() => {
@@ -302,7 +315,7 @@ function App() {
 
   // 未登录显示登录页
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return <LoginPage isDark={isDark} onToggleTheme={onToggleTheme} />;
   }
 
   // 冷启动全局加载遮罩：只保留一个（覆盖侧栏+主区），避免出现“导航一份、主区一份”的重复加载提示

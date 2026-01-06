@@ -32,6 +32,16 @@ public class AppSettings
     public string? DesktopName { get; set; }
 
     /// <summary>
+    /// Desktop 登录页副标题（小标题）
+    /// </summary>
+    public string? DesktopSubtitle { get; set; }
+
+    /// <summary>
+    /// Desktop 窗口标题（macOS 标题栏/窗口 title）
+    /// </summary>
+    public string? DesktopWindowTitle { get; set; }
+
+    /// <summary>
     /// Desktop 登录图标资源 key（文件名，指向 /icon/desktop/&lt;key&gt;，允许任意图片格式）
     /// </summary>
     public string? DesktopLoginIconKey { get; set; }

@@ -8,6 +8,8 @@ export async function getDesktopBrandingSettings(): Promise<ApiResponse<DesktopB
 
 export async function updateDesktopBrandingSettings(input: {
   desktopName: string;
+  desktopSubtitle: string;
+  windowTitle: string;
   loginIconKey: string;
   loginBackgroundKey: string;
 }): Promise<ApiResponse<DesktopBrandingSettings>> {
