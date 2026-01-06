@@ -24,7 +24,8 @@ public class AdminDesktopAssetsController : ControllerBase
     private readonly ILogger<AdminDesktopAssetsController> _logger;
     private readonly IAssetStorage _assetStorage;
     private static readonly Regex SkinNameRegex = new(@"^[a-z0-9][a-z0-9\-_]{0,31}$", RegexOptions.Compiled);
-    private static readonly Regex AssetKeyRegex = new(@"^[a-z0-9][a-z0-9_\-./]{0,127}$", RegexOptions.Compiled);
+    // 业务约束：key 仅允许“文件名”（不允许子目录），与 Desktop 端规则对齐
+    private static readonly Regex AssetKeyRegex = new(@"^[a-z0-9][a-z0-9_\-.]{0,127}$", RegexOptions.Compiled);
     private const long MaxUploadBytes = 5 * 1024 * 1024; // 5MB：icon/动图应很小
 
     public AdminDesktopAssetsController(MongoDbContext db, ILogger<AdminDesktopAssetsController> logger, IAssetStorage assetStorage)
@@ -53,7 +54,8 @@ public class AdminDesktopAssetsController : ControllerBase
         var s = (key ?? string.Empty).Trim().TrimStart('/').ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(s)) return (false, "资源 key 不能为空", s);
         if (s.Length > 128) return (false, "资源 key 不能超过 128 字符", s);
-        if (!AssetKeyRegex.IsMatch(s)) return (false, "资源 key 仅允许小写字母/数字/下划线/中划线/点/斜杠，且需以字母或数字开头", s);
+        if (s.Contains('/')) return (false, "资源 key 仅允许文件名（不允许包含 / 子目录）", s);
+        if (!AssetKeyRegex.IsMatch(s)) return (false, "资源 key 仅允许小写字母/数字/下划线/中划线/点，且需以字母或数字开头", s);
         if (s.Contains("..", StringComparison.Ordinal)) return (false, "资源 key 不允许包含 ..", s);
         if (s.Contains('\\')) return (false, "资源 key 不允许包含反斜杠", s);
         return (true, null, s);

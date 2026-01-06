@@ -74,6 +74,17 @@ public class UserAvatarUpdateResponse
 }
 
 /// <summary>
+/// 用户头像上传响应（上传文件并更新 users.avatarFileName 后返回）
+/// </summary>
+public class UserAvatarUploadResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public string? AvatarFileName { get; set; }
+    public string? AvatarUrl { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
 /// 用户状态更新响应
 /// </summary>
 public class UserStatusUpdateResponse

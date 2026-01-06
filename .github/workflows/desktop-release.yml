@@ -692,8 +692,12 @@ jobs:
           # 获取当前时间 (ISO 8601 格式)
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
+          # URL 编码文件名（处理特殊字符）
+          # 使用 Python 进行标准 URL 编码（所有 runner 都有 Python）
+          ENCODED_FILENAME=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$FILENAME")
+          
           # 构建下载 URL
-          DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$FILENAME"
+          DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ENCODED_FILENAME"
           
           # 生成 latest-{target}.json
           MANIFEST_FILE="latest-$TARGET.json"

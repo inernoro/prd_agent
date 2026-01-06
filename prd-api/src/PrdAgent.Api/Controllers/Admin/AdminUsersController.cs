@@ -10,6 +10,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -25,14 +26,22 @@ public class AdminUsersController : ControllerBase
     private readonly ILogger<AdminUsersController> _logger;
     private readonly ILoginAttemptService _loginAttemptService;
     private readonly IConfiguration _cfg;
+    private readonly IAssetStorage _assetStorage;
     private static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
+    private const long MaxAvatarUploadBytes = 5 * 1024 * 1024; // 5MB：头像应很小
 
-    public AdminUsersController(MongoDbContext db, ILogger<AdminUsersController> logger, ILoginAttemptService loginAttemptService, IConfiguration cfg)
+    public AdminUsersController(
+        MongoDbContext db,
+        ILogger<AdminUsersController> logger,
+        ILoginAttemptService loginAttemptService,
+        IConfiguration cfg,
+        IAssetStorage assetStorage)
     {
         _db = db;
         _logger = logger;
         _loginAttemptService = loginAttemptService;
         _cfg = cfg;
+        _assetStorage = assetStorage;
     }
 
     private string GetAdminId()
@@ -61,6 +70,38 @@ public class AdminUsersController : ControllerBase
         if (t.Contains("..")) return (false, "头像文件名不合法");
         if (!Regex.IsMatch(t, @"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")) return (false, "头像文件名不合法（仅允许字母数字及 . _ -）");
         return (true, null);
+    }
+
+    private static string? NormalizeAvatarImageExt(string? extOrDotExt)
+    {
+        var ext = (extOrDotExt ?? string.Empty).Trim().ToLowerInvariant();
+        if (ext.StartsWith('.')) ext = ext[1..];
+        if (string.IsNullOrWhiteSpace(ext)) return null;
+        if (ext == "jpeg") ext = "jpg";
+        return ext is "png" or "jpg" or "gif" or "webp" ? ext : null;
+    }
+
+    private static string? GuessAvatarImageExtFromMime(string? mime)
+    {
+        var m = (mime ?? string.Empty).Trim().ToLowerInvariant();
+        if (m == "image/png") return "png";
+        if (m == "image/jpeg") return "jpg";
+        if (m == "image/gif") return "gif";
+        if (m == "image/webp") return "webp";
+        return null;
+    }
+
+    private static string GuessAvatarMimeFromExt(string ext)
+    {
+        var e = (ext ?? string.Empty).Trim().ToLowerInvariant();
+        return e switch
+        {
+            "png" => "image/png",
+            "jpg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            _ => "application/octet-stream"
+        };
     }
 
     private string? BuildAvatarUrl(User user)
@@ -196,6 +237,98 @@ public class AdminUsersController : ControllerBase
             UserId = userId,
             AvatarFileName = fileName,
             UpdatedAt = DateTime.UtcNow
+        }));
+    }
+
+    /// <summary>
+    /// 上传并更新用户头像（上传图片 -> 覆盖写 COS -> 更新 users.avatarFileName）
+    /// 约束：
+    /// - 仅支持图片：png/jpg/gif/webp
+    /// - 头像文件名固定为 {username}.{ext}（全小写）
+    /// </summary>
+    [HttpPost("{userId}/avatar/upload")]
+    [RequestSizeLimit(MaxAvatarUploadBytes)]
+    [ProducesResponseType(typeof(ApiResponse<UserAvatarUploadResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UploadUserAvatar([FromRoute] string userId, [FromForm] IFormFile file, CancellationToken ct)
+    {
+        var uid = (userId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(uid))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userId 不能为空"));
+
+        var user = await _db.Users.Find(u => u.UserId == uid).FirstOrDefaultAsync(ct);
+        if (user == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+
+        if (file == null || file.Length <= 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 不能为空"));
+        if (file.Length > MaxAvatarUploadBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "文件过大"));
+
+        // 仅图片：优先从文件名扩展名推断，其次从 MIME 推断
+        var ext = NormalizeAvatarImageExt(Path.GetExtension(file.FileName ?? string.Empty));
+        var mime = (file.ContentType ?? string.Empty).Trim();
+        if (ext == null)
+        {
+            ext = GuessAvatarImageExtFromMime(mime);
+        }
+        if (ext == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片格式：png/jpg/gif/webp"));
+        }
+
+        // 如果 MIME 不可信/为空，回填为与 ext 匹配的标准值
+        if (string.IsNullOrWhiteSpace(mime) || mime == "application/octet-stream")
+        {
+            mime = GuessAvatarMimeFromExt(ext);
+        }
+        // 再次兜底：要求 MIME 必须是 image/*
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片上传"));
+        }
+
+        // 固定文件名策略：{username}.{ext}
+        var usernameLower = (user.Username ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(usernameLower))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "用户数据异常：username 为空"));
+
+        var avatarFileName = $"{usernameLower}.{ext}".ToLowerInvariant();
+        var (ok, err) = ValidateAvatarFileName(avatarFileName);
+        if (!ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+        if (bytes.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 内容为空"));
+
+        var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
+
+        if (_assetStorage is not TencentCosStorage cos)
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
+
+        await cos.UploadBytesAsync(objectKey, bytes, mime, ct);
+
+        var now = DateTime.UtcNow;
+        var update = Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName);
+        await _db.Users.UpdateOneAsync(u => u.UserId == uid, update, cancellationToken: ct);
+
+        user.AvatarFileName = avatarFileName;
+        var avatarUrl = BuildAvatarUrl(user);
+
+        _logger.LogInformation("Admin uploaded user avatar. userId={UserId} file={File} size={Size}",
+            uid, avatarFileName, bytes.Length);
+
+        return Ok(ApiResponse<UserAvatarUploadResponse>.Ok(new UserAvatarUploadResponse
+        {
+            UserId = uid,
+            AvatarFileName = avatarFileName,
+            AvatarUrl = avatarUrl,
+            UpdatedAt = now
         }));
     }
 

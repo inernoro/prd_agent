@@ -44,6 +44,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminCreateUserResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminBulkCreateUsersResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserAvatarUpdateResponse>))]
+[JsonSerializable(typeof(ApiResponse<UserAvatarUploadResponse>))]
 [JsonSerializable(typeof(ApiResponse<ForceExpireResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminGroupListItem>>))]
 [JsonSerializable(typeof(ApiResponse<AdminGroupListItem>))]

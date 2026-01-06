@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PRD Agent",
+  "productName": "PRD.Agent",
   "version": "1.2.6",
   "identifier": "com.prdagent.app",
   "build": {

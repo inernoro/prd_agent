@@ -1124,6 +1124,7 @@ export default function UsersPage() {
         }}
         title={avatarTargetUser ? `修改头像：${avatarTargetUser.username}` : '修改头像'}
         description={avatarTargetUser ? `${avatarTargetUser.displayName} · ${avatarTargetUser.userId}` : undefined}
+        userId={avatarTargetUser?.userId ?? null}
         username={avatarTargetUser?.username}
         userType={avatarTargetUser?.userType ?? null}
         avatarFileName={avatarTargetUser?.avatarFileName ?? null}

@@ -251,6 +251,7 @@ export default function AppShell() {
             onOpenChange={setAvatarOpen}
             title="修改我的头像"
             description={user ? `${user.displayName} · ${user.userId}` : undefined}
+            userId={user?.userId ?? null}
             username={user?.username}
             userType={user?.userType ?? null}
             avatarFileName={user?.avatarFileName ?? null}

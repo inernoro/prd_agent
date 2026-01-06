@@ -68,6 +68,7 @@ import type {
   PutAdminImageGenPlanPromptOverrideContract,
 } from '@/services/contracts/promptOverrides';
 import type { UploadNoHeadAvatarContract } from '@/services/contracts/avatarAssets';
+import type { UploadUserAvatarContract } from '@/services/contracts/userAvatarUpload';
 import type {
   AddImageMasterMessageContract,
   AddImageMasterWorkspaceMessageContract,
@@ -231,6 +232,7 @@ import {
   getDesktopAssetsMatrix as getDesktopAssetsMatrixReal,
 } from '@/services/real/desktopAssets';
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
+import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -367,6 +369,7 @@ export const uploadDesktopAsset: UploadDesktopAssetContract = withAuth(uploadDes
 export const getDesktopAssetsMatrix = withAuth(getDesktopAssetsMatrixReal);
 
 export const uploadNoHeadAvatar: UploadNoHeadAvatarContract = withAuth(uploadNoHeadAvatarReal);
+export const uploadUserAvatar: UploadUserAvatarContract = withAuth(uploadUserAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);
