@@ -852,11 +852,13 @@ function RowBlock(props: {
             <div className="flex flex-col gap-2">
               <div
                 className={cn(
-                  'rounded-[12px] border p-2',
-                  isBroken ? 'border-red-500/40' : (isFallback ? 'border-yellow-500/40 border-dashed' : 'border-white/10')
+                  'rounded-[12px] border p-2 cursor-pointer transition-all hover:border-white/20',
+                  isBroken ? 'border-red-500/40' : (isFallback ? 'border-yellow-500/40 border-dashed' : 'border-white/10'),
+                  isUploading && 'opacity-60 pointer-events-none'
                 )}
                 style={{ width: `${BOX}px`, height: `${BOX}px`, background: isBroken ? 'rgba(239,68,68,0.08)' : (isFallback ? 'rgba(234,179,8,0.05)' : 'rgba(255,255,255,0.02)') }}
-                title={url || '未上传'}
+                title={isUploading ? '上传中...' : (url ? `点击上传/替换\n${url}` : '点击上传')}
+                onClick={() => !isUploading && onUpload(skin, row.key)}
               >
                 {url ? (
                   isVideo ? (
@@ -883,39 +885,9 @@ function RowBlock(props: {
                   )
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                    未上传
+                    {isUploading ? '上传中...' : '点击上传'}
                   </div>
                 )}
-              </div>
-
-              <div className="text-xs" style={{ color: isBroken ? 'rgba(248,113,113,0.95)' : (isFallback ? 'rgba(234,179,8,0.85)' : 'var(--text-muted)') }}>
-                {isBroken ? '缺失/不可用' : (isFallback ? '回退' : '正常')}
-              </div>
-              <div className="text-xs font-mono break-all flex items-center gap-1" style={{ color: 'var(--text-muted)' }} title={url || ''}>
-                <span>{fileName}</span>
-                {skin && <span className="text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>{skin}</span>}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className={cn('px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs', isUploading && 'opacity-60 pointer-events-none')}
-                  onClick={() => onUpload(skin, row.key)}
-                  title="上传/替换（覆盖写）"
-                >
-                  {isUploading ? '上传中...' : '上传/替换'}
-                </button>
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded-[10px] border border-white/10 hover:bg-white/5 text-xs"
-                  onClick={() => void copyText(url)}
-                  title="复制源站地址"
-                >
-                  复制地址
-                </button>
-                <a className="text-xs underline" href={url} target="_blank" rel="noreferrer">
-                  查看
-                </a>
               </div>
             </div>
           </div>
