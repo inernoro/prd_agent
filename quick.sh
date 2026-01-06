@@ -268,6 +268,74 @@ sync_desktop_version() {
     log_success "Desktop version synced!"
 }
 
+# 发布新版本：同步版本号 -> commit -> tag -> push
+# - 用法：./quick.sh release 1.4.32
+# - 一气呵成：同步版本 -> git commit -> git tag -> git push
+release_version() {
+    local raw_version="${1:-}"
+    
+    if [ -z "$raw_version" ]; then
+        log_error "Usage: ./quick.sh release <version>"
+        log_error "Example: ./quick.sh release 1.4.32"
+        exit 1
+    fi
+    
+    cd "$SCRIPT_DIR"
+    
+    # 规范化版本号（去掉 v 前缀用于文件，保留用于 tag）
+    local version="$raw_version"
+    if [[ "$version" == v* ]]; then
+        version="${version:1}"
+    fi
+    local tag_name="v$version"
+    
+    # 验证版本号格式
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z\.\-]+)?$ ]]; then
+        log_error "Invalid version: '$raw_version' (expected like v1.2.3 / 1.2.3)"
+        exit 1
+    fi
+    
+    # 检查是否有未提交的更改（除了即将修改的版本文件）
+    if ! git diff --quiet HEAD 2>/dev/null; then
+        log_warn "You have uncommitted changes. Please commit or stash them first."
+        git status --short
+        exit 1
+    fi
+    
+    # 检查 tag 是否已存在
+    if git rev-parse "$tag_name" >/dev/null 2>&1; then
+        log_error "Tag '$tag_name' already exists!"
+        log_info "To delete it: git tag -d $tag_name && git push origin :refs/tags/$tag_name"
+        exit 1
+    fi
+    
+    log_info "=== Release $tag_name ==="
+    
+    # Step 1: 同步版本号
+    log_info "[1/4] Syncing version to $version..."
+    bash "$SCRIPT_DIR/scripts/sync-desktop-version.sh" "$version"
+    
+    # Step 2: Git add & commit
+    log_info "[2/4] Committing version changes..."
+    git add prd-desktop/src-tauri/tauri.conf.json \
+            prd-desktop/src-tauri/Cargo.toml \
+            prd-desktop/package.json
+    git commit -m "chore(release): bump version to $version"
+    
+    # Step 3: 创建 tag
+    log_info "[3/4] Creating tag $tag_name..."
+    git tag "$tag_name"
+    
+    # Step 4: 推送 commit 和 tag
+    log_info "[4/4] Pushing to remote..."
+    git push
+    git push origin "$tag_name"
+    
+    log_success "=== Release $tag_name completed! ==="
+    log_info "GitHub Actions will now build and publish the release."
+    log_info "Check progress at: https://github.com/inernoro/prd_agent/actions"
+}
+
 # 同时启动后端 + Web管理后台 + 桌面端
 start_all() {
     log_info "Starting all services..."
