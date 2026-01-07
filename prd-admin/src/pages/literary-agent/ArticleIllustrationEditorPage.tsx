@@ -2,14 +2,35 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { generateArticleMarkers, exportArticle, updateImageMasterWorkspace, getImageMasterWorkspaceDetail } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2 } from 'lucide-react';
-import { useState, useCallback, useEffect } from 'react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { highlightMarkers, extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
 import { systemDialog } from '@/lib/systemDialog';
 
-type WorkflowPhase = 'editing' | 'markers-generated' | 'images-generating' | 'images-generated';
+type WorkflowPhase = 'upload' | 'editing' | 'markers-generated' | 'images-generating' | 'images-generated';
+
+const PRD_MD_STYLE = `
+  .prd-md { font-size: 13px; line-height: 1.65; color: var(--text-secondary); white-space: normal; word-break: break-word; }
+  .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 14px 0 8px; }
+  .prd-md h1 { font-size: 18px; }
+  .prd-md h2 { font-size: 16px; }
+  .prd-md h3 { font-size: 14px; }
+  .prd-md p { margin: 8px 0; }
+  .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
+  .prd-md li { margin: 4px 0; }
+  .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
+  .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+  .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+  .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
+  .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+  .prd-md pre code { background: transparent; border: 0; padding: 0; }
+  .prd-md table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; vertical-align: top; }
+  .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+`;
 
 // 用户自定义提示词模板类型
 type PromptTemplate = {
@@ -19,71 +40,19 @@ type PromptTemplate = {
   isSystem?: boolean;
 };
 
-// 默认提示词（从 article-image-format.mdc 读取）
-const DEFAULT_PROMPT_CONTENT = `---
-globs: *.md
-description: 文章写作中插入图片的标准格式规范
----
-
-# 文章图片插入格式规范
-
-## 图片插入标准格式
-
-在文章的关键章节之间需要插入相应的图片时，使用以下标准格式：
-
-\`\`\`
-[插图] : 提示词xxxxxx
-\`\`\`
-
-## 图片要求规范
-
-### 基本参数
-- **尺寸规格**：1024*1024像素
-- **风格要求**：扁平化商业风格插画
-- **色彩搭配**：符合商业文档的专业性要求
-
-### 提示词编写指导
-
-提示词应该包含以下要素：
-1. **场景描述**：清晰描述图片要表达的核心概念
-2. **风格指定**：扁平化商业风格插画
-3. **尺寸要求**：1024x1024
-4. **色彩倾向**：专业、简洁的商业配色
-5. **具体文字信息**：必须明确指出图片中需要显示的具体文字内容
-6. **企业标识信息**：如涉及企业标志或团队信息，需明确标注
-
-### 示例格式
-
-#### 基础场景示例
-\`\`\`markdown
-[插图] : 1024x1024扁平化商业风格插画，展示团队协作场景，多个商务人士围绕会议桌讨论，背景是现代办公环境，使用蓝色和灰色为主色调，体现专业和效率
-\`\`\`
-
-#### 包含具体文字的示例
-\`\`\`markdown
-[插图] : 1024x1024扁平化商业风格插画，展示Cursor的四个输入接口，四个标签页分别标注"Chat"、"Doc"、"Rule"、"Memory"，每个标签用不同颜色区分，整体界面采用现代科技风格，使用蓝色渐变背景
-\`\`\`
-
-## 插入位置建议
-
-### 适合插图的关键位置
-- 章节开头：概念引入时
-- 核心思想阐述：复杂概念需要可视化时  
-- 方法论介绍：流程步骤说明时
-- 案例分析：具体场景描述时
-- 总结段落：要点梳理时
-
-### 不建议插图的位置
-- 纯文字描述段落中间
-- 代码示例附近
-- 表格数据展示区域`;
-
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
   const [articleContent, setArticleContent] = useState('');
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
-  const [phase, setPhase] = useState<WorkflowPhase>('editing');
+  const [phase, setPhase] = useState<WorkflowPhase>('upload');
   const [generating, setGenerating] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  
+  // 文件上传相关状态
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 编辑模式下的预览状态
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
@@ -101,6 +70,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 加载工作空间数据
   useEffect(() => {
     void loadWorkspace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
   async function loadWorkspace() {
@@ -108,7 +78,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const res = await getImageMasterWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
-        setArticleContent(ws.articleContent || '');
+        const content = ws.articleContent || '';
+        setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
         
         // 如果有生成的内容，提取标记
@@ -118,6 +89,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (extracted.length > 0) {
             setPhase('markers-generated');
           }
+        } else if (content) {
+          // 如果有内容但没有生成标记，直接进入编辑模式并显示预览
+          setUploadedFileName('已上传的文章.md');
+          setPhase('editing');
+          setIsPreviewMode(true);
         }
         
         // 加载用户自定义提示词（全局共享）
@@ -152,6 +128,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (debouncedArticleContent && workspaceId && phase === 'editing') {
       void saveArticleContent();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedArticleContent]);
 
   async function saveArticleContent() {
@@ -168,6 +145,49 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const handleContentChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setArticleContent(e.target.value);
+  }, []);
+
+  // 文件上传处理
+  const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const fileName = file.name;
+    
+    try {
+      const text = await file.text();
+      setArticleContent(text);
+      setUploadedFileName(fileName);
+      
+      // 保存到后端
+      await updateImageMasterWorkspace({
+        id: workspaceId,
+        articleContent: text,
+        idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
+      });
+      
+      // 上传后直接进入编辑模式并启用预览
+      setPhase('editing');
+      setIsPreviewMode(true);
+    } catch {
+      await systemDialog.alert('文件读取失败');
+    }
+    
+    // 重置 input，允许重新上传同一文件
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [workspaceId]);
+
+  // 点击上传按钮
+  const handleUploadClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  // 进入编辑模式
+  const handleEnterEditMode = useCallback(() => {
+    setPhase('editing');
+    setIsPreviewMode(false);
   }, []);
 
   const handleGenerateMarkers = async () => {
@@ -247,7 +267,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       // 临时：模拟延迟
       await new Promise((resolve) => setTimeout(resolve, 2000));
       setPhase('images-generated');
-    } catch (error) {
+    } catch {
       await systemDialog.alert('生图失败');
       setPhase('markers-generated');
     }
@@ -268,7 +288,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
       // TODO: 处理导出结果（下载文件或显示内容）
       setExportOpen(false);
-    } catch (error) {
+    } catch {
       await systemDialog.alert('导出失败');
     }
   };
@@ -279,7 +299,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const handleCreatePrompt = () => {
     setCreatingPrompt({
       title: '',
-      content: DEFAULT_PROMPT_CONTENT, // 预填充默认内容
+      content: '',
     });
   };
 
@@ -397,15 +417,93 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               文章内容 {phase === 'editing' && <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>(自动保存)</span>}
             </div>
-            {phase !== 'editing' && (
-              <Button size="sm" variant="secondary" onClick={() => setPhase('editing')}>
-                <FileText size={14} />
-                继续编辑
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {phase === 'editing' && (
+                <Button 
+                  size="sm" 
+                  variant={isPreviewMode ? 'primary' : 'secondary'} 
+                  onClick={() => setIsPreviewMode(!isPreviewMode)}
+                >
+                  <Eye size={14} />
+                  {isPreviewMode ? '编辑' : '预览'}
+                </Button>
+              )}
+              {phase === 'upload' && uploadedFileName && (
+                <Button size="sm" variant="primary" onClick={handleEnterEditMode}>
+                  <Edit2 size={14} />
+                  编辑
+                </Button>
+              )}
+              {phase !== 'editing' && phase !== 'upload' && (
+                <Button size="sm" variant="secondary" onClick={handleEnterEditMode}>
+                  <FileText size={14} />
+                  继续编辑
+                </Button>
+              )}
+            </div>
           </div>
           <div className="flex-1 min-h-0 overflow-auto">
-            {phase === 'editing' ? (
+            <style>{PRD_MD_STYLE}</style>
+            {/* 上传阶段：显示上传区域或已上传文件信息 */}
+            {phase === 'upload' && !uploadedFileName && (
+              <div className="h-full flex flex-col items-center justify-center p-8">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".md,.txt"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <div className="text-center">
+                  <Upload size={48} className="mx-auto mb-4" style={{ color: 'var(--text-muted)' }} />
+                  <div className="text-sm mb-4" style={{ color: 'var(--text-primary)' }}>
+                    上传文章文件
+                  </div>
+                  <Button variant="primary" onClick={handleUploadClick}>
+                    <Upload size={16} />
+                    选择文件
+                  </Button>
+                  <div className="text-xs mt-3" style={{ color: 'var(--text-muted)' }}>
+                    支持 .md 和 .txt 格式
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* 上传阶段：已有文件 */}
+            {phase === 'upload' && uploadedFileName && (
+              <div className="h-full flex flex-col items-center justify-center p-8">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".md,.txt"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <div className="text-center">
+                  <FileText size={48} className="mx-auto mb-4" style={{ color: 'var(--accent-primary)' }} />
+                  <div className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>
+                    {uploadedFileName}
+                  </div>
+                  <div className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                    {articleContent.length} 字符
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={handleUploadClick}>
+                      <Upload size={16} />
+                      重新上传
+                    </Button>
+                    <Button variant="primary" onClick={handleEnterEditMode}>
+                      <Edit2 size={16} />
+                      开始编辑
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 编辑阶段 */}
+            {phase === 'editing' && !isPreviewMode && (
               <textarea
                 value={articleContent}
                 onChange={handleContentChange}
@@ -419,10 +517,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   outline: 'none',
                 }}
               />
-            ) : (
+            )}
+            
+            {/* 编辑阶段：预览模式 */}
+            {phase === 'editing' && isPreviewMode && (
               <div className="p-4">
-                <div className="prose prose-sm max-w-none dark:prose-invert" style={{ color: 'var(--text-primary)' }}>
-                  <ReactMarkdown>{articleWithMarkers || articleContent}</ReactMarkdown>
+                <div className="prd-md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{articleContent}</ReactMarkdown>
+                </div>
+              </div>
+            )}
+
+            {/* 其他阶段：显示渲染内容 */}
+            {phase !== 'editing' && phase !== 'upload' && (
+              <div className="p-4">
+                <div className="prd-md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{articleWithMarkers || articleContent}</ReactMarkdown>
                 </div>
                 {phase === 'markers-generated' && articleWithMarkers && (
                   <div className="mt-4 p-3 rounded" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
@@ -484,15 +594,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     className="p-3 rounded transition-all"
                     style={{
                       background: selectedPrompt?.id === prompt.id 
-                        ? 'linear-gradient(135deg, var(--accent-primary-alpha) 0%, color-mix(in srgb, var(--accent-primary) 15%, transparent) 100%)'
+                        ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 22%, transparent) 0%, color-mix(in srgb, var(--accent-primary) 10%, transparent) 100%)'
                         : 'var(--bg-elevated)',
                       border: selectedPrompt?.id === prompt.id 
-                        ? '2px solid var(--accent-primary)' 
+                        ? '3px solid var(--accent-primary)' 
                         : '1px solid var(--border-subtle)',
                       boxShadow: selectedPrompt?.id === prompt.id 
-                        ? '0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 3px color-mix(in srgb, var(--accent-primary) 20%, transparent)'
-                        : 'none',
-                      transform: selectedPrompt?.id === prompt.id ? 'translateY(-2px)' : 'none',
+                        ? '0 10px 24px rgba(0, 0, 0, 0.28), 0 0 0 6px color-mix(in srgb, var(--accent-primary) 22%, transparent), 0 0 22px color-mix(in srgb, var(--accent-primary) 28%, transparent)'
+                        : '0 0 0 rgba(0,0,0,0)',
+                      transform: selectedPrompt?.id === prompt.id ? 'translateY(-3px)' : 'translateY(0px)',
                     }}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -647,7 +757,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <textarea
                   value={creatingPrompt.content}
                   onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
-                  placeholder="输入模板内容..."
+                  placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
                   rows={12}
                   className="w-full p-2 text-sm resize-none font-mono rounded"
                   style={{

@@ -1662,6 +1662,11 @@ public class AdminImageMasterController : ControllerBase
         }
 
         var userInstruction = (request?.UserInstruction ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(userInstruction))
+        {
+            await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "userInstruction 不能为空"), StatusCodes.Status400BadRequest, ct);
+            return;
+        }
 
         // 设置 SSE 响应头
         Response.ContentType = "text/event-stream";
@@ -1672,8 +1677,8 @@ public class AdminImageMasterController : ControllerBase
         {
             // 调用主模型 LLM
             var client = await _modelDomain.GetClientAsync(ModelPurpose.MainChat, ct);
-            var systemPrompt = PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.SystemPrompt;
-            var userPrompt = PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.BuildUserPrompt(articleContent, userInstruction);
+            var systemPrompt = userInstruction;
+            var userPrompt = articleContent;
 
             var messages = new List<LLMMessage>
             {
