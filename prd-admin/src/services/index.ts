@@ -114,6 +114,7 @@ import type {
   RegenerateAdminGroupInviteContract,
   RemoveAdminGroupMemberContract,
   SimulateMessageContract,
+  SimulateStreamMessagesContract,
   UpdateAdminGapStatusContract,
   UpdateAdminGroupContract,
 } from '@/services/contracts/adminGroups';

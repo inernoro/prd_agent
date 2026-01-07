@@ -5,6 +5,37 @@
   outline-offset: 2px;
 }
 
+/* Admin 通用输入控件：柔和边框 + 暗底微混色 + 统一交互态 */
+.prd-field {
+  background: color-mix(in srgb, var(--bg-base) 62%, black);
+  color: var(--text-primary);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  caret-color: color-mix(in srgb, var(--accent-gold) 72%, rgba(255, 255, 255, 0.9));
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.prd-field::placeholder {
+  color: var(--text-muted);
+  opacity: 0.72;
+}
+
+.prd-field:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.prd-field:focus {
+  border-color: color-mix(in srgb, var(--accent-gold) 30%, rgba(255, 255, 255, 0.14));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent-gold) 16%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.prd-field:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清） */
 select {
   color-scheme: dark;

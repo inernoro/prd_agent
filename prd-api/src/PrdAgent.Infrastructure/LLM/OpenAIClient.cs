@@ -103,6 +103,7 @@ public class OpenAIClient : ILLMClient
         }
         systemPromptFinal ??= string.Empty;
         messages ??= new List<LLMMessage>();
+        var ctx = _contextAccessor?.Current;
 
         var allMessages = new List<OpenAIRequestMessage>
         {
@@ -129,7 +130,6 @@ public class OpenAIClient : ILLMClient
         };
 
         // 日志：请求（仅 token/密钥脱敏）
-        var ctx = _contextAccessor?.Current;
         var requestId = ctx?.RequestId ?? Guid.NewGuid().ToString();
         var startedAt = DateTime.UtcNow;
         string? logId = null;

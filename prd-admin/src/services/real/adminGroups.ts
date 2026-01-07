@@ -23,6 +23,9 @@ import type {
   SimulateMessageContract,
   SimulateMessageInput,
   SimulateMessageResponse,
+  SimulateStreamMessagesContract,
+  SimulateStreamMessagesInput,
+  SimulateStreamMessagesResponse,
 } from '@/services/contracts/adminGroups';
 
 export const getAdminGroupsReal: GetAdminGroupsContract = async (params: GetAdminGroupsParams) => {
