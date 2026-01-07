@@ -17,7 +17,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'EOF'
 用法：
-  ./local_exec_dep.sh [--dev] [--load-tars] [--skip-cos-check] [up|build|down|restart]
+  ./local_exec_dep.sh [--dev] [--load-tars] [--skip-cos-check] [check|config|up|build|down|restart]
 
 说明：
   - 默认模式（推荐）：prod-like
@@ -34,6 +34,8 @@ usage() {
   --skip-cos-check   跳过 COS 环境变量预检查（不建议；缺失时容器会启动失败）
 
 命令：
+  check     仅做依赖与环境自检（不会启动容器）
+  config    输出合并后的 compose 配置（用于排错）
   up        构建并启动（默认）
   build     仅构建镜像
   down      停止并清理容器（保留数据卷）
@@ -78,7 +80,7 @@ while [ $# -gt 0 ]; do
       SKIP_COS_CHECK=1
       shift
       ;;
-    up|build|down|restart)
+    check|config|up|build|down|restart)
       ACTION="$1"
       shift
       ;;
@@ -174,6 +176,19 @@ if [ "$SKIP_COS_CHECK" -ne 1 ]; then
 fi
 
 case "$ACTION" in
+  check)
+    echo "OK: docker compose 可用"
+    echo "OK: compose files = ${compose_args[*]}"
+    if [ "$SKIP_COS_CHECK" -eq 1 ]; then
+      echo "WARN: 已跳过 COS 环境变量检查（--skip-cos-check）"
+    else
+      echo "OK: COS 环境变量已通过预检查"
+    fi
+    echo "OK: JWT_SECRET 已设置（或已临时生成）"
+    ;;
+  config)
+    "${COMPOSE[@]}" "${compose_args[@]}" config
+    ;;
   build)
     "${COMPOSE[@]}" "${compose_args[@]}" build
     ;;
