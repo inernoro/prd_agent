@@ -1105,6 +1105,28 @@ public class GroupsController : ControllerBase
                     continue;
                 }
 
+                // citations：引用/注脚事件（不参与 seq 排序，直接推送）
+                if (string.Equals(ev.Type, "citations", StringComparison.OrdinalIgnoreCase) && ev.Citations != null && ev.Citations.Count > 0)
+                {
+                    var citationsEvent = new GroupMessageStreamEventDto
+                    {
+                        Type = "citations",
+                        MessageId = ev.MessageId,
+                        Citations = ev.Citations.Select(c => new DocCitationDto
+                        {
+                            HeadingTitle = c.HeadingTitle,
+                            HeadingId = c.HeadingId,
+                            Excerpt = c.Excerpt,
+                            Score = c.Score,
+                            Rank = c.Rank
+                        }).ToList()
+                    };
+                    var json = JsonSerializer.Serialize(citationsEvent, AppJsonContext.Default.GroupMessageStreamEventDto);
+                    await WriteSseAsync(id: null, eventName: "message", dataJson: json, ct: cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                    continue;
+                }
+
                 // messageUpdated：用于在线通知（例如软删除），不依赖 afterSeq 递增
                 if (string.Equals(ev.Type, "messageUpdated", StringComparison.OrdinalIgnoreCase))
                 {

@@ -529,6 +529,12 @@ public class ChatService : IChatService
                 // 新消息，正常广播
                 _groupMessageStreamHub.Publish(assistantMessage);
             }
+            
+            // 广播 citations（引用/注脚）到群组流
+            if (citations.Count > 0)
+            {
+                _groupMessageStreamHub.PublishCitations(gidForSeq, messageId, citations);
+            }
         }
 
         // 刷新会话活跃时间

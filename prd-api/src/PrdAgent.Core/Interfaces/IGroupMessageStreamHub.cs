@@ -32,6 +32,12 @@ public interface IGroupMessageStreamHub
     /// 用于通知前端某个 Markdown block 已完整输出，可以进行完整渲染。
     /// </summary>
     void PublishBlockEnd(string groupId, string messageId, string blockId);
+
+    /// <summary>
+    /// 发布引用/注脚（citations）事件。
+    /// 用于通知前端该消息关联的 PRD 文档引用信息。
+    /// </summary>
+    void PublishCitations(string groupId, string messageId, System.Collections.Generic.IReadOnlyList<DocCitation> citations);
 }
 
 public sealed class GroupMessageStreamSubscription : IDisposable

@@ -9,6 +9,7 @@ import ChatInput from './ChatInput';
 import SystemNoticeOverlay from '../Feedback/SystemNoticeOverlay';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
+import type { DocCitation } from '../../types';
 
 // 阶段提示文案会造成重复状态块（且与“AI 回复气泡”割裂），这里不再使用。
 
@@ -72,6 +73,26 @@ function ChatContainerInner() {
         
         const store = useMessageStore.getState();
         store.endStreamingBlock(blockId);
+        return;
+      }
+      
+      // 处理 citations 事件：为消息添加引用/注脚信息
+      if (p?.type === 'citations' && p?.messageId && Array.isArray(p?.citations)) {
+        const messageId = String(p.messageId);
+        const citations = p.citations as DocCitation[];
+        
+        useMessageStore.setState((state) => {
+          const idx = state.messages.findIndex(m => m.id === messageId);
+          if (idx === -1) return state;
+          
+          const next = [...state.messages];
+          next[idx] = {
+            ...next[idx],
+            citations: citations
+          };
+          
+          return { messages: next };
+        });
         return;
       }
       

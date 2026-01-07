@@ -149,6 +149,32 @@ public class GroupMessageStreamHub : IGroupMessageStreamHub
             ch.Writer.TryWrite(payload);
         }
     }
+
+    public void PublishCitations(string groupId, string messageId, IReadOnlyList<DocCitation> citations)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        var mid = (messageId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid) || string.IsNullOrEmpty(mid)) return;
+        if (citations == null || citations.Count == 0) return;
+
+        if (!_subs.TryGetValue(gid, out var map) || map.IsEmpty) return;
+
+        // Citations 事件不需要 seq
+        var payload = new GroupMessageBroadcast
+        {
+            GroupId = gid,
+            Seq = 0,
+            Type = "citations",
+            MessageId = mid,
+            Citations = citations
+        };
+
+        foreach (var kv in map)
+        {
+            var ch = kv.Value;
+            ch.Writer.TryWrite(payload);
+        }
+    }
 }
 
 
