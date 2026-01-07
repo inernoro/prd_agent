@@ -1,0 +1,24 @@
+services:
+  # 本地“生产式”一键环境：
+  # - gateway 构建时会内置 prd-admin dist（无需 exec_dep.sh 下载 zip）
+  # - api 直接从本仓库源码构建镜像（无需 pull 远端 ghcr 镜像）
+  #
+  # 用法示例（推荐配合 local_exec_dep.sh）：
+  #   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+      args:
+        # 同域部署：让前端请求走 /api/v1/...（base 为空 => joinUrl 返回 /api/v1/...）
+        VITE_API_BASE_URL: ""
+    image: prdagent-web:local
+    # 说明：deploy/nginx/Dockerfile 已将 nginx.conf 与 admin dist 打包进镜像，因此不再需要挂载 dist
+    volumes: []
+
+  api:
+    build:
+      context: ./prd-api
+      dockerfile: Dockerfile
+    image: prdagent-server:local
+
