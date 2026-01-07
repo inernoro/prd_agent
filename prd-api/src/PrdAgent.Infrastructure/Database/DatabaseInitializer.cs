@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.Database;
@@ -9,10 +10,12 @@ namespace PrdAgent.Infrastructure.Database;
 public class DatabaseInitializer
 {
     private readonly MongoDbContext _db;
+    private readonly IIdGenerator _idGenerator;
 
-    public DatabaseInitializer(MongoDbContext db)
+    public DatabaseInitializer(MongoDbContext db, IIdGenerator idGenerator)
     {
         _db = db;
+        _idGenerator = idGenerator;
     }
 
     /// <summary>
@@ -37,7 +40,7 @@ public class DatabaseInitializer
         // 创建默认管理员账号
         var adminUser = new User
         {
-            Id = Guid.NewGuid().ToString("N"),
+            UserId = await _idGenerator.GenerateIdAsync("user"),
             Username = "admin",
             PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
             DisplayName = "系统管理员",
@@ -63,7 +66,7 @@ public class DatabaseInitializer
         // 创建初始邀请码
         var inviteCode = new InviteCode
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = await _idGenerator.GenerateIdAsync("config"),
             Code = "PRD-INIT-2024",
             CreatorId = "system",
             IsUsed = false,

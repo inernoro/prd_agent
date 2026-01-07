@@ -16,7 +16,11 @@ public class RedisCacheManager : ICacheManager, IDisposable
 
     public RedisCacheManager(string connectionString, int defaultExpiryMinutes = 30)
     {
-        _redis = ConnectionMultiplexer.Connect(connectionString);
+        // 启用 allowAdmin 以支持 FLUSHDB 等管理命令
+        var options = ConfigurationOptions.Parse(connectionString);
+        options.AllowAdmin = true;
+        
+        _redis = ConnectionMultiplexer.Connect(options);
         _db = _redis.GetDatabase();
         _defaultExpiry = TimeSpan.FromMinutes(defaultExpiryMinutes);
     }
@@ -101,6 +105,24 @@ public class RedisCacheManager : ICacheManager, IDisposable
         {
             await _db.KeyDeleteAsync(key);
         }
+    }
+
+    /// <summary>清空当前数据库的所有键（执行 FLUSHDB）</summary>
+    public async Task FlushDatabaseAsync()
+    {
+        var endpoints = _redis.GetEndPoints();
+        if (endpoints == null || endpoints.Length == 0)
+        {
+            throw new InvalidOperationException("No Redis endpoints available");
+        }
+
+        var server = _redis.GetServer(endpoints[0]);
+        
+        // 获取当前数据库编号
+        var dbNumber = _db.Database;
+        
+        // 执行 FLUSHDB（只清空当前数据库）
+        await server.FlushDatabaseAsync(dbNumber);
     }
 
     private static JsonSerializerOptions GetJsonOptions()

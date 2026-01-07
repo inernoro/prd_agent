@@ -3,6 +3,7 @@ import { invoke } from '../../lib/tauri';
 import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useAuthStore } from '../../stores/authStore';
+import { AvatarWithFallback } from '../Chat/AvatarWithFallback';
 import type { ApiResponse, GroupMember, GroupMemberTag } from '../../types';
 
 function parseJoinedAtMs(value: unknown): number {
@@ -79,31 +80,6 @@ function initials(name: string): string {
   return t.slice(0, 1).toUpperCase();
 }
 
-function AvatarCircle(props: { name: string; avatarUrl?: string | null }) {
-  const [ok, setOk] = useState(false);
-  const [bad, setBad] = useState(false);
-  const url = (props.avatarUrl ?? '').trim();
-  const showImg = url && ok && !bad;
-
-  return (
-    <div className="relative w-12 h-12 rounded-full mx-auto overflow-hidden border border-white/10">
-      <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-white bg-gradient-to-br from-primary-500/70 to-sky-500/60">
-        {initials(props.name)}
-      </div>
-      {url ? (
-        <img
-          src={url}
-          alt={props.name}
-          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-150 ${showImg ? 'opacity-100' : 'opacity-0'}`}
-          onLoad={() => setOk(true)}
-          onError={() => setBad(true)}
-          referrerPolicy="no-referrer"
-        />
-      ) : null}
-    </div>
-  );
-}
-
 export default function GroupInfoDrawer() {
   const isOpen = useGroupInfoDrawerStore((s) => s.isOpen);
   const groupId = useGroupInfoDrawerStore((s) => s.groupId);
@@ -161,6 +137,13 @@ export default function GroupInfoDrawer() {
 
   useEffect(() => {
     if (!isOpen || !groupId) return;
+    // 检查群组是否存在（避免为已解散的群组查询成员）
+    const groupExists = groups.some((g) => String(g.groupId) === groupId);
+    if (!groupExists) {
+      setMembers([]);
+      setError('群组不存在或已解散');
+      return;
+    }
     setError('');
     setLoading(true);
     invoke<ApiResponse<GroupMember[]>>('get_group_members', { groupId })
@@ -177,7 +160,7 @@ export default function GroupInfoDrawer() {
         setError('加载群成员失败');
       })
       .finally(() => setLoading(false));
-  }, [isOpen, groupId]);
+  }, [isOpen, groupId, groups]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -295,7 +278,9 @@ export default function GroupInfoDrawer() {
               <div className="mt-3 grid grid-cols-4 gap-3">
                 {sortedMembers.slice(0, 16).map((m) => (
                   <div key={m.userId} className="min-w-0">
-                    <AvatarCircle name={m.displayName || m.username} avatarUrl={m.avatarUrl} />
+                    <div className="mx-auto w-12">
+                      <AvatarWithFallback userId={m.userId} size="lg" />
+                    </div>
                     <div className="mt-2 text-xs text-text-secondary text-center truncate" title={m.displayName || m.username}>
                       {m.displayName || m.username}
                     </div>

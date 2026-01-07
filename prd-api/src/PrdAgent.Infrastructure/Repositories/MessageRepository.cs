@@ -23,6 +23,13 @@ public class MessageRepository : IMessageRepository
         await _messages.InsertManyAsync(list);
     }
 
+    public async Task ReplaceOneAsync(Message message)
+    {
+        if (message == null || string.IsNullOrWhiteSpace(message.Id)) return;
+        var filter = Builders<Message>.Filter.Eq(x => x.Id, message.Id);
+        await _messages.ReplaceOneAsync(filter, message, new ReplaceOptions { IsUpsert = false });
+    }
+
     public async Task<Message?> FindByIdAsync(string messageId, bool includeDeleted = false)
     {
         var id = (messageId ?? string.Empty).Trim();

@@ -29,6 +29,7 @@ public class AdminPlatformsController : ControllerBase
     private readonly IModelDomainService _modelDomainService;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly ILlmRequestLogWriter _logWriter;
+    private readonly IIdGenerator _idGenerator;
     
     // v2：不再返回预设(demo)模型列表；同时通过升级 key 前缀避免旧缓存继续生效
     private const string ModelsCacheKeyPrefix = "platform:models:v2:";
@@ -43,7 +44,8 @@ public class AdminPlatformsController : ControllerBase
         IHttpClientFactory httpClientFactory,
         IModelDomainService modelDomainService,
         ILLMRequestContextAccessor ctxAccessor,
-        ILlmRequestLogWriter logWriter)
+        ILlmRequestLogWriter logWriter,
+        IIdGenerator idGenerator)
     {
         _db = db;
         _logger = logger;
@@ -53,6 +55,7 @@ public class AdminPlatformsController : ControllerBase
         _modelDomainService = modelDomainService;
         _ctxAccessor = ctxAccessor;
         _logWriter = logWriter;
+        _idGenerator = idGenerator;
     }
 
     private string GetAdminId() => User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "unknown";
@@ -128,6 +131,7 @@ public class AdminPlatformsController : ControllerBase
 
         var platform = new LLMPlatform
         {
+            Id = await _idGenerator.GenerateIdAsync("platform"),
             Name = request.Name,
             PlatformType = request.PlatformType,
             ProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(),

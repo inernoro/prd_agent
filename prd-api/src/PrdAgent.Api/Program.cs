@@ -209,6 +209,19 @@ var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);
 builder.Services.AddSingleton<ICacheManager>(new RedisCacheManager(redisConnectionString, sessionTimeout));
 
+// 注册 Redis ConnectionMultiplexer（用于 ID 生成器等服务）
+builder.Services.AddSingleton<StackExchange.Redis.ConnectionMultiplexer>(sp =>
+    StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString));
+
+// 注册 ID 生成器
+var useReadableIds = builder.Environment.IsDevelopment() || 
+                     builder.Environment.IsEnvironment("Testing");
+builder.Services.AddSingleton<IIdGenerator>(sp =>
+{
+    var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
+    return new IdGenerator(redis, useReadableIds);
+});
+
 // Run 事件存储（断线续传/观测）：生产用 Redis（高频写，避免 Mongo 写放大）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
     new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
@@ -664,7 +677,8 @@ builder.Services.AddScoped<IUserService>(sp =>
 {
     var userRepo = sp.GetRequiredService<IUserRepository>();
     var inviteCodeRepo = sp.GetRequiredService<IInviteCodeRepository>();
-    return new UserService(userRepo, inviteCodeRepo);
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new UserService(userRepo, inviteCodeRepo, idGenerator);
 });
 
 builder.Services.AddScoped<IDocumentService>(sp =>
@@ -678,7 +692,8 @@ builder.Services.AddScoped<IDocumentService>(sp =>
 builder.Services.AddScoped<ISessionService>(sp =>
 {
     var cache = sp.GetRequiredService<ICacheManager>();
-    return new SessionService(cache, sessionTimeout);
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new SessionService(cache, idGenerator, sessionTimeout);
 });
 
 builder.Services.AddScoped<IGroupService>(sp =>
@@ -686,7 +701,8 @@ builder.Services.AddScoped<IGroupService>(sp =>
     var groupRepo = sp.GetRequiredService<IGroupRepository>();
     var memberRepo = sp.GetRequiredService<IGroupMemberRepository>();
     var docRepo = sp.GetRequiredService<IPrdDocumentRepository>();
-    return new GroupService(groupRepo, memberRepo, docRepo);
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new GroupService(groupRepo, memberRepo, docRepo, idGenerator);
 });
 
 builder.Services.AddScoped<IGroupBotService>(sp =>
@@ -694,13 +710,24 @@ builder.Services.AddScoped<IGroupBotService>(sp =>
     var userRepo = sp.GetRequiredService<IUserRepository>();
     var groupRepo = sp.GetRequiredService<IGroupRepository>();
     var memberRepo = sp.GetRequiredService<IGroupMemberRepository>();
-    return new GroupBotService(userRepo, groupRepo, memberRepo);
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new GroupBotService(userRepo, groupRepo, memberRepo, idGenerator);
+});
+
+builder.Services.AddScoped<IGroupNameSuggestionService>(sp =>
+{
+    var groupService = sp.GetRequiredService<IGroupService>();
+    var documentService = sp.GetRequiredService<IDocumentService>();
+    var modelDomainService = sp.GetRequiredService<IModelDomainService>();
+    var logger = sp.GetRequiredService<ILogger<GroupNameSuggestionService>>();
+    return new GroupNameSuggestionService(groupService, documentService, modelDomainService, logger);
 });
 
 builder.Services.AddScoped<IGapDetectionService>(sp =>
 {
     var gapRepo = sp.GetRequiredService<IContentGapRepository>();
-    return new GapDetectionService(gapRepo);
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new GapDetectionService(gapRepo, idGenerator);
 });
 
 builder.Services.AddScoped<IChatService>(sp =>
@@ -717,7 +744,8 @@ builder.Services.AddScoped<IChatService>(sp =>
     var groupSeq = sp.GetRequiredService<IGroupMessageSeqService>();
     var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx);
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
@@ -763,7 +791,8 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-    var initializer = new DatabaseInitializer(db);
+    var idGenerator = scope.ServiceProvider.GetRequiredService<IIdGenerator>();
+    var initializer = new DatabaseInitializer(db, idGenerator);
     await initializer.InitializeAsync();
 }
 

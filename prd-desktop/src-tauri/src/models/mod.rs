@@ -173,6 +173,10 @@ pub struct MessageHistoryItem {
     pub sender_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_tags: Option<Vec<GroupMemberTag>>,
     pub role: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]

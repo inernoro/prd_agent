@@ -5,8 +5,8 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class Message
 {
-    /// <summary>消息唯一标识</summary>
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>消息唯一标识（通过 IIdGenerator 生成）</summary>
+    public string Id { get; set; } = string.Empty;
     
     /// <summary>所属群组ID</summary>
     public string GroupId { get; set; } = string.Empty;
@@ -40,11 +40,8 @@ public class Message
     /// </summary>
     public string? RunId { get; set; }
     
-    /// <summary>发送者用户ID（User消息的发送者；AI消息为null）</summary>
+    /// <summary>发送者用户ID（User 和 Assistant 消息统一使用此字段）</summary>
     public string? SenderId { get; set; }
-
-    /// <summary>AI消息的机器人用户ID（Assistant消息专用；User消息为null）</summary>
-    public string? AssistantUserId { get; set; }
     
     /// <summary>消息角色</summary>
     public MessageRole Role { get; set; } = MessageRole.User;

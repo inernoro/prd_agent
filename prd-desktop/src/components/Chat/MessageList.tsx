@@ -5,13 +5,13 @@ import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
-import { useUserDirectoryStore } from '../../stores/userDirectoryStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import type { GroupMemberTag, Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyText } from '../../lib/clipboard';
 import WizardLoader from './WizardLoader';
+import { AvatarWithFallback } from './AvatarWithFallback';
 
 type MsgStoreState = ReturnType<typeof useMessageStore.getState>;
 
@@ -54,13 +54,6 @@ function roleTheme(role?: string | null): { badgeClass: string; avatarBgClass: s
         avatarBgClass: 'bg-gradient-to-br from-slate-600/75 to-slate-400/75 dark:from-white/25 dark:to-white/10',
       };
   }
-}
-
-function initials(name?: string | null): string {
-  const t = String(name || '').trim();
-  if (!t) return '?';
-  // 中文/英文统一取首字符（避免复杂分词）
-  return t.slice(0, 1).toUpperCase();
 }
 
 function tagTheme(tag: GroupMemberTag): string {
@@ -730,10 +723,6 @@ function MessageListInner() {
     const currentUser = useAuthStore((s) => s.user ?? null);
     const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
     const currentUserId = currentUser?.userId ?? null;
-    const resolveUsername = useUserDirectoryStore((s) => s.resolveUsername);
-    const resolveRole = useUserDirectoryStore((s) => s.resolveRole);
-    const resolveUser = useUserDirectoryStore((s) => s.resolveUser);
-    const resolveRobotForViewRole = useUserDirectoryStore((s) => s.resolveRobotForViewRole);
     const assistantFontScale = useUiPrefsStore((s) => s.assistantFontScale);
     const assistantContentStyle = useMemo(() => {
       // 仅对 Assistant 正文缩放（不影响气泡壳/头像/昵称行）
@@ -799,31 +788,17 @@ function MessageListInner() {
 
         const showMeta = !!(metaSeq || metaRightText);
 
-        // Assistant 消息：优先使用消息中的 Assistant 字段（历史消息），回退到 userDirectory（流式消息）
-        const assistantUser =
-          message.role === 'Assistant'
-            ? (resolveUser(message.assistantUserId) || resolveRobotForViewRole(message.viewRole || null))
-            : null;
-
+        // 统一使用消息自带的 sender 信息（后端已携带完整信息）
         const senderDisplayName = (() => {
           if (message.role === 'Assistant') {
-            // 优先使用消息中的字段（历史消息已包含完整信息）
-            const n1 = String(message.assistantDisplayName || '').trim();
-            const n2 = (assistantUser?.displayName || assistantUser?.username || '').trim();
-            return n1 || n2 || desktopName || 'PRD Agent';
+            return message.senderName || desktopName || 'PRD Agent';
           }
           if (isMine) return (currentUser?.displayName || (currentUser as any)?.username || '我') as string;
-          // 优先显示 username（由 get_group_members 拉取一次后缓存）
-          const fromDir = resolveUsername(message.senderId);
-          return String(fromDir || message.senderName || message.senderId || '用户');
+          return message.senderName || message.senderId || '用户';
         })();
 
         const badgeText = (() => {
-          if (message.role === 'Assistant') {
-            const vr = String(message.viewRole || '').trim();
-            return vr ? (roleZh[vr] || vr) : '';
-          }
-          const sr = String((message as any).senderRole || resolveRole(message.senderId) || '').trim();
+          const sr = String(message.senderRole || message.viewRole || '').trim();
           return sr ? (roleZh[sr] || sr) : '';
         })();
 
@@ -831,35 +806,13 @@ function MessageListInner() {
 
         const assistantTags = (() => {
           if (message.role !== 'Assistant') return [];
-          // 优先使用消息中的 tags（历史消息），回退到 userDirectory（流式消息）
-          const tags = Array.isArray(message.assistantTags) 
-            ? message.assistantTags 
-            : (Array.isArray(assistantUser?.tags) ? assistantUser?.tags : []);
+          // 直接使用消息自带的 tags（后端已携带完整信息）
+          const tags = Array.isArray(message.senderTags) ? message.senderTags : [];
           // 当前需求：至少展示"机器人"标识；其它 tag 先不铺开，避免气泡头过长
           const robotTags = tags.filter((t) => String(t?.role || '').trim().toLowerCase() === 'robot');
           return robotTags.slice(0, 2);
         })();
 
-        const assistantAvatarUrl = (() => {
-          if (message.role !== 'Assistant') return null;
-          // 优先使用消息中的 avatarUrl（历史消息），回退到 userDirectory（流式消息）
-          const url = String(message.assistantAvatarUrl || assistantUser?.avatarUrl || '').trim();
-          return url || null;
-        })();
-
-        const otherUser = message.role === 'User' ? resolveUser(message.senderId) : null;
-        const otherAvatarUrl = (() => {
-          if (message.role !== 'User') return null;
-          // 优先从 userDirectory 获取（包含当前用户），因为 loadGroupMembers 会加载所有成员的最新头像
-          // 如果 userDirectory 中没有，再回退到 authStore（兼容未加载群成员的场景）
-          const fromDirectory = String(otherUser?.avatarUrl || '').trim();
-          if (fromDirectory) return fromDirectory;
-          // 回退：如果是当前用户且 authStore 有头像，使用 authStore
-          if (isMine && currentUser?.avatarUrl) {
-            return String(currentUser.avatarUrl).trim() || null;
-          }
-          return null;
-        })();
 
         return (
           <div
@@ -873,36 +826,13 @@ function MessageListInner() {
             }`}
           >
             {/* 头像（左/右） */}
-            {(!isMine || message.role === 'Assistant') ? (
+            {(!isMine) ? (
               <div className="shrink-0 mr-3 mt-1">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white ${theme.avatarBgClass} border border-black/10 dark:border-white/15 shadow-sm`}>
-                  {/* 你的要求：必须展示真实 src=xxx（只要有 URL）；不允许字符回退；不允许人为塞“假 src”制造破图 */}
-                  {message.role === 'Assistant' ? (
-                    assistantAvatarUrl ? (
-                      <img
-                        src={assistantAvatarUrl}
-                        alt={senderDisplayName || 'assistant'}
-                        className="w-9 h-9 rounded-full object-cover"
-                        draggable={false}
-                        title={assistantAvatarUrl}
-                      />
-                    ) : (
-                      <span className="w-9 h-9 rounded-full" aria-hidden="true" />
-                    )
-                  ) : (
-                    otherAvatarUrl ? (
-                      <img
-                        src={otherAvatarUrl}
-                        alt={senderDisplayName || 'user'}
-                        className="w-9 h-9 rounded-full object-cover"
-                        draggable={false}
-                        title={otherAvatarUrl}
-                      />
-                    ) : (
-                      <span className="w-9 h-9 rounded-full" aria-hidden="true" />
-                    )
-                  )}
-                </div>
+                <AvatarWithFallback
+                  avatarUrl={message.senderAvatarUrl}
+                  displayName={senderDisplayName}
+                  size="md"
+                />
               </div>
             ) : null}
 
@@ -971,7 +901,7 @@ function MessageListInner() {
                 ) : null}
                 {/* Block Protocol：按块渲染，流式期间也能稳定 Markdown 排版 */}
                 {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
-                  // 非流式阶段：用整段 message.content 统一渲染，避免分块导致“列表/编号/段落上下文”丢失
+                  // 非流式阶段：用整段 message.content 统一渲染，避免分块导致"列表/编号/段落上下文"丢失
               !isMessageStreaming ? (
                     <MarkdownRenderer
                       className="prose prose-sm dark:prose-invert max-w-none"
@@ -1053,7 +983,32 @@ function MessageListInner() {
                             {b.kind === 'codeBlock' ? (
                               // 如果后端/模型标记为 markdown 代码块，用户通常期望"按 Markdown 渲染"而不是当代码展示
                               (b.language === 'markdown' || b.language === 'md') ? (
-                                <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                                <MarkdownRenderer 
+                                  content={unwrapMarkdownFences(b.content)} 
+                                  citations={assistantCitations}
+                                  onOpenCitation={(citationIdx) => {
+                                    if (!activeGroupId || !prdDocumentId) return;
+                                    const citations = assistantCitations ?? [];
+                                    const safeIdx = Math.max(0, Math.min(citations.length - 1, citationIdx));
+                                    const c = citations[safeIdx];
+                                    const targetHeadingId = (c?.headingId || '').trim();
+                                    const targetHeadingTitle = (c?.headingTitle || '').trim();
+                                    openWithCitations({
+                                      targetHeadingId: targetHeadingId || null,
+                                      targetHeadingTitle: targetHeadingTitle || null,
+                                      citations,
+                                      activeCitationIndex: safeIdx,
+                                    });
+                                    openCitationDrawer({
+                                      documentId: prdDocumentId,
+                                      groupId: activeGroupId,
+                                      targetHeadingId: targetHeadingId || null,
+                                      targetHeadingTitle: targetHeadingTitle || null,
+                                      citations,
+                                      activeCitationIndex: safeIdx,
+                                    });
+                                  }}
+                                />
                               ) : (
                                 <pre className="overflow-x-auto rounded-md border border-border bg-gray-50 dark:bg-gray-900 p-3">
                                   <code className="whitespace-pre">{b.content}</code>
@@ -1063,9 +1018,39 @@ function MessageListInner() {
                               // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式"缺一截"
                               // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
                               b.isComplete === false ? (
-                                <p className="whitespace-pre-wrap break-words">{b.content}</p>
+                                <p 
+                                  className="whitespace-pre-wrap break-words not-prose" 
+                                  style={assistantContentStyle}
+                                >
+                                  {b.content}
+                                </p>
                               ) : (
-                                <MarkdownRenderer content={unwrapMarkdownFences(b.content)} />
+                                <MarkdownRenderer 
+                                  content={unwrapMarkdownFences(b.content)} 
+                                  citations={assistantCitations}
+                                  onOpenCitation={(citationIdx) => {
+                                    if (!activeGroupId || !prdDocumentId) return;
+                                    const citations = assistantCitations ?? [];
+                                    const safeIdx = Math.max(0, Math.min(citations.length - 1, citationIdx));
+                                    const c = citations[safeIdx];
+                                    const targetHeadingId = (c?.headingId || '').trim();
+                                    const targetHeadingTitle = (c?.headingTitle || '').trim();
+                                    openWithCitations({
+                                      targetHeadingId: targetHeadingId || null,
+                                      targetHeadingTitle: targetHeadingTitle || null,
+                                      citations,
+                                      activeCitationIndex: safeIdx,
+                                    });
+                                    openCitationDrawer({
+                                      documentId: prdDocumentId,
+                                      groupId: activeGroupId,
+                                      targetHeadingId: targetHeadingId || null,
+                                      targetHeadingTitle: targetHeadingTitle || null,
+                                      citations,
+                                      activeCitationIndex: safeIdx,
+                                    });
+                                  }}
+                                />
                               )
                             )}
                           </div>
@@ -1292,9 +1277,11 @@ function MessageListInner() {
             {/* 自己的头像放右侧（更像聊天软件） */}
             {isMine ? (
               <div className="shrink-0 ml-3 mt-1">
-                <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white bg-gradient-to-br from-primary-500/80 to-sky-500/70 border border-white/15 shadow-sm">
-                  {initials(senderDisplayName)}
-                </div>
+                <AvatarWithFallback
+                  avatarUrl={currentUser?.avatarUrl}
+                  displayName={currentUser?.displayName || currentUser?.username}
+                  size="md"
+                />
               </div>
             ) : null}
           </div>
@@ -1374,7 +1361,16 @@ function MessageListInner() {
         }
 
         const isMessageStreaming = isStreaming && streamingMessageId === message.id;
-        const showThinking = isMessageStreaming && !!streamingPhase && streamingPhase !== 'typing';
+        // 显示"思考中"加载动画的条件：
+        // 1. 消息正在流式输出（isMessageStreaming）
+        // 2. 阶段不是 'typing'（即还在请求中/等待首字）
+        // 3. 消息内容为空（还没收到第一个 chunk）
+        // 4. 消息的 isStreaming 标志不为 true（收到第一个 chunk 后会设置为 true）
+        const showThinking = isMessageStreaming 
+          && !!streamingPhase 
+          && streamingPhase !== 'typing' 
+          && !message.content 
+          && !message.isStreaming;
         const thinkingLabel = '思考中...';
 
         return (

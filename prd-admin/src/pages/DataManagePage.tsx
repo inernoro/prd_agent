@@ -164,7 +164,16 @@ export default function DataManagePage() {
       setErr(`${res.error?.code || 'ERROR'}：${res.error?.message || '清理失败'}`);
       return;
     }
-    setMsg(`已执行清理：${domains.join(', ')}（本次删除：llmLogs=${fmtNum(res.data.llmRequestLogs)} messages=${fmtNum(res.data.messages)} documents=${fmtNum(res.data.documents)}）`);
+    
+    // 判断是否为 devReset 模式
+    const isDevReset = domains.some(d => d.toLowerCase().includes('devreset') || d.toLowerCase().includes('resetkeepmodels'));
+    
+    if (isDevReset) {
+      setMsg(`已执行清理：devReset（本次删除：${res.data.otherDeleted ?? 0}个集合 llmLogs=${fmtNum(res.data.llmRequestLogs)} messages=${fmtNum(res.data.messages)} documents=${fmtNum(res.data.documents)}）`);
+    } else {
+      setMsg(`已执行清理：${domains.join(', ')}（本次删除：llmLogs=${fmtNum(res.data.llmRequestLogs)} messages=${fmtNum(res.data.messages)} documents=${fmtNum(res.data.documents)}）`);
+    }
+    
     await load();
   };
 

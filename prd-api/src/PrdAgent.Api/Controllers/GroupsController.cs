@@ -33,6 +33,7 @@ public class GroupsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IGroupMessageStreamHub _groupMessageStreamHub;
     private readonly IConfiguration _cfg;
+    private readonly IGroupNameSuggestionService _groupNameSuggestionService;
 
     private static readonly TimeSpan GroupSessionExpiry = TimeSpan.FromMinutes(30);
 
@@ -56,7 +57,8 @@ public class GroupsController : ControllerBase
         ILogger<GroupsController> logger,
         MongoDbContext db,
         IGroupMessageStreamHub groupMessageStreamHub,
-        IConfiguration cfg)
+        IConfiguration cfg,
+        IGroupNameSuggestionService groupNameSuggestionService)
     {
         _groupService = groupService;
         _groupBotService = groupBotService;
@@ -69,6 +71,7 @@ public class GroupsController : ControllerBase
         _db = db;
         _groupMessageStreamHub = groupMessageStreamHub;
         _cfg = cfg;
+        _groupNameSuggestionService = groupNameSuggestionService;
     }
 
     private string? BuildAvatarUrl(User user)
@@ -138,6 +141,15 @@ public class GroupsController : ControllerBase
         }
 
         var members = await _groupService.GetMembersAsync(group.GroupId);
+
+        // 如果用户没有提供群名且有 PRD 文档，在后台异步生成群名
+        if (string.IsNullOrWhiteSpace(request.GroupName) && !string.IsNullOrEmpty(prdDocumentId))
+        {
+            _groupNameSuggestionService.EnqueueGroupNameSuggestion(
+                group.GroupId, 
+                fileName: null, 
+                prdDocumentId);
+        }
 
         var response = new GroupResponse
         {
@@ -761,49 +773,81 @@ public class GroupsController : ControllerBase
             messages = await _messageRepository.FindByGroupAsync(groupId, before, limit);
         }
 
-        // 批量补齐 senderName/senderRole（避免 N+1）
+        // 批量补齐 sender 信息（包括用户和机器人，避免 N+1）
         var senderIds = messages
             .Select(m => m.SenderId)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct()
             .ToList();
-        var senderNameMap = new Dictionary<string, string>(StringComparer.Ordinal);
-        var senderRoleMap = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+        var senderInfoMap = new Dictionary<string, (string Name, UserRole Role, string? AvatarFileName, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
         if (senderIds.Count > 0)
         {
             var users = await _db.Users
                 .Find(u => senderIds.Contains(u.UserId))
-                .Project(u => new { u.UserId, u.DisplayName, u.Username, u.Role })
                 .ToListAsync();
             foreach (var u in users)
             {
-                var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
-                if (!string.IsNullOrWhiteSpace(u.UserId) && !string.IsNullOrWhiteSpace(name))
-                {
-                    senderNameMap[u.UserId] = name;
-                }
-                if (!string.IsNullOrWhiteSpace(u.UserId))
-                {
-                    senderRoleMap[u.UserId] = u.Role;
-                }
+                var uid = u.UserId;
+                if (string.IsNullOrWhiteSpace(uid)) continue;
+                var name = (u.DisplayName ?? u.Username ?? uid).Trim();
+                var avatarFileName = u.AvatarFileName;
+                
+                // 获取该用户在当前群组的 tags（机器人会有"机器人"标签）
+                var member = members.FirstOrDefault(m => m.UserId == uid);
+                var tags = member?.Tags;
+                
+                senderInfoMap[uid!] = (name, u.Role, avatarFileName, tags);
             }
         }
 
-        var result = messages.Select(m => new MessageResponse
+        // 统计 Assistant 消息数量（用于日志）
+        var assistantCount = messages.Count(m => m.Role == MessageRole.Assistant && !string.IsNullOrWhiteSpace(m.SenderId));
+        _logger.LogInformation(
+            "GetGroupMessages: groupId={GroupId}, limit={Limit}, messagesCount={Count}, assistantCount={AssistantCount}",
+            groupId, limit, messages.Count, assistantCount);
+
+        var result = messages.Select(m =>
+        {
+            // 补齐 sender 信息（统一处理用户和机器人）
+            string? senderName = null;
+            UserRole? senderRole = null;
+            string? senderAvatarUrl = null;
+            List<GroupMemberTag>? senderTags = null;
+            
+            if (!string.IsNullOrWhiteSpace(m.SenderId) && senderInfoMap.TryGetValue(m.SenderId, out var info))
+            {
+                senderName = info.Name;
+                senderRole = info.Role;
+                senderAvatarUrl = AvatarUrlBuilder.Build(_cfg, info.AvatarFileName);
+                senderTags = info.Tags;
+            }
+
+            return new MessageResponse
         {
             Id = m.Id,
             GroupSeq = m.GroupSeq,
             SenderId = m.SenderId,
-            SenderName = m.SenderId != null && senderNameMap.TryGetValue(m.SenderId, out var nm) ? nm : null,
-            SenderRole = m.SenderId != null && senderRoleMap.TryGetValue(m.SenderId, out var rr) ? rr : null,
+                SenderName = senderName,
+                SenderRole = senderRole,
+                SenderAvatarUrl = senderAvatarUrl,
+                SenderTags = senderTags,
             Role = m.Role,
             Content = m.Content,
             ReplyToMessageId = m.ReplyToMessageId,
             ResendOfMessageId = m.ResendOfMessageId,
             ViewRole = m.ViewRole,
             Timestamp = m.Timestamp,
-            TokenUsage = m.TokenUsage
+                TokenUsage = m.TokenUsage
+            };
         }).ToList();
+
+        // 打印前3条 Assistant 消息的 ID 用于调试
+        foreach (var msg in result.Take(3).Where(m => m.Role == MessageRole.Assistant))
+        {
+            _logger.LogInformation(
+                "Assistant Message: id={Id}, senderId={SenderId}, avatarUrl={AvatarUrl}",
+                msg.Id, msg.SenderId ?? "null", msg.SenderAvatarUrl ?? "null");
+        }
 
         return Ok(ApiResponse<List<MessageResponse>>.Ok(result));
     }
@@ -931,31 +975,31 @@ public class GroupsController : ControllerBase
 
             if (batch.Count == 0) break;
 
-            // 本批次 senderName/senderRole 预取
+            // 本批次 sender 信息预取（包括头像）
             var batchSenderIds = batch
                 .Select(x => x.SenderId)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct()
                 .ToList();
-            var batchSenderNameMap = new Dictionary<string, string>(StringComparer.Ordinal);
-            var batchSenderRoleMap = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+            var batchSenderInfoMap = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
             if (batchSenderIds.Count > 0)
             {
                 var users = await _db.Users
                     .Find(u => batchSenderIds.Contains(u.UserId))
-                    .Project(u => new { u.UserId, u.DisplayName, u.Username, u.Role })
                     .ToListAsync(cancellationToken);
+                
+                // 获取群成员信息（用于 tags）
+                var batchMembers = await _groupService.GetMembersAsync(groupId);
+                
                 foreach (var u in users)
                 {
-                    var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
-                    if (!string.IsNullOrWhiteSpace(u.UserId) && !string.IsNullOrWhiteSpace(name))
-                    {
-                        batchSenderNameMap[u.UserId] = name;
-                    }
-                    if (!string.IsNullOrWhiteSpace(u.UserId))
-                    {
-                        batchSenderRoleMap[u.UserId] = u.Role;
-                    }
+                    var uid = u.UserId;
+                    if (string.IsNullOrWhiteSpace(uid)) continue;
+                    var name = (u.DisplayName ?? u.Username ?? uid).Trim();
+                    var avatarUrl = AvatarUrlBuilder.Build(_cfg, u.AvatarFileName);
+                    var member = batchMembers.FirstOrDefault(m => m.UserId == uid);
+                    var tags = member?.Tags;
+                    batchSenderInfoMap[uid!] = (name, u.Role, avatarUrl, tags);
                 }
             }
 
@@ -963,9 +1007,20 @@ public class GroupsController : ControllerBase
             {
                 if (!m.GroupSeq.HasValue) continue;
                 var seq = m.GroupSeq.Value;
-                var senderName = m.SenderId != null && batchSenderNameMap.TryGetValue(m.SenderId, out var nm) ? nm : null;
-                var senderRole = m.SenderId != null && batchSenderRoleMap.TryGetValue(m.SenderId, out var rr) ? (UserRole?)rr : null;
-                var payload = ToStreamEvent(m, "message", senderName, senderRole);
+                string? senderName = null;
+                UserRole? senderRole = null;
+                string? senderAvatarUrl = null;
+                List<GroupMemberTag>? senderTags = null;
+                
+                if (m.SenderId != null && batchSenderInfoMap.TryGetValue(m.SenderId, out var info))
+                {
+                    senderName = info.Name;
+                    senderRole = info.Role;
+                    senderAvatarUrl = info.AvatarUrl;
+                    senderTags = info.Tags;
+                }
+                
+                var payload = ToStreamEvent(m, "message", senderName, senderRole, senderAvatarUrl, senderTags);
                 var json = JsonSerializer.Serialize(payload, AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
                 afterSeq = seq;
@@ -976,36 +1031,27 @@ public class GroupsController : ControllerBase
         using var sub = _groupMessageStreamHub.Subscribe(groupId);
         var reader = sub.Reader;
         var lastKeepAliveAt = DateTime.UtcNow;
-        var senderNameCache = new Dictionary<string, string>(StringComparer.Ordinal);
-        var senderRoleCache = new Dictionary<string, UserRole>(StringComparer.Ordinal);
+        var senderInfoCache = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
+        var groupMembersCache = await _groupService.GetMembersAsync(groupId);
 
-        async Task<string?> ResolveSenderNameAsync(string? senderId)
+        async Task<(string? Name, UserRole? Role, string? AvatarUrl, List<GroupMemberTag>? Tags)> ResolveSenderInfoAsync(string? senderId)
         {
-            if (string.IsNullOrWhiteSpace(senderId)) return null;
-            if (senderNameCache.TryGetValue(senderId, out var cached)) return cached;
+            if (string.IsNullOrWhiteSpace(senderId)) return (null, null, null, null);
+            if (senderInfoCache.TryGetValue(senderId, out var cached)) 
+                return (cached.Name, cached.Role, cached.AvatarUrl, cached.Tags);
+            
             var u = await _db.Users
                 .Find(x => x.UserId == senderId)
-                .Project(x => new { x.UserId, x.DisplayName, x.Username, x.Role })
                 .FirstOrDefaultAsync(cancellationToken);
-            if (u == null) return null;
+            if (u == null) return (null, null, null, null);
+            
             var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(name)) return null;
-            senderNameCache[senderId] = name;
-            senderRoleCache[senderId] = u.Role;
-            return name;
-        }
-
-        async Task<UserRole?> ResolveSenderRoleAsync(string? senderId)
-        {
-            if (string.IsNullOrWhiteSpace(senderId)) return null;
-            if (senderRoleCache.TryGetValue(senderId, out var cached)) return cached;
-            var u = await _db.Users
-                .Find(x => x.UserId == senderId)
-                .Project(x => new { x.UserId, x.Role })
-                .FirstOrDefaultAsync(cancellationToken);
-            if (u == null) return null;
-            senderRoleCache[senderId] = u.Role;
-            return u.Role;
+            var avatarUrl = AvatarUrlBuilder.Build(_cfg, u.AvatarFileName);
+            var member = groupMembersCache.FirstOrDefault(m => m.UserId == senderId);
+            var tags = member?.Tags;
+            
+            senderInfoCache[senderId] = (name, u.Role, avatarUrl, tags);
+            return (name, u.Role, avatarUrl, tags);
         }
 
         while (!cancellationToken.IsCancellationRequested)
@@ -1027,22 +1073,52 @@ public class GroupsController : ControllerBase
 
             while (reader.TryRead(out var ev))
             {
-                // message：严格按 afterSeq 去重/推进
+                // delta：AI 流式输出的增量内容（不参与 seq 排序，直接推送）
+                if (string.Equals(ev.Type, "delta", StringComparison.OrdinalIgnoreCase))
+                {
+                    var deltaEvent = new GroupMessageStreamEventDto
+                    {
+                        Type = "delta",
+                        MessageId = ev.MessageId,
+                        DeltaContent = ev.DeltaContent,
+                        BlockId = ev.BlockId,
+                        IsFirstChunk = ev.IsFirstChunk
+                    };
+                    var json = JsonSerializer.Serialize(deltaEvent, AppJsonContext.Default.GroupMessageStreamEventDto);
+                    await WriteSseAsync(id: null, eventName: "message", dataJson: json, ct: cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                    continue;
+                }
+
+                // blockEnd：Block 结束事件（不参与 seq 排序，直接推送）
+                if (string.Equals(ev.Type, "blockEnd", StringComparison.OrdinalIgnoreCase))
+                {
+                    var blockEndEvent = new GroupMessageStreamEventDto
+                    {
+                        Type = "blockEnd",
+                        MessageId = ev.MessageId,
+                        BlockId = ev.BlockId
+                    };
+                    var json = JsonSerializer.Serialize(blockEndEvent, AppJsonContext.Default.GroupMessageStreamEventDto);
+                    await WriteSseAsync(id: null, eventName: "message", dataJson: json, ct: cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                    continue;
+                }
+
                 // messageUpdated：用于在线通知（例如软删除），不依赖 afterSeq 递增
                 if (string.Equals(ev.Type, "messageUpdated", StringComparison.OrdinalIgnoreCase))
                 {
-                    var senderName = await ResolveSenderNameAsync(ev.Message.SenderId);
-                    var senderRole = await ResolveSenderRoleAsync(ev.Message.SenderId);
-                    var json = JsonSerializer.Serialize(ToStreamEvent(ev.Message, "messageUpdated", senderName, senderRole), AppJsonContext.Default.GroupMessageStreamEventDto);
+                    var info = await ResolveSenderInfoAsync(ev.Message!.SenderId);
+                    var json = JsonSerializer.Serialize(ToStreamEvent(ev.Message!, "messageUpdated", info.Name, info.Role, info.AvatarUrl, info.Tags), AppJsonContext.Default.GroupMessageStreamEventDto);
                     await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
                     lastKeepAliveAt = DateTime.UtcNow;
                     continue;
                 }
 
+                // message：严格按 afterSeq 去重/推进
                 if (ev.Seq <= afterSeq) continue;
-                var senderName2 = await ResolveSenderNameAsync(ev.Message.SenderId);
-                var senderRole2 = await ResolveSenderRoleAsync(ev.Message.SenderId);
-                var json2 = JsonSerializer.Serialize(ToStreamEvent(ev.Message, "message", senderName2, senderRole2), AppJsonContext.Default.GroupMessageStreamEventDto);
+                var info2 = await ResolveSenderInfoAsync(ev.Message!.SenderId);
+                var json2 = JsonSerializer.Serialize(ToStreamEvent(ev.Message!, "message", info2.Name, info2.Role, info2.AvatarUrl, info2.Tags), AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json2, ct: cancellationToken);
                 afterSeq = ev.Seq;
                 lastKeepAliveAt = DateTime.UtcNow;
@@ -1050,7 +1126,13 @@ public class GroupsController : ControllerBase
         }
     }
 
-    private static GroupMessageStreamEventDto ToStreamEvent(Message m, string type, string? senderName, UserRole? senderRole)
+    private static GroupMessageStreamEventDto ToStreamEvent(
+        Message m, 
+        string type, 
+        string? senderName, 
+        UserRole? senderRole,
+        string? senderAvatarUrl = null,
+        List<GroupMemberTag>? senderTags = null)
     {
         var isUpdate = string.Equals(type, "messageUpdated", StringComparison.OrdinalIgnoreCase);
         var shouldHideContent = isUpdate || m.IsDeleted;
@@ -1068,6 +1150,8 @@ public class GroupsController : ControllerBase
                 SenderId = m.SenderId,
                 SenderName = senderName,
                 SenderRole = senderRole,
+                SenderAvatarUrl = senderAvatarUrl,
+                SenderTags = senderTags,
                 Role = m.Role,
                 Content = shouldHideContent ? string.Empty : m.Content,
                 ReplyToMessageId = m.ReplyToMessageId,
@@ -1120,6 +1204,47 @@ public class GroupsController : ControllerBase
             new() { Name = "机器人", Role = "robot" },
             roleTag
         };
+    }
+
+    /// <summary>
+    /// 更新群组名称
+    /// </summary>
+    [HttpPatch("{groupId}/name")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> UpdateGroupName(string groupId, [FromBody] UpdateGroupNameRequest request)
+    {
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 只有群主可以修改群名
+        if (group.OwnerId != userId)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅群主可修改群组名称"));
+        }
+
+        await _groupService.UpdateGroupNameAsync(groupId, request.GroupName!);
+
+        _logger.LogInformation("Group name updated: {GroupId} -> {GroupName}", groupId, request.GroupName);
+
+        return Ok(ApiResponse<object?>.Ok(null));
     }
 
     private async Task WriteSseAsync(string? id, string eventName, string dataJson, CancellationToken ct)

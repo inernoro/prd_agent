@@ -27,6 +27,7 @@ public class AdminUsersController : ControllerBase
     private readonly ILoginAttemptService _loginAttemptService;
     private readonly IConfiguration _cfg;
     private readonly IAssetStorage _assetStorage;
+    private readonly IIdGenerator _idGenerator;
     private static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
     private const long MaxAvatarUploadBytes = 5 * 1024 * 1024; // 5MB：头像应很小
 
@@ -35,13 +36,15 @@ public class AdminUsersController : ControllerBase
         ILogger<AdminUsersController> logger,
         ILoginAttemptService loginAttemptService,
         IConfiguration cfg,
-        IAssetStorage assetStorage)
+        IAssetStorage assetStorage,
+        IIdGenerator idGenerator)
     {
         _db = db;
         _logger = logger;
         _loginAttemptService = loginAttemptService;
         _cfg = cfg;
         _assetStorage = assetStorage;
+        _idGenerator = idGenerator;
     }
 
     private string GetAdminId()
@@ -388,7 +391,7 @@ public class AdminUsersController : ControllerBase
 
         var user = new User
         {
-            UserId = Guid.NewGuid().ToString("N"),
+            UserId = await _idGenerator.GenerateIdAsync("user"),
             Username = username,
             DisplayName = displayName,
             Role = role,
@@ -540,16 +543,20 @@ public class AdminUsersController : ControllerBase
         }
 
         var toCreate = valid.Where(x => !existedSet.Contains(x.username)).ToList();
-        var docs = toCreate.Select(x => new User
+        var docs = new List<User>();
+        foreach (var x in toCreate)
         {
-            UserId = Guid.NewGuid().ToString("N"),
-            Username = x.username,
-            DisplayName = x.displayName,
-            Role = x.role,
-            Status = UserStatus.Active,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(x.password),
-            CreatedAt = DateTime.UtcNow
-        }).ToList();
+            docs.Add(new User
+            {
+                UserId = await _idGenerator.GenerateIdAsync("user"),
+                Username = x.username,
+                DisplayName = x.displayName,
+                Role = x.role,
+                Status = UserStatus.Active,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(x.password),
+                CreatedAt = DateTime.UtcNow
+            });
+        }
 
         if (docs.Count > 0)
         {
@@ -815,6 +822,93 @@ public class AdminUsersController : ControllerBase
 
         var response = new InviteCodeGenerateResponse { Codes = codes };
         return Ok(ApiResponse<InviteCodeGenerateResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 初始化用户（删除所有用户并创建默认管理员和机器人账号）
+    /// </summary>
+    [HttpPost("initialize")]
+    [ProducesResponseType(typeof(ApiResponse<InitializeUsersResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> InitializeUsers(CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        _logger.LogWarning("Admin {AdminId} is initializing users (will delete all existing users)", adminId);
+
+        // 1. 删除所有用户
+        var deleteResult = await _db.Users.DeleteManyAsync(_ => true, ct);
+        _logger.LogInformation("Deleted {Count} users", deleteResult.DeletedCount);
+
+        // 2. 创建默认管理员账号 (admin/admin)
+        var adminUser = new User
+        {
+            UserId = await _idGenerator.GenerateIdAsync("user"),
+            Username = "admin",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
+            DisplayName = "管理员",
+            Role = UserRole.ADMIN,
+            Status = UserStatus.Active,
+            UserType = UserType.Human,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.Users.InsertOneAsync(adminUser, cancellationToken: ct);
+        _logger.LogInformation("Created admin user: {UserId}", adminUser.UserId);
+
+        // 3. 创建三个机器人账号（使用独立的 robot 序列）
+        var botUsers = new List<User>();
+        
+        var botPm = new User
+        {
+            UserId = await _idGenerator.GenerateIdAsync("robot"),
+            Username = "bot_pm",
+            DisplayName = "产品经理机器人",
+            Role = UserRole.PM,
+            Status = UserStatus.Active,
+            UserType = UserType.Bot,
+            BotKind = BotKind.PM,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword($"bot-secret-{Guid.NewGuid():N}"),
+            CreatedAt = DateTime.UtcNow
+        };
+        botUsers.Add(botPm);
+
+        var botDev = new User
+        {
+            UserId = await _idGenerator.GenerateIdAsync("robot"),
+            Username = "bot_dev",
+            DisplayName = "开发机器人",
+            Role = UserRole.DEV,
+            Status = UserStatus.Active,
+            UserType = UserType.Bot,
+            BotKind = BotKind.DEV,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword($"bot-secret-{Guid.NewGuid():N}"),
+            CreatedAt = DateTime.UtcNow
+        };
+        botUsers.Add(botDev);
+
+        var botQa = new User
+        {
+            UserId = await _idGenerator.GenerateIdAsync("robot"),
+            Username = "bot_qa",
+            DisplayName = "测试机器人",
+            Role = UserRole.QA,
+            Status = UserStatus.Active,
+            UserType = UserType.Bot,
+            BotKind = BotKind.QA,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword($"bot-secret-{Guid.NewGuid():N}"),
+            CreatedAt = DateTime.UtcNow
+        };
+        botUsers.Add(botQa);
+
+        await _db.Users.InsertManyAsync(botUsers, cancellationToken: ct);
+        _logger.LogInformation("Created {Count} bot users", botUsers.Count);
+
+        var response = new InitializeUsersResponse
+        {
+            DeletedCount = deleteResult.DeletedCount,
+            AdminUserId = adminUser.UserId,
+            BotUserIds = botUsers.Select(b => b.UserId).ToList()
+        };
+
+        return Ok(ApiResponse<InitializeUsersResponse>.Ok(response));
     }
 }
 

@@ -95,6 +95,60 @@ public class GroupMessageStreamHub : IGroupMessageStreamHub
             ch.Writer.TryWrite(payload);
         }
     }
+
+    public void PublishDelta(string groupId, string messageId, string deltaContent, string? blockId = null, bool isFirstChunk = false)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        var mid = (messageId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid) || string.IsNullOrEmpty(mid)) return;
+        if (string.IsNullOrEmpty(deltaContent)) return;
+
+        if (!_subs.TryGetValue(gid, out var map) || map.IsEmpty) return;
+
+        // Delta 事件不需要 seq（因为不用于断线续传，只用于实时推送）
+        var payload = new GroupMessageBroadcast
+        {
+            GroupId = gid,
+            Seq = 0,  // Delta 不参与 seq 排序
+            Type = "delta",
+            MessageId = mid,
+            DeltaContent = deltaContent,
+            BlockId = blockId,
+            IsFirstChunk = isFirstChunk
+        };
+
+        foreach (var kv in map)
+        {
+            var ch = kv.Value;
+            ch.Writer.TryWrite(payload);
+        }
+    }
+
+    public void PublishBlockEnd(string groupId, string messageId, string blockId)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        var mid = (messageId ?? string.Empty).Trim();
+        var bid = (blockId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid) || string.IsNullOrEmpty(mid) || string.IsNullOrEmpty(bid)) return;
+
+        if (!_subs.TryGetValue(gid, out var map) || map.IsEmpty) return;
+
+        // BlockEnd 事件不需要 seq
+        var payload = new GroupMessageBroadcast
+        {
+            GroupId = gid,
+            Seq = 0,
+            Type = "blockEnd",
+            MessageId = mid,
+            BlockId = bid
+        };
+
+        foreach (var kv in map)
+        {
+            var ch = kv.Value;
+            ch.Writer.TryWrite(payload);
+        }
+    }
 }
 
 

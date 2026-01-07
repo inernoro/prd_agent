@@ -10,10 +10,12 @@ public class SessionService : ISessionService
 {
     private readonly ICacheManager _cache;
     private readonly TimeSpan _sessionTimeout;
+    private readonly IIdGenerator _idGenerator;
 
-    public SessionService(ICacheManager cache, int timeoutMinutes = 30)
+    public SessionService(ICacheManager cache, IIdGenerator idGenerator, int timeoutMinutes = 30)
     {
         _cache = cache;
+        _idGenerator = idGenerator;
         _sessionTimeout = TimeSpan.FromMinutes(timeoutMinutes);
     }
 
@@ -21,6 +23,7 @@ public class SessionService : ISessionService
     {
         var session = new Session
         {
+            SessionId = await _idGenerator.GenerateIdAsync("session"),
             DocumentId = documentId,
             GroupId = groupId,
             CurrentRole = UserRole.PM,

@@ -28,6 +28,9 @@ public interface ICacheManager
 
     /// <summary>批量删除匹配模式的键</summary>
     Task RemoveByPatternAsync(string pattern);
+
+    /// <summary>清空当前数据库的所有键（执行 FLUSHDB）</summary>
+    Task FlushDatabaseAsync();
 }
 
 /// <summary>

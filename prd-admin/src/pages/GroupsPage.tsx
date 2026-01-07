@@ -14,6 +14,7 @@ import {
   regenerateAdminGroupInvite,
   removeAdminGroupMember,
   simulateMessage,
+  simulateStreamMessages,
   updateAdminGapStatus,
 } from '@/services';
 import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send } from 'lucide-react';
@@ -400,6 +401,40 @@ export default function GroupsPage() {
                   >
                     <Send size={16} />
                     模拟发送
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      if (!selected) return;
+                      const confirmed = await systemDialog.confirm({
+                        title: '模拟流发送',
+                        message: `将向群组「${selected.groupName}」发送3条流消息（PM、DEV、QA 机器人），用于测试多机器人并发场景。是否继续？`,
+                      });
+                      if (!confirmed) return;
+                      setActionBusy(true);
+                      try {
+                        const res = await simulateStreamMessages({ groupId: selected.groupId });
+                        if (res.success) {
+                          systemDialog.alert({
+                            title: '发送成功',
+                            message: res.data.message || '已启动模拟流式发送',
+                          });
+                        } else {
+                          systemDialog.alert({
+                            title: '发送失败',
+                            message: res.error?.message || '未知错误',
+                          });
+                        }
+                      } finally {
+                        setActionBusy(false);
+                      }
+                    }}
+                    title="模拟流发送（测试多机器人并发）"
+                    aria-label="模拟流发送"
+                  >
+                    <Send size={16} />
+                    模拟流发送
                   </Button>
                   <Button
                     variant="secondary"

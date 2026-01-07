@@ -5,8 +5,8 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class ContentGap
 {
-    /// <summary>缺失记录唯一标识</summary>
-    public string GapId { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>缺失记录唯一标识（通过 IIdGenerator 生成）</summary>
+    public string GapId { get; set; } = string.Empty;
     
     /// <summary>所属群组ID</summary>
     public string GroupId { get; set; } = string.Empty;

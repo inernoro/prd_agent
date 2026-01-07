@@ -2,7 +2,7 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { generateArticleMarkers, exportArticle, updateImageMasterWorkspace, getImageMasterWorkspaceDetail } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, RefreshCw } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2 } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { highlightMarkers, extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';

@@ -36,9 +36,8 @@ export default function GroupList() {
     return t.slice(0, 1).toUpperCase();
   };
 
-  useEffect(() => {
-    loadGroups();
-  }, [loadGroups, user?.userId]);
+  // 移除此处的 loadGroups 调用，因为 App.tsx 已经在登录后统一加载
+  // 这样可以避免重复请求（特别是在 StrictMode 下会被调用两次）
 
   useEffect(() => {
     // 有群组时默认选中第一个群组
@@ -50,8 +49,8 @@ export default function GroupList() {
 
   const openGroup = async (group: (typeof groups)[number]) => {
     // 切换群组：先重置消息/分页/滚动状态，再切换 session/document，避免残留状态导致：
-    // - 列表停留在旧的 range（看起来像“显示最旧消息”）
-    // - 错误显示“仅加载最近3轮…”
+    // - 列表停留在旧的 range（看起来像"显示最旧消息"）
+    // - 错误显示"仅加载最近3轮…"
     bindGroupContext(group.groupId);
     setActiveGroupContext(group.groupId);
 
@@ -115,6 +114,12 @@ export default function GroupList() {
     if (ownerMap[groupId] != null) return;
     if (ownerLoadingMap[groupId]) return;
     if (!user?.userId) return;
+    // 检查群组是否存在（避免为已解散的群组查询成员）
+    const groupExists = groups.some((g) => String(g.groupId) === groupId);
+    if (!groupExists) {
+      setOwnerMap((prev) => ({ ...prev, [groupId]: false }));
+      return;
+    }
     try {
       setOwnerLoadingMap((prev) => ({ ...prev, [groupId]: true }));
       const resp = await invoke<ApiResponse<GroupMemberInfo[]>>('get_group_members', { groupId });
@@ -170,7 +175,8 @@ export default function GroupList() {
         return;
       }
 
-      await loadGroups();
+      // 解散群组后强制刷新列表
+      await loadGroups({ force: true });
       setDissolveTarget(null);
     } catch (err) {
       console.error('Failed to dissolve group:', err);

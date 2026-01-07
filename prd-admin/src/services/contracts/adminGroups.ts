@@ -124,3 +124,16 @@ export type SimulateMessageResponse = {
 };
 export type SimulateMessageContract = (input: SimulateMessageInput) => Promise<ApiResponse<SimulateMessageResponse>>;
 
+// 模拟流式发送（一次性发送3条流消息）
+export type SimulateStreamMessagesInput = {
+  groupId: string;
+  content1?: string;
+  content2?: string;
+  content3?: string;
+};
+export type SimulateStreamMessagesResponse = {
+  groupId: string;
+  message: string;
+};
+export type SimulateStreamMessagesContract = (input: SimulateStreamMessagesInput) => Promise<ApiResponse<SimulateStreamMessagesResponse>>;
+

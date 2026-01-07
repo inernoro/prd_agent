@@ -140,6 +140,16 @@ public class InviteCodeGenerateResponse
 }
 
 /// <summary>
+/// 初始化用户响应
+/// </summary>
+public class InitializeUsersResponse
+{
+    public long DeletedCount { get; set; }
+    public string AdminUserId { get; set; } = string.Empty;
+    public List<string> BotUserIds { get; set; } = new();
+}
+
+/// <summary>
 /// 管理端创建用户响应
 /// </summary>
 public class AdminCreateUserResponse

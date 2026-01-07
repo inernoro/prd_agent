@@ -10,11 +10,16 @@ public class UserService : IUserService
 {
     private readonly IUserRepository _userRepository;
     private readonly IInviteCodeRepository _inviteCodeRepository;
+    private readonly IIdGenerator _idGenerator;
 
-    public UserService(IUserRepository userRepository, IInviteCodeRepository inviteCodeRepository)
+    public UserService(
+        IUserRepository userRepository, 
+        IInviteCodeRepository inviteCodeRepository,
+        IIdGenerator idGenerator)
     {
         _userRepository = userRepository;
         _inviteCodeRepository = inviteCodeRepository;
+        _idGenerator = idGenerator;
     }
 
     public async Task<User> RegisterAsync(
@@ -41,6 +46,7 @@ public class UserService : IUserService
         // 创建用户
         var user = new User
         {
+            UserId = await _idGenerator.GenerateIdAsync("user"),
             Username = username,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
             DisplayName = displayName ?? username,

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Cryptography;
@@ -19,15 +20,18 @@ public class AdminLLMConfigController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminLLMConfigController> _logger;
     private readonly IConfiguration _config;
+    private readonly IIdGenerator _idGenerator;
 
     public AdminLLMConfigController(
         MongoDbContext db, 
         ILogger<AdminLLMConfigController> logger,
-        IConfiguration config)
+        IConfiguration config,
+        IIdGenerator idGenerator)
     {
         _db = db;
         _logger = logger;
         _config = config;
+        _idGenerator = idGenerator;
     }
 
     /// <summary>
@@ -69,6 +73,7 @@ public class AdminLLMConfigController : ControllerBase
     {
         var config = new LLMConfig
         {
+            Id = await _idGenerator.GenerateIdAsync("config"),
             Provider = request.Provider,
             Model = request.Model,
             ApiKeyEncrypted = EncryptApiKey(request.ApiKey),

@@ -79,6 +79,13 @@ public class GroupRepository : IGroupRepository
 
         await _groups.UpdateOneAsync(g => g.GroupId == groupId, update);
     }
+
+    public async Task UpdateGroupNameAsync(string groupId, string groupName)
+    {
+        await _groups.UpdateOneAsync(
+            g => g.GroupId == groupId,
+            Builders<Group>.Update.Set(g => g.GroupName, groupName));
+    }
 }
 
 /// <summary>

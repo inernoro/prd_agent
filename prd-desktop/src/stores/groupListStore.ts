@@ -6,15 +6,19 @@ import { useAuthStore } from './authStore';
 interface GroupListState {
   groups: Group[];
   loading: boolean;
-  loadGroups: () => Promise<void>;
+  loadGroups: (opts?: { force?: boolean }) => Promise<void>;
   clear: () => void;
 }
 
-export const useGroupListStore = create<GroupListState>((set) => ({
+export const useGroupListStore = create<GroupListState>((set, get) => ({
   groups: [],
   loading: false,
 
-  loadGroups: async () => {
+  loadGroups: async (opts) => {
+    const force = opts?.force ?? false;
+    // 防止并发调用（特别是 StrictMode 下的双重调用）
+    // force=true 时允许绕过检查（用于创建群组后强制刷新）
+    if (!force && get().loading) return;
     set({ loading: true });
     try {
       const runOnce = async () => {

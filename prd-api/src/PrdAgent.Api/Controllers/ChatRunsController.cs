@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
@@ -102,6 +103,68 @@ public class ChatRunsController : ControllerBase
             }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
         };
         await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+
+        // 立即创建用户消息和 AI 占位消息（确保顺序正确：用户消息先，AI 占位后）
+        long? userGroupSeq = null;
+        long? assistantGroupSeq = null;
+        if (!string.IsNullOrWhiteSpace(gid))
+        {
+            // 1. 创建用户消息（分配 seq）
+            userGroupSeq = await _groupMessageSeqService.NextAsync(gid, ct);
+            var userMessage = new Message
+            {
+                Id = userMessageId,
+                SessionId = sid,
+                GroupId = gid,
+                GroupSeq = userGroupSeq,
+                RunId = runId,
+                SenderId = userId,
+                Role = MessageRole.User,
+                Content = request.Content ?? "",
+                ViewRole = session.CurrentRole,
+                Timestamp = DateTime.UtcNow
+            };
+            await _messageRepository.InsertManyAsync(new[] { userMessage });
+            _groupMessageStreamHub.Publish(userMessage);
+            
+            _logger.LogInformation("Created user message: runId={RunId}, messageId={MessageId}, groupSeq={GroupSeq}",
+                runId, userMessageId, userGroupSeq);
+            
+            // 2. 创建 AI 占位消息（分配下一个 seq）
+            var botUsername = session.CurrentRole switch
+            {
+                UserRole.DEV => "bot_dev",
+                UserRole.QA => "bot_qa",
+                _ => "bot_pm"
+            };
+            var botUser = await _db.Users.Find(u => u.Username == botUsername).FirstOrDefaultAsync(ct);
+            
+            if (botUser != null)
+            {
+                assistantGroupSeq = await _groupMessageSeqService.NextAsync(gid, ct);
+                
+                var placeholderMessage = new Message
+                {
+                    Id = assistantMessageId,
+                    SessionId = sid,
+                    GroupId = gid,
+                    GroupSeq = assistantGroupSeq,
+                    RunId = runId,
+                    SenderId = botUser.UserId,
+                    Role = MessageRole.Assistant,
+                    Content = "",  // 空内容，标识为占位消息
+                    ViewRole = session.CurrentRole,
+                    Timestamp = DateTime.UtcNow
+                };
+                
+                await _messageRepository.InsertManyAsync(new[] { placeholderMessage });
+                _groupMessageStreamHub.Publish(placeholderMessage);
+                
+                _logger.LogInformation("Created AI placeholder message: runId={RunId}, messageId={MessageId}, bot={Bot}, groupSeq={GroupSeq}",
+                    runId, assistantMessageId, botUsername, assistantGroupSeq);
+            }
+        }
+
         await _runQueue.EnqueueAsync(RunKinds.Chat, runId, CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new
@@ -109,7 +172,7 @@ public class ChatRunsController : ControllerBase
             runId,
             userMessageId,
             assistantMessageId,
-            groupSeq = (long?)null
+            groupSeq = assistantGroupSeq
         }));
     }
 

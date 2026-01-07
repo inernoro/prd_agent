@@ -29,8 +29,8 @@ public class LLMModelCapability
 /// </summary>
 public class LLMModel
 {
-    /// <summary>模型ID</summary>
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>模型ID（通过 IIdGenerator 生成）</summary>
+    public string Id { get; set; } = string.Empty;
     
     /// <summary>模型显示名称 (如: GPT-4 Turbo)</summary>
     public string Name { get; set; } = string.Empty;

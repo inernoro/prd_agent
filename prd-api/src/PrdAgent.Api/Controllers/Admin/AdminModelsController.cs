@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Cryptography;
@@ -21,17 +22,20 @@ public class AdminModelsController : ControllerBase
     private readonly ILogger<AdminModelsController> _logger;
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IIdGenerator _idGenerator;
 
     public AdminModelsController(
         MongoDbContext db,
         ILogger<AdminModelsController> logger,
         IConfiguration config,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IIdGenerator idGenerator)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _httpClientFactory = httpClientFactory;
+        _idGenerator = idGenerator;
     }
 
     /// <summary>
@@ -114,6 +118,7 @@ public class AdminModelsController : ControllerBase
 
         var model = new LLMModel
         {
+            Id = await _idGenerator.GenerateIdAsync("model"),
             Name = request.Name,
             ModelName = reqMid,
             ApiUrl = request.ApiUrl,
@@ -604,6 +609,7 @@ public class AdminModelsController : ControllerBase
 
             var model = new LLMModel
             {
+                Id = await _idGenerator.GenerateIdAsync("model"),
                 Name = modelInfo.DisplayName ?? modelInfo.ModelName,
                 ModelName = modelInfo.ModelName,
                 PlatformId = request.PlatformId,

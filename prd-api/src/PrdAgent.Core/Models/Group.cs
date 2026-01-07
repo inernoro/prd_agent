@@ -5,8 +5,8 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class Group
 {
-    /// <summary>群组唯一标识</summary>
-    public string GroupId { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>群组唯一标识（通过 IIdGenerator 生成）</summary>
+    public string GroupId { get; set; } = string.Empty;
     
     /// <summary>群组名称</summary>
     public string GroupName { get; set; } = string.Empty;

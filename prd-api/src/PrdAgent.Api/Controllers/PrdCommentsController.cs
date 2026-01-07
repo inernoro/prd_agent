@@ -17,6 +17,7 @@ public class PrdCommentsController : ControllerBase
     private readonly IGroupService _groupService;
     private readonly IUserService _userService;
     private readonly IPrdCommentRepository _commentRepo;
+    private readonly IIdGenerator _idGenerator;
 
     private static string? GetUserId(ClaimsPrincipal user)
     {
@@ -26,11 +27,16 @@ public class PrdCommentsController : ControllerBase
                ?? user.FindFirst("nameid")?.Value;
     }
 
-    public PrdCommentsController(IGroupService groupService, IUserService userService, IPrdCommentRepository commentRepo)
+    public PrdCommentsController(
+        IGroupService groupService, 
+        IUserService userService, 
+        IPrdCommentRepository commentRepo,
+        IIdGenerator idGenerator)
     {
         _groupService = groupService;
         _userService = userService;
         _commentRepo = commentRepo;
+        _idGenerator = idGenerator;
     }
 
     private async Task<(bool Ok, IActionResult? ErrorResult)> EnsureCanAccessDocumentAsync(string documentId, string groupId)
@@ -112,6 +118,7 @@ public class PrdCommentsController : ControllerBase
 
         var entity = new PrdComment
         {
+            Id = await _idGenerator.GenerateIdAsync("comment"),
             DocumentId = request.DocumentId.Trim(),
             HeadingId = request.HeadingId.Trim(),
             HeadingTitleSnapshot = (request.HeadingTitleSnapshot ?? string.Empty).Trim(),

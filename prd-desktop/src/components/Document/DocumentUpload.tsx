@@ -22,26 +22,12 @@ export default function DocumentUpload() {
   const [error, setError] = useState('');
   const loadGifUrl = useDesktopBrandingStore((s) => s.getAssetUrl('load'));
 
-  const suggestGroupName = async (content: string, fileName?: string | null, docTitle?: string | null) => {
+  const suggestGroupName = (content: string, fileName?: string | null, docTitle?: string | null) => {
+    // 本地启发式命名：文件名有意义则用文件名，否则用 Markdown 标题或文档标题
+    // 意图模型生成群名的逻辑已移到后端异步执行，不再阻塞创建流程
     const rawFileBase = fileName ? normalizeCandidateName(stripFileExtension(fileName)) : '';
     if (rawFileBase && !isMeaninglessName(rawFileBase)) return rawFileBase;
 
-    const snippet = extractSnippetFromContent(content);
-    // fileName 无意义时，优先走“意图模型”
-    if (snippet) {
-      try {
-        const resp = await invoke<ApiResponse<{ name: string }>>('suggest_group_name', {
-          fileName: fileName ?? null,
-          snippet,
-        });
-        const name = (resp.success && resp.data?.name) ? String(resp.data.name).trim() : '';
-        if (name) return name;
-      } catch {
-        // ignore
-      }
-    }
-
-    // 兜底：取 Markdown 标题 / 解析后的 docTitle
     const mdTitle = extractMarkdownTitle(content);
     return mdTitle || (docTitle || '').trim() || '未命名群组';
   };
@@ -56,8 +42,8 @@ export default function DocumentUpload() {
       });
 
       if (response.success && response.data) {
-        // 上传 PRD 后默认“一键创建群组”，并将该 PRD 绑定到群组（群组作为容器）
-        const groupName = await suggestGroupName(content, fileName ?? null, response.data.document.title || null);
+        // 上传 PRD 后默认"一键创建群组"，并将该 PRD 绑定到群组（群组作为容器）
+        const groupName = suggestGroupName(content, fileName ?? null, response.data.document.title || null);
         const createResp = await invoke<ApiResponse<{ groupId: string; inviteCode: string }>>('create_group', {
           prdDocumentId: response.data.document.id,
           groupName: groupName || undefined,
@@ -79,7 +65,8 @@ export default function DocumentUpload() {
           return;
         }
 
-        await loadGroups();
+        // 创建群组后强制刷新列表，确保新群组立即显示
+        await loadGroups({ force: true });
 
         // 打开群组会话，后续所有对话都基于该群组/session
         const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
@@ -109,6 +96,15 @@ export default function DocumentUpload() {
         };
 
         setSession(session, response.data.document);
+
+        // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
+        // 在后台执行，不阻塞用户操作
+        (async () => {
+          for (let i = 0; i < 3; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await loadGroups({ force: true });
+          }
+        })();
       } else {
         const code = response.error?.code ?? null;
         // 系统性错误交给全局弹窗接管，避免重复提示

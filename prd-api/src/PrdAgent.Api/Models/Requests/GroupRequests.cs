@@ -99,3 +99,21 @@ public class BindGroupPrdRequest
         return (true, null);
     }
 }
+
+/// <summary>
+/// 更新群组名称请求
+/// </summary>
+public class UpdateGroupNameRequest
+{
+    /// <summary>新的群组名称</summary>
+    public string? GroupName { get; set; }
+
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(GroupName))
+            return (false, "群组名称不能为空");
+        if (GroupName.Length > 50)
+            return (false, "群组名称不能超过50字符");
+        return (true, null);
+    }
+}

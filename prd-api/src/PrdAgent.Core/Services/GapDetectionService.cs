@@ -9,10 +9,12 @@ namespace PrdAgent.Core.Services;
 public class GapDetectionService : IGapDetectionService
 {
     private readonly IContentGapRepository _gapRepository;
+    private readonly IIdGenerator _idGenerator;
 
-    public GapDetectionService(IContentGapRepository gapRepository)
+    public GapDetectionService(IContentGapRepository gapRepository, IIdGenerator idGenerator)
     {
         _gapRepository = gapRepository;
+        _idGenerator = idGenerator;
     }
 
     public async Task<ContentGap> RecordGapAsync(
@@ -24,6 +26,7 @@ public class GapDetectionService : IGapDetectionService
     {
         var gap = new ContentGap
         {
+            GapId = await _idGenerator.GenerateIdAsync("gap"),
             GroupId = groupId,
             AskedByUserId = askedByUserId,
             Question = question,

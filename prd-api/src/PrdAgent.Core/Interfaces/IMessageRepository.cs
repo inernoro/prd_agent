@@ -10,6 +10,11 @@ public interface IMessageRepository
     Task InsertManyAsync(IEnumerable<Message> messages);
 
     /// <summary>
+    /// 更新单条消息（用于更新 AI 占位消息的内容）。
+    /// </summary>
+    Task ReplaceOneAsync(Message message);
+
+    /// <summary>
     /// 按消息ID获取单条消息（可选包含已删除）。
     /// </summary>
     Task<Message?> FindByIdAsync(string messageId, bool includeDeleted = false);

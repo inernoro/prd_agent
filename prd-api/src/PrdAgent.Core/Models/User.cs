@@ -10,8 +10,8 @@ public class User
     /// </summary>
     public string? Id { get; set; }
 
-    /// <summary>用户唯一标识</summary>
-    public string UserId { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>用户唯一标识（通过 IIdGenerator 生成）</summary>
+    public string UserId { get; set; } = string.Empty;
     
     /// <summary>用户名（登录用）</summary>
     public string Username { get; set; } = string.Empty;

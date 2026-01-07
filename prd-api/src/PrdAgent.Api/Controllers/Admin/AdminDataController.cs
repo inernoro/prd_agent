@@ -23,6 +23,7 @@ public class AdminDataController : ControllerBase
     private readonly ILogger<AdminDataController> _logger;
     private readonly IConfiguration _config;
     private readonly ICacheManager _cache;
+    private readonly IIdGenerator _idGenerator;
 
     private static readonly TimeSpan PurgeIdempotencyExpiry = TimeSpan.FromMinutes(15);
 
@@ -30,12 +31,14 @@ public class AdminDataController : ControllerBase
         MongoDbContext db,
         ILogger<AdminDataController> logger,
         IConfiguration config,
-        ICacheManager cache)
+        ICacheManager cache,
+        IIdGenerator idGenerator)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _cache = cache;
+        _idGenerator = idGenerator;
     }
 
     private string GetAdminId()
@@ -441,7 +444,7 @@ public class AdminDataController : ControllerBase
                 var created = new LLMPlatform
                 {
                     // 仅 version=2 才允许使用导入 id（用于跨环境一致）；v1 一律生成新 id
-                    Id = request.Data.Version == 2 && !string.IsNullOrWhiteSpace(p.Id) ? p.Id : Guid.NewGuid().ToString(),
+                    Id = request.Data.Version == 2 && !string.IsNullOrWhiteSpace(p.Id) ? p.Id : await _idGenerator.GenerateIdAsync("platform"),
                     Name = p.Name,
                     PlatformType = p.PlatformType,
                     ProviderId = string.IsNullOrWhiteSpace(p.ProviderId) ? null : p.ProviderId,
@@ -500,6 +503,7 @@ public class AdminDataController : ControllerBase
                 {
                     var created = new LLMModel
                     {
+                        Id = await _idGenerator.GenerateIdAsync("model"),
                         Name = mid,
                         ModelName = mid,
                         PlatformId = platformId,
@@ -829,62 +833,53 @@ public class AdminDataController : ControllerBase
         }
 
         // dev reset：保留 users + llmplatforms + 启用 llmmodels，其余全清（开发期维护）
+        var isDevReset = false;
         if (requested.Contains("devreset") || requested.Contains("devresetkeepmodels") || requested.Contains("resetkeepmodels"))
         {
             matchedAny = true;
+            isDevReset = true;
 
             // 1) 删除未启用模型（仅保留 enabled=true）
             var delDisabledModels = await _db.LLMModels.DeleteManyAsync(x => !x.Enabled);
             payload.DisabledModelsDeleted = delDisabledModels.DeletedCount;
 
-            // 2) 清掉"配置/提示词/日志/会话/业务数据/图片/实验"等全部非核心集合（使用 drop 而非 remove）
-            await _db.Database.DropCollectionAsync("groups");
-            await _db.Database.DropCollectionAsync("groupmembers");
-            await _db.Database.DropCollectionAsync("group_message_counters");
-            await _db.Database.DropCollectionAsync("messages");
-            await _db.Database.DropCollectionAsync("documents");
-            await _db.Database.DropCollectionAsync("attachments");
-            await _db.Database.DropCollectionAsync("contentgaps");
-            await _db.Database.DropCollectionAsync("prdcomments");
-            await _db.Database.DropCollectionAsync("invitecodes");
-            await _db.Database.DropCollectionAsync("llmconfigs");
-            await _db.Database.DropCollectionAsync("appsettings");
-            await _db.Database.DropCollectionAsync("promptstages");
-            await _db.Database.DropCollectionAsync("systemprompts");
-            await _db.Database.DropCollectionAsync("llmrequestlogs");
-            await _db.Database.DropCollectionAsync("apirequestlogs");
+            // 2) 动态获取所有集合并清理（排除保留的3个集合）
+            var keepCollections = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "users",           // 保留用户
+                "llmplatforms",    // 保留平台
+                "llmmodels"        // 保留模型（已删除未启用的）
+            };
 
-            await _db.Database.DropCollectionAsync("model_lab_experiments");
-            await _db.Database.DropCollectionAsync("model_lab_runs");
-            await _db.Database.DropCollectionAsync("model_lab_run_items");
-            await _db.Database.DropCollectionAsync("model_lab_model_sets");
-            await _db.Database.DropCollectionAsync("model_lab_groups");
+            var allCollections = await _db.Database.ListCollectionNames().ToListAsync();
+            var droppedCount = 0;
 
-            await _db.Database.DropCollectionAsync("image_master_sessions");
-            await _db.Database.DropCollectionAsync("image_master_messages");
-            await _db.Database.DropCollectionAsync("image_assets");
-            await _db.Database.DropCollectionAsync("image_master_canvases");
-            await _db.Database.DropCollectionAsync("image_master_workspaces");
+            foreach (var collectionName in allCollections)
+            {
+                if (!keepCollections.Contains(collectionName))
+                {
+                    await _db.Database.DropCollectionAsync(collectionName);
+                    droppedCount++;
+                    _logger.LogInformation("Dropped collection: {CollectionName}", collectionName);
+                }
+            }
 
-            await _db.Database.DropCollectionAsync("image_gen_size_caps");
-            await _db.Database.DropCollectionAsync("image_gen_runs");
-            await _db.Database.DropCollectionAsync("image_gen_run_items");
-            await _db.Database.DropCollectionAsync("image_gen_run_events");
+            payload.OtherDeleted = droppedCount;
 
-            await _db.Database.DropCollectionAsync("upload_artifacts");
-            await _db.Database.DropCollectionAsync("admin_prompt_overrides");
-            await _db.Database.DropCollectionAsync("admin_idempotency");
-
-            payload.OtherDeleted = 0; // drop 操作无法返回删除数量
-
-            // 3) cache 清理：尽量清空相关前缀（避免 UI 看到幽灵数据）
-            await _cache.RemoveByPatternAsync($"{CacheKeys.Session}*");
-            await _cache.RemoveByPatternAsync($"{CacheKeys.ChatHistory}*");
-            await _cache.RemoveByPatternAsync($"{CacheKeys.GroupChatHistory}*");
-            await _cache.RemoveByPatternAsync($"{CacheKeys.UserSession}*");
-            await _cache.RemoveByPatternAsync($"{CacheKeys.Document}*");
-            await _cache.RemoveByPatternAsync("platform:models:*");
-            await _cache.RemoveByPatternAsync("platform:models:v2:*");
+            // 3) Redis 清理：执行 FLUSHDB（清空当前数据库的所有键，包括所有认证会话）
+            // 注意：这会导致所有用户被强制退出登录（Refresh Token 失效）
+            // Access Token 仍然有效直到过期（默认60分钟），但无法续期
+            try
+            {
+                _logger.LogWarning("Attempting to flush Redis database...");
+                await _cache.FlushDatabaseAsync();
+                _logger.LogWarning("Redis FLUSHDB executed successfully - all users will be forced to re-login after access token expires");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute Redis FLUSHDB: {Message}", ex.Message);
+                // 不抛出异常，继续执行（Redis 清理失败不应阻止整个清理流程）
+            }
         }
 
         // 校验：至少匹配到一个 domain，否则视为格式错误（即使数据本来为空，也应返回成功）
@@ -893,7 +888,8 @@ public class AdminDataController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "domains 不支持（可选：llmLogs, sessionsMessages, documents, devReset）"));
         }
 
-        if (!string.IsNullOrWhiteSpace(idemKey))
+        // 幂等性缓存：devReset 模式下跳过（因为 Redis 已被清空，写入也没意义）
+        if (!string.IsNullOrWhiteSpace(idemKey) && !isDevReset)
         {
             var cacheKey = $"admin:data:purge:{adminId}:{idemKey}";
             await _cache.SetAsync(cacheKey, payload, PurgeIdempotencyExpiry);

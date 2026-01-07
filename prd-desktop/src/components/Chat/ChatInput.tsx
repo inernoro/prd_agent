@@ -117,8 +117,10 @@ export default function ChatInput() {
       viewRole: currentRole,
       senderId: user?.userId ?? undefined,
       senderName: user?.displayName ?? undefined,
+      senderRole: user?.role ?? undefined,
+      senderAvatarUrl: user?.avatarUrl ?? undefined,
     };
-    // 插入占位 assistant + 滚到底：避免“点了没反应/卡住”的体感
+    // 插入占位 assistant + 滚到底：避免"点了没反应/卡住"的体感
     addUserMessageWithPendingAssistant({ userMessage });
     return userMessage;
   };
@@ -159,6 +161,8 @@ export default function ChatInput() {
       viewRole: currentRole,
       senderId: user?.userId ?? undefined,
       senderName: user?.displayName ?? undefined,
+      senderRole: user?.role ?? undefined,
+      senderAvatarUrl: user?.avatarUrl ?? undefined,
     };
 
     setIsSubmitting(true);

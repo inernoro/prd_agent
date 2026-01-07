@@ -23,6 +23,8 @@ public interface IGroupRepository
         int? prdCharCountSnapshot);
 
     Task ClearPrdAsync(string groupId);
+
+    Task UpdateGroupNameAsync(string groupId, string groupName);
 }
 
 /// <summary>

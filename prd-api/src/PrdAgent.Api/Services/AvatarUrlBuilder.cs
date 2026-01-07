@@ -34,6 +34,24 @@ public static class AvatarUrlBuilder
         return $"{baseUrl}/{AvatarPathPrefix}/{file}";
     }
 
+    /// <summary>
+    /// 根据 AvatarFileName 构造头像 URL（用于已知文件名的场景）
+    /// </summary>
+    public static string? Build(IConfiguration cfg, string? avatarFileName)
+    {
+        if (cfg == null) return null;
+        var baseUrl = (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+
+        var file = (avatarFileName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(file)) file = DefaultNoHeadFile;
+
+        // 全局约束：COS 对象 key 必须全小写
+        file = file.ToLowerInvariant();
+
+        return $"{baseUrl}/{AvatarPathPrefix}/{file}";
+    }
+
     private static string ResolveAvatarFileName(User? user)
     {
         if (user == null) return DefaultNoHeadFile;

@@ -5,8 +5,8 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class LLMPlatform
 {
-    /// <summary>平台ID</summary>
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>平台ID（通过 IIdGenerator 生成）</summary>
+    public string Id { get; set; } = string.Empty;
     
     /// <summary>平台名称 (如: OpenAI官方、阿里云通义)</summary>
     public string Name { get; set; } = string.Empty;

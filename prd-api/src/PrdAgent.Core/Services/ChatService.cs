@@ -23,6 +23,7 @@ public class ChatService : IChatService
     private readonly IGroupMessageSeqService _groupMessageSeqService;
     private readonly IGroupMessageStreamHub _groupMessageStreamHub;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IIdGenerator _idGenerator;
     private static readonly TimeSpan ChatHistoryExpiry = TimeSpan.FromMinutes(30);
 
     public ChatService(
@@ -37,7 +38,8 @@ public class ChatService : IChatService
         IMessageRepository messageRepository,
         IGroupMessageSeqService groupMessageSeqService,
         IGroupMessageStreamHub groupMessageStreamHub,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IIdGenerator idGenerator)
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
@@ -51,6 +53,7 @@ public class ChatService : IChatService
         _groupMessageSeqService = groupMessageSeqService;
         _groupMessageStreamHub = groupMessageStreamHub;
         _llmRequestContext = llmRequestContext;
+        _idGenerator = idGenerator;
     }
 
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
@@ -114,11 +117,11 @@ public class ChatService : IChatService
             }
         }
 
-        var effectiveRunId = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId.Trim();
-        var userMessageId = string.IsNullOrWhiteSpace(fixedUserMessageId) ? Guid.NewGuid().ToString("N") : fixedUserMessageId.Trim();
+        var effectiveRunId = string.IsNullOrWhiteSpace(runId) ? await _idGenerator.GenerateIdAsync("run") : runId.Trim();
+        var userMessageId = string.IsNullOrWhiteSpace(fixedUserMessageId) ? await _idGenerator.GenerateIdAsync("message") : fixedUserMessageId.Trim();
 
         // 生成（或固定）assistant 消息ID
-        var messageId = string.IsNullOrWhiteSpace(fixedAssistantMessageId) ? Guid.NewGuid().ToString("N") : fixedAssistantMessageId.Trim();
+        var messageId = string.IsNullOrWhiteSpace(fixedAssistantMessageId) ? await _idGenerator.GenerateIdAsync("message") : fixedAssistantMessageId.Trim();
 
         startAtUtc = DateTime.UtcNow;
         yield return new ChatStreamEvent
@@ -204,6 +207,7 @@ public class ChatService : IChatService
         var blockTokenizer = new MarkdownBlockTokenizer();
         var terminatedWithError = false;
         string? terminatedErrorMessage = null;
+        var isFirstDelta = true; // 标记是否为第一个 delta（用于隐藏加载动画）
 
         var llmRequestId = Guid.NewGuid().ToString();
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -218,32 +222,64 @@ public class ChatService : IChatService
             RequestType: "reasoning",
             RequestPurpose: "chat.sendMessage"));
 
-        // 先保存/广播用户消息（避免等 AI 结束才看到用户消息；并与 seq 分配语义一致）
-        var userMessage = new Message
+        // 检查用户消息是否已存在（CreateRun 可能已创建）
+        Message userMessage;
+        var existingUserMessage = await _messageRepository.FindByIdAsync(userMessageId);
+        if (existingUserMessage == null)
         {
-            Id = userMessageId,
-            SessionId = sessionId,
-            GroupId = session.GroupId ?? "",
-            RunId = effectiveRunId,
-            SenderId = userId,
-            Role = MessageRole.User,
-            Content = content ?? string.Empty,
-            LlmRequestId = llmRequestId,
-            ViewRole = session.CurrentRole,
-            AttachmentIds = attachmentIds ?? new List<string>(),
-            ResendOfMessageId = string.IsNullOrWhiteSpace(resendOfMessageId) ? null : resendOfMessageId!.Trim(),
-            Timestamp = userInputAtUtc
+            // 用户消息不存在（兼容旧版本/直接调用），创建并广播
+            userMessage = new Message
+            {
+                Id = userMessageId,
+                SessionId = sessionId,
+                GroupId = session.GroupId ?? "",
+                RunId = effectiveRunId,
+                SenderId = userId,
+                Role = MessageRole.User,
+                Content = content ?? string.Empty,
+                LlmRequestId = llmRequestId,
+                ViewRole = session.CurrentRole,
+                AttachmentIds = attachmentIds ?? new List<string>(),
+                ResendOfMessageId = string.IsNullOrWhiteSpace(resendOfMessageId) ? null : resendOfMessageId!.Trim(),
+                Timestamp = userInputAtUtc
+            };
+            if (!string.IsNullOrEmpty(gidForSeq))
+            {
+                // groupSeq 分配不应受 HTTP RequestAborted 影响（避免"客户端断线导致服务端闭环失败"）
+                userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
+            }
+            await _messageRepository.InsertManyAsync(new[] { userMessage });
+            if (!string.IsNullOrEmpty(gidForSeq))
+            {
+                _groupMessageStreamHub.Publish(userMessage);
+            }
+        }
+        else
+        {
+            // 用户消息已存在（由 CreateRun 创建），仅更新附加字段（不修改 GroupSeq）
+            existingUserMessage.LlmRequestId = llmRequestId;
+            if (attachmentIds != null && attachmentIds.Count > 0)
+            {
+                existingUserMessage.AttachmentIds = attachmentIds;
+            }
+            if (!string.IsNullOrWhiteSpace(resendOfMessageId))
+            {
+                existingUserMessage.ResendOfMessageId = resendOfMessageId.Trim();
+            }
+            await _messageRepository.ReplaceOneAsync(existingUserMessage);
+            userMessage = existingUserMessage;
+        }
+
+        // 提前获取对应角色的机器人用户ID（用于创建 AI 占位消息）
+        var botUsername = session.CurrentRole switch
+        {
+            UserRole.PM => "bot_pm",
+            UserRole.DEV => "bot_dev",
+            UserRole.QA => "bot_qa",
+            _ => "bot_dev" // 默认使用 DEV 机器人
         };
-        if (!string.IsNullOrEmpty(gidForSeq))
-        {
-            // groupSeq 分配不应受 HTTP RequestAborted 影响（避免“客户端断线导致服务端闭环失败”）
-            userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
-        }
-        await _messageRepository.InsertManyAsync(new[] { userMessage });
-        if (!string.IsNullOrEmpty(gidForSeq))
-        {
-            _groupMessageStreamHub.Publish(userMessage);
-        }
+        var botUser = await _userService.GetByUsernameAsync(botUsername);
+        var botUserId = botUser?.UserId;
 
         var enumerator = _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
@@ -276,10 +312,38 @@ public class ChatService : IChatService
                     if (!firstTokenAtUtc.HasValue)
                     {
                         firstTokenAtUtc = DateTime.UtcNow;
-                        // AI 首字到达：分配 assistant seq（仅一次）
+                        // AI 首字到达：检查占位消息是否已存在（CreateRun 可能已创建）
                         if (!string.IsNullOrEmpty(gidForSeq) && !assistantSeqAtFirstToken.HasValue)
                         {
-                            assistantSeqAtFirstToken = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
+                            // 查询占位消息是否已存在
+                            var existingMessage = await _messageRepository.FindByIdAsync(messageId);
+                            
+                            if (existingMessage != null && existingMessage.GroupSeq.HasValue)
+                            {
+                                // 占位消息已存在（由 CreateRun 创建），直接使用其 seq
+                                assistantSeqAtFirstToken = existingMessage.GroupSeq.Value;
+                            }
+                            else
+                            {
+                                // 占位消息不存在（兼容旧版本/直接调用），创建并广播
+                                assistantSeqAtFirstToken = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
+                                
+                                var placeholderMessage = new Message
+                                {
+                                    Id = messageId,
+                                    SessionId = sessionId,
+                                    GroupId = session.GroupId ?? "",
+                                    GroupSeq = assistantSeqAtFirstToken,
+                                    RunId = effectiveRunId,
+                                    SenderId = botUserId,
+                                    Role = MessageRole.Assistant,
+                                    Content = "",  // 空内容，表示占位
+                                    ViewRole = session.CurrentRole,
+                                    Timestamp = firstTokenAtUtc.Value
+                                };
+                                await _messageRepository.InsertManyAsync(new[] { placeholderMessage });
+                                _groupMessageStreamHub.Publish(placeholderMessage);
+                            }
                         }
                     }
                     fullResponse.Append(chunk.Content);
@@ -296,7 +360,7 @@ public class ChatService : IChatService
                         };
                         if (!firstTokenMetricsEmitted && firstTokenAtUtc.HasValue)
                         {
-                            // 只在“首个可见输出事件”上附带一次 TTFT 指标，便于前端直接消费
+                            // 只在"首个可见输出事件"上附带一次 TTFT 指标，便于前端直接消费
                             var ttftMs = (int)Math.Max(0, Math.Round((firstTokenAtUtc.Value - userInputAtUtc).TotalMilliseconds));
                             ev.RequestReceivedAtUtc = userInputAtUtc;
                             ev.StartAtUtc = startAtUtc;
@@ -305,6 +369,25 @@ public class ChatService : IChatService
                             firstTokenMetricsEmitted = true;
                         }
                         yield return ev;
+
+                        // 实时广播到群组流
+                        if (!string.IsNullOrEmpty(gidForSeq))
+                        {
+                            if (bt.Type == "blockDelta" && !string.IsNullOrEmpty(bt.Content))
+                            {
+                                // Debug: 记录第一次发送
+                                if (isFirstDelta)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[ChatService] 首次广播 delta: blockId={bt.BlockId}, blockKind={bt.BlockKind}, contentLength={bt.Content?.Length}");
+                                }
+                                _groupMessageStreamHub.PublishDelta(gidForSeq, messageId, bt.Content, bt.BlockId, isFirstDelta);
+                                isFirstDelta = false; // 后续 delta 不再标记为 first
+                            }
+                            else if (bt.Type == "blockEnd" && !string.IsNullOrEmpty(bt.BlockId))
+                            {
+                                _groupMessageStreamHub.PublishBlockEnd(gidForSeq, messageId, bt.BlockId);
+                            }
+                        }
                     }
                 }
                 else if (chunk.Type == "done")
@@ -349,6 +432,20 @@ public class ChatService : IChatService
                     BlockKind = bt.BlockKind,
                     BlockLanguage = bt.Language
                 };
+
+                // 实时广播到群组流
+                if (!string.IsNullOrEmpty(gidForSeq))
+                {
+                    if (bt.Type == "blockDelta" && !string.IsNullOrEmpty(bt.Content))
+                    {
+                        _groupMessageStreamHub.PublishDelta(gidForSeq, messageId, bt.Content, bt.BlockId, isFirstDelta);
+                        isFirstDelta = false; // 后续 delta 不再标记为 first
+                    }
+                    else if (bt.Type == "blockEnd" && !string.IsNullOrEmpty(bt.BlockId))
+                    {
+                        _groupMessageStreamHub.PublishBlockEnd(gidForSeq, messageId, bt.BlockId);
+                    }
+                }
             }
         }
 
@@ -370,17 +467,7 @@ public class ChatService : IChatService
         // 保存用户消息
         // userMessage 已在请求开始阶段落库/广播，这里仅复用变量参与缓存拼接与关联
 
-        // 获取对应角色的机器人用户ID
-        var botUsername = session.CurrentRole switch
-        {
-            UserRole.PM => "bot_pm",
-            UserRole.DEV => "bot_dev",
-            UserRole.QA => "bot_qa",
-            _ => "bot_dev" // 默认使用 DEV 机器人
-        };
-        var botUser = await _userService.GetByUsernameAsync(botUsername);
-
-        // 保存AI回复
+        // 保存AI回复（botUser 已在流式输出前获取）
         var assistantMessage = new Message
         {
             Id = messageId,
@@ -388,7 +475,7 @@ public class ChatService : IChatService
             GroupId = session.GroupId ?? "",
             RunId = effectiveRunId,
             Role = MessageRole.Assistant,
-            AssistantUserId = botUser?.UserId, // 记录机器人用户ID
+            SenderId = botUser?.UserId, // AI 机器人也使用 SenderId（统一模型）
             Content = terminatedWithError
                 ? (string.IsNullOrWhiteSpace(terminatedErrorMessage) ? "LLM调用失败" : $"请求失败：{terminatedErrorMessage}")
                 : fullResponse.ToString(),
@@ -419,12 +506,29 @@ public class ChatService : IChatService
                 ?? await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
         }
 
-        await _messageRepository.InsertManyAsync(new[] { assistantMessage });
+        // 如果已经创建了占位消息（assistantSeqAtFirstToken 有值），则更新；否则插入
+        if (assistantSeqAtFirstToken.HasValue)
+        {
+            await _messageRepository.ReplaceOneAsync(assistantMessage);
+        }
+        else
+        {
+            await _messageRepository.InsertManyAsync(new[] { assistantMessage });
+        }
 
-        // 群广播：只广播“消息级别”事件（user + assistant final），token/delta 不广播
+        // 群广播：如果是更新（占位消息已存在），使用 PublishUpdated；否则使用 Publish
         if (!string.IsNullOrEmpty(gidForSeq))
         {
-            _groupMessageStreamHub.Publish(assistantMessage);
+            if (assistantSeqAtFirstToken.HasValue)
+            {
+                // 占位消息已存在，广播更新事件（避免因 seq 去重被跳过）
+                _groupMessageStreamHub.PublishUpdated(assistantMessage);
+            }
+            else
+            {
+                // 新消息，正常广播
+                _groupMessageStreamHub.Publish(assistantMessage);
+            }
         }
 
         // 刷新会话活跃时间

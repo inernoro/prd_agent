@@ -5,8 +5,8 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class LLMConfig
 {
-    /// <summary>配置ID</summary>
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>配置ID（通过 IIdGenerator 生成）</summary>
+    public string Id { get; set; } = string.Empty;
     
     /// <summary>服务商名称 (Claude/OpenAI)</summary>
     public string Provider { get; set; } = "Claude";

@@ -11,15 +11,18 @@ public class GroupService : IGroupService
     private readonly IGroupRepository _groupRepository;
     private readonly IGroupMemberRepository _memberRepository;
     private readonly IPrdDocumentRepository _documentRepository;
+    private readonly IIdGenerator _idGenerator;
 
     public GroupService(
         IGroupRepository groupRepository,
         IGroupMemberRepository memberRepository,
-        IPrdDocumentRepository documentRepository)
+        IPrdDocumentRepository documentRepository,
+        IIdGenerator idGenerator)
     {
         _groupRepository = groupRepository;
         _memberRepository = memberRepository;
         _documentRepository = documentRepository;
+        _idGenerator = idGenerator;
     }
 
     public async Task<Group> CreateAsync(
@@ -32,6 +35,7 @@ public class GroupService : IGroupService
     {
         var group = new Group
         {
+            GroupId = await _idGenerator.GenerateIdAsync("group"),
             OwnerId = ownerId,
             PrdDocumentId = prdDocumentId,
             GroupName = groupName ?? "新建群组",
@@ -195,7 +199,7 @@ public class GroupService : IGroupService
         // 删除群组
         await _groupRepository.DeleteAsync(groupId);
 
-        // 业务规则：PRD 文档随时可被查看，默认不应“自己消失”；
+        // 业务规则：PRD 文档随时可被查看，默认不应"自己消失"；
         // 只有当群组被人为删除/解散，且无任何群组再引用该 PRD 时，才允许清理文档。
         if (!string.IsNullOrWhiteSpace(prdDocumentId))
         {
@@ -205,5 +209,10 @@ public class GroupService : IGroupService
                 await _documentRepository.DeleteAsync(prdDocumentId);
             }
         }
+    }
+
+    public async Task UpdateGroupNameAsync(string groupId, string groupName)
+    {
+        await _groupRepository.UpdateGroupNameAsync(groupId, groupName);
     }
 }

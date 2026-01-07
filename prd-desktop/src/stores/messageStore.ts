@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { invoke } from '../lib/tauri';
 import type { ApiResponse, DocCitation, Message, MessageBlock, MessageBlockKind } from '../types';
 
@@ -99,39 +98,6 @@ function clearStreamingBuffers() {
   }
 }
 
-function reviveMessage(m: any): Message {
-  const ts = m?.timestamp;
-  const t = ts instanceof Date ? ts : new Date(ts || Date.now());
-  const blocks = Array.isArray(m?.blocks) ? m.blocks : undefined;
-  const citations = Array.isArray(m?.citations) ? m.citations : undefined;
-  return {
-    id: String(m?.id ?? ''),
-    role: (m?.role === 'User' ? 'User' : 'Assistant'),
-    content: String(m?.content ?? ''),
-    blocks,
-    citations,
-    viewRole: m?.viewRole ?? undefined,
-    timestamp: t,
-    groupSeq: typeof m?.groupSeq === 'number' ? m.groupSeq : undefined,
-    replyToMessageId: typeof m?.replyToMessageId === 'string' ? m.replyToMessageId : undefined,
-    resendOfMessageId: typeof m?.resendOfMessageId === 'string' ? m.resendOfMessageId : undefined,
-    isDeleted: typeof m?.isDeleted === 'boolean' ? m.isDeleted : undefined,
-    senderId: m?.senderId ?? undefined,
-    senderName: m?.senderName ?? undefined,
-    senderRole: m?.senderRole ?? undefined,
-    assistantUserId: m?.assistantUserId ?? undefined,
-    assistantDisplayName: m?.assistantDisplayName ?? undefined,
-    assistantUsername: m?.assistantUsername ?? undefined,
-    assistantAvatarUrl: m?.assistantAvatarUrl ?? undefined,
-    assistantTags: Array.isArray(m?.assistantTags) ? m.assistantTags : undefined,
-  };
-}
-
-function reviveMessages(list: any): Message[] {
-  if (!Array.isArray(list)) return [];
-  return list.map(reviveMessage).filter((x) => x.id);
-}
-
 function isLocalEphemeralMessage(m: Message): boolean {
   const id = String((m as any)?.id ?? '').trim();
   if (!id) return true;
@@ -193,9 +159,7 @@ type MessageHistoryItem = {
   timestamp: string;
 };
 
-export const useMessageStore = create<MessageState>()(
-  persist(
-    (set, get) => ({
+export const useMessageStore = create<MessageState>()((set, get) => ({
       boundSessionId: null,
       boundGroupId: null,
       isPinnedToBottom: true,
@@ -339,31 +303,18 @@ export const useMessageStore = create<MessageState>()(
         };
       }),
 
-      // 提示词/发送：先插入一个“请求中”的占位 assistant 气泡，再滚到底
-      // 这样用户不会觉得“点了没反应/页面卡住”，并且可与后续真实 start 事件无缝衔接
+      // 发送消息：只添加用户消息，不创建本地 AI 占位（由后端创建并广播）
       addUserMessageWithPendingAssistant: ({ userMessage }) => {
-        const t0 = (globalThis as any).performance?.now?.() ?? Date.now();
         set((state) => {
-        const pendingId = `pending-assistant-${Date.now()}`;
-        const pending: Message = {
-          id: pendingId,
-          role: 'Assistant',
-          content: '',
-          timestamp: new Date(),
-          viewRole: userMessage.viewRole,
-        };
-        const next = [...state.messages, userMessage, pending];
+        const next = [...state.messages, userMessage];
         return {
           messages: next,
-          pendingAssistantId: pendingId,
+          pendingAssistantId: null,
           pendingUserMessageId: userMessage?.id ?? null,
           isPinnedToBottom: true,
           scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
         };
         });
-        const t1 = (globalThis as any).performance?.now?.() ?? Date.now();
-        void t0;
-        void t1;
       },
 
       clearPendingAssistant: () => set((state) => {
@@ -496,6 +447,8 @@ export const useMessageStore = create<MessageState>()(
         senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
         senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
+        senderAvatarUrl: (m as any).senderAvatarUrl ? String((m as any).senderAvatarUrl) : undefined,
+        senderTags: Array.isArray((m as any).senderTags) ? (m as any).senderTags : undefined,
       }));
 
       const added = get().prependMessages(mapped);
@@ -547,11 +500,8 @@ export const useMessageStore = create<MessageState>()(
         senderId: (m as any).senderId ? String((m as any).senderId) : undefined,
         senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
-        assistantUserId: (m as any).assistantUserId ? String((m as any).assistantUserId) : undefined,
-        assistantDisplayName: (m as any).assistantDisplayName ? String((m as any).assistantDisplayName) : undefined,
-        assistantUsername: (m as any).assistantUsername ? String((m as any).assistantUsername) : undefined,
-        assistantAvatarUrl: (m as any).assistantAvatarUrl ? String((m as any).assistantAvatarUrl) : undefined,
-        assistantTags: Array.isArray((m as any).assistantTags) ? (m as any).assistantTags : undefined,
+        senderAvatarUrl: (m as any).senderAvatarUrl ? String((m as any).senderAvatarUrl) : undefined,
+        senderTags: Array.isArray((m as any).senderTags) ? (m as any).senderTags : undefined,
       }));
 
       // 冷启动（本地无缓存）：直接设置
@@ -743,12 +693,17 @@ export const useMessageStore = create<MessageState>()(
   },
 
   startStreamingBlock: (block) => set((state) => {
-    if (!state.streamingMessageId) return state;
+    if (!state.streamingMessageId) {
+      console.warn('[messageStore] startStreamingBlock 调用时没有 streamingMessageId');
+      return state;
+    }
     const next = state.messages.map((m) => {
       if (m.id !== state.streamingMessageId) return m;
       const blocks = (m.blocks ?? []) as MessageBlock[];
       // 避免重复 start
-      if (blocks.some((b) => b.id === block.id)) return m;
+      if (blocks.some((b) => b.id === block.id)) {
+        return m;
+      }
       const nextContent =
         block.kind === 'codeBlock'
           ? (m.content ?? '') + `\`\`\`${block.language ? block.language : ''}\n`
@@ -922,40 +877,4 @@ export const useMessageStore = create<MessageState>()(
         isSyncing: false,
         });
       },
-    }),
-    {
-      name: 'message-storage',
-      version: 2, // 版本升级：新增 seq 字段
-      partialize: (s) => ({
-        boundSessionId: s.boundSessionId,
-        boundGroupId: s.boundGroupId,
-        isPinnedToBottom: s.isPinnedToBottom,
-        // 仅持久化“可作为历史”的消息：过滤本地占位/空气泡，避免重启后出现与后端不一致
-        messages: (s.messages || []).filter((m) => !isLocalEphemeralMessage(m)),
-        localMinSeq: s.localMinSeq,
-        localMaxSeq: s.localMaxSeq,
-      }),
-      merge: (persisted: any, current) => {
-        const p = (persisted as any) || {};
-        const next: any = {
-          ...current,
-          ...p,
-        };
-        const revived = reviveMessages(p.messages);
-        const cleaned = revived.filter((m) => !isLocalEphemeralMessage(m));
-        // 刷新/重启后：对持久化消息做一次稳定纠序
-        next.messages = maybeSortByGroupSeq(cleaned);
-        // 重建 seq 边界（以实际消息为准，防止脏数据）
-        const { minSeq, maxSeq } = computeSeqBounds(cleaned);
-        next.localMinSeq = minSeq;
-        next.localMaxSeq = maxSeq;
-        // 非持久化字段重置
-        next.isLoadingOlder = false;
-        next.hasMoreOlder = cleaned.length > 0;
-        next.pendingAssistantId = null;
-        next.isSyncing = false;
-        return next as MessageState;
-      },
-    }
-  )
-);
+    }));

@@ -53,4 +53,7 @@ public interface IGroupService
 
     /// <summary>解散群组（删除群组与成员记录）</summary>
     Task DissolveAsync(string groupId);
+
+    /// <summary>更新群组名称</summary>
+    Task UpdateGroupNameAsync(string groupId, string groupName);
 }

@@ -11,15 +11,18 @@ public class GroupBotService : IGroupBotService
     private readonly IUserRepository _userRepository;
     private readonly IGroupRepository _groupRepository;
     private readonly IGroupMemberRepository _groupMemberRepository;
+    private readonly IIdGenerator _idGenerator;
 
     public GroupBotService(
         IUserRepository userRepository,
         IGroupRepository groupRepository,
-        IGroupMemberRepository groupMemberRepository)
+        IGroupMemberRepository groupMemberRepository,
+        IIdGenerator idGenerator)
     {
         _userRepository = userRepository;
         _groupRepository = groupRepository;
         _groupMemberRepository = groupMemberRepository;
+        _idGenerator = idGenerator;
     }
 
     public async Task<IReadOnlyList<User>> EnsureDefaultRoleBotsInGroupAsync(string groupId)
@@ -101,6 +104,7 @@ public class GroupBotService : IGroupBotService
 
         var user = new User
         {
+            UserId = await _idGenerator.GenerateIdAsync("robot"),
             Username = username,
             DisplayName = displayName,
             Role = role,

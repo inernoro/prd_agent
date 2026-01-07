@@ -14,7 +14,7 @@ import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, nor
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
   const { setSession, activeGroupId, documentLoaded, document: prdDocument, mode, sessionId, setMode, openPrdPreviewPage } = useSessionStore();
-  const { loadGroups } = useGroupListStore();
+  const { loadGroups, groups } = useGroupListStore();
   const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -141,6 +141,12 @@ export default function Sidebar() {
       setActiveOwner(false);
       return;
     }
+    // 检查群组是否存在（避免为已解散的群组查询成员）
+    const groupExists = groups.some((g) => String(g.groupId) === gid);
+    if (!groupExists) {
+      setActiveOwner(false);
+      return;
+    }
     if (activeOwnerLoading) return;
     try {
       setActiveOwnerLoading(true);
@@ -156,7 +162,7 @@ export default function Sidebar() {
     } finally {
       setActiveOwnerLoading(false);
     }
-  }, [activeGroupId, activeOwnerLoading, invoke, isAdmin, user?.userId]);
+  }, [activeGroupId, activeOwnerLoading, invoke, isAdmin, user?.userId, groups]);
 
   useEffect(() => {
     void refreshActiveOwner();
@@ -207,7 +213,8 @@ export default function Sidebar() {
         return;
       }
 
-      await loadGroups();
+      // 加入群组后强制刷新列表
+      await loadGroups({ force: true });
       await openGroupSession(resp.data.groupId);
       setJoinOpen(false);
     } catch (err) {
@@ -246,29 +253,15 @@ export default function Sidebar() {
           return;
         }
 
-        // 2) 决定群名：用户手动填写优先；否则文件名有意义用文件名；无意义则调用意图模型
+        // 2) 决定群名：用户手动填写优先；否则文件名有意义用文件名；无意义则用文档标题或默认名称
+        // 意图模型生成群名的逻辑已移到后端异步执行，不再阻塞创建流程
         let groupNameFinal = explicitGroupName;
         if (!groupNameFinal) {
           const base = createPrdFileName ? normalizeCandidateName(stripFileExtension(createPrdFileName)) : '';
           if (base && !isMeaninglessName(base)) {
             groupNameFinal = base;
           } else {
-            const snippet = extractSnippetFromContent(createPrdContent);
-            if (snippet) {
-              try {
-                const suggestResp = await invoke<ApiResponse<{ name: string }>>('suggest_group_name', {
-                  fileName: createPrdFileName || null,
-                  snippet,
-                });
-                const suggested = (suggestResp.success && suggestResp.data?.name) ? String(suggestResp.data.name).trim() : '';
-                if (suggested) groupNameFinal = suggested;
-              } catch {
-                // ignore
-              }
-            }
-            if (!groupNameFinal) {
-              groupNameFinal = extractMarkdownTitle(createPrdContent) || uploadResp.data.document.title || '';
-            }
+            groupNameFinal = extractMarkdownTitle(createPrdContent) || uploadResp.data.document.title || '';
           }
         }
 
@@ -289,9 +282,16 @@ export default function Sidebar() {
           return;
         }
 
-        await loadGroups();
+        // 创建群组后强制刷新列表
+        await loadGroups({ force: true });
         await openGroupSession(resp.data.groupId);
         setCreateOpen(false);
+
+        // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
+        for (let i = 0; i < 3; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await loadGroups({ force: true });
+        }
         return;
       }
 
@@ -316,8 +316,15 @@ export default function Sidebar() {
       const inviteLink = `prdagent://join/${resp.data.inviteCode}`;
       alert(`群组创建成功\\n邀请码：${resp.data.inviteCode}\\n邀请链接：${inviteLink}`);
 
-      await loadGroups();
+      // 创建群组后强制刷新列表
+      await loadGroups({ force: true });
       setCreateOpen(false);
+
+      // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
+      for (let i = 0; i < 3; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await loadGroups({ force: true });
+      }
     } catch (err) {
       console.error('Failed to create group:', err);
     } finally {
@@ -381,7 +388,8 @@ export default function Sidebar() {
         return;
       }
 
-      await loadGroups();
+      // 绑定 PRD 后强制刷新列表（群组名称可能变化）
+      await loadGroups({ force: true });
       await openGroupSession(activeGroupId);
     } catch (err) {
       console.error('Failed to upload/bind PRD:', err);

@@ -124,3 +124,10 @@ export const simulateMessageReal: SimulateMessageContract = async (input: Simula
   });
 };
 
+export const simulateStreamMessagesReal: SimulateStreamMessagesContract = async (input: SimulateStreamMessagesInput) => {
+  return await apiRequest<SimulateStreamMessagesResponse>('/api/v1/admin/lab/simulate-stream-messages', {
+    method: 'POST',
+    body: input,
+  });
+};
+

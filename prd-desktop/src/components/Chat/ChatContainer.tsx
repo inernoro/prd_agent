@@ -3,7 +3,6 @@ import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
-import { useUserDirectoryStore } from '../../stores/userDirectoryStore';
 import { useSystemNoticeStore } from '../../stores/systemNoticeStore';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
@@ -19,191 +18,17 @@ function ChatContainerInner() {
   const groups = useGroupListStore((s) => s.groups);
   const openGroupDrawer = useGroupInfoDrawerStore((s) => s.open);
   const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
-  const loadGroupMembers = useUserDirectoryStore((s) => s.loadGroupMembers);
   const startStreaming = useMessageStore((s) => s.startStreaming);
-  const appendToStreamingMessage = useMessageStore((s) => s.appendToStreamingMessage);
-  const startStreamingBlock = useMessageStore((s) => s.startStreamingBlock);
-  const appendToStreamingBlock = useMessageStore((s) => s.appendToStreamingBlock);
-  const endStreamingBlock = useMessageStore((s) => s.endStreamingBlock);
-  const setMessageCitations = useMessageStore((s) => s.setMessageCitations);
-  const stopStreaming = useMessageStore((s) => s.stopStreaming);
-  const finishStreaming = useMessageStore((s) => s.finishStreaming);
-  const clearPendingAssistant = useMessageStore((s) => s.clearPendingAssistant);
   const pushNotice = useSystemNoticeStore((s) => s.push);
-  // isStreaming 状态由 MessageList/MessageBubble 负责展示（含占位动画），不再额外展示顶部 banner
-  const setStreamingPhase = useMessageStore((s) => s.setStreamingPhase);
   const bindSession = useMessageStore((s) => s.bindSession);
   const syncFromServer = useMessageStore((s) => s.syncFromServer);
-  const ackPendingUserMessageTimestamp = useMessageStore((s) => s.ackPendingUserMessageTimestamp);
   const ingestGroupBroadcastMessage = useMessageStore((s) => s.ingestGroupBroadcastMessage);
   const removeMessageById = useMessageStore((s) => s.removeMessageById);
   const localMaxSeq = useMessageStore((s) => s.localMaxSeq);
   const getLastGroupSeq = useSessionStore((s) => s.getLastGroupSeq);
   const setLastGroupSeq = useSessionStore((s) => s.setLastGroupSeq);
 
-  useEffect(() => {
-    // 监听消息流事件
-    const unlistenMessage = listen<any>('message-chunk', (event) => {
-      const {
-        type,
-        content,
-        messageId,
-        errorMessage,
-        phase,
-        blockId,
-        blockKind,
-        blockLanguage,
-        citations,
-        requestReceivedAtUtc,
-        startAtUtc,
-        firstTokenAtUtc,
-        doneAtUtc,
-        ttftMs,
-      } = event.payload || {};
-
-      const parseUtc = (v: any) => {
-        if (typeof v !== 'string' || !v) return null;
-        const d = new Date(v);
-        return Number.isNaN(d.getTime()) ? null : d;
-      };
-      
-      if (type === 'start') {
-        // 真实 start 到达：移除本地"请求中"占位气泡
-        clearPendingAssistant();
-        const dRecv = parseUtc(requestReceivedAtUtc);
-        const dStart = parseUtc(startAtUtc) || dRecv;
-        if (dRecv) {
-          // 用户消息发送时间：以服务端 requestReceivedAtUtc 为准（与 DB 保持一致）
-          ackPendingUserMessageTimestamp({ receivedAt: dRecv });
-        }
-        
-        // 根据 viewRole 获取对应的机器人信息（用于流式消息显示）
-        const resolveRobotForViewRole = useUserDirectoryStore.getState().resolveRobotForViewRole;
-        const assistantUser = resolveRobotForViewRole(currentRole);
-        
-        startStreaming({
-          id: messageId || `assistant-${Date.now()}`,
-          role: 'Assistant',
-          content: '',
-          timestamp: dStart || new Date(),
-          serverRequestReceivedAtUtc: dRecv || undefined,
-          serverStartAtUtc: dStart || undefined,
-          viewRole: currentRole,
-          blocks: [],
-          // 填充 Assistant 机器人信息（用于刷新后仍能正确显示）
-          assistantUserId: assistantUser?.userId,
-          assistantDisplayName: assistantUser?.displayName,
-          assistantUsername: assistantUser?.username,
-          assistantAvatarUrl: assistantUser?.avatarUrl ?? undefined,
-          assistantTags: assistantUser?.tags,
-        });
-        // 交给 store：startStreaming 默认 phase=requesting；后续 phase 事件会更新；
-        // 一旦进入 typing（收到首包 delta/blockDelta），将不再被 phase 覆盖（见 messageStore.setStreamingPhase）
-      } else if (type === 'blockStart' && blockId && blockKind) {
-        // 首字延迟（TTFT）只在首次输出时下发一次：落到 streaming message 上
-        if (messageId && (typeof ttftMs === 'number' || firstTokenAtUtc)) {
-          const dFirst = parseUtc(firstTokenAtUtc);
-          const dRecv = parseUtc(requestReceivedAtUtc);
-          const dStart = parseUtc(startAtUtc);
-          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
-          if (existing) {
-            useMessageStore.getState().upsertMessage({
-              ...existing,
-              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
-              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
-              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
-              serverStartAtUtc: dStart || existing.serverStartAtUtc,
-              // 你的规约：assistant 时间=首字时间（与 DB 保持一致），因此首字一到就把 timestamp 回填为 firstTokenAtUtc
-              timestamp: dFirst || existing.timestamp,
-            } as any);
-          }
-        }
-        startStreamingBlock({ id: blockId, kind: blockKind, language: blockLanguage ?? null });
-      } else if (type === 'blockDelta' && blockId && content) {
-        if (messageId && (typeof ttftMs === 'number' || firstTokenAtUtc)) {
-          const dFirst = parseUtc(firstTokenAtUtc);
-          const dRecv = parseUtc(requestReceivedAtUtc);
-          const dStart = parseUtc(startAtUtc);
-          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
-          if (existing) {
-            useMessageStore.getState().upsertMessage({
-              ...existing,
-              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
-              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
-              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
-              serverStartAtUtc: dStart || existing.serverStartAtUtc,
-              timestamp: dFirst || existing.timestamp,
-            } as any);
-          }
-        }
-        appendToStreamingBlock(blockId, content);
-      } else if (type === 'blockEnd' && blockId) {
-        endStreamingBlock(blockId);
-      } else if (type === 'delta' && content) {
-        if (messageId && (typeof ttftMs === 'number' || firstTokenAtUtc)) {
-          const dFirst = parseUtc(firstTokenAtUtc);
-          const dRecv = parseUtc(requestReceivedAtUtc);
-          const dStart = parseUtc(startAtUtc);
-          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
-          if (existing) {
-            useMessageStore.getState().upsertMessage({
-              ...existing,
-              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
-              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
-              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
-              serverStartAtUtc: dStart || existing.serverStartAtUtc,
-              timestamp: dFirst || existing.timestamp,
-            } as any);
-          }
-        }
-        // 兼容旧协议
-        appendToStreamingMessage(content);
-      } else if (type === 'citations' && messageId && Array.isArray(citations)) {
-        setMessageCitations(messageId, citations);
-      } else if (type === 'done') {
-        // done：不再覆盖 timestamp（你的规约：assistant 落库时间=首字时间），这里只记录 doneAt 以便计算耗时
-        if (messageId) {
-          const dDone = parseUtc(doneAtUtc);
-          const dRecv = parseUtc(requestReceivedAtUtc);
-          const dStart = parseUtc(startAtUtc);
-          const dFirst = parseUtc(firstTokenAtUtc);
-          const existing = useMessageStore.getState().messages?.find((m) => m.id === messageId);
-          if (existing && dDone) {
-            const base = (dRecv || dStart || existing.serverRequestReceivedAtUtc || existing.serverStartAtUtc) ?? null;
-            const totalMs = base ? Math.max(0, Math.round(dDone.getTime() - base.getTime())) : undefined;
-            useMessageStore.getState().upsertMessage({
-              ...existing,
-              serverDoneAtUtc: dDone,
-              serverFirstTokenAtUtc: dFirst || existing.serverFirstTokenAtUtc,
-              serverRequestReceivedAtUtc: dRecv || existing.serverRequestReceivedAtUtc,
-              serverStartAtUtc: dStart || existing.serverStartAtUtc,
-              ttftMs: typeof ttftMs === 'number' ? ttftMs : existing.ttftMs,
-              totalMs: totalMs ?? (existing as any).totalMs,
-            } as any);
-          }
-        }
-        clearPendingAssistant();
-        finishStreaming();
-      } else if (type === 'phase' && phase) {
-        setStreamingPhase((phase as any) || null);
-      } else if (type === 'error') {
-        clearPendingAssistant();
-        stopStreaming();
-        if (errorMessage) {
-          pushNotice(`请求失败：${errorMessage}`, { level: 'error', ttlMs: 8000, signature: `chat-error:${String(errorMessage)}` });
-        }
-      }
-    }).catch((err) => {
-      console.error('Failed to listen to message-chunk event:', err);
-      return () => {};
-    });
-
-    return () => {
-      unlistenMessage.then(fn => fn()).catch((err) => {
-        console.error('Failed to unlisten message-chunk event:', err);
-      });
-    };
-  }, [currentRole, clearPendingAssistant, startStreaming, appendToStreamingMessage, startStreamingBlock, appendToStreamingBlock, endStreamingBlock, stopStreaming, finishStreaming, pushNotice, setStreamingPhase, setMessageCitations]);
+  // 旧的 message-chunk 监听器已删除：所有流式输出已统一到群组流的 delta 事件
 
   // 订阅群消息广播（SSE 由 Rust 消费并 emit 为 group-message）
   // 使用 localMaxSeq 作为断点续传游标
@@ -218,13 +43,6 @@ function ChatContainerInner() {
     const afterSeq = localMaxSeq ?? getLastGroupSeq(activeGroupId) ?? 0;
     invoke('subscribe_group_messages', { groupId: activeGroupId, afterSeq }).catch(() => {});
   }, [activeGroupId, localMaxSeq, getLastGroupSeq]);
-
-  // 首次进入群组：拉一次成员列表并缓存（用于把 senderId 显示成 username）
-  useEffect(() => {
-    if (!activeGroupId) return;
-    // 默认打开群：强制拉一次成员信息，保证机器人/用户头像/昵称/tag 最新
-    loadGroupMembers(activeGroupId, { force: true }).catch(() => {});
-  }, [activeGroupId, loadGroupMembers]);
 
   useEffect(() => {
     const unlisten = listen<any>('group-message', (event) => {
@@ -242,66 +60,235 @@ function ChatContainerInner() {
         const m = p.message;
         if (m?.isDeleted === true || m?.IsDeleted === true) {
           removeMessageById(String(m.id));
+          return; // 只有在删除时才 return
+        }
+        // 其他 messageUpdated 事件（如 AI 流式输出完成）继续处理
+      }
+      
+      // 处理 blockEnd 事件：标记 block 为完成状态，可以进行 Markdown 渲染
+      if (p?.type === 'blockEnd' && p?.messageId && p?.blockId) {
+        const messageId = String(p.messageId);
+        const blockId = String(p.blockId);
+        
+        const store = useMessageStore.getState();
+        store.endStreamingBlock(blockId);
+        return;
+      }
+      
+      // 处理 AI 流式输出的增量内容（delta）
+      if (p?.type === 'delta' && p?.messageId && p?.deltaContent) {
+        const messageId = String(p.messageId);
+        const deltaContent = String(p.deltaContent);
+        const blockId = p.blockId ? String(p.blockId) : undefined;
+        const isFirstChunk = Boolean(p.isFirstChunk);
+        
+        
+        // 如果有 blockId，使用 block 协议更新（支持 Markdown 逐块渲染）
+        if (blockId) {
+          const store = useMessageStore.getState();
+          let targetMessage = store.messages.find(m => m.id === messageId);
+          
+          if (!targetMessage) {
+            console.warn('[ChatContainer] Delta 事件对应的消息不存在:', messageId);
+            return;
+          }
+          
+          // 如果不是当前流式消息，先设置为流式状态
+          if (store.streamingMessageId !== messageId) {
+            store.startStreaming(targetMessage);
+            // 重新获取消息（startStreaming 可能修改了 state）
+            targetMessage = useMessageStore.getState().messages.find(m => m.id === messageId)!;
+          }
+          
+          // 检查 block 是否已存在，如果不存在则创建（使用最新的 targetMessage）
+          const blockExists = targetMessage.blocks?.some(b => b.id === blockId);
+          
+          if (!blockExists) {
+            // 推断 block 类型（简化处理，默认为 paragraph）
+            store.startStreamingBlock({ 
+              id: blockId, 
+              kind: 'paragraph',
+              language: null 
+            });
+          }
+          
+          // 追加内容到指定 block
+          store.appendToStreamingBlock(blockId, deltaContent);
+          
+          // 如果是第一个 chunk，标记消息为"正在输出"
+          if (isFirstChunk) {
+            useMessageStore.setState((state) => {
+              const idx = state.messages.findIndex(m => m.id === messageId);
+              if (idx === -1) return state;
+              const next = [...state.messages];
+              next[idx] = { ...next[idx], isStreaming: true };
+              return { messages: next };
+            });
+          }
+        } else {
+          // 没有 blockId，直接更新 content（兼容旧协议）
+          useMessageStore.setState((state) => {
+            const targetIndex = state.messages.findIndex(m => m.id === messageId);
+            
+            if (targetIndex === -1) {
+              console.warn('[ChatContainer] Delta 事件对应的消息不存在:', messageId);
+              return state;
+            }
+            
+            const next = [...state.messages];
+            const targetMessage = next[targetIndex];
+            
+            const updates: any = {
+              content: (targetMessage.content || '') + deltaContent
+            };
+            
+            if (isFirstChunk) {
+              updates.isStreaming = true;
+            }
+            
+            next[targetIndex] = {
+              ...targetMessage,
+              ...updates
+            };
+            
+            return { messages: next };
+          });
         }
         return;
       }
-      if (p?.type !== 'message' || !p?.message) return;
+      
+      // 处理 message 和 messageUpdated 事件
+      if ((p?.type !== 'message' && p?.type !== 'messageUpdated') || !p?.message) return;
 
       const m = p.message;
       const gid = String(m.groupId || '').trim();
       const seq = Number(m.groupSeq || 0);
 
-      // 兜底：若消息携带 senderId，但本地没有该用户信息，则强制刷新一次群成员列表（批量补齐）
-      try {
-        const sid = m.senderId ? String(m.senderId).trim() : '';
-        if (sid && useSessionStore.getState().activeGroupId) {
-          const exists = !!useUserDirectoryStore.getState().resolveUser(sid);
-          if (!exists) {
-            const active = useSessionStore.getState().activeGroupId;
-            if (active && String(active) === gid) {
-              useUserDirectoryStore.getState().loadGroupMembers(active, { force: true }).catch(() => {});
-            }
-          }
-        }
-      } catch {
-        // ignore
-      }
-
-      // 不再做“跳号补洞”：群组 seq 仅表示顺序，不保证连续可见（删除/软删会产生空洞），
-      // 离线/重连一致性通过“订阅后快照校准 + 历史拉取”来保证。
-      if (gid && Number.isFinite(seq) && seq > 0) {
+      // 不再做"跳号补洞"：群组 seq 仅表示顺序，不保证连续可见（删除/软删会产生空洞），
+      // 离线/重连一致性通过"订阅后快照校准 + 历史拉取"来保证。
+      // 注意：messageUpdated 事件不依赖 seq 递增，不更新 lastGroupSeq
+      if (p.type === 'message' && gid && Number.isFinite(seq) && seq > 0) {
         setLastGroupSeq(gid, seq);
       }
 
-      ingestGroupBroadcastMessage({
-        currentUserId,
-        message: {
-          id: String(m.id || ''),
-          role: (m.role === 'User' ? 'User' : 'Assistant'),
-          content: String(m.content || ''),
-          timestamp: new Date(m.timestamp || Date.now()),
-          viewRole: (m.viewRole as any) || undefined,
-          runId: (m as any).runId ? String((m as any).runId) : undefined,
-          senderId: m.senderId ? String(m.senderId) : undefined,
-          senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
-          senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
-          groupSeq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
-          replyToMessageId: m.replyToMessageId ? String(m.replyToMessageId) : undefined,
-          resendOfMessageId: m.resendOfMessageId ? String(m.resendOfMessageId) : undefined,
-        } as any,
-      });
+      const message = {
+        id: String(m.id || ''),
+        role: (m.role === 'User' ? 'User' : 'Assistant') as 'User' | 'Assistant',
+        content: String(m.content || ''),
+        timestamp: new Date(m.timestamp || Date.now()),
+        viewRole: (m.viewRole as any) || undefined,
+        runId: (m as any).runId ? String((m as any).runId) : undefined,
+        senderId: m.senderId ? String(m.senderId) : undefined,
+        senderName: (m as any).senderName ? String((m as any).senderName) : undefined,
+        senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
+        senderAvatarUrl: (m as any).senderAvatarUrl ? String((m as any).senderAvatarUrl) : undefined,
+        senderTags: (m as any).senderTags || undefined,
+        groupSeq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
+        replyToMessageId: m.replyToMessageId ? String(m.replyToMessageId) : undefined,
+        resendOfMessageId: m.resendOfMessageId ? String(m.resendOfMessageId) : undefined,
+      };
 
-      // 若这是一个携带 runId 的用户消息，则订阅对应的 ChatRun（群内所有成员可观测同一流）
-      const runId = (m as any).runId ? String((m as any).runId).trim() : '';
-      if (runId && m.role === 'User') {
-        invoke('subscribe_chat_run', { runId, afterSeq: 0 }).catch(() => {});
+      // 处理 messageUpdated 事件（AI 流式输出完成）
+      if (p.type === 'messageUpdated') {
+        const existingMessage = useMessageStore.getState().messages.find(msg => msg.id === message.id);
+        const currentStreamingId = useMessageStore.getState().streamingMessageId;
+        
+        if (existingMessage && currentStreamingId === message.id) {
+          // 延迟处理，确保所有 blockEnd 事件都已经被处理
+          // 使用 setTimeout 将处理推迟到下一个事件循环
+          setTimeout(() => {
+            const latestMessage = useMessageStore.getState().messages.find(msg => msg.id === message.id);
+            if (!latestMessage) return;
+            
+            // 再次检查是否有未完成的 blocks
+            const hasIncompleteBlocks = latestMessage.blocks?.some(b => b.isComplete === false);
+            
+            if (hasIncompleteBlocks) {
+              console.warn('[ChatContainer] messageUpdated 延迟检查：仍有未完成的 blocks，再次延迟');
+              // 递归延迟，直到所有 blocks 完成
+              setTimeout(() => {
+                const finalMessage = useMessageStore.getState().messages.find(msg => msg.id === message.id);
+                if (!finalMessage) return;
+                
+                // 最终停止流式状态（使用 stopStreaming 确保缓冲区 flush）
+                const { stopStreaming } = useMessageStore.getState();
+                stopStreaming();
+                
+                // 更新时间戳
+                useMessageStore.setState((state) => {
+                  const idx = state.messages.findIndex(m => m.id === message.id);
+                  if (idx === -1) return state;
+                  
+                  const updated = [...state.messages];
+                  updated[idx] = {
+                    ...updated[idx],
+                    timestamp: new Date(message.timestamp || Date.now()),
+                  };
+                  
+                  return { messages: updated };
+                });
+              }, 50); // 再延迟 50ms
+              return;
+            }
+            
+            // 所有 blocks 都已完成，停止流式状态
+            // 重要：使用 stopStreaming() 而不是直接 setState，以确保缓冲区内容被 flush
+            const { stopStreaming } = useMessageStore.getState();
+            stopStreaming();
+            
+            // 更新时间戳
+            useMessageStore.setState((state) => {
+              const idx = state.messages.findIndex(m => m.id === message.id);
+              if (idx === -1) return state;
+              
+              const updated = [...state.messages];
+              updated[idx] = {
+                ...updated[idx],
+                timestamp: new Date(message.timestamp || Date.now()),
+              };
+              
+              return { messages: updated };
+            });
+          }, 100); // 延迟 100ms
+        }
+        return;
       }
+
+      // 检测 AI 占位消息（空内容的 Assistant 消息）
+      if (message.role === 'Assistant' && message.content === '') {
+        startStreaming(message);
+      } else if (message.role === 'Assistant' && message.content !== '') {
+        // AI 完整消息：检查是否已存在（更新而不是新增）
+        const existingMessage = useMessageStore.getState().messages.find(m => m.id === message.id);
+        const currentStreamingId = useMessageStore.getState().streamingMessageId;
+        
+        if (existingMessage) {
+          useMessageStore.getState().upsertMessage(message);
+          // 直接停止流式状态（不依赖 finishStreaming 的复杂逻辑）
+          if (currentStreamingId === message.id) {
+            useMessageStore.setState({ 
+              isStreaming: false, 
+              streamingMessageId: null, 
+              streamingPhase: null 
+            });
+          }
+        } else {
+          // 消息不存在，正常添加（可能是离线后重连收到的历史消息）
+          ingestGroupBroadcastMessage({ currentUserId, message });
+        }
+      } else {
+        // 用户消息
+        ingestGroupBroadcastMessage({ currentUserId, message });
+      }
+
+      // 注意：AI 流式输出现在通过群组流的 delta 事件推送，不再需要单独订阅 runId 流
+      // 完整的 AI 消息会在生成完成后通过 type='message' 推送
     }).catch(() => Promise.resolve((() => {}) as any));
 
     return () => {
       unlisten.then((fn) => fn()).catch(() => {});
     };
-  }, [currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById, pushNotice]);
+  }, [currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById, pushNotice, startStreaming]);
 
   // 会话/群组切换时：绑定会话并执行增量同步
   // 每次进入群组都会与服务端同步（本地是线上的缓存，服务端主导）

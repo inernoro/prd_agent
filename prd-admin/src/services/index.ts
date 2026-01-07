@@ -133,6 +133,7 @@ import {
   updateUserStatusReal,
   unlockUserReal,
   forceExpireUserReal,
+  initializeUsersReal,
 } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
@@ -220,6 +221,7 @@ import {
   regenerateAdminGroupInviteReal,
   removeAdminGroupMemberReal,
   simulateMessageReal,
+  simulateStreamMessagesReal,
   updateAdminGapStatusReal,
   updateAdminGroupReal,
 } from '@/services/real/adminGroups';
@@ -261,6 +263,7 @@ export const updateUserDisplayName: UpdateUserDisplayNameContract = withAuth(upd
 export const unlockUser: UnlockUserContract = withAuth(unlockUserReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
 export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);
+export const initializeUsers = withAuth(initializeUsersReal);
 
 export const getOverviewStats: GetOverviewStatsContract = withAuth(getOverviewStatsReal);
 export const getTokenUsage: GetTokenUsageContract = withAuth(getTokenUsageReal);
@@ -283,6 +286,7 @@ export const generateAdminGapSummary: GenerateAdminGapSummaryContract = withAuth
 
 export const getAdminGroupMessages: GetAdminGroupMessagesContract = withAuth(getAdminGroupMessagesReal);
 export const simulateMessage: SimulateMessageContract = withAuth(simulateMessageReal);
+export const simulateStreamMessages: SimulateStreamMessagesContract = withAuth(simulateStreamMessagesReal);
 
 export const getPlatforms: GetPlatformsContract = withAuth(getPlatformsReal);
 export const createPlatform: CreatePlatformContract = withAuth(createPlatformReal);

@@ -3,13 +3,14 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName } from '@/services';
-import { CheckCircle2, Circle, KeyRound, MoreVertical, Pencil, XCircle } from 'lucide-react';
+import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate } from '@/services';
+import { CheckCircle2, Circle, KeyRound, MoreVertical, Pencil, XCircle, UserCog } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigate } from 'react-router-dom';
 import { systemDialog } from '@/lib/systemDialog';
+import { useAuthStore } from '@/stores/authStore';
 
 type UserRow = {
   userId: string;
@@ -137,6 +138,9 @@ export default function UsersPage() {
   const [nameValue, setNameValue] = useState('');
   const [nameSubmitting, setNameSubmitting] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+
+  const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
+  const { login: authLogin } = useAuthStore();
 
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
@@ -386,6 +390,48 @@ export default function UsersPage() {
     return u.isLocked === true;
   };
 
+  const onSwitchToUser = async (u: UserRow) => {
+    if (!u?.userId) return;
+    
+    const confirmed = await systemDialog.confirm({
+      title: '切换用户登录',
+      message: `确定要切换到用户 "${u.displayName}" (${u.username}) 登录吗？\n\n切换后将以该用户身份进行操作，当前管理员会话将被替换。`,
+      tone: 'neutral',
+      confirmText: '确认切换',
+      cancelText: '取消',
+    });
+    
+    if (!confirmed) return;
+    
+    setSwitchingUserId(u.userId);
+    try {
+      const res = await adminImpersonate(u.userId, 3600); // 1小时有效期
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '切换用户失败');
+        return;
+      }
+      
+      // 更新认证状态
+      authLogin(
+        {
+          userId: res.data.user.userId,
+          username: res.data.user.username,
+          displayName: res.data.user.displayName,
+          role: res.data.user.role,
+        },
+        res.data.accessToken
+      );
+      
+      // 提示并跳转到首页
+      await systemDialog.alert(`已切换到用户 "${res.data.user.displayName}" (${res.data.user.username})\n\n请注意：当前以该用户身份登录，会话有效期约 ${Math.floor(res.data.expiresIn / 60)} 分钟。`);
+      navigate('/');
+    } catch (error) {
+      await systemDialog.alert(error instanceof Error ? error.message : '切换用户时发生错误');
+    } finally {
+      setSwitchingUserId(null);
+    }
+  };
+
   const onUnlock = async (u: UserRow) => {
     if (!u?.userId) return;
     setUnlockingUserId(u.userId);
@@ -535,6 +581,54 @@ export default function UsersPage() {
     }
   };
 
+  const handleInitializeUsers = async () => {
+    const confirmed = await systemDialog.confirm({
+      title: '初始化用户',
+      message: '此操作将删除所有现有用户并创建默认管理员账号（admin/admin）和三个机器人账号。此操作不可撤销，确定继续吗？',
+      confirmText: '确定初始化',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
+    const doubleConfirmed = await systemDialog.confirm({
+      title: '二次确认',
+      message: '再次确认：您确定要删除所有用户并重新初始化吗？',
+      confirmText: '确定',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!doubleConfirmed) return;
+
+    try {
+      const res = await initializeUsers();
+      
+      if (!res.success) {
+        await systemDialog.alert({
+          title: '初始化失败',
+          message: res.error?.message || '初始化用户失败',
+          tone: 'danger',
+        });
+        return;
+      }
+
+      await systemDialog.alert({
+        title: '初始化成功',
+        message: `已删除 ${res.data.deletedCount} 个用户，创建了管理员账号（admin/admin）和 ${res.data.botUserIds.length} 个机器人账号`,
+        tone: 'neutral',
+      });
+
+      await load();
+    } catch (error) {
+      console.error('Initialize users error:', error);
+      await systemDialog.alert({
+        title: '初始化失败',
+        message: '初始化用户时发生错误',
+        tone: 'danger',
+      });
+    }
+  };
+
   return (
     <div className="h-full flex flex-col gap-6">
       <div className="flex items-end justify-between">
@@ -558,6 +652,13 @@ export default function UsersPage() {
             }}
           >
             生成邀请码
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={handleInitializeUsers}
+          >
+            初始化用户
           </Button>
         </div>
       </div>
@@ -879,6 +980,21 @@ export default function UsersPage() {
                                 }}
                               >
                                 修改密码
+                              </DropdownMenu.Item>
+
+                              <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                disabled={switchingUserId === u.userId}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  onSwitchToUser(u);
+                                }}
+                              >
+                                <UserCog size={14} />
+                                {switchingUserId === u.userId ? '切换中...' : '切换到该用户登录'}
                               </DropdownMenu.Item>
 
                               <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />

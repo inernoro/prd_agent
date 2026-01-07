@@ -124,7 +124,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     setShareOpen(true);
     setUsersLoading(true);
     try {
-      const res = await getUsers({ limit: 200 });
+      const res = await getUsers({ page: 1, pageSize: 200 });
       if (res.success && res.data?.items) {
         setUsers(res.data.items.filter((u) => u.role === 'ADMIN' && u.userId !== ws.ownerUserId));
       }

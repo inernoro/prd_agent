@@ -72,6 +72,8 @@ export interface Message {
   resendOfMessageId?: string;
   // 软删除标记（用户态收到 messageUpdated 时用于移除；正常历史/回放默认不应包含 deleted）
   isDeleted?: boolean;
+  // 流式输出状态：true 表示正在输出（用于隐藏加载动画）
+  isStreaming?: boolean;
   // 服务端时间点（用于端到端统一与首字延迟）
   serverRequestReceivedAtUtc?: Date;
   serverStartAtUtc?: Date;
@@ -79,16 +81,12 @@ export interface Message {
   serverDoneAtUtc?: Date;
   ttftMs?: number;
   totalMs?: number;
-  // User 消息字段
+  // 统一的发送者信息（User 和 Assistant 都使用）
   senderId?: string;
   senderName?: string;
   senderRole?: UserRole;
-  // Assistant 消息字段
-  assistantUserId?: string;
-  assistantDisplayName?: string;
-  assistantUsername?: string;
-  assistantAvatarUrl?: string;
-  assistantTags?: GroupMemberTag[];
+  senderAvatarUrl?: string;  // 新增：发送者头像 URL
+  senderTags?: GroupMemberTag[];  // 新增：发送者标签（如机器人标识）
 }
 
 export type MessageBlockKind = 'paragraph' | 'heading' | 'listItem' | 'codeBlock';

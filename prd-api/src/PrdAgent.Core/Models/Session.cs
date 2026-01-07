@@ -5,8 +5,8 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class Session
 {
-    /// <summary>会话唯一标识</summary>
-    public string SessionId { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>会话唯一标识（通过 IIdGenerator 生成）</summary>
+    public string SessionId { get; set; } = string.Empty;
     
     /// <summary>关联的群组ID（可为空表示个人会话）</summary>
     public string? GroupId { get; set; }
