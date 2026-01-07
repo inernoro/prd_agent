@@ -16,7 +16,7 @@ import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye }
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { extractMarkers, replaceMarkersWithImages, type ArticleMarker } from '@/lib/articleMarkerExtractor';
+import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
 import { systemDialog } from '@/lib/systemDialog';
 import type { Model } from '@/types/admin';
@@ -370,19 +370,73 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     markerRunItemsRef.current = markerRunItems;
   }, [markerRunItems]);
 
-  const rebuildMergedMarkdown = (items: MarkerRunItem[]) => {
-    // 顺序约束：replaceMarkersWithImages 会按文章中 marker 出现顺序依次替换
-    // 本页生图严格按 marker 顺序串行生成，因此只替换“前缀已完成”的 N 个 marker，避免错位
-    const ordered = [...items].sort((a, b) => a.markerIndex - b.markerIndex);
-    const urls: Array<{ url: string; alt?: string }> = [];
-    for (let i = 0; i < ordered.length; i++) {
-      const u = String(ordered[i].assetUrl || '').trim();
-      if (!u) break;
-      urls.push({ url: u, alt: `配图 ${i + 1}` });
+  const buildPreviewMarkdownWithImages = useCallback(
+    (items: MarkerRunItem[]) => {
+      const base = String(articleWithMarkers || articleContent || '');
+      if (!base) return '';
+
+      const byIndex = new Map<number, MarkerRunItem>(items.map((x) => [x.markerIndex, x]));
+      const patches: Array<{ start: number; end: number; replacement: string }> = [];
+      let changed = false;
+
+      // 关键：按 markerIndex 精准替换（允许只生成第 N 张，不依赖“前缀完成”）
+      for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        const it = byIndex.get(m.index);
+        if (!it) continue;
+
+        const url =
+          String(it.assetUrl || it.url || '').trim() ||
+          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+
+        if (url) {
+          changed = true;
+          patches.push({
+            start: m.startPos,
+            end: m.endPos,
+            replacement: `![配图 ${i + 1}](${url})`,
+          });
+          continue;
+        }
+
+        // “立刻插入”：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
+        const isGenerating = it.status === 'parsing' || it.status === 'parsed' || it.status === 'running';
+        if (isGenerating) {
+          changed = true;
+          patches.push({
+            start: m.startPos,
+            end: m.endPos,
+            replacement: `[插图] : ${m.text}\n\n> 配图 ${i + 1} 生成中...`,
+          });
+        }
+      }
+
+      if (!changed) return '';
+
+      // 从后往前替换，避免偏移
+      patches.sort((a, b) => b.start - a.start);
+      let out = base;
+      for (const p of patches) {
+        out = out.slice(0, p.start) + p.replacement + out.slice(p.end);
+      }
+      return out;
+    },
+    [articleWithMarkers, articleContent, markers]
+  );
+
+  const rebuildMergedMarkdown = useCallback(
+    (items: MarkerRunItem[]) => {
+      setArticleWithImages(buildPreviewMarkdownWithImages(items));
+    },
+    [buildPreviewMarkdownWithImages]
+  );
+
+  // markerRunItems 状态变化时：立即刷新左侧预览（支持“单条先生成”不乱序）
+  useEffect(() => {
+    if (phase === 'markers-generated' || phase === 'images-generating' || phase === 'images-generated') {
+      rebuildMergedMarkdown(markerRunItems);
     }
-    const merged = urls.length ? replaceMarkersWithImages(articleWithMarkers || articleContent, urls) : '';
-    setArticleWithImages(merged);
-  };
+  }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
   const runSingleMarker = async (markerIndex: number) => {
     if (!imageGenModel) {
@@ -580,11 +634,53 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase('images-generating');
     try {
       await runSingleMarker(markerIndex);
-      rebuildMergedMarkdown(markerRunItemsRef.current);
     } finally {
       setGenerating(false);
       const allDone = markerRunItemsRef.current.length > 0 && markerRunItemsRef.current.every((x) => x.status === 'done');
       setPhase(allDone ? 'images-generated' : 'markers-generated');
+    }
+  };
+
+  const removeMarkerFromContent = (content: string, marker: ArticleMarker): string => {
+    let start = marker.startPos;
+    let end = marker.endPos;
+
+    // 优先吃掉行尾换行；否则吃掉行首换行，避免留下空行
+    const nextTwo = content.slice(end, end + 2);
+    if (nextTwo === '\r\n') end += 2;
+    else if (content[end] === '\n' || content[end] === '\r') end += 1;
+    else if (start > 0 && (content[start - 1] === '\n' || content[start - 1] === '\r')) start -= 1;
+
+    return content.slice(0, start) + content.slice(end);
+  };
+
+  const handleDeleteMarker = async (markerIndex: number) => {
+    if (generating) return;
+    const marker = markers.find((m) => m.index === markerIndex) ?? null;
+    if (!marker) return;
+
+    const ok = await systemDialog.confirm({
+      title: '确认删除',
+      message: `确定要删除配图 ${markerIndex + 1} 吗？将同时移除文章中的对应 [插图] 标记（不可恢复）。`,
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    const current = String(articleWithMarkers || '').trim();
+    if (!current) return;
+
+    const nextArticleWithMarkers = removeMarkerFromContent(articleWithMarkers, marker);
+    const nextMarkers = extractMarkers(nextArticleWithMarkers);
+    const nextRunItems = markerRunItemsRef.current
+      .filter((x) => x.markerIndex !== markerIndex)
+      .map((x) => (x.markerIndex > markerIndex ? { ...x, markerIndex: x.markerIndex - 1 } : x));
+
+    setArticleWithMarkers(nextArticleWithMarkers);
+    setMarkers(nextMarkers);
+    setMarkerRunItems(nextRunItems);
+
+    if (nextMarkers.length === 0) {
+      setPhase('editing');
     }
   };
 
@@ -1117,6 +1213,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
                 const canShow = Boolean(src) && (it.status === 'done' || it.status === 'running');
+                const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
+                const genLabel = hasImage ? '重新生成' : '生成图片';
+                const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
                 return (
                   <div
@@ -1188,20 +1287,30 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     }}
                     className="mt-2 w-full rounded-[12px] px-3 py-2 text-[12px] outline-none resize-none prd-field"
                     style={{ minHeight: 84 }}
-                    placeholder="可编辑后右下角重新生成"
+                    placeholder="可编辑后右下角生成图片 / 重新生成"
                     disabled={generating}
                   />
 
-                  <div className="mt-2 flex items-center justify-end gap-2">
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={generating}
+                      onClick={() => void handleDeleteMarker(it.markerIndex)}
+                      title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
+                    >
+                      <Trash2 size={14} />
+                      删除
+                    </Button>
                     <Button
                       size="sm"
                       variant="secondary"
                       disabled={generating || !imageGenModel}
                       onClick={() => void handleRegenerateOne(it.markerIndex)}
-                      title="重新生成该配图（会替换左侧预览中的对应插图）"
+                      title={genTitle}
                     >
                       <Sparkles size={14} />
-                      重新生成
+                      {genLabel}
                     </Button>
                   </div>
                 </div>
