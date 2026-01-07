@@ -17,10 +17,16 @@ public class IdGenerator : IIdGenerator
     // 已废弃：所有类别统一从 1 开始，直接 INCR 即可
     // private static readonly Dictionary<string, int> CategoryStartIndex = ...
 
-    public IdGenerator(ConnectionMultiplexer redis, bool useReadableIds)
+    public IdGenerator(IConnectionMultiplexer redis, bool useReadableIds)
     {
         _redis = redis.GetDatabase();
         _useReadableIds = useReadableIds;
+    }
+
+    // 兼容历史调用方（DI 里多数仍注入 ConnectionMultiplexer）
+    public IdGenerator(ConnectionMultiplexer redis, bool useReadableIds)
+        : this((IConnectionMultiplexer)redis, useReadableIds)
+    {
     }
 
     public async Task<string> GenerateIdAsync(string category)

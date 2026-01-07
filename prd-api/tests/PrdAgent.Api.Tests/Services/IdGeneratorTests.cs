@@ -1,38 +1,37 @@
 using PrdAgent.Infrastructure.Services;
+using Moq;
 using StackExchange.Redis;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
-public class IdGeneratorTests : IDisposable
+public class IdGeneratorTests
 {
-    private readonly ConnectionMultiplexer _redis;
-    private readonly IDatabase _db;
-    private const string TestKeyPrefix = "test:prd_agent:id_seq:";
-
-    public IdGeneratorTests()
+    private static IdGenerator CreateGenerator(bool useReadableIds)
     {
-        _redis = ConnectionMultiplexer.Connect("localhost:6379");
-        _db = _redis.GetDatabase();
-    }
+        // 单元测试必须无外部依赖：这里用内存计数器模拟 Redis INCR（线程安全）
+        var sequences = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
 
-    public void Dispose()
-    {
-        // 清理测试数据
-        var server = _redis.GetServer(_redis.GetEndPoints()[0]);
-        var keys = server.Keys(pattern: $"{TestKeyPrefix}*");
-        foreach (var key in keys)
-        {
-            _db.KeyDelete(key);
-        }
-        _redis.Dispose();
+        var db = new Mock<IDatabase>(MockBehavior.Strict);
+        db.Setup(x => x.StringIncrementAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<CommandFlags>()))
+            .ReturnsAsync((RedisKey key, long value, CommandFlags _) =>
+            {
+                var k = key.ToString();
+                return sequences.AddOrUpdate(k, value, (_, current) => current + value);
+            });
+
+        var redis = new Mock<IConnectionMultiplexer>(MockBehavior.Strict);
+        redis.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object?>()))
+            .Returns(db.Object);
+
+        return new IdGenerator(redis.Object, useReadableIds);
     }
 
     [Fact]
     public async Task GenerateIdAsync_Development_ReturnsReadableId()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var id1 = await generator.GenerateIdAsync("user");
@@ -42,14 +41,14 @@ public class IdGeneratorTests : IDisposable
         // Assert
         Assert.Equal("user1", id1);
         Assert.Equal("user2", id2);
-        Assert.Equal("group0", groupId);
+        Assert.Equal("group1", groupId);
     }
 
     [Fact]
     public async Task GenerateIdAsync_Production_ReturnsGuid()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: false);
+        var generator = CreateGenerator(useReadableIds: false);
         
         // Act
         var id = await generator.GenerateIdAsync("user");
@@ -63,7 +62,7 @@ public class IdGeneratorTests : IDisposable
     public async Task GenerateIdAsync_Platform_StartsFromOne()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var id1 = await generator.GenerateIdAsync("platform");
@@ -78,7 +77,7 @@ public class IdGeneratorTests : IDisposable
     public async Task GenerateIdAsync_Model_StartsFromOne()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var id1 = await generator.GenerateIdAsync("model");
@@ -93,7 +92,7 @@ public class IdGeneratorTests : IDisposable
     public async Task GenerateIdAsync_Session_StartsFromOne()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var id1 = await generator.GenerateIdAsync("session");
@@ -108,7 +107,7 @@ public class IdGeneratorTests : IDisposable
     public async Task GenerateIdAsync_Message_StartsFromOne()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var id1 = await generator.GenerateIdAsync("message");
@@ -123,7 +122,7 @@ public class IdGeneratorTests : IDisposable
     public async Task GenerateIdAsync_Robot_StartsFromOne()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var id1 = await generator.GenerateIdAsync("robot");
@@ -138,7 +137,7 @@ public class IdGeneratorTests : IDisposable
     public async Task GenerateIdAsync_DifferentCategories_IndependentSequences()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         
         // Act
         var userId1 = await generator.GenerateIdAsync("user");
@@ -151,17 +150,17 @@ public class IdGeneratorTests : IDisposable
         // Assert
         Assert.Equal("user1", userId1);
         Assert.Equal("robot1", robotId1);
-        Assert.Equal("group0", groupId1);
+        Assert.Equal("group1", groupId1);
         Assert.Equal("user2", userId2);
         Assert.Equal("robot2", robotId2);
-        Assert.Equal("group1", groupId2);
+        Assert.Equal("group2", groupId2);
     }
 
     [Fact]
     public async Task GenerateIdAsync_Concurrent_ThreadSafe()
     {
         // Arrange
-        var generator = new IdGenerator(_redis, useReadableIds: true);
+        var generator = CreateGenerator(useReadableIds: true);
         var tasks = new List<Task<string>>();
         
         // Act
