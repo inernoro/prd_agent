@@ -23,11 +23,18 @@ description: API 协议/错误码/角色等全局契约
 | INVALID_FORMAT | 400 | 格式不支持 |
 | CONTENT_EMPTY | 400 | 内容为空 |
 | DOCUMENT_TOO_LARGE | 413 | 文档超10MB |
+| DOCUMENT_NOT_FOUND | 404 | 文档不存在（或无权/已过期的统一提示） |
 | SESSION_NOT_FOUND | 404 | 会话不存在 |
 | SESSION_EXPIRED | 410 | 会话已过期 |
 | RATE_LIMITED | 429 | 限流 |
+| UNAUTHORIZED | 401 | 未授权（未登录/Token无效/过期） |
 | PERMISSION_DENIED | 403 | 无权限 |
 | LLM_ERROR | 502 | LLM调用失败 |
+| INTERNAL_ERROR | 500 | 服务器内部错误 |
+
+> 说明：
+> - 以上为“全局常用码”。具体业务域（群组/附件/评论/生图等）可在对应模块文档中扩展，但应复用同一响应结构。
+> - 代码侧存在更细粒度错误码（例如账号锁定、邀请码无效、附件过大、PRD评论不存在、生图 run 不存在等），需要时再下沉到 SRS 的模块章节维护。
 
 ## 角色枚举
 
