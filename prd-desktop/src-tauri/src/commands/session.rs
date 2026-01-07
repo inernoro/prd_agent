@@ -128,6 +128,18 @@ fn handle_sse_text(
         let raw_event = buf[..idx].to_string();
         *buf = buf[idx + 2..].to_string();
 
+        // 检测是否为 keep-alive 注释行（如 ": keepalive"）
+        let is_keepalive = raw_event.lines().any(|line| {
+            let trimmed = line.trim_end_matches('\r').trim();
+            trimmed.starts_with(':')
+        });
+
+        if is_keepalive {
+            // 发送 keepalive 心跳事件到前端（用于重置心跳计时器）
+            let _ = app.emit(channel, serde_json::json!({ "type": "keepalive" }));
+            continue;
+        }
+
         let mut data_lines: Vec<String> = Vec::new();
         for raw_line in raw_event.lines() {
             // 保留行尾 \r 的兼容（Windows CRLF）

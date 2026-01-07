@@ -1,4 +1,4 @@
-import { memo, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { invoke, listen } from '../../lib/tauri';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -10,6 +10,7 @@ import SystemNoticeOverlay from '../Feedback/SystemNoticeOverlay';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
 import type { DocCitation } from '../../types';
+import { useGroupStreamReconnect } from '../../hooks/useGroupStreamReconnect';
 
 // 阶段提示文案会造成重复状态块（且与“AI 回复气泡”割裂），这里不再使用。
 
@@ -29,30 +30,47 @@ function ChatContainerInner() {
   const getLastGroupSeq = useSessionStore((s) => s.getLastGroupSeq);
   const setLastGroupSeq = useSessionStore((s) => s.setLastGroupSeq);
 
+  // 连接状态（用于 UI 显示）
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('disconnected');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
   // 旧的 message-chunk 监听器已删除：所有流式输出已统一到群组流的 delta 事件
 
-  // 订阅群消息广播（SSE 由 Rust 消费并 emit 为 group-message）
-  // 使用 localMaxSeq 作为断点续传游标
-  useEffect(() => {
-    if (!activeGroupId) {
-      // 退出群上下文：停止订阅，避免后台残留连接
-      invoke('cancel_stream', { kind: 'group' }).catch(() => {});
-      return;
+  // 订阅群消息广播（带断线重连机制）
+  const afterSeq = localMaxSeq ?? getLastGroupSeq(activeGroupId || '') ?? 0;
+  const { resetHeartbeat, updateSeq } = useGroupStreamReconnect({
+    groupId: activeGroupId,
+    afterSeq,
+    onConnectionChange: (status) => {
+      setConnectionStatus(status);
+      // 连接成功时清除错误信息
+      if (status === 'connected') {
+        setConnectionError(null);
+      }
+      // 只在真正断线重连时才通知（避免初始连接时的噪音）
+      if (status === 'reconnecting' && connectionStatus === 'connected') {
+        pushNotice('连接中断，正在重连...', { level: 'warning', ttlMs: 0, signature: 'group-stream-reconnecting' });
+      } else if (status === 'connected' && connectionStatus === 'reconnecting') {
+        pushNotice('连接已恢复', { level: 'success', ttlMs: 2000, signature: 'group-stream-connected' });
+      }
     }
-
-    // 优先使用本地 seq 边界，其次使用 sessionStore 的记录（兼容过渡）
-    const afterSeq = localMaxSeq ?? getLastGroupSeq(activeGroupId) ?? 0;
-    invoke('subscribe_group_messages', { groupId: activeGroupId, afterSeq }).catch(() => {});
-  }, [activeGroupId, localMaxSeq, getLastGroupSeq]);
+  });
 
   useEffect(() => {
     const unlisten = listen<any>('group-message', (event) => {
       const p = event.payload || {};
+      
+      // 收到任何消息（除了 error）都重置心跳
+      if (p?.type && p.type !== 'error') {
+        resetHeartbeat();
+      }
+      
       if (p?.type === 'error') {
-        // 若当前已不在任何群上下文（例如刚解散/退出），忽略订阅错误提示，避免“可预期噪声”
+        // 若当前已不在任何群上下文（例如刚解散/退出），忽略订阅错误提示，避免"可预期噪声"
         if (!useSessionStore.getState().activeGroupId) return;
         if (p?.errorMessage) {
-          pushNotice(`群消息订阅失败：${String(p.errorMessage)}`, { level: 'warning', ttlMs: 10_000, signature: `group-stream-error:${String(p.errorMessage)}` });
+          // 将错误信息显示在标题栏，而不是 Toast
+          setConnectionError(String(p.errorMessage));
         }
         return;
       }
@@ -190,6 +208,8 @@ function ChatContainerInner() {
       // 注意：messageUpdated 事件不依赖 seq 递增，不更新 lastGroupSeq
       if (p.type === 'message' && gid && Number.isFinite(seq) && seq > 0) {
         setLastGroupSeq(gid, seq);
+        // 更新重连 hook 的 seq（用于下次断线重连）
+        updateSeq(seq);
       }
 
       const message = {
@@ -309,7 +329,7 @@ function ChatContainerInner() {
     return () => {
       unlisten.then((fn) => fn()).catch(() => {});
     };
-  }, [currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById, pushNotice, startStreaming]);
+  }, [currentRole, ingestGroupBroadcastMessage, currentUserId, setLastGroupSeq, getLastGroupSeq, removeMessageById, pushNotice, startStreaming, resetHeartbeat, updateSeq]);
 
   // 会话/群组切换时：绑定会话并执行增量同步
   // 每次进入群组都会与服务端同步（本地是线上的缓存，服务端主导）
@@ -352,7 +372,7 @@ function ChatContainerInner() {
       {/* 群标题栏：右上角打开群信息侧边栏 */}
       {activeGroupId ? (
         <div className="h-12 px-4 flex items-center justify-between border-b ui-glass-bar">
-          <div className="min-w-0">
+          <div className="min-w-0 flex items-center gap-3">
             <button
               type="button"
               className="text-sm font-semibold text-text-primary truncate text-left hover:text-primary-600 dark:hover:text-primary-300"
@@ -362,17 +382,74 @@ function ChatContainerInner() {
               {groups.find((g) => g.groupId === activeGroupId)?.groupName || '群组'}
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => openGroupDrawer(activeGroupId)}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
-            title="群信息"
-            aria-label="群信息"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 12h.01M19 12h.01M5 12h.01" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 错误信息（如果有） */}
+            {connectionError && (
+              <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400 select-none">
+                <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span className="truncate max-w-xs">{connectionError}</span>
+                <button
+                  type="button"
+                  onClick={() => setConnectionError(null)}
+                  className="shrink-0 hover:opacity-70"
+                  title="关闭"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            
+            {/* 连接状态指示器（常驻） */}
+            <div className="flex items-center gap-1.5 text-xs select-none shrink-0" title={
+              connectionStatus === 'connected' ? '连接正常' :
+              connectionStatus === 'connecting' ? '连接中...' :
+              connectionStatus === 'reconnecting' ? '重连中...' :
+              '未连接'
+            }>
+              {connectionStatus === 'connected' && (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-green-500 dark:bg-green-400"></div>
+                  <span className="text-text-tertiary">已连接</span>
+                </>
+              )}
+              {connectionStatus === 'connecting' && (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-blue-500 dark:bg-blue-400 animate-pulse"></div>
+                  <span className="text-blue-600 dark:text-blue-400">连接中</span>
+                </>
+              )}
+              {connectionStatus === 'reconnecting' && (
+                <>
+                  <svg className="w-3 h-3 text-yellow-600 dark:text-yellow-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-yellow-600 dark:text-yellow-400">重连中</span>
+                </>
+              )}
+              {connectionStatus === 'disconnected' && (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-red-500 dark:bg-red-400"></div>
+                  <span className="text-red-600 dark:text-red-400">未连接</span>
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => openGroupDrawer(activeGroupId)}
+              className="h-9 w-9 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
+              title="群信息"
+              aria-label="群信息"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 12h.01M19 12h.01M5 12h.01" />
+              </svg>
+            </button>
+          </div>
         </div>
       ) : null}
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
