@@ -933,56 +933,53 @@ export default function PromptStagesPage() {
                     className="w-full text-left px-3 py-3 outline-none"
                     title={normalizeText(s.title).trim() || `提示词 ${s.order}`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span
-                        draggable
-                        onDragStart={(e) => {
-                          e.stopPropagation();
-                          try {
-                            e.dataTransfer.setData('text/plain', s.promptKey);
-                            e.dataTransfer.effectAllowed = 'move';
-                          } catch {
-                            // ignore
-                          }
-                        }}
-                        className="shrink-0 inline-flex items-center justify-center font-extrabold"
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 10,
-                          color: active ? '#1a1206' : 'var(--text-secondary)',
-                          background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
-                          border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
-                          boxShadow: active ? 'var(--shadow-gold)' : 'none',
-                          cursor: 'grab',
-                        }}
-                        title="拖拽排序"
-                      >
-                        {s.order}
-                      </span>
-                      <div className="text-sm font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
-                        {normalizeText(s.title).trim() || `提示词 ${s.order}`}
+                    <div className="flex items-start justify-between gap-3 min-w-0">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <span
+                          draggable
+                          onDragStart={(e) => {
+                            e.stopPropagation();
+                            try {
+                              e.dataTransfer.setData('text/plain', s.promptKey);
+                              e.dataTransfer.effectAllowed = 'move';
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          className="shrink-0 inline-flex items-center justify-center font-extrabold"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 10,
+                            color: active ? '#1a1206' : 'var(--text-secondary)',
+                            background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
+                            border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
+                            boxShadow: active ? 'var(--shadow-gold)' : 'none',
+                            cursor: 'grab',
+                          }}
+                          title="拖拽排序"
+                        >
+                          {s.order}
+                        </span>
+                        <div className="text-sm font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
+                          {normalizeText(s.title).trim() || `提示词 ${s.order}`}
+                        </div>
                       </div>
-                    </div>
-                    <div className="mt-1 text-[11px] break-words whitespace-normal" style={{ color: 'var(--text-muted)' }}>
-                      {normalizeText(s.promptTemplate).trim()
-                        ? normalizeText(s.promptTemplate).trim().replace(/\s+/g, ' ').slice(0, 120)
-                        : '（提示词模板为空：仅切换标题，不会注入结构要求）'}
+
+                      <button
+                        type="button"
+                        className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          goTest({ role: roleEnum, promptKey: s.promptKey });
+                        }}
+                        title="跳转到 AI 对话页测试该提示词（上传 PRD 后一键运行）"
+                      >
+                        测试
+                      </button>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    className="absolute bottom-2 right-2 h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
-                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      goTest({ role: roleEnum, promptKey: s.promptKey });
-                    }}
-                    title="跳转到 AI 对话页测试该提示词（上传 PRD 后一键运行）"
-                  >
-                    测试
-                  </button>
                 </div>
               );
             })}

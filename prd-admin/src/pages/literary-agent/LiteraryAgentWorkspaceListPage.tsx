@@ -11,6 +11,8 @@ import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -20,7 +22,8 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
-function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 60) {
+
+function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
   const raw = ws.articleContent ?? ws.articleContentWithMarkers ?? '';
   let s = String(raw ?? '').trim();
   if (!s) return '';
@@ -28,7 +31,7 @@ function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 60) {
   // 文学创作 Agent 的文章配图标记：`[插图] : xxx`；列表预览应去掉标记与占位文案
   s = s.replace(/^\s*\[插图\]\s*:\s*.*$/gm, '');
   s = s.replace(/^\s*>\s*配图.*$/gm, '');
-  s = s.replace(/\s+/g, ' ').trim();
+  s = s.trim();
 
   if (s.length <= maxChars) return s;
   return `${s.slice(0, maxChars)}…`;
@@ -122,7 +125,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const grid = (
-    <div className="w-full max-w-[1080px] mx-auto space-y-3">
+    <div className="w-full max-w-[1440px] mx-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {items.map((ws) => (
         <Card key={ws.id} className="p-0 overflow-hidden">
           <div
@@ -133,6 +136,7 @@ export default function LiteraryAgentWorkspaceListPage() {
               'group relative cursor-pointer select-none',
               'transition-colors',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
+              'flex flex-col h-full',
             ].join(' ')}
             onClick={() => navigate(`/literary-agent/${ws.id}`)}
             onKeyDown={(e) => {
@@ -142,77 +146,114 @@ export default function LiteraryAgentWorkspaceListPage() {
               }
             }}
           >
-            <div className="flex items-start gap-4 p-4 pb-14">
-              <div
-                className="w-12 h-12 rounded flex items-center justify-center flex-shrink-0"
-                style={{ background: 'var(--accent-primary-alpha)' }}
-              >
-                <FileText size={24} style={{ color: 'var(--accent-primary)' }} />
-              </div>
-
-              <div className="flex-1 min-w-0 text-left">
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            {/* 上栏：标题区 */}
+            <div className="p-3 pb-1 flex-shrink-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 flex items-center gap-2">
+                  <FileText size={18} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                  <div className="font-semibold truncate text-[15px]" style={{ color: 'var(--text-primary)' }}>
                     {ws.title}
                   </div>
-                  <div className="text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                    更新于 {formatDate(ws.updatedAt)}
-                  </div>
                 </div>
 
-                <div className="mt-2 text-[12px] leading-5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
-                  {getArticlePreviewText(ws) || '（暂无内容）'}
+                <div
+                  className={[
+                    'flex items-center justify-end gap-2 flex-shrink-0',
+                    'opacity-0 translate-y-[-1px] pointer-events-none',
+                    'transition-all duration-150',
+                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto',
+                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto',
+                  ].join(' ')}
+                >
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/literary-agent/${ws.id}`);
+                    }}
+                    title="编辑"
+                  >
+                    <SquarePen size={14} />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onRename(ws);
+                    }}
+                    title="重命名"
+                  >
+                    <Pencil size={14} />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onDelete(ws);
+                    }}
+                    title="删除"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
                 </div>
               </div>
             </div>
 
-            {/* hover/focus-within：底部浮出操作条；按钮点击必须阻止冒泡避免触发“进入卡片” */}
-            <div
-              className={[
-                'absolute left-4 right-4 bottom-3 flex items-center justify-start gap-2',
-                'opacity-0 translate-y-1 pointer-events-none',
-                'transition-all duration-150',
-                'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto',
-                'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto',
-              ].join(' ')}
-            >
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/literary-agent/${ws.id}`);
+            {/* 中栏：摘要区 */}
+            <div className="px-3 pb-1 flex-1 min-h-0 overflow-hidden">
+              <div
+                className="h-full overflow-auto border rounded-[8px] text-[12px] leading-5 flex flex-col"
+                style={{
+                  borderColor: 'var(--border-subtle)',
+                  background: 'rgba(255,255,255,0.02)',
+                  color: 'var(--text-secondary)',
                 }}
-                title="编辑"
               >
-                <SquarePen size={14} />
-                编辑
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void onRename(ws);
-                }}
-                title="重命名"
-              >
-                <Pencil size={14} />
-                重命名
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void onDelete(ws);
-                }}
-                title="删除"
-              >
-                <Trash2 size={14} />
-                删除
-              </Button>
+                <div className="p-3 flex-1">
+                  {getArticlePreviewText(ws) ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{getArticlePreviewText(ws)}</ReactMarkdown>
+                  ) : (
+                    <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>
+                  )}
+                </div>
+                {formatDate(ws.updatedAt) && (
+                  <div
+                    className="px-3 py-2 text-right text-[11px] border-t"
+                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                  >
+                    更新于 {formatDate(ws.updatedAt)}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* 下栏：图片区，仅在有图片时显示 */}
+            {ws.coverAssets && ws.coverAssets.length > 0 && (
+              <div className="px-3 pb-3 pt-1 flex-shrink-0">
+                <div className="grid grid-cols-3 gap-2">
+                  {ws.coverAssets.slice(0, 3).map((a, idx) => (
+                    <div
+                      key={a.id}
+                      className="relative overflow-hidden rounded-[8px] border"
+                      style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}
+                    >
+                      <div className="aspect-[4/3]">
+                        <img
+                          src={a.url}
+                          alt={ws.title ? `${ws.title}-cover-${idx + 1}` : `cover-${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          draggable={false}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </Card>
       ))}

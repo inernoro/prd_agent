@@ -39,6 +39,13 @@ type UiMessage = {
 
 type RoleEnum = 'PM' | 'DEV' | 'QA';
 
+function parseLegacyPromptOrder(promptKey: string): number | null {
+  const m = String(promptKey || '').match(/(?:^|-)prompt-(\d+)(?:-|$)/i) || String(promptKey || '').match(/legacy-prompt-(\d+)-/i);
+  if (!m?.[1]) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
 function SegmentedTabs<T extends string>(props: {
   items: Array<{ key: T; label: string }>;
   value: T;
@@ -76,6 +83,19 @@ function SegmentedTabs<T extends string>(props: {
         );
       })}
     </div>
+  );
+}
+
+function StreamingDot() {
+  return (
+    <span
+      className="inline-flex items-center align-middle ml-1"
+      style={{ width: '1em', height: '1em', verticalAlign: 'middle' }}
+      aria-label="流式输出中"
+      title="流式输出中"
+    >
+      <span className="inline-block rounded-full border-2 border-current border-t-transparent animate-spin" style={{ width: '100%', height: '100%' }} />
+    </span>
   );
 }
 
@@ -291,6 +311,7 @@ export default function AiChatPage() {
 
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string>('');
   const abortRef = useRef<AbortController | null>(null);
 
   const [composer, setComposer] = useState('');
@@ -334,6 +355,21 @@ export default function AiChatPage() {
   const [testPrompts, setTestPrompts] = useState<Array<{ promptKey: string; role: RoleEnum; title: string }>>([]);
   const [testMsg, setTestMsg] = useState<string | null>(null);
   const [testErr, setTestErr] = useState<string | null>(null);
+
+  const promptsForTestRole = useMemo(() => {
+    const list = Array.isArray(testPrompts) ? testPrompts : [];
+    const filtered = list.filter((x) => x.role === testRole);
+    return filtered
+      .slice()
+      .sort((a, b) => {
+        const oa = parseLegacyPromptOrder(a.promptKey);
+        const ob = parseLegacyPromptOrder(b.promptKey);
+        if (oa != null && ob != null && oa !== ob) return oa - ob;
+        if (oa != null && ob == null) return -1;
+        if (oa == null && ob != null) return 1;
+        return String(a.title || a.promptKey).localeCompare(String(b.title || b.promptKey));
+      });
+  }, [testPrompts, testRole]);
 
   useEffect(() => {
     if (!isTestMode) return;
@@ -454,6 +490,7 @@ export default function AiChatPage() {
     abortRef.current?.abort();
     abortRef.current = null;
     setIsStreaming(false);
+    setStreamingAssistantMessageId('');
   };
 
   const removeRoundByUserMessageId = useCallback((list: UiMessage[], targetUserMessageId: string) => {
@@ -582,6 +619,7 @@ export default function AiChatPage() {
 
     if (t === 'start') {
       const id = String(evt.messageId || `assistant-${Date.now()}`);
+      setStreamingAssistantMessageId(id);
       setMessages((prev) => {
         if (prev.some((m) => m.id === id)) return prev;
         return prev.concat({
@@ -1018,6 +1056,7 @@ export default function AiChatPage() {
           ) : (
             messages.map((m) => {
               const isUser = m.role === 'User';
+              const isThisStreaming = !isUser && !!streamingAssistantMessageId && m.id === streamingAssistantMessageId;
               return (
                 <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                   <div
@@ -1057,6 +1096,12 @@ export default function AiChatPage() {
                     ) : (
                       <div className="text-sm">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || ''}</ReactMarkdown>
+                        {isThisStreaming ? (
+                          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                            输出中
+                            <StreamingDot />
+                          </div>
+                        ) : null}
                       </div>
                     )}
                     {typeof m.groupSeq === 'number' && m.groupSeq > 0 ? (
@@ -1314,8 +1359,8 @@ export default function AiChatPage() {
             </div>
           ) : null}
 
-          <div className="mt-3 flex flex-wrap gap-3">
-            <div className="min-w-0 flex-1" style={{ minWidth: 360 }}>
+          <div className="mt-3 grid gap-3">
+            <div className="min-w-0">
               <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>角色</div>
               <div className="mt-2">
                 <SegmentedTabs<RoleEnum>
@@ -1334,33 +1379,62 @@ export default function AiChatPage() {
               </div>
             </div>
 
-            <div className="min-w-0 w-full" style={{ maxWidth: 520 }}>
+            <div className="min-w-0">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>提示词（promptKey）</div>
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>提示词（title）</div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  {testPromptsLoading ? '加载中...' : `${testPrompts.filter((x) => x.role === testRole).length} 个`}
+                  {testPromptsLoading ? '加载中...' : `${promptsForTestRole.length} 个`}
                 </div>
               </div>
-              <select
-                value={testPromptKey}
-                onChange={(e) => setTestPromptKey(e.target.value)}
-                className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none"
+              <div
+                className="mt-2 inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
                 style={{
-                  border: '1px solid var(--border-subtle)',
-                  background: 'var(--bg-input)',
-                  color: 'var(--text-primary)',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.10)',
                 }}
               >
-                <option value="">（不选择：仅按系统提示词回答）</option>
-                {testPrompts
-                  .filter((x) => x.role === testRole)
-                  .sort((a, b) => a.title.localeCompare(b.title))
-                  .map((x) => (
-                    <option key={x.promptKey} value={x.promptKey}>
-                      {x.title || x.promptKey}
-                    </option>
-                  ))}
-              </select>
+                <button
+                  type="button"
+                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                  style={{
+                    color: !testPromptKey ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                    background: !testPromptKey ? 'rgba(250,204,21,0.10)' : 'transparent',
+                    border: !testPromptKey ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                    opacity: testPromptsLoading ? 0.6 : 1,
+                    cursor: testPromptsLoading ? 'not-allowed' : 'pointer',
+                  }}
+                  disabled={testPromptsLoading}
+                  aria-pressed={!testPromptKey}
+                  onClick={() => setTestPromptKey('')}
+                  title="不选择：仅按系统提示词回答"
+                >
+                  （不选择）
+                </button>
+                {promptsForTestRole.map((x) => {
+                  const active = x.promptKey === testPromptKey;
+                  const label = x.title || x.promptKey;
+                  return (
+                    <button
+                      key={x.promptKey}
+                      type="button"
+                      className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center shrink-0 whitespace-nowrap"
+                      style={{
+                        color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                        background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                        border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                        opacity: testPromptsLoading ? 0.6 : 1,
+                        cursor: testPromptsLoading ? 'not-allowed' : 'pointer',
+                      }}
+                      disabled={testPromptsLoading}
+                      aria-pressed={active}
+                      onClick={() => setTestPromptKey(x.promptKey)}
+                      title={`${label}${x.promptKey ? ` — ${x.promptKey}` : ''}`}
+                    >
+                      <span className="max-w-[200px] truncate">{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
               <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 提示：若从 /prompts 点击“测试”跳转，会自动带入 role/promptKey。
               </div>
