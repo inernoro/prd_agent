@@ -61,6 +61,7 @@ type ModelForm = {
   group: string;
   enabled: boolean;
   enablePromptCache: boolean;
+  maxTokens: string;
 };
 
 const defaultPlatformForm: PlatformForm = {
@@ -82,6 +83,7 @@ const defaultModelForm: ModelForm = {
   group: '',
   enabled: true,
   enablePromptCache: true,
+  maxTokens: '',
 };
 
 
@@ -810,11 +812,17 @@ export default function ModelManagePage() {
       group: m.group || '',
       enabled: m.enabled,
       enablePromptCache: typeof (m as any).enablePromptCache === 'boolean' ? (m as any).enablePromptCache : true,
+      maxTokens: (m as any).maxTokens == null ? '' : String((m as any).maxTokens),
     });
     setModelDialogOpen(true);
   };
 
   const submitModel = async () => {
+    const maxTokensRaw = String(modelForm.maxTokens ?? '').trim();
+    const maxTokensNum = maxTokensRaw ? Number(maxTokensRaw) : NaN;
+    const maxTokens =
+      Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.floor(maxTokensNum) : null;
+
     if (editingModel) {
       const res = await updateModel(editingModel.id, {
         name: modelForm.name,
@@ -823,6 +831,7 @@ export default function ModelManagePage() {
         group: modelForm.group || undefined,
         enabled: modelForm.enabled,
         enablePromptCache: modelForm.enablePromptCache,
+        maxTokens,
       });
       if (!res.success) return;
     } else {
@@ -833,6 +842,7 @@ export default function ModelManagePage() {
         group: modelForm.group || undefined,
         enabled: modelForm.enabled,
         enablePromptCache: modelForm.enablePromptCache,
+        maxTokens,
       });
       if (!res.success) return;
     }
@@ -2074,6 +2084,28 @@ export default function ModelManagePage() {
               />
               Prompt Cache（模型级）
             </label>
+
+            <div className="grid gap-2">
+              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                Max Tokens（可选）
+                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  留空使用默认 4096；将透传到请求的 max_tokens
+                </span>
+              </div>
+              <input
+                value={modelForm.maxTokens}
+                onChange={(e) => setModelForm((s) => ({ ...s, maxTokens: e.target.value }))}
+                className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={inputStyle}
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                name="model-max-tokens"
+                autoComplete="off"
+                placeholder="4096"
+              />
+            </div>
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="secondary" size="sm" onClick={() => setModelDialogOpen(false)}>

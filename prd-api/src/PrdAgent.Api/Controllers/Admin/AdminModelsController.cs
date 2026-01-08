@@ -116,6 +116,7 @@ public class AdminModelsController : ControllerBase
             .Project(m => m.Priority)
             .FirstOrDefaultAsync();
 
+        var reqMaxTokens = request.MaxTokens.HasValue && request.MaxTokens.Value > 0 ? request.MaxTokens : null;
         var model = new LLMModel
         {
             Id = await _idGenerator.GenerateIdAsync("model"),
@@ -128,6 +129,7 @@ public class AdminModelsController : ControllerBase
             Timeout = request.Timeout,
             MaxRetries = request.MaxRetries,
             MaxConcurrency = request.MaxConcurrency,
+            MaxTokens = reqMaxTokens,
             Enabled = request.Enabled,
             Priority = request.Priority ?? maxPriority + 1,
             Remark = request.Remark,
@@ -160,6 +162,7 @@ public class AdminModelsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_MODEL", "模型名称已存在"));
         }
 
+        var reqMaxTokens = request.MaxTokens.HasValue && request.MaxTokens.Value > 0 ? request.MaxTokens : null;
         var update = Builders<LLMModel>.Update
             .Set(m => m.Name, request.Name)
             .Set(m => m.ModelName, request.ModelName)
@@ -169,6 +172,7 @@ public class AdminModelsController : ControllerBase
             .Set(m => m.Timeout, request.Timeout)
             .Set(m => m.MaxRetries, request.MaxRetries)
             .Set(m => m.MaxConcurrency, request.MaxConcurrency)
+            .Set(m => m.MaxTokens, reqMaxTokens)
             .Set(m => m.Enabled, request.Enabled)
             .Set(m => m.EnablePromptCache, request.EnablePromptCache)
             .Set(m => m.Remark, request.Remark)
@@ -671,6 +675,7 @@ public class AdminModelsController : ControllerBase
         m.Timeout,
         m.MaxRetries,
         m.MaxConcurrency,
+        maxTokens = m.MaxTokens,
         m.Enabled,
         m.Priority,
         m.IsMain,
@@ -754,6 +759,7 @@ public class CreateModelRequest
     public int Timeout { get; set; } = 360000;
     public int MaxRetries { get; set; } = 3;
     public int MaxConcurrency { get; set; } = 5;
+    public int? MaxTokens { get; set; }
     public bool Enabled { get; set; } = true;
     public bool EnablePromptCache { get; set; } = true;
     public int? Priority { get; set; }
@@ -771,6 +777,7 @@ public class UpdateModelRequest
     public int Timeout { get; set; } = 360000;
     public int MaxRetries { get; set; } = 3;
     public int MaxConcurrency { get; set; } = 5;
+    public int? MaxTokens { get; set; }
     public bool Enabled { get; set; } = true;
     public bool EnablePromptCache { get; set; } = true;
     public int? Priority { get; set; }

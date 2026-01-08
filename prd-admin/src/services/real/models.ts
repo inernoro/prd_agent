@@ -34,6 +34,7 @@ export const createModelReal: CreateModelContract = async (input: CreateModelInp
       group: input.group ?? null,
       enabled: input.enabled,
       enablePromptCache: typeof input.enablePromptCache === 'boolean' ? input.enablePromptCache : true,
+      maxTokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
     },
   });
 
@@ -52,6 +53,7 @@ export const updateModelReal: UpdateModelContract = async (id: string, input: Up
 
   const m = current.data as any;
 
+  const hasMaxTokens = 'maxTokens' in (input as any);
   const body: Record<string, unknown> = {
     name: input.name ?? m.name,
     modelName: input.modelName ?? m.modelName,
@@ -61,6 +63,7 @@ export const updateModelReal: UpdateModelContract = async (id: string, input: Up
     timeout: m.timeout ?? 360000,
     maxRetries: m.maxRetries ?? 3,
     maxConcurrency: m.maxConcurrency ?? 5,
+    maxTokens: hasMaxTokens ? ((input as any).maxTokens ?? null) : (m.maxTokens ?? null),
     enabled: typeof input.enabled === 'boolean' ? input.enabled : m.enabled,
     enablePromptCache:
       typeof (input as any).enablePromptCache === 'boolean'

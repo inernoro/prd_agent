@@ -13,6 +13,7 @@ namespace PrdAgent.Infrastructure.Services;
 
 public class ModelDomainService : IModelDomainService
 {
+    private const int DefaultMaxTokens = 4096;
     private readonly MongoDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
@@ -66,9 +67,10 @@ public class ModelDomainService : IModelDomainService
         httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
 
         var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true);
+        var maxTokens = model.MaxTokens.HasValue && model.MaxTokens.Value > 0 ? model.MaxTokens.Value : DefaultMaxTokens;
         if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
         {
-            return new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, platformId, platformName);
+            return new ClaudeClient(httpClient, apiKey, model.ModelName, maxTokens, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, platformId, platformName);
         }
 
         // 默认 OpenAI 兼容：按 baseURL 规则选择 chat/completions 的最终调用方式
@@ -83,7 +85,7 @@ public class ModelDomainService : IModelDomainService
             httpClient,
             apiKey,
             model.ModelName,
-            1024,
+            maxTokens,
             0.2,
             enablePromptCache,
             _logWriter,

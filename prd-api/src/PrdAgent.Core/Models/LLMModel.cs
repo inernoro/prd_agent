@@ -58,6 +58,12 @@ public class LLMModel
     
     /// <summary>模型级最大并发数</summary>
     public int MaxConcurrency { get; set; } = 5;
+
+    /// <summary>
+    /// 最大输出 Token 数（透传到大模型请求的 max_tokens/MaxTokens）
+    /// - null 表示使用服务端默认值（当前为 4096）
+    /// </summary>
+    public int? MaxTokens { get; set; }
     
     /// <summary>是否启用</summary>
     public bool Enabled { get; set; } = true;
