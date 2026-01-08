@@ -10,6 +10,8 @@ export type CreateModelInput = {
   enabled: boolean;
   group?: string;
   enablePromptCache?: boolean;
+  /** 透传到大模型请求的 max_tokens；不传/传 null 表示使用后端默认 */
+  maxTokens?: number | null;
 };
 
 export type UpdateModelInput = Partial<CreateModelInput> & {

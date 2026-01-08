@@ -50,6 +50,8 @@ export type Model = {
   isImageGen?: boolean;
   group?: string;
   enablePromptCache: boolean;
+  /** 透传到大模型请求的 max_tokens；null/undefined 表示使用后端默认（当前 4096） */
+  maxTokens?: number | null;
   /** 优先级：越小越靠前（用于拖拽排序） */
   priority?: number;
   // 后端模型统计（真实数据；用于模型管理页显示“请求次数/平均耗时”等）
