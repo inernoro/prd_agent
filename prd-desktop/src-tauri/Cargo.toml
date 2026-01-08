@@ -30,6 +30,16 @@ futures = "0.3"
 thiserror = "2.0"
 lazy_static = "1.5"
 uuid = { version = "1.11", features = ["v4", "serde"] }
+# NOTE: Pin transitive dependency to avoid pulling crates that require `edition2024`
+# (CI Cargo is currently 1.82.x).
+dlopen2 = "=0.8.0"
+dlopen2_derive = "=0.4.1"
+# NOTE: tree_magic_mini 3.2.2 requires edition 2024; wl-clipboard-rs pulls it in.
+tree_magic_mini = "=3.2.0"
+
+[patch.crates-io]
+# Patch upstream to control its transitive deps (avoid crates requiring edition2024 on CI Cargo 1.82).
+tauri-plugin-clipboard-manager = { path = "vendor/tauri-plugin-clipboard-manager" }
 
 [features]
 default = ["custom-protocol"]
