@@ -15,7 +15,7 @@ export function PageHeader(props: PageHeaderProps) {
 
   return (
     <div
-      className="rounded-[20px] p-6 transition-all duration-200"
+      className="rounded-[20px] p-5 transition-all duration-200"
       style={{
         backgroundColor: 'var(--bg-elevated)',
         backgroundImage:
@@ -28,30 +28,30 @@ export function PageHeader(props: PageHeaderProps) {
         boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
       }}
     >
-      <div className="flex items-start justify-between gap-6">
-        {/* 左侧：标题和描述 */}
-        <div className="min-w-0">
-          <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
-            {title}
-          </div>
-          {description && (
-            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              {description}
+      <div className="flex items-center justify-between gap-6">
+        {/* 左侧：标题、描述和切换按钮 */}
+        <div className="min-w-0 flex items-center gap-4">
+          <div className="min-w-0">
+            <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
+              {title}
             </div>
-          )}
-        </div>
+            {description && (
+              <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                {description}
+              </div>
+            )}
+          </div>
 
-        {/* 中间：切换按钮（如果有） */}
-        {tabs && tabs.length > 0 && (
-          <div className="flex-1 flex justify-center items-center">
+          {/* 切换按钮：紧跟标题右侧，更紧凑 */}
+          {tabs && tabs.length > 0 && (
             <div
-              className="inline-flex items-center p-1.5 rounded-[14px] w-fit"
+              className="inline-flex items-center p-1 rounded-[12px]"
               style={{
-                background: 'rgba(0, 0, 0, 0.46)',
-                border: '1px solid rgba(255, 255, 255, 0.16)',
-                boxShadow: '0 14px 36px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.30) inset',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
+                background: 'rgba(0, 0, 0, 0.32)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                boxShadow: '0 8px 20px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.20) inset',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
               }}
             >
               {tabs.map((tab) => {
@@ -61,13 +61,26 @@ export function PageHeader(props: PageHeaderProps) {
                     key={tab.key}
                     type="button"
                     onClick={() => onTabChange?.(tab.key)}
-                    className="h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap hover:bg-white/6"
+                    className="h-[28px] px-3 rounded-[9px] text-[12px] font-semibold transition-all duration-150 inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
                     style={{
-                      color: active ? '#1a1206' : 'rgba(255, 255, 255, 0.82)',
+                      color: active ? '#1a1206' : 'rgba(255, 255, 255, 0.75)',
                       background: active ? 'var(--gold-gradient)' : 'transparent',
                       boxShadow: active
-                        ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
+                        ? '0 2px 8px -1px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12) inset'
                         : 'none',
+                      opacity: active ? 1 : 0.85,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!active) {
+                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                        e.currentTarget.style.opacity = '1';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!active) {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.opacity = '0.85';
+                      }
                     }}
                   >
                     {tab.icon}
@@ -76,8 +89,8 @@ export function PageHeader(props: PageHeaderProps) {
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* 右侧：操作按钮 */}
         {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
