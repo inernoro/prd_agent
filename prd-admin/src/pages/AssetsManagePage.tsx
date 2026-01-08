@@ -445,41 +445,31 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <div
-        className="rounded-[20px] p-6 transition-all duration-200"
-        style={{
-          backgroundColor: 'var(--bg-elevated)',
-          backgroundImage: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
-          borderWidth: 1,
-          borderStyle: 'solid',
-          borderColor: 'color-mix(in srgb, var(--border-subtle) 60%, transparent)',
-          boxShadow: '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
-        }}
-      >
-        <div className="flex items-start justify-between gap-6">
+      <Card variant="gold" className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
-              资源管理（Desktop / 单文件）
+            <div className="text-[28px] leading-tight font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+              资源管理 <span className="opacity-70">（Desktop / 单文件）</span>
             </div>
-            <div className="mt-2 text-[14px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               {activeTab === 'desktop' ? (
                 <>
-                  规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
+                  规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；优先皮肤专有资源，不存在则回落默认。
                 </>
               ) : (
                 <>
-                  单文件资源不区分皮肤：用于全局兜底（例如无头像 nohead.png）。
+                  单文件资源不分皮肤：用于全局兜底（例如无头像 <span className="font-mono">nohead.png</span>）。
                 </>
               )}
             </div>
 
             {/* Tab：合并进标题卡片，提升可读性 */}
             <div
-              className="mt-4 inline-flex items-center p-1.5 rounded-[14px] w-fit self-start"
+              className="mt-3 inline-flex items-center p-1.5 rounded-[14px] w-fit self-start"
               style={{
-                background: 'rgba(0,0,0,0.38)',
-                border: '1px solid rgba(255,255,255,0.14)',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.28) inset',
+                background: 'rgba(0,0,0,0.46)',
+                border: '1px solid rgba(255,255,255,0.16)',
+                boxShadow: '0 14px 36px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.30) inset',
                 backdropFilter: 'blur(10px)',
               }}
             >
@@ -487,16 +477,15 @@ export default function AssetsManagePage() {
                 type="button"
                 onClick={() => setActiveTab('desktop')}
                 className={cn(
-                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
-                  activeTab === 'desktop' && 'transform scale-1',
-                  activeTab !== 'desktop' && 'transform scale-[0.98] hover:bg-white/5'
+                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center shrink-0 whitespace-nowrap',
+                  activeTab !== 'desktop' && 'hover:bg-white/6'
                 )}
                 style={{
-                  color: activeTab === 'desktop' ? '#1a1206' : 'rgba(255,255,255,0.78)',
+                  color: activeTab === 'desktop' ? '#1a1206' : 'rgba(255,255,255,0.82)',
                   background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
                   boxShadow:
                     activeTab === 'desktop'
-                      ? '0 2px 10px -2px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.14) inset'
+                      ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
                       : 'none',
                 }}
               >
@@ -506,16 +495,15 @@ export default function AssetsManagePage() {
                 type="button"
                 onClick={() => setActiveTab('single')}
                 className={cn(
-                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
-                  activeTab === 'single' && 'transform scale-1',
-                  activeTab !== 'single' && 'transform scale-[0.98] hover:bg-white/5'
+                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center shrink-0 whitespace-nowrap',
+                  activeTab !== 'single' && 'hover:bg-white/6'
                 )}
                 style={{
-                  color: activeTab === 'single' ? '#1a1206' : 'rgba(255,255,255,0.78)',
+                  color: activeTab === 'single' ? '#1a1206' : 'rgba(255,255,255,0.82)',
                   background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
                   boxShadow:
                     activeTab === 'single'
-                      ? '0 2px 10px -2px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.14) inset'
+                      ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
                       : 'none',
                 }}
               >
@@ -524,17 +512,17 @@ export default function AssetsManagePage() {
             </div>
           </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {activeTab === 'desktop' ? (
             <button
               type="button"
               className={cn(
                 'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
-                'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
+                'bg-white/6 border border-white/12 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
                 loading && 'opacity-50 pointer-events-none'
               )}
               style={{
-                boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
               }}
               onClick={() => void reload()}
               title="重新获取 skins/keys"
@@ -546,11 +534,11 @@ export default function AssetsManagePage() {
             type="button"
             className={cn(
               'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
-              'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
+              'bg-white/6 border border-white/12 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
               loading && 'opacity-50 pointer-events-none'
             )}
             style={{
-              boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
             }}
             onClick={() => void hardRefresh()}
             title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
@@ -559,7 +547,7 @@ export default function AssetsManagePage() {
           </button>
         </div>
       </div>
-      </div>
+      </Card>
 
       {err ? (
         <div
