@@ -1314,8 +1314,8 @@ export default function AiChatPage() {
             </div>
           ) : null}
 
-          <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: '240px 1fr' }}>
-            <div className="min-w-0">
+          <div className="mt-3 flex flex-wrap gap-3">
+            <div className="min-w-0 flex-1" style={{ minWidth: 360 }}>
               <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>角色</div>
               <div className="mt-2">
                 <SegmentedTabs<RoleEnum>
@@ -1334,7 +1334,7 @@ export default function AiChatPage() {
               </div>
             </div>
 
-            <div className="min-w-0">
+            <div className="min-w-0 w-full" style={{ maxWidth: 520 }}>
               <div className="flex items-center justify-between gap-3">
                 <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>提示词（promptKey）</div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -1357,7 +1357,7 @@ export default function AiChatPage() {
                   .sort((a, b) => a.title.localeCompare(b.title))
                   .map((x) => (
                     <option key={x.promptKey} value={x.promptKey}>
-                      {x.title ? `${x.title} — ${x.promptKey}` : x.promptKey}
+                      {x.title || x.promptKey}
                     </option>
                   ))}
               </select>

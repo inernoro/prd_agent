@@ -444,23 +444,7 @@ export default function UsersPage() {
     }
   };
 
-  const isGuestUser = (u: UserRow) => {
-    const ut = String(u?.userType ?? '').trim().toLowerCase();
-    const role = String(u?.role ?? '').trim().toLowerCase();
-    const un = String(u?.username ?? '').trim().toLowerCase();
-    if (ut === 'guest') return true;
-    if (role === 'guest') return true;
-    if (un.startsWith('guest')) return true;
-    return false;
-  };
-
-  const avatarRingColor = (u: UserRow) => {
-    // guest 白色 > 机器人绿色 > 管理员金色 > 普通用户蓝色
-    if (isGuestUser(u)) return 'rgba(255,255,255,0.88)';
-    if (String(u.userType ?? '').trim().toLowerCase() === 'bot') return 'rgba(34,197,94,0.92)';
-    if (String(u.role ?? '').trim().toUpperCase() === 'ADMIN') return 'rgba(250,204,21,0.95)';
-    return 'rgba(59,130,246,0.92)';
-  };
+  // （原先这里给头像做了 5px 内描边圈；现已按需求移除，避免卡顿/加载阶段露出“头像内边框”）
 
   const confirmTwice = async (opts: { title: string; message: string; tone?: 'neutral' | 'danger' }) => {
     const ok1 = await systemDialog.confirm({
@@ -738,12 +722,6 @@ export default function UsersPage() {
                       <div className="flex items-center gap-3 min-w-0">
                         <div
                           className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0 cursor-pointer"
-                          style={{
-                            background: 'rgba(255,255,255,0.06)',
-                            // 5px 内描边圈（不改变头像尺寸）
-                            boxShadow: `inset 0 0 0 5px ${avatarRingColor(u)}`,
-                            border: '1px solid rgba(255,255,255,0.10)',
-                          }}
                           title="点击修改头像"
                           onClick={() => openChangeAvatar(u)}
                           role="button"
