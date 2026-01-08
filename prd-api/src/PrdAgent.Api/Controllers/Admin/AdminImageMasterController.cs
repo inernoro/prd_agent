@@ -234,7 +234,8 @@ public class AdminImageMasterController : ControllerBase
                 updatedAt = ws.UpdatedAt,
                 lastOpenedAt = ws.LastOpenedAt,
                 articleContent = ws.ArticleContent,
-                articleContentWithMarkers = ws.ArticleContentWithMarkers
+                articleContentWithMarkers = ws.ArticleContentWithMarkers,
+                articleWorkflow = ws.ArticleWorkflow
             };
         }).ToList();
 
@@ -324,8 +325,60 @@ public class AdminImageMasterController : ControllerBase
             .Set(x => x.MemberUserIds, memberIds);
         if (!string.IsNullOrWhiteSpace(title)) update = update.Set(x => x.Title, title);
         if (request?.CoverAssetId != null) update = update.Set(x => x.CoverAssetId, string.IsNullOrWhiteSpace(coverAssetId) ? null : coverAssetId);
-        if (!string.IsNullOrWhiteSpace(request?.ArticleContent)) update = update.Set(x => x.ArticleContent, request.ArticleContent);
         if (!string.IsNullOrWhiteSpace(request?.ScenarioType)) update = update.Set(x => x.ScenarioType, request.ScenarioType);
+
+        // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、清后续、清旧配图）
+        var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent) 
+            && !string.Equals(request.ArticleContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
+        if (articleContentChanged)
+        {
+            update = update.Set(x => x.ArticleContent, request!.ArticleContent);
+            // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
+            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
+            if (ws.ArticleWorkflow != null)
+            {
+                history.Insert(0, ws.ArticleWorkflow);
+                if (history.Count > 10) history = history.Take(10).ToList();
+            }
+            // 清空后续阶段：清 markers/images/articleContentWithMarkers
+            var newWorkflow = new ArticleIllustrationWorkflow
+            {
+                Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
+                Phase = "editing",
+                Markers = new List<ArticleIllustrationMarker>(),
+                ExpectedImageCount = null,
+                DoneImageCount = 0,
+                AssetIdByMarkerIndex = new Dictionary<string, string>(),
+                UpdatedAt = now
+            };
+            update = update
+                .Set(x => x.ArticleWorkflow, newWorkflow)
+                .Set(x => x.ArticleWorkflowHistory, history)
+                .Set(x => x.ArticleContentWithMarkers, null);
+
+            // 删除旧的文章配图资产（ArticleInsertionIndex != null）
+            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(ct);
+            if (oldAssets.Count > 0)
+            {
+                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, ct);
+                // best-effort 删除底层文件（按 sha 引用计数）
+                foreach (var a in oldAssets)
+                {
+                    try
+                    {
+                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
+                        if (remain <= 0)
+                        {
+                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                        }
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+            }
+        }
 
         await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
         var next = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
@@ -981,11 +1034,43 @@ public class AdminImageMasterController : ControllerBase
             SizeBytes = stored.SizeBytes,
             Url = stored.Url,
             Prompt = (request?.Prompt ?? string.Empty).Trim(),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            ArticleInsertionIndex = request?.ArticleInsertionIndex,
+            OriginalMarkerText = string.IsNullOrWhiteSpace(request?.OriginalMarkerText) ? null : request!.OriginalMarkerText!.Trim(),
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
+        if (asset.OriginalMarkerText != null && asset.OriginalMarkerText.Length > 200) asset.OriginalMarkerText = asset.OriginalMarkerText[..200].Trim();
         if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
         if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
+
+        // 文章配图：同一 workspace + insertionIndex 只保留最新 1 张（避免导出替换顺序错乱）
+        // - 只删除元数据；底层文件按 sha 全库引用计数决定是否删除（同 DeleteWorkspace 逻辑）
+        if (asset.ArticleInsertionIndex.HasValue)
+        {
+            var idx = asset.ArticleInsertionIndex.Value;
+            if (idx < 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "articleInsertionIndex 无效"));
+            var old = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex == idx).FirstOrDefaultAsync(ct);
+            if (old != null)
+            {
+                await _db.ImageAssets.DeleteOneAsync(x => x.Id == old.Id, ct);
+                try
+                {
+                    // 若新旧 sha 相同，底层文件仍会被新记录引用，禁止删除物理文件
+                    if (!string.Equals(old.Sha256, stored.Sha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == old.Sha256, cancellationToken: ct);
+                        if (remain <= 0)
+                        {
+                            await _assetStorage.DeleteByShaAsync(old.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                        }
+                    }
+                }
+                catch
+                {
+                    // ignore: best-effort
+                }
+            }
+        }
 
         try
         {
@@ -1007,6 +1092,27 @@ public class AdminImageMasterController : ControllerBase
                 .Set(x => x.AssetsHash, newAssetsHash)
                 .Set(x => x.ContentHash, newContentHash),
             cancellationToken: ct);
+
+        // 文章配图：写入/推进 workflow（doneCount/phase），用于前端恢复进度与禁止跳未来
+        if (asset.ArticleInsertionIndex.HasValue)
+        {
+            var idx = asset.ArticleInsertionIndex.Value;
+            var wf = ws.ArticleWorkflow ?? new ArticleIllustrationWorkflow();
+            wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            wf.AssetIdByMarkerIndex[idx.ToString()] = asset.Id;
+            wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+            wf.ExpectedImageCount ??= (wf.Markers?.Count ?? 0);
+            wf.Phase = wf.DoneImageCount >= (wf.ExpectedImageCount ?? 0) && (wf.ExpectedImageCount ?? 0) > 0
+                ? "images-generated"
+                : "images-generating";
+            wf.UpdatedAt = DateTime.UtcNow;
+
+            // history/debug 不在此写入；仅在“提交型修改”时快照
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == wid,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
+                cancellationToken: ct);
+        }
 
         // 初始封面：仅在完全没有封面时，设置第一张（避免空白；不会覆盖后续 refresh/手动选择）
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
@@ -1704,13 +1810,59 @@ public class AdminImageMasterController : ControllerBase
                 }
             }
 
-            // 保存生成的内容到 workspace
+            // 保存生成的内容到 workspace，并触发"提交型修改"逻辑（version++、清后续、清旧配图）
             var now = DateTime.UtcNow;
             var generatedContent = fullResponse.ToString();
+            var extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
+
+            // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
+            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
+            if (ws.ArticleWorkflow != null)
+            {
+                history.Insert(0, ws.ArticleWorkflow);
+                if (history.Count > 10) history = history.Take(10).ToList();
+            }
+
+            // 清空后续阶段：清旧图片资产，重置 images 进度
+            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(ct);
+            if (oldAssets.Count > 0)
+            {
+                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, ct);
+                // best-effort 删除底层文件（按 sha 引用计数）
+                foreach (var a in oldAssets)
+                {
+                    try
+                    {
+                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
+                        if (remain <= 0)
+                        {
+                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                        }
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+            }
+
+            var newWorkflow = new ArticleIllustrationWorkflow
+            {
+                Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
+                Phase = "markersGenerated",
+                Markers = extractedMarkers.Select(m => new ArticleIllustrationMarker { Index = m.Index, Text = m.Text }).ToList(),
+                ExpectedImageCount = extractedMarkers.Count,
+                DoneImageCount = 0,
+                AssetIdByMarkerIndex = new Dictionary<string, string>(),
+                UpdatedAt = now
+            };
+
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 x => x.Id == wid,
                 Builders<ImageMasterWorkspace>.Update
                     .Set(x => x.ArticleContentWithMarkers, generatedContent)
+                    .Set(x => x.ArticleWorkflow, newWorkflow)
+                    .Set(x => x.ArticleWorkflowHistory, history)
                     .Set(x => x.UpdatedAt, now),
                 cancellationToken: ct);
 
@@ -1859,6 +2011,10 @@ public class UploadAssetRequest
     public string? Prompt { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }
+
+    // 文章配图场景（可选）：用于导出时替换 [插图] 标记
+    public int? ArticleInsertionIndex { get; set; }
+    public string? OriginalMarkerText { get; set; }
 }
 
 public class SaveCanvasRequest

@@ -34,8 +34,12 @@ function SegmentedTabs<T extends string>(props: {
   const { items, value, onChange, disabled, ariaLabel } = props;
   return (
     <div
-      className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
-      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+      className="inline-flex items-center max-w-full p-1 rounded-[14px] overflow-x-auto"
+      style={{ 
+        background: 'rgba(0,0,0,0.20)', 
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3) inset',
+      }}
       aria-label={ariaLabel}
     >
       {items.map((x) => {
@@ -44,13 +48,14 @@ function SegmentedTabs<T extends string>(props: {
           <button
             key={x.key}
             type="button"
-            className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+            className="h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap"
             style={{
-              color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-              background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-              border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-              opacity: disabled ? 0.6 : 1,
+              color: active ? '#1a1206' : 'var(--text-secondary)',
+              background: active ? 'var(--gold-gradient)' : 'transparent',
+              boxShadow: active ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
+              opacity: disabled ? 0.5 : 1,
               cursor: disabled ? 'not-allowed' : 'pointer',
+              transform: active ? 'scale(1)' : 'scale(0.98)',
             }}
             disabled={!!disabled}
             aria-pressed={active}
@@ -227,6 +232,19 @@ export default function PromptStagesPage() {
   const [optOriginal, setOptOriginal] = useState<string>('');
   const optAbortRef = useRef<AbortController | null>(null);
 
+  // 系统提示词结构化编辑
+  const [sysEditMode, setSysEditMode] = useState<'structured' | 'raw'>('structured');
+  const [sysStructured, setSysStructured] = useState({
+    roleDefinition: '',
+    coreResponsibilities: '',
+    focusAreas: '',
+    responseStyle: '',
+    outputFormat: '',
+    boundaries: '',
+    dataUsageInstructions: '',
+    outputRequirements: '',
+  });
+
   const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
@@ -341,7 +359,7 @@ export default function PromptStagesPage() {
     });
   };
 
-  const setSystemPromptText = (value: string) => {
+  const setSystemPromptText = useCallback((value: string) => {
     setSysSettings((prev) => {
       if (!prev) return prev;
       const base = normalizeSystemEntries(prev.entries);
@@ -351,7 +369,74 @@ export default function PromptStagesPage() {
       );
       return { ...prev, entries: nextEntries };
     });
-  };
+  }, [roleEnum]);
+
+  // 解析 systemPrompt 到结构化字段（启发式匹配）
+  useEffect(() => {
+    const raw = sysText.trim();
+    if (!raw) {
+      setSysStructured({
+        roleDefinition: '',
+        coreResponsibilities: '',
+        focusAreas: '',
+        responseStyle: '',
+        outputFormat: '',
+        boundaries: '',
+        dataUsageInstructions: '',
+        outputRequirements: '',
+      });
+      return;
+    }
+
+    // 简单启发式：按 # 标题拆分
+    const lines = raw.split('\n');
+    const sections: Record<string, string> = {};
+    let currentKey = '';
+    let currentLines: string[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('# ')) {
+        if (currentKey && currentLines.length > 0) {
+          sections[currentKey] = currentLines.join('\n').trim();
+        }
+        currentKey = trimmed.substring(2).trim();
+        currentLines = [];
+      } else if (currentKey) {
+        currentLines.push(line);
+      }
+    }
+    if (currentKey && currentLines.length > 0) {
+      sections[currentKey] = currentLines.join('\n').trim();
+    }
+
+    setSysStructured({
+      roleDefinition: sections['角色定义'] || '',
+      coreResponsibilities: sections['核心职责'] || '',
+      focusAreas: sections['关注领域'] || '',
+      responseStyle: sections['回答风格'] || '',
+      outputFormat: sections['输出格式（必须 Markdown）'] || sections['输出格式'] || '',
+      boundaries: sections['边界约束'] || '',
+      dataUsageInstructions: sections['资料使用说明（重要）'] || sections['资料使用说明'] || '',
+      outputRequirements: sections['输出要求（必须遵守）'] || sections['输出要求'] || '',
+    });
+  }, [sysText]);
+
+  // 从结构化字段生成 Raw
+  const generateRawFromStructured = useCallback(() => {
+    const parts: string[] = [];
+    if (sysStructured.roleDefinition.trim()) parts.push(`# 角色定义\n${sysStructured.roleDefinition.trim()}`);
+    if (sysStructured.coreResponsibilities.trim()) parts.push(`# 核心职责\n${sysStructured.coreResponsibilities.trim()}`);
+    if (sysStructured.focusAreas.trim()) parts.push(`# 关注领域\n${sysStructured.focusAreas.trim()}`);
+    if (sysStructured.responseStyle.trim()) parts.push(`# 回答风格\n${sysStructured.responseStyle.trim()}`);
+    if (sysStructured.outputFormat.trim()) parts.push(`# 输出格式（必须 Markdown）\n${sysStructured.outputFormat.trim()}`);
+    if (sysStructured.boundaries.trim()) parts.push(`# 边界约束\n${sysStructured.boundaries.trim()}`);
+    if (sysStructured.dataUsageInstructions.trim()) parts.push(`# 资料使用说明（重要）\n${sysStructured.dataUsageInstructions.trim()}`);
+    if (sysStructured.outputRequirements.trim()) parts.push(`# 输出要求（必须遵守）\n${sysStructured.outputRequirements.trim()}`);
+    const generated = parts.join('\n\n');
+    setSystemPromptText(generated);
+    setSysEditMode('raw');
+  }, [sysStructured, setSystemPromptText]);
 
   const addPrompt = () => {
     const key = safeIdempotencyKey();
@@ -405,15 +490,6 @@ export default function PromptStagesPage() {
     });
   };
 
-  const copyPromptKey = async (k: string) => {
-    try {
-      await navigator.clipboard.writeText(k);
-      setMsg('已复制 promptKey');
-      setTimeout(() => setMsg(null), 900);
-    } catch {
-      // ignore
-    }
-  };
 
   const openOptimize = () => {
     const raw = (stage?.promptTemplate ?? '').trim();
@@ -686,12 +762,12 @@ export default function PromptStagesPage() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
-      <Card className="p-4" variant="gold">
-        <div className="flex items-start justify-between gap-4">
+    <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
+      <Card className="p-5" variant="gold">
+        <div className="flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>提示词管理</div>
+            <div className="flex items-center gap-3">
+              <div className="text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>提示词管理</div>
               {uiIsDirty && (
                 <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
                   未保存
@@ -867,8 +943,8 @@ export default function PromptStagesPage() {
       </style>
 
       {showUserPrompts ? (
-        <div className="grid gap-4 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}>
-        <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden">
+        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}>
+        <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>提示词总览</div>
             <div className="shrink-0">
@@ -881,16 +957,23 @@ export default function PromptStagesPage() {
           <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             共 {roleStages.length} 个提示词（{roleEnum}；支持新增/删除/排序/切换）
           </div>
-          <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0">
+          <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0 content-start items-start auto-rows-min">
             {roleStages.map((s) => {
               const active = s.promptKey === (activePromptKey || roleStages[0]?.promptKey || '');
               return (
                 <div
                   key={s.promptKey}
-                  className="rounded-[14px] transition-colors min-w-0 overflow-hidden relative"
+                  className="rounded-[16px] transition-all duration-200 min-w-0 overflow-hidden relative cursor-pointer hover:scale-[1.01]"
                   style={{
-                    background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
-                    border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
+                    background: active 
+                      ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-gold) 12%, var(--bg-input)) 0%, color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input)) 100%)'
+                      : 'var(--bg-input)',
+                    border: active 
+                      ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)' 
+                      : '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+                    boxShadow: active 
+                      ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                      : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                   }}
                 >
                   <div
@@ -989,24 +1072,22 @@ export default function PromptStagesPage() {
         <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                编辑器：order {stage?.order ?? 0} · {roleLabel}
-              </div>
-              {stage?.promptKey && (
-                <div className="mt-1 text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                  <span className="truncate">promptKey：{stage.promptKey}</span>
-                  <button
-                    type="button"
-                    onClick={() => void copyPromptKey(stage.promptKey)}
-                    className="h-7 w-7 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                    style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.04)' }}
-                    aria-label="复制 promptKey"
-                    title="复制 promptKey"
-                  >
-                    <Copy size={14} />
-                  </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  编辑器：order {stage?.order ?? 0} · {roleLabel}
                 </div>
-              )}
+                <SegmentedTabs<RoleKey>
+                  items={[
+                    { key: 'pm', label: 'PM' },
+                    { key: 'dev', label: 'DEV' },
+                    { key: 'qa', label: 'QA' },
+                  ]}
+                  value={activeRole}
+                  onChange={(next) => setActiveRole(next)}
+                  disabled={loading || saving}
+                  ariaLabel="切换角色（PM/DEV/QA）"
+                />
+              </div>
               <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                 提示词模板用于“聚焦指令”：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
               </div>
@@ -1032,7 +1113,7 @@ export default function PromptStagesPage() {
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 min-h-0">
+          <div className="mt-4 flex-1 min-h-0 flex flex-col gap-3">
             <div>
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>标题（title）</div>
@@ -1058,7 +1139,7 @@ export default function PromptStagesPage() {
                   字符：{(stage?.promptTemplate ?? '').length.toLocaleString()}
                 </div>
               </div>
-              <div className="mt-2 flex-1 min-h-[340px] relative">
+              <div className="mt-2 flex-1 min-h-0 relative">
                 <textarea
                   value={stage?.promptTemplate ?? ''}
                   onChange={(e) => setPromptField('promptTemplate', e.target.value)}
@@ -1105,10 +1186,10 @@ export default function PromptStagesPage() {
       </div>
       ) : showSystemPrompts ? (
         <div
-          className="grid gap-4 flex-1 min-h-0 overflow-x-hidden"
-          style={{ gridTemplateColumns: '340px minmax(0, 1fr)' }}
+          className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
+          style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}
         >
-          <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden">
+          <Card className="p-4 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>系统提示词总览</div>
             </div>
@@ -1117,18 +1198,24 @@ export default function PromptStagesPage() {
             </div>
             {/* 角色按钮行按需求删除：改为直接点击下方卡片选中 */}
 
-            <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0">
+            <div className="mt-3 grid gap-2 min-w-0 content-start items-start auto-rows-min">
               {(['PM', 'DEV', 'QA'] as const).map((r) => {
-                const t = sysEntries.find((x) => x.role === r)?.systemPrompt ?? '';
                 const active = r === roleEnum;
                 const label = roleEnumToChineseLabel(r);
                 return (
                   <div
                     key={r}
-                    className="rounded-[14px] px-3 py-3 transition-colors min-w-0 overflow-hidden"
+                    className="rounded-[16px] px-4 py-3.5 transition-all duration-200 min-w-0 overflow-hidden cursor-pointer hover:scale-[1.01]"
                     style={{
-                      background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, var(--bg-input))' : 'var(--bg-input)',
-                      border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, var(--border-default))' : '1px solid var(--border-subtle)',
+                      background: active 
+                        ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-gold) 12%, var(--bg-input)) 0%, color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input)) 100%)'
+                        : 'var(--bg-input)',
+                      border: active 
+                        ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)' 
+                        : '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+                      boxShadow: active 
+                        ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                        : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                     }}
                     role="button"
                     tabIndex={0}
@@ -1146,20 +1233,9 @@ export default function PromptStagesPage() {
                   >
                     <div className="flex items-center justify-between gap-3 min-w-0">
                       <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>{label}</div>
-                      <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        字符：{t.length.toLocaleString()}
-                      </div>
-                    </div>
-                    <div
-                      className="mt-1 text-[11px] break-words whitespace-normal"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      {t ? t.replace(/\s+/g, ' ').slice(0, 120) : '（未配置，将使用默认）'}
-                    </div>
-                    <div className="mt-2 flex items-center justify-end">
                       <button
                         type="button"
-                        className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                        className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
                         style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1179,11 +1255,28 @@ export default function PromptStagesPage() {
           <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  编辑器：{roleLabel} · systemPrompt
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    编辑器：{roleLabel} · systemPrompt
+                  </div>
+                  <SegmentedTabs<'structured' | 'raw'>
+                    items={[
+                      { key: 'structured', label: '结构化' },
+                      { key: 'raw', label: 'Raw' },
+                    ]}
+                    value={sysEditMode}
+                    onChange={(next) => setSysEditMode(next)}
+                    disabled={sysLoading || sysSaving}
+                    ariaLabel="切换编辑模式"
+                  />
+                  {sysEditMode === 'structured' && (
+                    <Button variant="primary" size="xs" onClick={generateRawFromStructured} disabled={sysLoading || sysSaving}>
+                      应用到 Raw
+                    </Button>
+                  )}
                 </div>
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  注意：这里禁止写入“只返回 JSON / JSON schema / ```json”等约束（避免用户误配导致 PRD 问答异常）。
+                  注意：这里禁止写入"只返回 JSON / JSON schema / ```json"等约束（避免用户误配导致 PRD 问答异常）。
                 </div>
               </div>
               <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -1191,23 +1284,66 @@ export default function PromptStagesPage() {
               </div>
             </div>
 
-            <div className="mt-3 flex-1 min-h-0">
-              <textarea
-                value={sysText ?? ''}
-                onChange={(e) => setSystemPromptText(e.target.value)}
-                placeholder="建议包含：资料使用说明、输出结构（Markdown 小节）、PRD 未覆盖时的处理方式、边界约束等（禁止 JSON 输出强制约束）"
-                disabled={sysLoading || sysSaving || !sysSettings}
-                className="h-full w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
-                style={{
-                  border: '1px solid var(--border-subtle)',
-                  background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
-                  color: 'var(--text-primary)',
-                  lineHeight: 1.6,
-                  fontFamily:
-                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                }}
-              />
-            </div>
+            {sysEditMode === 'structured' ? (
+              <div className="mt-3 flex-1 min-h-0 grid grid-cols-2 gap-3" style={{ gridAutoRows: '1fr' }}>
+                {[
+                  { key: 'roleDefinition', label: '角色定义', placeholder: '例如：你是一位资深产品经理...' },
+                  { key: 'coreResponsibilities', label: '核心职责', placeholder: '例如：从业务价值和用户体验角度解读需求...' },
+                  { key: 'focusAreas', label: '关注领域', placeholder: '例如：1. 业务背景与问题定义\n2. 核心用户与使用场景...' },
+                  { key: 'responseStyle', label: '回答风格', placeholder: '例如：简洁、清晰、结构化...' },
+                  { key: 'outputFormat', label: '输出格式（必须 Markdown）', placeholder: '例如：使用 Markdown 小节、列表...' },
+                  { key: 'boundaries', label: '边界约束', placeholder: '例如：不回答与 PRD 无关的问题...' },
+                  { key: 'dataUsageInstructions', label: '资料使用说明（重要）', placeholder: '例如：优先引用 PRD 原文...' },
+                  { key: 'outputRequirements', label: '输出要求（必须遵守）', placeholder: '例如：必须使用 Markdown 格式...' },
+                ].map((field) => (
+                  <div key={field.key} className="flex flex-col min-h-0">
+                    <div className="text-xs font-semibold mb-1.5 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                      {field.label}
+                    </div>
+                    <textarea
+                      value={sysStructured[field.key as keyof typeof sysStructured]}
+                      onChange={(e) => setSysStructured((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                      placeholder={field.placeholder}
+                      disabled={sysLoading || sysSaving || !sysSettings}
+                      className="flex-1 min-h-0 w-full rounded-[14px] px-3 py-2.5 text-[13px] outline-none resize-none transition-all duration-200 focus:ring-2 focus:ring-offset-0"
+                      style={{
+                        border: '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+                        background: 'linear-gradient(135deg, var(--bg-input) 0%, color-mix(in srgb, var(--bg-input) 98%, black) 100%)',
+                        color: 'var(--text-primary)',
+                        lineHeight: 1.6,
+                        boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-gold) 40%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(214, 178, 106, 0.2) inset, 0 0 0 2px rgba(214, 178, 106, 0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--border-subtle) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset';
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-3 flex-1 min-h-0">
+                <textarea
+                  value={sysText ?? ''}
+                  onChange={(e) => setSystemPromptText(e.target.value)}
+                  placeholder="建议包含：资料使用说明、输出结构（Markdown 小节）、PRD 未覆盖时的处理方式、边界约束等（禁止 JSON 输出强制约束）"
+                  disabled={sysLoading || sysSaving || !sysSettings}
+                  className="h-full w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    color: 'var(--text-primary)',
+                    lineHeight: 1.6,
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                  }}
+                />
+              </div>
+            )}
 
             <div className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               生效范围：仅 PRD 问答（会话问答 / 本章提问）。不影响 gaps/分析等需要 JSON 输出的内部任务。

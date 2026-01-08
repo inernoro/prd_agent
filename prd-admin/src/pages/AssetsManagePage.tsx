@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
+import { Card } from '@/components/design/Card';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -422,7 +423,7 @@ export default function AssetsManagePage() {
   };
 
   return (
-    <div className="h-full w-full px-6 py-5">
+    <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <input
         ref={fileRef}
         type="file"
@@ -430,12 +431,23 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            资源管理（Desktop / 单文件）
-          </div>
-          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+      <div
+        className="rounded-[20px] p-6 transition-all duration-200"
+        style={{
+          backgroundColor: 'var(--bg-elevated)',
+          backgroundImage: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
+          borderWidth: 1,
+          borderStyle: 'solid',
+          borderColor: 'color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+          boxShadow: '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+        }}
+      >
+        <div className="flex items-start justify-between gap-6">
+          <div className="min-w-0">
+            <div className="text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
+              资源管理（Desktop / 单文件）
+            </div>
+          <div className="mt-2 text-[14px]" style={{ color: 'var(--text-muted)' }}>
             {activeTab === 'desktop' ? (
               <>
                 规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
@@ -448,11 +460,18 @@ export default function AssetsManagePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
           {activeTab === 'desktop' ? (
             <button
               type="button"
-              className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
+              className={cn(
+                'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
+                'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
+                loading && 'opacity-50 pointer-events-none'
+              )}
+              style={{
+                boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+              }}
               onClick={() => void reload()}
               title="重新获取 skins/keys"
             >
@@ -461,7 +480,14 @@ export default function AssetsManagePage() {
           ) : null}
           <button
             type="button"
-            className={cn('rounded-[12px] px-3 py-2 text-sm border border-white/10 hover:bg-white/5', loading && 'opacity-60 pointer-events-none')}
+            className={cn(
+              'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
+              'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
+              loading && 'opacity-50 pointer-events-none'
+            )}
+            style={{
+              boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+            }}
             onClick={() => void hardRefresh()}
             title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
           >
@@ -470,14 +496,24 @@ export default function AssetsManagePage() {
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="inline-flex items-center p-1 rounded-[14px]" style={{ 
+        background: 'rgba(0,0,0,0.20)', 
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3) inset',
+      }}>
         <button
           type="button"
           onClick={() => setActiveTab('desktop')}
           className={cn(
-            'h-9 px-3 rounded-[12px] border text-sm',
-            activeTab === 'desktop' ? 'border-white/20 bg-white/5' : 'border-white/10 hover:bg-white/5'
+            'h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
+            activeTab === 'desktop' && 'transform scale-1',
+            activeTab !== 'desktop' && 'transform scale-[0.98]'
           )}
+          style={{
+            color: activeTab === 'desktop' ? '#1a1206' : 'var(--text-secondary)',
+            background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
+            boxShadow: activeTab === 'desktop' ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
+          }}
         >
           Desktop 资源矩阵（皮肤）
         </button>
@@ -485,13 +521,20 @@ export default function AssetsManagePage() {
           type="button"
           onClick={() => setActiveTab('single')}
           className={cn(
-            'h-9 px-3 rounded-[12px] border text-sm',
-            activeTab === 'single' ? 'border-white/20 bg-white/5' : 'border-white/10 hover:bg-white/5'
+            'h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
+            activeTab === 'single' && 'transform scale-1',
+            activeTab !== 'single' && 'transform scale-[0.98]'
           )}
+          style={{
+            color: activeTab === 'single' ? '#1a1206' : 'var(--text-secondary)',
+            background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
+            boxShadow: activeTab === 'single' ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
+          }}
         >
           单文件资源（不分皮肤）
         </button>
       </div>
+    </div>
 
       {err ? (
         <div
@@ -507,7 +550,7 @@ export default function AssetsManagePage() {
       ) : null}
 
       {activeTab === 'single' ? (
-        <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+        <Card className="p-6 mt-6">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -582,12 +625,12 @@ export default function AssetsManagePage() {
               )}
             </div>
           </div>
-        </div>
+        </Card>
       ) : null}
 
       {activeTab === 'desktop' ? (
         <>
-      <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+      <Card className="p-6 mt-6">
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="min-w-0">
             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -658,13 +701,10 @@ export default function AssetsManagePage() {
             </div>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Desktop 品牌配置（放在资源管理之后） */}
-      <div
-        className="mt-4 rounded-[16px] p-4"
-        style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}
-      >
+      <Card className="p-6 mt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -719,9 +759,9 @@ export default function AssetsManagePage() {
             />
           </div>
         </div>
-      </div>
+      </Card>
 
-      <div className="mt-4 rounded-[16px] p-4" style={{ background: 'var(--panel, var(--bg-elevated))', border: '1px solid var(--border-subtle)' }}>
+      <Card className="p-6 mt-6">
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           资源诊断矩阵（含缺失展示；支持上传覆盖写）
         </div>
@@ -774,7 +814,7 @@ export default function AssetsManagePage() {
             ) : null}
           </div>
         </div>
-      </div>
+      </Card>
         </>
       ) : null}
     </div>

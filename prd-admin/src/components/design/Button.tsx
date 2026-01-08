@@ -16,15 +16,15 @@ export const Button = React.forwardRef<
   ref
 ) {
   const base =
-    'inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed';
+    'inline-flex items-center justify-center gap-2 font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed';
 
-  // 更紧凑的控件高度（更像参照图的“工具型 UI”）
+  // 更精致的控件高度和圆角
   const sizeCls =
     size === 'xs'
-      ? 'h-[30px] px-3 rounded-[10px] text-[12px]'
+      ? 'h-[32px] px-3.5 rounded-[11px] text-[12px]'
       : size === 'sm'
-        ? 'h-[35px] px-3 rounded-[10px] text-[13px]'
-        : 'h-10 px-4 rounded-[12px] text-[13px]';
+        ? 'h-[36px] px-4 rounded-[12px] text-[13px]'
+        : 'h-11 px-5 rounded-[14px] text-[14px]';
 
   const variantCls =
     variant === 'primary'
@@ -35,21 +35,32 @@ export const Button = React.forwardRef<
 
   const style: React.CSSProperties =
     variant === 'primary'
-      ? { background: 'var(--gold-gradient)', boxShadow: 'var(--shadow-gold)' }
+      ? { 
+          background: 'var(--gold-gradient)', 
+          boxShadow: '0 4px 16px -2px rgba(214, 178, 106, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
+        }
       : variant === 'secondary'
-        ? { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }
+        ? { 
+            background: 'rgba(255,255,255,0.05)', 
+            border: '1px solid rgba(255,255,255,0.10)',
+            boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+          }
         : variant === 'danger'
-          ? { background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)' }
+          ? { 
+              background: 'rgba(239,68,68,0.10)', 
+              border: '1px solid rgba(239,68,68,0.25)',
+              boxShadow: '0 2px 8px -2px rgba(239, 68, 68, 0.2)',
+            }
           : { background: 'transparent' };
 
   const hoverCls =
     variant === 'primary'
-      ? 'hover:brightness-[1.02]'
+      ? 'hover:brightness-[1.05] hover:shadow-lg active:scale-[0.98]'
       : variant === 'secondary'
-        ? 'hover:bg-white/8 hover:border-white/20'
+        ? 'hover:bg-white/10 hover:border-white/20 active:scale-[0.98]'
         : variant === 'danger'
-          ? 'hover:bg-[rgba(239,68,68,0.14)]'
-          : 'hover:bg-white/5';
+          ? 'hover:bg-[rgba(239,68,68,0.15)] active:scale-[0.98]'
+          : 'hover:bg-white/6 active:scale-[0.98]';
 
   return (
     <button

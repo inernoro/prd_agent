@@ -44,6 +44,21 @@ export type ImageMasterCanvas = {
   updatedAt: string;
 };
 
+export type ArticleIllustrationMarker = {
+  index: number;
+  text: string;
+};
+
+export type ArticleIllustrationWorkflow = {
+  version: number;
+  phase: 'upload' | 'editing' | 'markersGenerated' | 'imagesGenerating' | 'imagesGenerated';
+  markers: ArticleIllustrationMarker[];
+  expectedImageCount?: number | null;
+  doneImageCount: number;
+  assetIdByMarkerIndex: Record<string, string>;
+  updatedAt: string;
+};
+
 export type ImageMasterWorkspace = {
   id: string;
   ownerUserId: string;
@@ -65,6 +80,8 @@ export type ImageMasterWorkspace = {
   lastOpenedAt?: string | null;
   articleContent?: string | null;
   articleContentWithMarkers?: string | null;
+  /** 文章配图 workflow（服务端状态机，前端用于恢复进度/禁止跳未来） */
+  articleWorkflow?: ArticleIllustrationWorkflow | null;
 };
 
 export type ImageMasterViewport = {
@@ -131,6 +148,8 @@ export type UploadImageMasterWorkspaceAssetContract = (input: {
   prompt?: string;
   width?: number;
   height?: number;
+  articleInsertionIndex?: number;
+  originalMarkerText?: string;
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ asset: ImageAsset }>>;
 

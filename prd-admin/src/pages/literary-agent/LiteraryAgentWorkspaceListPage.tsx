@@ -151,7 +151,7 @@ export default function LiteraryAgentWorkspaceListPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 flex items-center gap-2">
                   <FileText size={18} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-                  <div className="font-semibold truncate text-[15px]" style={{ color: 'var(--text-primary)' }}>
+                  <div className="font-semibold text-[15px] group-hover:truncate" style={{ color: 'var(--text-primary)' }}>
                     {ws.title}
                   </div>
                 </div>
@@ -159,10 +159,10 @@ export default function LiteraryAgentWorkspaceListPage() {
                 <div
                   className={[
                     'flex items-center justify-end gap-2 flex-shrink-0',
-                    'opacity-0 translate-y-[-1px] pointer-events-none',
+                    'opacity-0 translate-y-[-1px] pointer-events-none absolute right-3 top-3',
                     'transition-all duration-150',
-                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto',
-                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto',
+                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto group-hover:relative group-hover:right-auto group-hover:top-auto',
+                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto group-focus-within:relative group-focus-within:right-auto group-focus-within:top-auto',
                   ].join(' ')}
                 >
                   <Button

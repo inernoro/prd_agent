@@ -1065,7 +1065,6 @@ export default function AiChatPage() {
                       background: isUser ? 'color-mix(in srgb, var(--accent-gold) 28%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.04)',
                       border: '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
-                      whiteSpace: 'pre-wrap',
                       wordBreak: 'break-word',
                     }}
                   >

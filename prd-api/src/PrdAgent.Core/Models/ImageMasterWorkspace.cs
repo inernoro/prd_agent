@@ -68,6 +68,17 @@ public class ImageMasterWorkspace
 
     /// <summary>文章配图场景专用：LLM 生成的带配图标记的文章内容</summary>
     public string? ArticleContentWithMarkers { get; set; }
+
+    /// <summary>
+    /// 文章配图场景专用：服务端工作流状态（前后端一致性的唯一来源）
+    /// </summary>
+    public ArticleIllustrationWorkflow? ArticleWorkflow { get; set; }
+
+    /// <summary>
+    /// 文章配图场景专用：工作流历史快照（仅用于 debug/审计，不下发给前端）
+    /// </summary>
+    [JsonIgnore]
+    public List<ArticleIllustrationWorkflow> ArticleWorkflowHistory { get; set; } = new();
 }
 
 

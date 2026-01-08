@@ -134,6 +134,8 @@ export const updateImageMasterWorkspaceReal: UpdateImageMasterWorkspaceContract 
       title: input.title,
       memberUserIds: input.memberUserIds,
       coverAssetId: input.coverAssetId ?? null,
+      articleContent: input.articleContent,
+      scenarioType: input.scenarioType,
     },
   });
 };
@@ -216,6 +218,8 @@ export const uploadImageMasterWorkspaceAssetReal: UploadImageMasterWorkspaceAsse
       prompt: input.prompt,
       width: input.width,
       height: input.height,
+      articleInsertionIndex: input.articleInsertionIndex,
+      originalMarkerText: input.originalMarkerText,
     },
   });
 };

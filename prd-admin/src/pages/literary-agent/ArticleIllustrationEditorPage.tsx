@@ -12,7 +12,7 @@ import {
   updateImageMasterWorkspace,
   uploadImageMasterWorkspaceAsset,
 } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -79,6 +79,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>('upload');
+  const [serverPhase, setServerPhase] = useState<WorkflowPhase>('upload'); // 服务端真实进度（用于判断按钮置灰）
   const [generating, setGenerating] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
@@ -86,6 +87,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
   
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
@@ -156,17 +158,31 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
         setArticleWithImages('');
         
-        // 如果有生成的内容，提取标记
+        // 优先以服务端 workflow.phase 为准（保证刷新可恢复/不可跳未来）
+        const workflowPhase = ws.articleWorkflow?.phase;
+        if (workflowPhase) {
+          setPhase(workflowPhase as WorkflowPhase);
+          setServerPhase(workflowPhase as WorkflowPhase); // 更新服务端真实进度
+        } else {
+          // 兼容旧数据：无 workflow 时按原逻辑推导
+          if (ws.articleContentWithMarkers) {
+            const extracted = extractMarkers(ws.articleContentWithMarkers);
+            setMarkers(extracted);
+            if (extracted.length > 0) {
+              setPhase('markers-generated');
+              setServerPhase('markers-generated');
+            }
+          } else if (content) {
+            setUploadedFileName('已上传的文章.md');
+            setPhase('editing');
+            setServerPhase('editing');
+          }
+        }
+        
+        // 如果有生成的内容，提取标记（用于右侧列表）
         if (ws.articleContentWithMarkers) {
           const extracted = extractMarkers(ws.articleContentWithMarkers);
           setMarkers(extracted);
-          if (extracted.length > 0) {
-            setPhase('markers-generated');
-          }
-        } else if (content) {
-          // 如果有内容但没有生成标记，进入预览阶段（不提供手动编辑入口）
-          setUploadedFileName('已上传的文章.md');
-          setPhase('editing');
         }
         
         // 加载用户自定义提示词（全局共享）
@@ -259,7 +275,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setArticleContent(text);
       setUploadedFileName(fileName);
       
-      // 保存到后端
+      // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
       await updateImageMasterWorkspace({
         id: workspaceId,
         articleContent: text,
@@ -268,6 +284,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       
       // 上传后直接进入编辑模式并启用预览
       setPhase('editing');
+      setServerPhase('editing'); // 更新服务端真实进度
     } catch {
       await systemDialog.alert('文件读取失败');
     }
@@ -282,6 +299,54 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const handleUploadClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  // 拖拽处理函数
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+
+    // 检查文件类型
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.md') && !fileName.endsWith('.txt')) {
+      await systemDialog.alert('仅支持 .md 和 .txt 格式的文件');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      setArticleContent(text);
+      setUploadedFileName(file.name);
+      
+      // 保存到后端
+      await updateImageMasterWorkspace({
+        id: workspaceId,
+        articleContent: text,
+        idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
+      });
+      
+      // 上传后直接进入编辑模式
+      setPhase('editing');
+      setServerPhase('editing');
+    } catch {
+      await systemDialog.alert('文件读取失败');
+    }
+  }, [workspaceId]);
 
   // 进入预览阶段（保留 phase=editing，表示“已上传可生成标记”）
   const handleEnterPreview = useCallback(() => {
@@ -331,7 +396,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
           
+          // 提交型操作成功：更新服务端真实进度
           setPhase('markers-generated');
+          setServerPhase('markers-generated');
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
         }
@@ -564,7 +631,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: dataUrl, prompt: plannedPrompt });
+    const up = await uploadImageMasterWorkspaceAsset({ 
+      id: workspaceId, 
+      data: dataUrl, 
+      prompt: plannedPrompt,
+      articleInsertionIndex: markerIndex,
+      originalMarkerText: current.markerText
+    });
     if (!up.success) {
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
@@ -878,45 +951,45 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (target === phase) return;
     if (generating) return;
 
-    if (target === 'upload') {
-      setPhase('upload');
+    // 刷新 workspace detail，以服务端 workflow 为准判断是否可跳转
+    const res = await getImageMasterWorkspaceDetail({ id: workspaceId });
+    if (!res.success || !res.data?.workspace) {
+      await systemDialog.alert('获取工作空间状态失败');
+      return;
+    }
+    const ws = res.data.workspace;
+    const latestServerPhase = ws.articleWorkflow?.phase || 'upload';
+    
+    // 更新服务端真实进度
+    setServerPhase(latestServerPhase as WorkflowPhase);
+
+    // 定义阶段顺序（用于判断"未来阶段"）
+    const phaseOrder: Record<WorkflowPhase, number> = {
+      'upload': 0,
+      'editing': 1,
+      'markers-generating': 2,
+      'markers-generated': 2,
+      'images-generating': 3,
+      'images-generated': 4
+    };
+
+    const targetOrder = phaseOrder[target];
+    const serverOrder = phaseOrder[latestServerPhase as WorkflowPhase];
+
+    // 禁止跳到未生成过的未来阶段（这个判断应该在按钮渲染时就置灰，这里只是兜底）
+    if (targetOrder > serverOrder) {
+      // 理论上不应该走到这里（按钮应该已经置灰），但作为兜底保护
       return;
     }
 
-    if (!articleContent.trim()) {
-      await systemDialog.alert('请先上传文章内容');
-      return;
-    }
-
-    if (target === 'editing') {
-      setPhase('editing');
-      return;
-    }
-
-    if (target === 'markers-generating') {
-      // 不允许手动跳入“生成中”，统一回到标记页
-      target = 'markers-generated';
-    }
-
-    if (target === 'markers-generated') {
-      if (!articleWithMarkers.trim()) {
-        await systemDialog.alert('请先生成配图标记');
-        return;
-      }
-      // 若 markers 未同步，补一次本地提取
-      if (markers.length === 0) {
-        setMarkers(extractMarkers(articleWithMarkers));
-      }
-      setPhase('markers-generated');
-      return;
-    }
-
-    if (target === 'images-generating' || target === 'images-generated') {
-      if (!articleWithMarkers.trim() || markers.length === 0) {
-        await systemDialog.alert('请先生成配图标记');
-        return;
-      }
-      setPhase(target);
+    // 允许跳转到任何"已生成过"的阶段（<= serverOrder）
+    // 只更新 UI 展示状态，不触发任何后端写入
+    setPhase(target);
+    setArticleContent(ws.articleContent || '');
+    setArticleWithMarkers(ws.articleContentWithMarkers || '');
+    if (ws.articleContentWithMarkers) {
+      const extracted = extractMarkers(ws.articleContentWithMarkers);
+      setMarkers(extracted);
     }
   };
 
@@ -926,8 +999,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <div className="flex-1 min-w-0 flex flex-col gap-4">
         <Card className="flex-1 min-h-0 flex flex-col">
           <div className="mb-3 flex items-center justify-between">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              文章内容
+            <div className="flex items-center gap-2">
+              <FileText size={16} style={{ color: 'var(--text-primary)' }} />
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {uploadedFileName || '文章内容'}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               {phase === 'upload' && uploadedFileName && (
@@ -941,100 +1017,90 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
           {/* 系统提示词：永远可见（预览 + 列表） */}
           <div className="mb-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div className="mt-2 rounded-[12px] px-2 py-2 flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
+              {/* 标签 */}
+              <div className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
                 系统提示词
               </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="secondary" onClick={handleCreatePrompt}>
-                  <Plus size={14} />
-                  新建
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!selectedPrompt}
-                  onClick={() => setPromptPreviewOpen(true)}
-                  title={selectedPrompt ? '预览系统提示词' : '请先选择一个提示词模板'}
-                >
-                  <Eye size={14} />
-                  预览
-                </Button>
-              </div>
-            </div>
-
-            <div className="mt-2 rounded-[12px] p-2" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-              {allPrompts.length === 0 ? (
-                <div className="text-xs py-2" style={{ color: 'var(--text-muted)' }}>
-                  还没有提示词模板，点击右上角「新建」创建第一个模板
-                </div>
-              ) : (
-                <div className="max-h-44 overflow-auto space-y-2 pr-1">
-                  {allPrompts.map((prompt) => (
-                    <div
-                      key={prompt.id}
-                      className="p-3 rounded transition-all"
-                      style={{
-                        background:
-                          selectedPrompt?.id === prompt.id
-                            ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 22%, transparent) 0%, color-mix(in srgb, var(--accent-primary) 10%, transparent) 100%)'
-                            : 'var(--bg-elevated)',
-                        border: selectedPrompt?.id === prompt.id ? '3px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                        boxShadow:
-                          selectedPrompt?.id === prompt.id
-                            ? '0 10px 24px rgba(0, 0, 0, 0.28), 0 0 0 6px color-mix(in srgb, var(--accent-primary) 22%, transparent), 0 0 22px color-mix(in srgb, var(--accent-primary) 28%, transparent)'
-                            : '0 0 0 rgba(0,0,0,0)',
-                        transform: selectedPrompt?.id === prompt.id ? 'translateY(-3px)' : 'translateY(0px)',
-                      }}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <button onClick={() => setSelectedPrompt(prompt)} className="flex-1 text-left">
-                          <div className="text-sm font-semibold mb-1 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-                            {prompt.title}
-                            {selectedPrompt?.id === prompt.id && (
-                              <span
-                                className="text-xs px-2 py-0.5 rounded-full font-medium"
-                                style={{
-                                  background: 'var(--accent-primary)',
-                                  color: 'white',
-                                }}
-                              >
-                                已选中
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                            {(prompt.content || '').slice(0, 80)}...
-                          </div>
-                        </button>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => handleEditPrompt(prompt)}
-                            className="p-1 rounded hover:bg-white/10 transition-colors"
-                            style={{ color: 'var(--text-muted)' }}
-                            title="编辑"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => void handleDeletePrompt(prompt)}
-                            className="p-1 rounded hover:bg-white/10 transition-colors"
-                            style={{ color: 'var(--text-muted)' }}
-                            title="删除"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+              
+              {/* 标题 */}
+              <div className="flex-1 min-w-0">
+                {allPrompts.length === 0 ? (
+                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    还没有提示词模板
+                  </div>
+                ) : selectedPrompt ? (
+                  <div>
+                    <style>{`
+                      .prompt-marquee{position:relative;overflow:hidden;white-space:nowrap;min-width:0;width:100%}
+                      .prompt-marquee__track{display:flex;align-items:center;gap:16px;width:max-content;will-change:transform}
+                      .prompt-marquee__track--animate{animation:prompt-marquee-scroll 10s linear infinite}
+                      .prompt-marquee__track--static{animation:none;width:100%}
+                      .prompt-marquee__item{display:inline-block;white-space:nowrap}
+                      @keyframes prompt-marquee-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+                      @media (prefers-reduced-motion: reduce){.prompt-marquee__track--animate{animation:none}}
+                    `}</style>
+                    <div className="prompt-marquee">
+                      <div className={`prompt-marquee__track ${selectedPrompt.title.length > 30 ? 'prompt-marquee__track--animate' : 'prompt-marquee__track--static'}`}>
+                        <span className="prompt-marquee__item text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {selectedPrompt.title}
+                        </span>
+                        {selectedPrompt.title.length > 30 && (
+                          <span className="prompt-marquee__item text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {selectedPrompt.title}
+                          </span>
+                        )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                ) : null}
+              </div>
+              
+              {/* 按钮 */}
+              <div className="shrink-0">
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={() => setPromptPreviewOpen(true)}
+                  title="切换系统提示词"
+                >
+                  <Eye size={12} />
+                  切换
+                </Button>
+              </div>
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div 
+            className="flex-1 min-h-0 overflow-auto relative"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             <style>{PRD_MD_STYLE}</style>
+            
+            {/* 拖拽悬浮提示层 */}
+            {isDragging && (
+              <div 
+                className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
+                style={{
+                  background: 'rgba(147, 197, 253, 0.15)',
+                  border: '2px dashed rgba(147, 197, 253, 0.6)',
+                  backdropFilter: 'blur(4px)',
+                }}
+              >
+                <div className="text-center">
+                  <Upload size={64} style={{ color: 'rgba(147, 197, 253, 0.95)' }} className="mx-auto mb-4" />
+                  <div className="text-lg font-semibold mb-2" style={{ color: 'rgba(147, 197, 253, 0.95)' }}>
+                    释放以上传文件
+                  </div>
+                  <div className="text-sm" style={{ color: 'rgba(147, 197, 253, 0.75)' }}>
+                    支持 .md 和 .txt 格式
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {/* 上传阶段：显示上传区域或已上传文件信息 */}
             {phase === 'upload' && !uploadedFileName && (
               <div className="h-full flex flex-col items-center justify-center p-8">
@@ -1095,7 +1161,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 预览阶段：渲染原文（不提供手动编辑入口） */}
             {phase === 'editing' && (
-              <div className="p-4">
+              <div className="p-4 relative">
+                {!isDragging && (
+                  <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded font-semibold" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
+                    正文
+                  </div>
+                )}
                 <div className="prd-md">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
@@ -1114,9 +1185,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 标记生成中/完成/生图等阶段：正文始终展示“原文”，预览单独展示“带标记版本” */}
+            {/* 标记生成中/完成/生图等阶段：正文始终展示"原文"，预览单独展示"带标记版本" */}
             {phase !== 'editing' && phase !== 'upload' && (
-              <div className="p-4">
+              <div className="p-4 relative">
+                {!isDragging && (
+                  <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded font-semibold" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
+                    正文
+                  </div>
+                )}
                 <div className="prd-md">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
@@ -1145,6 +1221,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           <div className="mb-3 flex flex-wrap items-center gap-2">
             {phaseSteps.map((s) => {
               const active = s.key === phase;
+              
+              // 判断是否是"未来阶段"（服务端还未到达的阶段）
+              const phaseOrder: Record<WorkflowPhase, number> = {
+                'upload': 0,
+                'editing': 1,
+                'markers-generating': 2,
+                'markers-generated': 2,
+                'images-generating': 3,
+                'images-generated': 4
+              };
+              const targetOrder = phaseOrder[s.key];
+              const serverOrder = phaseOrder[serverPhase];
+              const isFuture = targetOrder > serverOrder;
+              const disabled = generating || isFuture;
+              
               return (
                 <button
                   key={s.key}
@@ -1155,10 +1246,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 18%, rgba(255,255,255,0.03))' : 'rgba(255,255,255,0.03)',
                     border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, rgba(255,255,255,0.10))' : '1px solid rgba(255,255,255,0.10)',
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    opacity: generating ? 0.6 : 1,
-                    pointerEvents: generating ? 'none' : 'auto',
+                    opacity: disabled ? 0.4 : 1,
+                    pointerEvents: disabled ? 'none' : 'auto',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
                   }}
-                  title={active ? '当前阶段' : `跳转到：${s.label}`}
+                  title={active ? '当前阶段' : isFuture ? '该阶段尚未生成' : `跳转到：${s.label}`}
                 >
                   {s.label}
                 </button>
@@ -1348,45 +1440,84 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         onOpenChange={(open) => !open && handleCancelCreate()}
         title="新建提示词模板"
         description="输入模板名称和内容"
+        maxWidth={1040}
         content={
           creatingPrompt ? (
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                  模板名称
-                </label>
-                <input
-                  type="text"
-                  value={creatingPrompt.title}
-                  onChange={(e) => setCreatingPrompt({ ...creatingPrompt, title: e.target.value })}
-                  placeholder="例如：产品介绍"
-                  className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none prd-field"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                  模板内容
-                </label>
-                <textarea
-                  value={creatingPrompt.content}
-                  onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
-                  placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
-                  rows={12}
-                  className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
-                />
-              </div>
-              <div className="flex gap-2 justify-end">
-                <Button variant="secondary" onClick={handleCancelCreate}>
-                  取消
-                </Button>
-                <Button 
-                  variant="primary" 
-                  onClick={handleSaveNewPrompt}
-                  disabled={!creatingPrompt.title.trim() || !creatingPrompt.content.trim()}
-                >
-                  确认
-                </Button>
+            <div className="h-full min-h-0 flex flex-col">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
+                    模板名称
+                  </label>
+                  <input
+                    type="text"
+                    value={creatingPrompt.title}
+                    onChange={(e) => setCreatingPrompt({ ...creatingPrompt, title: e.target.value })}
+                    placeholder="例如：产品介绍"
+                    className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none prd-field"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
+                    模板内容
+                  </label>
+                  <textarea
+                    value={creatingPrompt.content}
+                    onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
+                    placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
+                    rows={12}
+                    className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
+                    预览
+                  </label>
+                  <div
+                    className="rounded-[14px] px-3 py-2.5 overflow-auto"
+                    style={{
+                      background: 'rgba(0,0,0,0.28)',
+                      border: '1px solid var(--border-subtle)',
+                      maxHeight: '300px',
+                    }}
+                  >
+                    <style>{`
+                      .create-prompt-md { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+                      .create-prompt-md h1,.create-prompt-md h2,.create-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 12px 0 6px; }
+                      .create-prompt-md h1 { font-size: 16px; }
+                      .create-prompt-md h2 { font-size: 14px; }
+                      .create-prompt-md h3 { font-size: 13px; }
+                      .create-prompt-md p { margin: 6px 0; }
+                      .create-prompt-md ul,.create-prompt-md ol { margin: 6px 0; padding-left: 18px; }
+                      .create-prompt-md li { margin: 3px 0; }
+                      .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                      .create-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                      .create-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                    `}</style>
+                    <div className="create-prompt-md">
+                      {creatingPrompt.content ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {creatingPrompt.content}
+                        </ReactMarkdown>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)' }}>（输入内容后显示预览）</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="secondary" onClick={handleCancelCreate}>
+                    取消
+                  </Button>
+                  <Button 
+                    variant="primary" 
+                    onClick={handleSaveNewPrompt}
+                    disabled={!creatingPrompt.title.trim() || !creatingPrompt.content.trim()}
+                  >
+                    确认
+                  </Button>
+                </div>
               </div>
             </div>
           ) : null
@@ -1399,64 +1530,256 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         onOpenChange={(open) => !open && handleCancelEdit()}
         title="编辑提示词模板"
         description="同时编辑标题和内容"
+        maxWidth={1040}
         content={
           editingPrompt ? (
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                  模板标题
-                </label>
-                <input
-                  type="text"
-                  value={editingPrompt.title}
-                  onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
-                  placeholder="输入模板标题..."
-                  className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none prd-field"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                  模板内容
-                </label>
-                <textarea
-                  value={editingPrompt.content}
-                  onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
-                  placeholder="输入模板内容..."
-                  rows={12}
-                  className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
-                />
-              </div>
-              <div className="flex gap-2 justify-end">
-                <Button variant="secondary" onClick={handleCancelEdit}>
-                  取消
-                </Button>
-                <Button 
-                  variant="primary" 
-                  onClick={handleSaveEdit}
-                  disabled={!editingPrompt.title.trim() || !editingPrompt.content.trim()}
-                >
-                  保存
-                </Button>
+            <div className="h-full min-h-0 flex flex-col">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
+                    模板标题
+                  </label>
+                  <input
+                    type="text"
+                    value={editingPrompt.title}
+                    onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                    placeholder="输入模板标题..."
+                    className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none prd-field"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
+                    模板内容
+                  </label>
+                  <textarea
+                    value={editingPrompt.content}
+                    onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
+                    placeholder="输入模板内容..."
+                    rows={12}
+                    className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
+                    预览
+                  </label>
+                  <div
+                    className="rounded-[14px] px-3 py-2.5 overflow-auto"
+                    style={{
+                      background: 'rgba(0,0,0,0.28)',
+                      border: '1px solid var(--border-subtle)',
+                      maxHeight: '300px',
+                    }}
+                  >
+                    <style>{`
+                      .edit-prompt-md { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+                      .edit-prompt-md h1,.edit-prompt-md h2,.edit-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 12px 0 6px; }
+                      .edit-prompt-md h1 { font-size: 16px; }
+                      .edit-prompt-md h2 { font-size: 14px; }
+                      .edit-prompt-md h3 { font-size: 13px; }
+                      .edit-prompt-md p { margin: 6px 0; }
+                      .edit-prompt-md ul,.edit-prompt-md ol { margin: 6px 0; padding-left: 18px; }
+                      .edit-prompt-md li { margin: 3px 0; }
+                      .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                      .edit-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                      .edit-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                    `}</style>
+                    <div className="edit-prompt-md">
+                      {editingPrompt.content ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {editingPrompt.content}
+                        </ReactMarkdown>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)' }}>（输入内容后显示预览）</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="secondary" onClick={handleCancelEdit}>
+                    取消
+                  </Button>
+                  <Button 
+                    variant="primary" 
+                    onClick={handleSaveEdit}
+                    disabled={!editingPrompt.title.trim() || !editingPrompt.content.trim()}
+                  >
+                    保存
+                  </Button>
+                </div>
               </div>
             </div>
           ) : null
         }
       />
 
-      {/* 系统提示词预览对话框 */}
+      {/* 系统提示词查看对话框 */}
       <Dialog
         open={promptPreviewOpen}
         onOpenChange={setPromptPreviewOpen}
-        title={selectedPrompt ? `预览系统提示词：${selectedPrompt.title}` : '预览系统提示词'}
-        description="仅预览，不会修改内容"
+        title="系统提示词"
+        description="查看所有提示词模板"
+        maxWidth={1200}
         content={
-          <div className="p-4">
-            <pre
-              className="text-xs whitespace-pre-wrap wrap-break-word rounded-[12px] p-3"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', maxHeight: 360, overflow: 'auto' }}
-            >
-              {selectedPrompt?.content || '（未选择提示词模板）'}
-            </pre>
+          <div className="p-2">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                系统提示词
+              </div>
+              <Button 
+                size="xs" 
+                variant="primary" 
+                onClick={() => {
+                  handleCreatePrompt();
+                  setPromptPreviewOpen(false);
+                }}
+              >
+                <Plus size={12} />
+                新建
+              </Button>
+            </div>
+            {allPrompts.length === 0 ? (
+              <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                还没有提示词模板，点击上方「新建」创建第一个模板
+              </div>
+            ) : (
+              <div className="max-h-[520px] overflow-auto pr-1">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {allPrompts.map((prompt) => (
+                    <Card key={prompt.id} className="p-0 overflow-hidden">
+                      <div className="group relative flex flex-col h-full">
+                        {/* 上栏：标题区 */}
+                        <div className="p-2 pb-1 flex-shrink-0">
+                          <style>{`
+                            .modal-prompt-marquee{position:relative;overflow:hidden;white-space:nowrap;min-width:0;width:100%}
+                            .modal-prompt-marquee__track{display:flex;align-items:center;gap:16px;width:max-content;will-change:transform}
+                            .modal-prompt-marquee__track--animate{animation:modal-prompt-scroll 12s linear infinite}
+                            .modal-prompt-marquee__track--static{animation:none;width:100%}
+                            .modal-prompt-marquee__item{display:inline-block;white-space:nowrap}
+                            @keyframes modal-prompt-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+                            @media (prefers-reduced-motion: reduce){.modal-prompt-marquee__track--animate{animation:none}}
+                          `}</style>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                              <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
+                              <div className="modal-prompt-marquee flex-1">
+                                <div className={`modal-prompt-marquee__track ${prompt.title.length > 20 ? 'modal-prompt-marquee__track--animate' : 'modal-prompt-marquee__track--static'}`}>
+                                  <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                    {prompt.title}
+                                  </span>
+                                  {prompt.title.length > 20 && (
+                                    <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                      {prompt.title}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {selectedPrompt?.id === prompt.id && (
+                              <span
+                                className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
+                                style={{
+                                  background: 'var(--accent-primary)',
+                                  color: 'white',
+                                }}
+                              >
+                                当前
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 中栏：内容预览区 */}
+                        <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                          <div
+                            className="h-full overflow-auto border rounded-[6px]"
+                            style={{
+                              borderColor: 'var(--border-subtle)',
+                              background: 'rgba(255,255,255,0.02)',
+                              minHeight: '120px',
+                              maxHeight: '160px',
+                            }}
+                          >
+                            <style>{`
+                              .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
+                              .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
+                              .modal-prompt-md h1 { font-size: 13px; }
+                              .modal-prompt-md h2 { font-size: 12px; }
+                              .modal-prompt-md h3 { font-size: 11px; }
+                              .modal-prompt-md p { margin: 4px 0; }
+                              .modal-prompt-md ul,.modal-prompt-md ol { margin: 4px 0; padding-left: 16px; }
+                              .modal-prompt-md li { margin: 2px 0; }
+                              .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                              .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+                              .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                            `}</style>
+                            <div className="modal-prompt-md">
+                              {prompt.content ? (
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {prompt.content}
+                                </ReactMarkdown>
+                              ) : (
+                                <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 下栏：操作按钮区 */}
+                        <div className="px-2 pb-2 pt-1 flex-shrink-0">
+                          <div className="flex gap-1.5 justify-end">
+                            {selectedPrompt?.id !== prompt.id ? (
+                              <Button
+                                size="xs"
+                                variant="primary"
+                                onClick={() => {
+                                  setSelectedPrompt(prompt);
+                                  setPromptPreviewOpen(false);
+                                }}
+                              >
+                                <Check size={12} />
+                                选择
+                              </Button>
+                            ) : (
+                              <Button
+                                size="xs"
+                                variant="secondary"
+                                disabled
+                              >
+                                <Check size={12} />
+                                已选
+                              </Button>
+                            )}
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => {
+                                handleEditPrompt(prompt);
+                                setPromptPreviewOpen(false);
+                              }}
+                            >
+                              <Edit2 size={12} />
+                              编辑
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="danger"
+                              onClick={() => {
+                                void handleDeletePrompt(prompt);
+                              }}
+                            >
+                              <Trash2 size={12} />
+                              删除
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         }
       />

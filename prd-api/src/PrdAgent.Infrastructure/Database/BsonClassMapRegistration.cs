@@ -45,6 +45,7 @@ public static class BsonClassMapRegistration
             RegisterImageMasterSession();
             RegisterImageMasterMessage();
             RegisterImageAsset();
+            RegisterArticleIllustrationWorkflow();
             RegisterImageMasterWorkspace();
             RegisterImageMasterViewport();
             RegisterImageGenRun();
@@ -193,6 +194,36 @@ public static class BsonClassMapRegistration
         });
     }
 
+    private static void RegisterArticleIllustrationWorkflow()
+    {
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ArticleIllustrationWorkflow)))
+        {
+            BsonClassMap.RegisterClassMap<ArticleIllustrationWorkflow>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapMember(x => x.Version).SetElementName("version");
+                cm.MapMember(x => x.Phase).SetElementName("phase");
+                cm.MapMember(x => x.Markers).SetElementName("markers");
+                cm.MapMember(x => x.ExpectedImageCount).SetElementName("expectedImageCount");
+                cm.MapMember(x => x.DoneImageCount).SetElementName("doneImageCount");
+                cm.MapMember(x => x.AssetIdByMarkerIndex).SetElementName("assetIdByMarkerIndex");
+                cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ArticleIllustrationMarker)))
+        {
+            BsonClassMap.RegisterClassMap<ArticleIllustrationMarker>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapMember(x => x.Index).SetElementName("index");
+                cm.MapMember(x => x.Text).SetElementName("text");
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+    }
+
     private static void RegisterImageMasterWorkspace()
     {
         if (BsonClassMap.IsClassMapRegistered(typeof(ImageMasterWorkspace))) return;
@@ -205,6 +236,8 @@ public static class BsonClassMapRegistration
             // 注意：ImageMasterWorkspace 历史写入字段名存在大小写差异。
             // 这里显式绑定为 camelCase，兼容已写入的数据（如 viewportByUserId）。
             cm.MapMember(x => x.ViewportByUserId).SetElementName("viewportByUserId");
+            cm.MapMember(x => x.ArticleWorkflow).SetElementName("articleWorkflow");
+            cm.MapMember(x => x.ArticleWorkflowHistory).SetElementName("articleWorkflowHistory");
             // 兼容历史字段/逐步演进：避免出现“新增字段导致反序列化崩溃”
             cm.SetIgnoreExtraElements(true);
         });
