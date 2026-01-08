@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import { Card } from '@/components/design/Card';
+import { PageHeader } from '@/components/design/PageHeader';
+import { Button } from '@/components/design/Button';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -445,109 +447,45 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <Card variant="gold" className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[28px] leading-tight font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-              资源管理 <span className="opacity-70">（Desktop / 单文件）</span>
-            </div>
-            <div className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              {activeTab === 'desktop' ? (
-                <>
-                  规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；优先皮肤专有资源，不存在则回落默认。
-                </>
-              ) : (
-                <>
-                  单文件资源不分皮肤：用于全局兜底（例如无头像 <span className="font-mono">nohead.png</span>）。
-                </>
-              )}
-            </div>
-
-            {/* Tab：合并进标题卡片，提升可读性 */}
-            <div
-              className="mt-3 inline-flex items-center p-1.5 rounded-[14px] w-fit self-start"
-              style={{
-                background: 'rgba(0,0,0,0.46)',
-                border: '1px solid rgba(255,255,255,0.16)',
-                boxShadow: '0 14px 36px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.30) inset',
-                backdropFilter: 'blur(10px)',
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setActiveTab('desktop')}
-                className={cn(
-                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center shrink-0 whitespace-nowrap',
-                  activeTab !== 'desktop' && 'hover:bg-white/6'
-                )}
-                style={{
-                  color: activeTab === 'desktop' ? '#1a1206' : 'rgba(255,255,255,0.82)',
-                  background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
-                  boxShadow:
-                    activeTab === 'desktop'
-                      ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
-                      : 'none',
-                }}
+      <PageHeader
+        title="资源管理（Desktop / 单文件）"
+        description={
+          activeTab === 'desktop'
+            ? <>规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；优先皮肤专有资源，不存在则回落默认。</>
+            : <>单文件资源不分皮肤：用于全局兜底（例如无头像 <span className="font-mono">nohead.png</span>）。</>
+        }
+        variant="gold"
+        tabs={[
+          { key: 'desktop', label: 'Desktop 资源矩阵（皮肤）' },
+          { key: 'single', label: '单文件资源（不分皮肤）' },
+        ]}
+        activeTab={activeTab}
+        onTabChange={(key) => setActiveTab(key as 'desktop' | 'single')}
+        actions={
+          <>
+            {activeTab === 'desktop' ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void reload()}
+                disabled={loading}
+                title="重新获取 skins/keys"
               >
-                Desktop 资源矩阵（皮肤）
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('single')}
-                className={cn(
-                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center shrink-0 whitespace-nowrap',
-                  activeTab !== 'single' && 'hover:bg-white/6'
-                )}
-                style={{
-                  color: activeTab === 'single' ? '#1a1206' : 'rgba(255,255,255,0.82)',
-                  background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
-                  boxShadow:
-                    activeTab === 'single'
-                      ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
-                      : 'none',
-                }}
-              >
-                单文件资源（不分皮肤）
-              </button>
-            </div>
-          </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {activeTab === 'desktop' ? (
-            <button
-              type="button"
-              className={cn(
-                'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
-                'bg-white/6 border border-white/12 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
-                loading && 'opacity-50 pointer-events-none'
-              )}
-              style={{
-                boxShadow: '0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
-              }}
-              onClick={() => void reload()}
-              title="重新获取 skins/keys"
+                重新获取皮肤
+              </Button>
+            ) : null}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void hardRefresh()}
+              disabled={loading}
+              title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
             >
-              重新获取皮肤
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className={cn(
-              'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
-              'bg-white/6 border border-white/12 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
-              loading && 'opacity-50 pointer-events-none'
-            )}
-            style={{
-              boxShadow: '0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
-            }}
-            onClick={() => void hardRefresh()}
-            title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
-          >
-            清空缓存并刷新
-          </button>
-        </div>
-      </div>
-      </Card>
+              清空缓存并刷新
+            </Button>
+          </>
+        }
+      />
 
       {err ? (
         <div
@@ -676,7 +614,8 @@ export default function AssetsManagePage() {
                     <input
                       value={newSkin}
                       onChange={(e) => setNewSkin(e.target.value)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[160px]"
+                      className="h-9 px-3 rounded-[12px] text-sm w-[160px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                       placeholder="white / dark / blue"
                     />
                     <button
@@ -700,13 +639,15 @@ export default function AssetsManagePage() {
                     <input
                       value={newKey}
                       onChange={(e) => setNewKey(e.target.value)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                      className="h-9 px-3 rounded-[12px] text-sm w-[220px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                       placeholder="例如 load（不含扩展名）"
                     />
                     <select
                       value={newKeyKind}
                       onChange={(e) => setNewKeyKind(e.target.value as AssetKind)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
+                      className="h-9 px-3 rounded-[12px] text-sm"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                     >
                       <option value="image">image</option>
                       <option value="audio">audio</option>
@@ -716,7 +657,8 @@ export default function AssetsManagePage() {
                     <input
                       value={newKeyDesc}
                       onChange={(e) => setNewKeyDesc(e.target.value)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                      className="h-9 px-3 rounded-[12px] text-sm w-[220px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                       placeholder="描述（可选）"
                     />
                     <button
@@ -753,15 +695,15 @@ export default function AssetsManagePage() {
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={() => void saveBranding()}
                   disabled={brandingSaving}
                   title="保存 Desktop 品牌配置"
-                  type="button"
                 >
                   {brandingSaving ? '保存中...' : '保存'}
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -771,7 +713,8 @@ export default function AssetsManagePage() {
                   大标题
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  className="w-full px-3 py-2 rounded-[12px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   value={brandingName}
                   onChange={(e) => setBrandingName(e.target.value)}
                   placeholder="PRD Agent"
@@ -783,7 +726,8 @@ export default function AssetsManagePage() {
                   小标题
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  className="w-full px-3 py-2 rounded-[12px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   value={brandingSubtitle}
                   onChange={(e) => setBrandingSubtitle(e.target.value)}
                   placeholder="智能PRD解读助手"
@@ -795,7 +739,8 @@ export default function AssetsManagePage() {
                   窗口标题（title）
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  className="w-full px-3 py-2 rounded-[12px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   value={brandingWindowTitle}
                   onChange={(e) => setBrandingWindowTitle(e.target.value)}
                   placeholder="PRD Agent"
@@ -823,7 +768,7 @@ export default function AssetsManagePage() {
               </div>
             </div>
 
-            <div className="mt-3 overflow-auto rounded-[14px] border border-white/10 bg-black/10">
+            <div className="mt-3 overflow-auto rounded-[14px]" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
               <div
                 className="grid"
                 style={{

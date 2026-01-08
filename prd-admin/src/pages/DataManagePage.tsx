@@ -1,6 +1,7 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Badge } from '@/components/design/Badge';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -235,25 +236,22 @@ export default function DataManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>数据管理</div>
-          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            配置迁移（导入/导出）与数据概览/清理，仅管理员可用
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw size={16} />
-            刷新
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)}>
-            <Database size={16} />
-            配置导入/导出
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="数据管理"
+        description="配置迁移（导入/导出）与数据概览/清理，仅管理员可用"
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
+              <RefreshCw size={16} />
+              刷新
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)}>
+              <Database size={16} />
+              配置导入/导出
+            </Button>
+          </>
+        }
+      />
 
       {err && (
         <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>

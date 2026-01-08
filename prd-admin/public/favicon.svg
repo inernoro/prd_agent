@@ -1,0 +1,23 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f4e2b8;stop-opacity:1" />
+      <stop offset="45%" style="stop-color:#d6b26a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f2d59b;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#goldGradient)" />
+  
+  <text 
+    x="256" 
+    y="268" 
+    font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif" 
+    font-size="190" 
+    font-weight="900" 
+    text-anchor="middle" 
+    dominant-baseline="middle" 
+    fill="#1a1206"
+    letter-spacing="-6"
+  >PRD</text>
+</svg>
