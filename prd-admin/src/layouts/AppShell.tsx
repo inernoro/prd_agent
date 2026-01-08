@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
@@ -161,28 +161,42 @@ export default function AppShell() {
         >
           <div
             className={cn(
-              'relative overflow-hidden transition-all duration-300 ease-out',
+              'relative overflow-hidden transition-all duration-300 ease-out shrink-0',
               collapsed
-                ? 'rounded-full w-[50px] h-[50px] self-center shrink-0'
+                ? 'rounded-[16px] w-[50px] self-center'
                 : 'rounded-[16px] p-3'
             )}
             style={{
-              background: collapsed 
-                ? 'var(--gold-gradient)'
-                : 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)',
-              border: collapsed 
-                ? 'none'
-                : '1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent)',
-              boxShadow: collapsed
-                ? '0 8px 24px rgba(214, 178, 106, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.15) inset'
-                : '0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
+              background: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)',
+              border: '1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
             }}
           >
             {collapsed ? (
-              <div className="h-full w-full flex items-center justify-center">
-                <div className="text-[13px] font-black tracking-tighter" style={{ color: '#1a1206' }}>
+              <div className="flex flex-col items-center gap-2 py-2">
+                <div
+                  className="h-9 w-9 rounded-[10px] flex items-center justify-center text-[10px] font-black tracking-tighter shrink-0"
+                  style={{ 
+                    background: 'var(--gold-gradient)',
+                    color: '#1a1206',
+                    boxShadow: '0 2px 8px rgba(214, 178, 106, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1) inset'
+                  }}
+                >
                   PRD
                 </div>
+                <button
+                  type="button"
+                  onClick={() => toggleNavCollapsed()}
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-[9px] transition-all duration-200 hover:bg-white/8"
+                  style={{ 
+                    color: 'var(--text-secondary)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)'
+                  }}
+                  aria-label="展开侧边栏"
+                  title="展开侧边栏"
+                >
+                  <PanelLeftOpen size={16} />
+                </button>
               </div>
             ) : (
               <>
