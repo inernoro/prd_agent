@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
@@ -161,39 +161,69 @@ export default function AppShell() {
         >
           <div
             className={cn(
-              'flex items-center transition-[padding,border-radius,width,height] duration-220 ease-out',
-              // 收拢态：强制正圆（避免 flex stretch 导致椭圆）
+              'relative overflow-hidden transition-all duration-300 ease-out',
               collapsed
-                ? 'justify-center rounded-full w-[50px] h-[50px] p-1.5 self-center shrink-0'
-                : 'justify-between rounded-[14px] px-3 py-3'
+                ? 'rounded-full w-[50px] h-[50px] self-center shrink-0'
+                : 'rounded-[16px] p-3'
             )}
-               style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            {!collapsed && (
-              <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className="h-9 w-9 rounded-[10px] flex items-center justify-center text-[11px] font-extrabold"
-                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
-                >
+            style={{
+              background: collapsed 
+                ? 'var(--gold-gradient)'
+                : 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)',
+              border: collapsed 
+                ? 'none'
+                : '1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent)',
+              boxShadow: collapsed
+                ? '0 8px 24px rgba(214, 178, 106, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.15) inset'
+                : '0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
+            }}
+          >
+            {collapsed ? (
+              <div className="h-full w-full flex items-center justify-center">
+                <div className="text-[13px] font-black tracking-tighter" style={{ color: '#1a1206' }}>
                   PRD
                 </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>PRD Admin</div>
-                  <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>Web Console</div>
-                </div>
               </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div
+                      className="h-8 w-8 rounded-[9px] flex items-center justify-center text-[10px] font-black tracking-tighter shrink-0"
+                      style={{ 
+                        background: 'var(--gold-gradient)',
+                        color: '#1a1206',
+                        boxShadow: '0 2px 8px rgba(214, 178, 106, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1) inset'
+                      }}
+                    >
+                      PRD
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-bold truncate tracking-tight" style={{ color: 'var(--text-primary)' }}>PRD Admin</div>
+                      <div className="text-[10px] truncate tracking-wide" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Web Console</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleNavCollapsed()}
+                    className="h-7 w-7 inline-flex items-center justify-center rounded-[9px] transition-all duration-200 hover:bg-white/8 shrink-0"
+                    style={{ 
+                      color: 'var(--text-secondary)',
+                      border: '1px solid rgba(255, 255, 255, 0.06)'
+                    }}
+                    aria-label="折叠侧边栏"
+                  >
+                    <PanelLeftClose size={16} />
+                  </button>
+                </div>
+                <div 
+                  className="h-px w-full"
+                  style={{
+                    background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)'
+                  }}
+                />
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => toggleNavCollapsed()}
-              className={cn(
-                'h-9 w-9 inline-flex items-center justify-center rounded-[12px] transition-colors',
-                'hover:bg-white/5'
-              )}
-              style={{ color: 'var(--text-secondary)' }}
-              aria-label={collapsed ? '展开侧边栏' : '折叠侧边栏'}
-            >
-              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-            </button>
           </div>
 
           <nav className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', collapsed ? 'gap-0.5' : 'gap-0.5')}
@@ -244,65 +274,119 @@ export default function AppShell() {
 
           <div
             className={cn(
-              'transition-[padding,border-radius,width,height] duration-220 ease-out',
-              // 收拢态：强制正圆（避免 flex stretch 导致椭圆）
+              'relative overflow-hidden transition-all duration-300 ease-out shrink-0',
               collapsed
-                ? 'rounded-full w-[50px] h-[50px] p-1.5 self-center shrink-0 flex items-center justify-center'
-                : 'rounded-[14px] p-3'
+                ? 'rounded-full w-[50px] h-[50px] self-center'
+                : 'rounded-[16px] p-3'
             )}
-               style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            {!collapsed && (
-              <div className="flex items-center gap-3 min-w-0">
+            style={{
+              background: collapsed
+                ? 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)'
+                : 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)',
+              border: '1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
+            }}
+          >
+            {collapsed ? (
+              <button
+                type="button"
+                onClick={() => setAvatarOpen(true)}
+                className="h-full w-full rounded-full overflow-hidden"
+                title="修改头像"
+              >
+                {(() => {
+                  const url = resolveAvatarUrl({
+                    username: user?.username,
+                    userType: user?.userType,
+                    botKind: user?.botKind,
+                    avatarFileName: user?.avatarFileName ?? null,
+                    avatarUrl: user?.avatarUrl,
+                  });
+                  const fallback = resolveNoHeadAvatarUrl();
+                  return (
+                    <img
+                      src={url}
+                      alt="avatar"
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        const el = e.currentTarget;
+                        if (el.getAttribute('data-fallback-applied') === '1') return;
+                        if (!fallback) return;
+                        el.setAttribute('data-fallback-applied', '1');
+                        el.src = fallback;
+                      }}
+                    />
+                  );
+                })()}
+              </button>
+            ) : (
+              <>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setAvatarOpen(true)}
+                    className="h-9 w-9 rounded-[10px] overflow-hidden shrink-0 transition-all duration-200 hover:scale-105"
+                    style={{ 
+                      background: 'rgba(255,255,255,0.04)', 
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)'
+                    }}
+                    title="修改头像"
+                  >
+                    {(() => {
+                      const url = resolveAvatarUrl({
+                        username: user?.username,
+                        userType: user?.userType,
+                        botKind: user?.botKind,
+                        avatarFileName: user?.avatarFileName ?? null,
+                        avatarUrl: user?.avatarUrl,
+                      });
+                      const fallback = resolveNoHeadAvatarUrl();
+                      return (
+                        <img
+                          src={url}
+                          alt="avatar"
+                          className="h-full w-full object-cover"
+                          onError={(e) => {
+                            const el = e.currentTarget;
+                            if (el.getAttribute('data-fallback-applied') === '1') return;
+                            if (!fallback) return;
+                            el.setAttribute('data-fallback-applied', '1');
+                            el.src = fallback;
+                          }}
+                        />
+                      );
+                    })()}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-bold truncate tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                      {user?.displayName || 'Admin'}
+                    </div>
+                    <div className="text-[10px] truncate tracking-wide mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                      {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                    </div>
+                  </div>
+                </div>
+                <div 
+                  className="h-px w-full my-2.5"
+                  style={{
+                    background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)'
+                  }}
+                />
                 <button
                   type="button"
-                  onClick={() => setAvatarOpen(true)}
-                  className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
-                  title="修改头像"
+                  onClick={() => logout()}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-[10px] transition-all duration-200 hover:bg-white/6 group"
+                  style={{ 
+                    color: 'var(--text-secondary)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)'
+                  }}
                 >
-                  {(() => {
-                    const url = resolveAvatarUrl({
-                      username: user?.username,
-                      userType: user?.userType,
-                      botKind: user?.botKind,
-                      avatarFileName: user?.avatarFileName ?? null,
-                      avatarUrl: user?.avatarUrl,
-                    });
-                    const fallback = resolveNoHeadAvatarUrl();
-                    return (
-                      <img
-                        src={url}
-                        alt="avatar"
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          const el = e.currentTarget;
-                          if (el.getAttribute('data-fallback-applied') === '1') return;
-                          if (!fallback) return;
-                          el.setAttribute('data-fallback-applied', '1');
-                          el.src = fallback;
-                        }}
-                      />
-                    );
-                  })()}
+                  <LogOut size={16} className="shrink-0 transition-transform duration-200 group-hover:-translate-x-0.5" />
+                  <span className="text-[12px] font-medium">退出登录</span>
                 </button>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{user?.displayName || 'Admin'}</div>
-                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}</div>
-                </div>
-              </div>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => logout()}
-              className={cn(
-                'inline-flex items-center justify-center rounded-[12px] transition-colors hover:bg-white/5',
-                collapsed ? 'w-9 h-9 p-0' : 'mt-3 w-full gap-2 px-3 py-2'
-              )}
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <LogOut size={18} className="shrink-0" />
-              {!collapsed && <span className="text-sm">退出</span>}
-            </button>
           </div>
 
           <AvatarEditDialog
