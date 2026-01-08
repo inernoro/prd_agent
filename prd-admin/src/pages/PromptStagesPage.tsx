@@ -761,6 +761,18 @@ export default function PromptStagesPage() {
     [navigate]
   );
 
+  const onChangePrdTab = useCallback((next: PrdTabKey) => {
+    setPrdTab(next);
+    // 清理对方 tab 的提示，避免切换后还残留
+    if (next === 'user') {
+      setSysErr(null);
+      setSysMsg(null);
+    } else {
+      setErr(null);
+      setMsg(null);
+    }
+  }, []);
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <Card className="p-5" variant="gold">
@@ -792,30 +804,6 @@ export default function PromptStagesPage() {
                 }}
               />
             </div>
-
-            {showPrd && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <SegmentedTabs<PrdTabKey>
-                  ariaLabel="PRD 提示词类型切换"
-                  items={[
-                    { key: 'user', label: '用户提示词' },
-                    { key: 'system', label: '系统提示词' },
-                  ]}
-                  value={prdTab}
-                  onChange={(next) => {
-                    setPrdTab(next);
-                    // 清理对方 tab 的提示，避免切换后还残留
-                    if (next === 'user') {
-                      setSysErr(null);
-                      setSysMsg(null);
-                    } else {
-                      setErr(null);
-                      setMsg(null);
-                    }
-                  }}
-                />
-              </div>
-            )}
             {/* 顶部状态行（使用默认/UpdatedAt）按需求删除；仅保留校验错误提示 */}
             {(showUserPrompts || showSystemPrompts) && !uiValidation.ok ? (
               <div className="mt-2 text-xs" style={{ color: 'rgba(255,120,120,0.95)' }}>
@@ -945,9 +933,19 @@ export default function PromptStagesPage() {
       {showUserPrompts ? (
         <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}>
         <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>提示词总览</div>
-            <div className="shrink-0">
+            <div className="shrink-0 flex items-center gap-2">
+              <SegmentedTabs<PrdTabKey>
+                ariaLabel="PRD 提示词类型切换"
+                items={[
+                  { key: 'user', label: '用户提示词' },
+                  { key: 'system', label: '系统提示词' },
+                ]}
+                value={prdTab}
+                onChange={onChangePrdTab}
+                disabled={loading || saving}
+              />
               <Button variant="secondary" size="xs" onClick={addPrompt} disabled={loading || saving}>
                 <Plus size={14} />
                 新增
@@ -1190,8 +1188,20 @@ export default function PromptStagesPage() {
           style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}
         >
           <Card className="p-4 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>系统提示词总览</div>
+              <div className="shrink-0">
+                <SegmentedTabs<PrdTabKey>
+                  ariaLabel="PRD 提示词类型切换"
+                  items={[
+                    { key: 'user', label: '用户提示词' },
+                    { key: 'system', label: '系统提示词' },
+                  ]}
+                  value={prdTab}
+                  onChange={onChangePrdTab}
+                  disabled={sysLoading || sysSaving}
+                />
+              </div>
             </div>
             <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               按角色（PM/DEV/QA）分别配置 PRD 问答 system prompt；仅用于“输出结构/边界/资料使用说明”等非 JSON 约束。
