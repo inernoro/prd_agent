@@ -11,7 +11,7 @@ import {
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
-import { Plus, Users2, Pencil, Trash2, ArrowRight, FileText } from 'lucide-react';
+import { Plus, Users2, Pencil, Trash2, FileText } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -21,6 +21,20 @@ function formatDate(iso: string | null | undefined) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString();
+}
+
+function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 60) {
+  const raw = ws.articleContent ?? ws.articleContentWithMarkers ?? '';
+  let s = String(raw ?? '').trim();
+  if (!s) return '';
+
+  // 文学创作 Agent 的文章配图标记：`[插图] : xxx`；列表预览应去掉标记与占位文案
+  s = s.replace(/^\s*\[插图\]\s*:\s*.*$/gm, '');
+  s = s.replace(/^\s*>\s*配图.*$/gm, '');
+  s = s.replace(/\s+/g, ' ').trim();
+
+  if (s.length <= maxChars) return s;
+  return `${s.slice(0, maxChars)}…`;
 }
 
 export default function LiteraryAgentWorkspaceListPage() {
@@ -149,39 +163,48 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const grid = (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="w-full max-w-[1080px] mx-auto space-y-3">
       {items.map((ws) => (
-        <Card key={ws.id} className="flex flex-col">
-          <div className="flex items-start gap-3 mb-3">
+        <Card key={ws.id} className="p-0 overflow-hidden">
+          <div className="flex items-start gap-4 p-4">
             <div
               className="w-12 h-12 rounded flex items-center justify-center flex-shrink-0"
               style={{ background: 'var(--accent-primary-alpha)' }}
             >
               <FileText size={24} style={{ color: 'var(--accent-primary)' }} />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                {ws.title}
+
+            <button
+              type="button"
+              className="flex-1 min-w-0 text-left group"
+              onClick={() => navigate(`/literary-agent/${ws.id}`)}
+              title={ws.title || ws.id}
+            >
+              <div className="flex items-baseline justify-between gap-3">
+                <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  {ws.title}
+                </div>
+                <div className="text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                  更新于 {formatDate(ws.updatedAt)}
+                </div>
               </div>
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                更新于 {formatDate(ws.updatedAt)}
+
+              <div className="mt-2 text-[12px] leading-5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                {getArticlePreviewText(ws) || '（暂无内容）'}
               </div>
+            </button>
+
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button size="sm" variant="secondary" onClick={() => void onRename(ws)} title="重命名">
+                <Pencil size={14} />
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void onShare(ws)} title="共享">
+                <Users2 size={14} />
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void onDelete(ws)} title="删除">
+                <Trash2 size={14} />
+              </Button>
             </div>
-          </div>
-          <div className="flex gap-2 mt-auto">
-            <Button size="sm" variant="primary" className="flex-1" onClick={() => navigate(`/literary-agent/${ws.id}`)}>
-              <ArrowRight size={14} />
-              打开
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => void onRename(ws)}>
-              <Pencil size={14} />
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => void onShare(ws)}>
-              <Users2 size={14} />
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => void onDelete(ws)}>
-              <Trash2 size={14} />
-            </Button>
           </div>
         </Card>
       ))}
