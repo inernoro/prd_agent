@@ -461,18 +461,68 @@ export default function AssetsManagePage() {
             <div className="text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
               资源管理（Desktop / 单文件）
             </div>
-          <div className="mt-2 text-[14px]" style={{ color: 'var(--text-muted)' }}>
-            {activeTab === 'desktop' ? (
-              <>
-                规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
-              </>
-            ) : (
-              <>
-                单文件资源不区分皮肤：用于全局兜底（例如无头像 nohead.png）。
-              </>
-            )}
+            <div className="mt-2 text-[14px]" style={{ color: 'var(--text-muted)' }}>
+              {activeTab === 'desktop' ? (
+                <>
+                  规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
+                </>
+              ) : (
+                <>
+                  单文件资源不区分皮肤：用于全局兜底（例如无头像 nohead.png）。
+                </>
+              )}
+            </div>
+
+            {/* Tab：合并进标题卡片，提升可读性 */}
+            <div
+              className="mt-4 inline-flex items-center p-1.5 rounded-[14px] w-fit self-start"
+              style={{
+                background: 'rgba(0,0,0,0.38)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.28) inset',
+                backdropFilter: 'blur(10px)',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveTab('desktop')}
+                className={cn(
+                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
+                  activeTab === 'desktop' && 'transform scale-1',
+                  activeTab !== 'desktop' && 'transform scale-[0.98] hover:bg-white/5'
+                )}
+                style={{
+                  color: activeTab === 'desktop' ? '#1a1206' : 'rgba(255,255,255,0.78)',
+                  background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
+                  boxShadow:
+                    activeTab === 'desktop'
+                      ? '0 2px 10px -2px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.14) inset'
+                      : 'none',
+                }}
+              >
+                Desktop 资源矩阵（皮肤）
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('single')}
+                className={cn(
+                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
+                  activeTab === 'single' && 'transform scale-1',
+                  activeTab !== 'single' && 'transform scale-[0.98] hover:bg-white/5'
+                )}
+                style={{
+                  color: activeTab === 'single' ? '#1a1206' : 'rgba(255,255,255,0.78)',
+                  background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
+                  boxShadow:
+                    activeTab === 'single'
+                      ? '0 2px 10px -2px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.14) inset'
+                      : 'none',
+                }}
+              >
+                单文件资源（不分皮肤）
+              </button>
+            </div>
           </div>
-        </div>
 
         <div className="flex items-center gap-3 shrink-0">
           {activeTab === 'desktop' ? (
@@ -509,45 +559,6 @@ export default function AssetsManagePage() {
           </button>
         </div>
       </div>
-      </div>
-
-      <div className="inline-flex items-center p-1 rounded-[14px]" style={{ 
-        background: 'rgba(0,0,0,0.20)', 
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3) inset',
-      }}>
-        <button
-          type="button"
-          onClick={() => setActiveTab('desktop')}
-          className={cn(
-            'h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
-            activeTab === 'desktop' && 'transform scale-1',
-            activeTab !== 'desktop' && 'transform scale-[0.98]'
-          )}
-          style={{
-            color: activeTab === 'desktop' ? '#1a1206' : 'var(--text-secondary)',
-            background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
-            boxShadow: activeTab === 'desktop' ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
-          }}
-        >
-          Desktop 资源矩阵（皮肤）
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('single')}
-          className={cn(
-            'h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
-            activeTab === 'single' && 'transform scale-1',
-            activeTab !== 'single' && 'transform scale-[0.98]'
-          )}
-          style={{
-            color: activeTab === 'single' ? '#1a1206' : 'var(--text-secondary)',
-            background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
-            boxShadow: activeTab === 'single' ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
-          }}
-        >
-          单文件资源（不分皮肤）
-        </button>
       </div>
 
       {err ? (
