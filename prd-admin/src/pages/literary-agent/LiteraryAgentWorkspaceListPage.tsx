@@ -1,18 +1,15 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
-import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   createImageMasterWorkspace,
   deleteImageMasterWorkspace,
-  getUsers,
   listImageMasterWorkspaces,
   updateImageMasterWorkspace,
 } from '@/services';
-import type { AdminUser } from '@/types/admin';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
-import { Plus, Users2, Pencil, Trash2, FileText } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 function formatDate(iso: string | null | undefined) {
@@ -42,14 +39,6 @@ export default function LiteraryAgentWorkspaceListPage() {
   const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
-
-  const [shareOpen, setShareOpen] = useState(false);
-  const [shareWs, setShareWs] = useState<ImageMasterWorkspace | null>(null);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [usersLoading, setUsersLoading] = useState(false);
-  const [memberSet, setMemberSet] = useState<Set<string>>(new Set());
-
-  const memberIds = useMemo(() => Array.from(memberSet), [memberSet]);
 
   const reload = async () => {
     setLoading(true);
@@ -132,77 +121,96 @@ export default function LiteraryAgentWorkspaceListPage() {
     await reload();
   };
 
-  const onShare = async (ws: ImageMasterWorkspace) => {
-    setShareWs(ws);
-    setMemberSet(new Set(ws.memberUserIds || []));
-    setShareOpen(true);
-    setUsersLoading(true);
-    try {
-      const res = await getUsers({ page: 1, pageSize: 200 });
-      if (res.success && res.data?.items) {
-        setUsers(res.data.items.filter((u) => u.role === 'ADMIN' && u.userId !== ws.ownerUserId));
-      }
-    } finally {
-      setUsersLoading(false);
-    }
-  };
-
-  const onSaveShare = async () => {
-    if (!shareWs) return;
-    const res = await updateImageMasterWorkspace({
-      id: shareWs.id,
-      memberUserIds: memberIds,
-      idempotencyKey: `share-${shareWs.id}-${Date.now()}`,
-    });
-    if (!res.success) {
-      await systemDialog.alert({ title: '保存失败', message: res.error?.message || '未知错误', confirmText: '确定' });
-      return;
-    }
-    setShareOpen(false);
-    await reload();
-  };
-
   const grid = (
     <div className="w-full max-w-[1080px] mx-auto space-y-3">
       {items.map((ws) => (
         <Card key={ws.id} className="p-0 overflow-hidden">
-          <div className="flex items-start gap-4 p-4">
-            <div
-              className="w-12 h-12 rounded flex items-center justify-center flex-shrink-0"
-              style={{ background: 'var(--accent-primary-alpha)' }}
-            >
-              <FileText size={24} style={{ color: 'var(--accent-primary)' }} />
+          <div
+            role="button"
+            tabIndex={0}
+            title={ws.title || ws.id}
+            className={[
+              'group relative cursor-pointer select-none',
+              'transition-colors',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
+            ].join(' ')}
+            onClick={() => navigate(`/literary-agent/${ws.id}`)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate(`/literary-agent/${ws.id}`);
+              }
+            }}
+          >
+            <div className="flex items-start gap-4 p-4 pb-14">
+              <div
+                className="w-12 h-12 rounded flex items-center justify-center flex-shrink-0"
+                style={{ background: 'var(--accent-primary-alpha)' }}
+              >
+                <FileText size={24} style={{ color: 'var(--accent-primary)' }} />
+              </div>
+
+              <div className="flex-1 min-w-0 text-left">
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {ws.title}
+                  </div>
+                  <div className="text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                    更新于 {formatDate(ws.updatedAt)}
+                  </div>
+                </div>
+
+                <div className="mt-2 text-[12px] leading-5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                  {getArticlePreviewText(ws) || '（暂无内容）'}
+                </div>
+              </div>
             </div>
 
-            <button
-              type="button"
-              className="flex-1 min-w-0 text-left group"
-              onClick={() => navigate(`/literary-agent/${ws.id}`)}
-              title={ws.title || ws.id}
+            {/* hover/focus-within：底部浮出操作条；按钮点击必须阻止冒泡避免触发“进入卡片” */}
+            <div
+              className={[
+                'absolute left-4 right-4 bottom-3 flex items-center justify-start gap-2',
+                'opacity-0 translate-y-1 pointer-events-none',
+                'transition-all duration-150',
+                'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto',
+                'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto',
+              ].join(' ')}
             >
-              <div className="flex items-baseline justify-between gap-3">
-                <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                  {ws.title}
-                </div>
-                <div className="text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                  更新于 {formatDate(ws.updatedAt)}
-                </div>
-              </div>
-
-              <div className="mt-2 text-[12px] leading-5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
-                {getArticlePreviewText(ws) || '（暂无内容）'}
-              </div>
-            </button>
-
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <Button size="sm" variant="secondary" onClick={() => void onRename(ws)} title="重命名">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/literary-agent/${ws.id}`);
+                }}
+                title="编辑"
+              >
+                <SquarePen size={14} />
+                编辑
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onRename(ws);
+                }}
+                title="重命名"
+              >
                 <Pencil size={14} />
+                重命名
               </Button>
-              <Button size="sm" variant="secondary" onClick={() => void onShare(ws)} title="共享">
-                <Users2 size={14} />
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => void onDelete(ws)} title="删除">
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onDelete(ws);
+                }}
+                title="删除"
+              >
                 <Trash2 size={14} />
+                删除
               </Button>
             </div>
           </div>
@@ -256,61 +264,6 @@ export default function LiteraryAgentWorkspaceListPage() {
       ) : (
         grid
       )}
-
-      <Dialog
-        open={shareOpen}
-        onOpenChange={(o) => {
-          setShareOpen(o);
-          if (!o) {
-            setShareWs(null);
-            setMemberSet(new Set());
-          }
-        }}
-        title="共享设置"
-        content={
-          <div className="p-4">
-            <div className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
-              选择可以访问此文章的成员
-            </div>
-            {usersLoading ? (
-              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                加载中...
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {users.map((u) => (
-                  <label key={u.userId} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={memberSet.has(u.userId)}
-                      onChange={(e) => {
-                        const next = new Set(memberSet);
-                        if (e.target.checked) {
-                          next.add(u.userId);
-                        } else {
-                          next.delete(u.userId);
-                        }
-                        setMemberSet(next);
-                      }}
-                    />
-                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                      {u.username}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2 justify-end mt-4">
-              <Button variant="secondary" onClick={() => setShareOpen(false)}>
-                取消
-              </Button>
-              <Button variant="primary" onClick={() => void onSaveShare()}>
-                保存
-              </Button>
-            </div>
-          </div>
-        }
-      />
     </div>
   );
 }
