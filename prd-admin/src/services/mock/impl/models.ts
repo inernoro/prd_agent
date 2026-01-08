@@ -27,6 +27,7 @@ export async function createModelMock(input: CreateModelInput): Promise<ApiRespo
     isImageGen: false,
     group: input.group,
     enablePromptCache: typeof input.enablePromptCache === 'boolean' ? input.enablePromptCache : true,
+    maxTokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
   };
 
   db.models.unshift(m);
@@ -48,6 +49,7 @@ export async function updateModelMock(id: string, input: UpdateModelInput): Prom
   m.group = input.group ?? m.group;
   if (typeof input.enabled === 'boolean') m.enabled = input.enabled;
   if (typeof (input as any).enablePromptCache === 'boolean') (m as any).enablePromptCache = (input as any).enablePromptCache;
+  if ('maxTokens' in (input as any)) (m as any).maxTokens = (input as any).maxTokens ?? null;
 
   if (typeof input.isMain === 'boolean') {
     if (input.isMain) {
