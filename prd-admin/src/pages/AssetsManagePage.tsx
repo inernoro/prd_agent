@@ -7,6 +7,20 @@ function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
 }
 
+function SectionDivider() {
+  return (
+    <div className="px-6">
+      <div
+        className="h-px w-full"
+        style={{
+          background:
+            'linear-gradient(90deg, rgba(255,255,255,0.00) 0%, rgba(255,255,255,0.14) 25%, rgba(255,255,255,0.14) 75%, rgba(255,255,255,0.00) 100%)',
+        }}
+      />
+    </div>
+  );
+}
+
 type AssetKind = 'image' | 'audio' | 'video' | 'other';
 
 type AssetRow = {
@@ -431,46 +445,84 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <div
-        className="rounded-[20px] p-6 transition-all duration-200"
-        style={{
-          backgroundColor: 'var(--bg-elevated)',
-          backgroundImage: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
-          borderWidth: 1,
-          borderStyle: 'solid',
-          borderColor: 'color-mix(in srgb, var(--border-subtle) 60%, transparent)',
-          boxShadow: '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
-        }}
-      >
-        <div className="flex items-start justify-between gap-6">
+      <Card variant="gold" className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
-              资源管理（Desktop / 单文件）
+            <div className="text-[28px] leading-tight font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+              资源管理 <span className="opacity-70">（Desktop / 单文件）</span>
             </div>
-          <div className="mt-2 text-[14px]" style={{ color: 'var(--text-muted)' }}>
-            {activeTab === 'desktop' ? (
-              <>
-                规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；悬浮可见源站地址；优先皮肤专有资源，不存在则回落默认。
-              </>
-            ) : (
-              <>
-                单文件资源不区分皮肤：用于全局兜底（例如无头像 nohead.png）。
-              </>
-            )}
-          </div>
-        </div>
+            <div className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {activeTab === 'desktop' ? (
+                <>
+                  规则固定：<span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；优先皮肤专有资源，不存在则回落默认。
+                </>
+              ) : (
+                <>
+                  单文件资源不分皮肤：用于全局兜底（例如无头像 <span className="font-mono">nohead.png</span>）。
+                </>
+              )}
+            </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+            {/* Tab：合并进标题卡片，提升可读性 */}
+            <div
+              className="mt-3 inline-flex items-center p-1.5 rounded-[14px] w-fit self-start"
+              style={{
+                background: 'rgba(0,0,0,0.46)',
+                border: '1px solid rgba(255,255,255,0.16)',
+                boxShadow: '0 14px 36px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.30) inset',
+                backdropFilter: 'blur(10px)',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveTab('desktop')}
+                className={cn(
+                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center shrink-0 whitespace-nowrap',
+                  activeTab !== 'desktop' && 'hover:bg-white/6'
+                )}
+                style={{
+                  color: activeTab === 'desktop' ? '#1a1206' : 'rgba(255,255,255,0.82)',
+                  background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
+                  boxShadow:
+                    activeTab === 'desktop'
+                      ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
+                      : 'none',
+                }}
+              >
+                Desktop 资源矩阵（皮肤）
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('single')}
+                className={cn(
+                  'h-[34px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center shrink-0 whitespace-nowrap',
+                  activeTab !== 'single' && 'hover:bg-white/6'
+                )}
+                style={{
+                  color: activeTab === 'single' ? '#1a1206' : 'rgba(255,255,255,0.82)',
+                  background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
+                  boxShadow:
+                    activeTab === 'single'
+                      ? '0 2px 12px -2px rgba(214, 178, 106, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.16) inset'
+                      : 'none',
+                }}
+              >
+                单文件资源（不分皮肤）
+              </button>
+            </div>
+          </div>
+
+        <div className="flex items-center gap-2 shrink-0">
           {activeTab === 'desktop' ? (
             <button
               type="button"
               className={cn(
                 'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
-                'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
+                'bg-white/6 border border-white/12 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
                 loading && 'opacity-50 pointer-events-none'
               )}
               style={{
-                boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
               }}
               onClick={() => void reload()}
               title="重新获取 skins/keys"
@@ -482,11 +534,11 @@ export default function AssetsManagePage() {
             type="button"
             className={cn(
               'h-[36px] px-4 rounded-[12px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2',
-              'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
+              'bg-white/6 border border-white/12 hover:bg-white/10 hover:border-white/20 active:scale-[0.98]',
               loading && 'opacity-50 pointer-events-none'
             )}
             style={{
-              boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
             }}
             onClick={() => void hardRefresh()}
             title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
@@ -495,46 +547,7 @@ export default function AssetsManagePage() {
           </button>
         </div>
       </div>
-
-      <div className="inline-flex items-center p-1 rounded-[14px]" style={{ 
-        background: 'rgba(0,0,0,0.20)', 
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3) inset',
-      }}>
-        <button
-          type="button"
-          onClick={() => setActiveTab('desktop')}
-          className={cn(
-            'h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
-            activeTab === 'desktop' && 'transform scale-1',
-            activeTab !== 'desktop' && 'transform scale-[0.98]'
-          )}
-          style={{
-            color: activeTab === 'desktop' ? '#1a1206' : 'var(--text-secondary)',
-            background: activeTab === 'desktop' ? 'var(--gold-gradient)' : 'transparent',
-            boxShadow: activeTab === 'desktop' ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
-          }}
-        >
-          Desktop 资源矩阵（皮肤）
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('single')}
-          className={cn(
-            'h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap',
-            activeTab === 'single' && 'transform scale-1',
-            activeTab !== 'single' && 'transform scale-[0.98]'
-          )}
-          style={{
-            color: activeTab === 'single' ? '#1a1206' : 'var(--text-secondary)',
-            background: activeTab === 'single' ? 'var(--gold-gradient)' : 'transparent',
-            boxShadow: activeTab === 'single' ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
-          }}
-        >
-          单文件资源（不分皮肤）
-        </button>
-      </div>
-    </div>
+      </Card>
 
       {err ? (
         <div
@@ -629,193 +642,242 @@ export default function AssetsManagePage() {
       ) : null}
 
       {activeTab === 'desktop' ? (
-        <>
-      <Card className="p-6 mt-6">
-        <div className="flex flex-wrap items-end gap-3 justify-between">
-          <div className="min-w-0">
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              资源根目录
-            </div>
-            <div className="mt-1 font-mono text-sm break-all" style={{ color: 'var(--text-primary)' }}>
-              {desktopRoot || '-'}
+        <Card className="p-0 overflow-hidden">
+          {/* 1) 资源根目录 + 新建（皮肤 / key） */}
+          <div className="px-6 py-5">
+            <div className="flex flex-wrap items-start gap-3 justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: 'var(--accent-gold)' }} />
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    资源根目录与创建
+                  </div>
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-full border border-white/10 bg-white/5"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    Desktop
+                  </span>
+                </div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  资源根目录（只读）+ 快速新建皮肤 / key（key 仅文件名、强制小写）。
+                </div>
+                <div className="mt-2 font-mono text-sm break-all" style={{ color: 'var(--text-primary)' }}>
+                  {desktopRoot || '-'}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                    新建皮肤（仅小写）
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={newSkin}
+                      onChange={(e) => setNewSkin(e.target.value)}
+                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[160px]"
+                      placeholder="white / dark / blue"
+                    />
+                    <button
+                      type="button"
+                      className={cn(
+                        'h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm',
+                        loading && 'opacity-60 pointer-events-none'
+                      )}
+                      onClick={() => void onCreateSkin()}
+                    >
+                      新建皮肤
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                    新建 key（仅文件名）
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={newKey}
+                      onChange={(e) => setNewKey(e.target.value)}
+                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                      placeholder="例如 load（不含扩展名）"
+                    />
+                    <select
+                      value={newKeyKind}
+                      onChange={(e) => setNewKeyKind(e.target.value as AssetKind)}
+                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
+                    >
+                      <option value="image">image</option>
+                      <option value="audio">audio</option>
+                      <option value="video">video</option>
+                      <option value="other">other</option>
+                    </select>
+                    <input
+                      value={newKeyDesc}
+                      onChange={(e) => setNewKeyDesc(e.target.value)}
+                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                      placeholder="描述（可选）"
+                    />
+                    <button
+                      type="button"
+                      className={cn(
+                        'h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm',
+                        loading && 'opacity-60 pointer-events-none'
+                      )}
+                      onClick={() => void onCreateKey()}
+                    >
+                      新建 key
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                新建皮肤（仅小写）
+          <SectionDivider />
+
+          {/* 2) Desktop 品牌配置 */}
+          <div className="px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: 'var(--accent-gold)' }} />
+                  <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Desktop 品牌配置（登录页名称 + 图标 + 背景图）
+                  </div>
+                </div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  在线模式下 Desktop 会拉取该配置：名称用于登录页标题；图标/背景图从{' '}
+                  <span className="font-mono">/icon/desktop/&lt;key&gt;</span> 加载（key 仅文件名、必须全小写；背景图允许为空表示使用内置背景）。
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  value={newSkin}
-                  onChange={(e) => setNewSkin(e.target.value)}
-                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[160px]"
-                  placeholder="white / dark / blue"
-                />
+              <div className="flex items-center gap-2 shrink-0">
                 <button
+                  className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
+                  onClick={() => void saveBranding()}
+                  disabled={brandingSaving}
+                  title="保存 Desktop 品牌配置"
                   type="button"
-                  className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', loading && 'opacity-60 pointer-events-none')}
-                  onClick={() => void onCreateSkin()}
                 >
-                  新建皮肤
+                  {brandingSaving ? '保存中...' : '保存'}
                 </button>
               </div>
             </div>
 
-            <div>
-              <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                新建 key（仅文件名）
-              </div>
-              <div className="flex items-center gap-2">
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  大标题
+                </div>
                 <input
-                  value={newKey}
-                  onChange={(e) => setNewKey(e.target.value)}
-                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
-                  placeholder="例如 load（不含扩展名）"
+                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  value={brandingName}
+                  onChange={(e) => setBrandingName(e.target.value)}
+                  placeholder="PRD Agent"
                 />
-                <select
-                  value={newKeyKind}
-                  onChange={(e) => setNewKeyKind(e.target.value as AssetKind)}
-                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
-                >
-                  <option value="image">image</option>
-                  <option value="audio">audio</option>
-                  <option value="video">video</option>
-                  <option value="other">other</option>
-                </select>
+              </div>
+
+              <div>
+                <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  小标题
+                </div>
                 <input
-                  value={newKeyDesc}
-                  onChange={(e) => setNewKeyDesc(e.target.value)}
-                  className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
-                  placeholder="描述（可选）"
+                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  value={brandingSubtitle}
+                  onChange={(e) => setBrandingSubtitle(e.target.value)}
+                  placeholder="智能PRD解读助手"
                 />
-                <button
-                  type="button"
-                  className={cn('h-9 px-3 rounded-[12px] border border-white/10 hover:bg-white/5 text-sm', loading && 'opacity-60 pointer-events-none')}
-                  onClick={() => void onCreateKey()}
-                >
-                  新建 key
-                </button>
+              </div>
+
+              <div>
+                <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  窗口标题（title）
+                </div>
+                <input
+                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  value={brandingWindowTitle}
+                  onChange={(e) => setBrandingWindowTitle(e.target.value)}
+                  placeholder="PRD Agent"
+                />
               </div>
             </div>
           </div>
-        </div>
-      </Card>
 
-      {/* Desktop 品牌配置（放在资源管理之后） */}
-      <Card className="p-6 mt-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              Desktop 品牌配置（登录页名称 + 图标 + 背景图）
+          <SectionDivider />
+
+          {/* 3) 资源诊断矩阵 */}
+          <div className="px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: 'var(--accent-gold)' }} />
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    资源诊断矩阵（含缺失展示；支持上传覆盖写）
+                  </div>
+                </div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  说明：本页 key 对齐 Desktop 端规则，仅支持文件名（不支持子目录）。上传会覆盖写到 COS：
+                  <span className="font-mono">icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>（全小写）。
+                </div>
+              </div>
             </div>
-            <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              在线模式下 Desktop 会拉取该配置：名称用于登录页标题；图标/背景图从 <span className="font-mono">/icon/desktop/&lt;key&gt;</span> 加载（key 仅文件名、必须全小写，可指向任意图片格式；背景图允许为空表示使用内置背景）。
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
-              onClick={() => void saveBranding()}
-              disabled={brandingSaving}
-              title="保存 Desktop 品牌配置"
-              type="button"
-            >
-              {brandingSaving ? '保存中...' : '保存'}
-            </button>
-          </div>
-        </div>
 
-        {/* 三个文本 */}
-        <div className="mt-3 grid grid-cols-3 gap-4">
-          <div>
-            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>大标题</div>
-            <input
-              className="w-full px-3 py-2 rounded-xl ui-control"
-              value={brandingName}
-              onChange={(e) => setBrandingName(e.target.value)}
-              placeholder="PRD Agent"
-            />
-          </div>
-
-          <div>
-            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>小标题</div>
-            <input
-              className="w-full px-3 py-2 rounded-xl ui-control"
-              value={brandingSubtitle}
-              onChange={(e) => setBrandingSubtitle(e.target.value)}
-              placeholder="智能PRD解读助手"
-            />
-          </div>
-
-          <div>
-            <div className="text-xs mb-2 font-medium" style={{ color: 'var(--text-muted)' }}>窗口标题（title）</div>
-            <input
-              className="w-full px-3 py-2 rounded-xl ui-control"
-              value={brandingWindowTitle}
-              onChange={(e) => setBrandingWindowTitle(e.target.value)}
-              placeholder="PRD Agent"
-            />
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-6 mt-6">
-        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-          资源诊断矩阵（含缺失展示；支持上传覆盖写）
-        </div>
-        <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-          说明：本页 key 对齐 Desktop 端规则，仅支持文件名（不支持子目录）。上传会覆盖写到 COS：<span className="font-mono">icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>（全小写）。
-        </div>
-
-        <div className="mt-3 overflow-auto">
-          <div
-            className="grid"
-            style={{
-              gridTemplateColumns: `180px repeat(${columns.length}, minmax(240px, 1fr))`,
-            }}
-          >
-            {/* 表头 */}
-            <div
-              className="sticky top-0 z-10 px-3 py-2 text-sm"
-              style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}
-            >
-              项目
-            </div>
-            {columns.map((c) => (
+            <div className="mt-3 overflow-auto rounded-[14px] border border-white/10 bg-black/10">
               <div
-                key={c}
-                className="sticky top-0 z-10 px-3 py-2 text-sm font-semibold"
-                style={{ background: 'var(--panel-solid, var(--bg-elevated))', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}
+                className="grid"
+                style={{
+                  gridTemplateColumns: `180px repeat(${columns.length}, minmax(240px, 1fr))`,
+                }}
               >
-                {c === '__base__' ? '默认' : labelForSkin(c)}
-              </div>
-            ))}
+                {/* 表头 */}
+                <div
+                  className="sticky top-0 z-10 px-3 py-2 text-sm"
+                  style={{
+                    background: 'var(--panel-solid, var(--bg-elevated))',
+                    color: 'var(--text-muted)',
+                    borderBottom: '1px solid var(--border-subtle)',
+                  }}
+                >
+                  项目
+                </div>
+                {columns.map((c) => (
+                  <div
+                    key={c}
+                    className="sticky top-0 z-10 px-3 py-2 text-sm font-semibold"
+                    style={{
+                      background: 'var(--panel-solid, var(--bg-elevated))',
+                      color: 'var(--text-primary)',
+                      borderBottom: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    {c === '__base__' ? '默认' : labelForSkin(c)}
+                  </div>
+                ))}
 
-            {rows.map((row) => (
-              <RowBlock
-                key={row.key}
-                row={row}
-                columns={columns}
-                broken={broken}
-                uploadingId={uploadingId}
-                matrixData={matrixData}
-                onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
-                onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
-                onUpload={(skin, key) => chooseUpload(skin, key)}
-                onDelete={() => void handleDeleteKey(row)}
-              />
-            ))}
-            {rows.length === 0 ? (
-              <div className="py-3" style={{ color: 'var(--text-muted)' }}>
-                暂无 key
+                {rows.map((row) => (
+                  <RowBlock
+                    key={row.key}
+                    row={row}
+                    columns={columns}
+                    broken={broken}
+                    uploadingId={uploadingId}
+                    matrixData={matrixData}
+                    onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
+                    onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
+                    onUpload={(skin, key) => chooseUpload(skin, key)}
+                    onDelete={() => void handleDeleteKey(row)}
+                  />
+                ))}
+                {rows.length === 0 ? (
+                  <div className="py-3" style={{ color: 'var(--text-muted)' }}>
+                    暂无 key
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
-        </div>
-      </Card>
-        </>
+        </Card>
       ) : null}
     </div>
   );
