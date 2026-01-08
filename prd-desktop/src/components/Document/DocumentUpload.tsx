@@ -6,7 +6,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 import { ApiResponse, Document, Session } from '../../types';
-import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
+import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
 interface UploadResponse {
   sessionId: string;

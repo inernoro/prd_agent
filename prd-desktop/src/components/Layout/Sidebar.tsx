@@ -9,7 +9,7 @@ import { useMessageStore } from '../../stores/messageStore';
 import type { ApiResponse, Document, Session, UserRole } from '../../types';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { extractMarkdownTitle, extractSnippetFromContent, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
+import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();

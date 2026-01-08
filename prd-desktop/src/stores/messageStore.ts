@@ -98,23 +98,6 @@ function clearStreamingBuffers() {
   }
 }
 
-function isLocalEphemeralMessage(m: Message): boolean {
-  const id = String((m as any)?.id ?? '').trim();
-  if (!id) return true;
-  // 本地占位：用户发送后立刻插入的“请求中 assistant”，只用于 UX，不应作为历史消息展示/持久化
-  if (id.startsWith('pending-assistant-')) return true;
-  // 本地系统提示：仅用于 UI 提示，不应持久化到聊天历史
-  if (id.startsWith('group-stream-error-')) return true;
-  if (id.startsWith('error-')) return true;
-  // 容错：极端情况下（崩溃/重启）可能遗留空 assistant 气泡；只要它明显不是服务端消息就清掉
-  const role = (m as any)?.role;
-  const content = String((m as any)?.content ?? '');
-  const hasSeq = typeof (m as any)?.groupSeq === 'number' && Number.isFinite((m as any).groupSeq) && (m as any).groupSeq > 0;
-  const hasBlocks = Array.isArray((m as any)?.blocks) && (m as any).blocks.length > 0;
-  const hasCitations = Array.isArray((m as any)?.citations) && (m as any).citations.length > 0;
-  if (role === 'Assistant' && !hasSeq && !hasBlocks && !hasCitations && !content.trim()) return true;
-  return false;
-}
 
 function maybeSortByGroupSeq(list: Message[]): Message[] {
   const hasSeq = list.some((m) => typeof (m as any)?.groupSeq === 'number');

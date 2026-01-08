@@ -51,7 +51,7 @@ function ChatContainerInner() {
       if (status === 'reconnecting' && connectionStatus === 'connected') {
         pushNotice('连接中断，正在重连...', { level: 'warning', ttlMs: 0, signature: 'group-stream-reconnecting' });
       } else if (status === 'connected' && connectionStatus === 'reconnecting') {
-        pushNotice('连接已恢复', { level: 'success', ttlMs: 2000, signature: 'group-stream-connected' });
+        pushNotice('连接已恢复', { level: 'info', ttlMs: 2000, signature: 'group-stream-connected' });
       }
     }
   });
@@ -86,7 +86,6 @@ function ChatContainerInner() {
       
       // 处理 blockEnd 事件：标记 block 为完成状态，可以进行 Markdown 渲染
       if (p?.type === 'blockEnd' && p?.messageId && p?.blockId) {
-        const messageId = String(p.messageId);
         const blockId = String(p.blockId);
         
         const store = useMessageStore.getState();
