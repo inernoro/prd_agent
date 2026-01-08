@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { PageHeader } from '@/components/design/PageHeader';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
 import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts } from '@/services';
@@ -775,111 +776,100 @@ export default function PromptStagesPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
-      <Card className="p-5" variant="gold">
-        <div className="flex items-start justify-between gap-6">
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
-              <div className="text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>提示词管理</div>
-              {uiIsDirty && (
-                <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
-                  未保存
-                </Badge>
-              )}
-            </div>
-            {/* tabs：两排（按需求），胶囊分段切换（参考 LlmLabTab） */}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <SegmentedTabs<TopTabKey>
-                ariaLabel="提示词域切换"
-                items={[
-                  { key: 'prd', label: 'PRD提示词' },
-                  { key: 'other', label: '其他提示词' },
-                ]}
-                value={topTab}
-                onChange={(next) => {
-                  setTopTab(next);
-                  setErr(null);
-                  setMsg(null);
-                  setSysErr(null);
-                  setSysMsg(null);
-                }}
-              />
-            </div>
-            {/* 顶部状态行（使用默认/UpdatedAt）按需求删除；仅保留校验错误提示 */}
-            {(showUserPrompts || showSystemPrompts) && !uiValidation.ok ? (
-              <div className="mt-2 text-xs" style={{ color: 'rgba(255,120,120,0.95)' }}>
+      <PageHeader
+        title="提示词管理"
+        description={
+          <div className="flex items-center gap-2">
+            {(showUserPrompts || showSystemPrompts) && !uiValidation.ok && (
+              <span style={{ color: 'rgba(255,120,120,0.95)' }}>
                 {uiValidation.message}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {!showOther && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    // 顶部“测试”：根据当前 tab 尽量带上更多上下文
-                    if (showUserPrompts) {
-                      goTest({ role: roleEnum, promptKey: activePromptKey || null });
-                      return;
-                    }
-                    // 系统提示词测试：仅 role
-                    goTest({ role: roleEnum, promptKey: null });
-                  }}
-                  disabled={uiLoading || uiSaving}
-                  title="跳转到 AI 对话页进行测试（上传 PRD / 选择角色与提示词 / 一键运行）"
-                >
-                  测试
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={showUserPrompts ? load : loadSystem}
-                  disabled={uiLoading || uiSaving}
-                >
-                  <RefreshCw size={16} />
-                  刷新
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={showUserPrompts ? save : saveSystem}
-                  disabled={
-                    uiLoading ||
-                    uiSaving ||
-                    (showUserPrompts ? !settings : !sysSettings) ||
-                    !uiIsDirty ||
-                    !uiValidation.ok
-                  }
-                  title={!uiIsDirty ? '未修改无需保存' : !uiValidation.ok ? '请先修正校验错误' : '保存'}
-                >
-                  <Save size={16} />
-                  保存
-                </Button>
-                <ConfirmTip
-                  title="恢复默认？"
-                  description={
-                    showUserPrompts
-                      ? '将删除管理员覆盖配置，所有阶段提示词回落到系统默认（不可恢复覆盖内容）。'
-                      : '将删除管理员覆盖配置，系统提示词回落到系统默认（不可恢复覆盖内容）。'
-                  }
-                  confirmText="确认恢复默认"
-                  onConfirm={showUserPrompts ? reset : resetSystem}
-                  disabled={uiLoading || uiSaving}
-                  side="top"
-                  align="end"
-                >
-                  <Button variant="danger" size="sm" disabled={uiLoading || uiSaving}>
-                    <RotateCcw size={16} />
-                    恢复默认
-                  </Button>
-                </ConfirmTip>
-              </>
+              </span>
+            )}
+            {uiIsDirty && (
+              <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
+                未保存
+              </Badge>
             )}
           </div>
-        </div>
-      </Card>
+        }
+        variant="gold"
+        tabs={[
+          { key: 'prd', label: 'PRD提示词' },
+          { key: 'other', label: '其他提示词' },
+        ]}
+        activeTab={topTab}
+        onTabChange={(next) => {
+          setTopTab(next as TopTabKey);
+          setErr(null);
+          setMsg(null);
+          setSysErr(null);
+          setSysMsg(null);
+        }}
+        actions={
+          !showOther ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  if (showUserPrompts) {
+                    goTest({ role: roleEnum, promptKey: activePromptKey || null });
+                    return;
+                  }
+                  goTest({ role: roleEnum, promptKey: null });
+                }}
+                disabled={uiLoading || uiSaving}
+                title="跳转到 AI 对话页进行测试（上传 PRD / 选择角色与提示词 / 一键运行）"
+              >
+                测试
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={showUserPrompts ? load : loadSystem}
+                disabled={uiLoading || uiSaving}
+              >
+                <RefreshCw size={16} />
+                刷新
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={showUserPrompts ? save : saveSystem}
+                disabled={
+                  uiLoading ||
+                  uiSaving ||
+                  (showUserPrompts ? !settings : !sysSettings) ||
+                  !uiIsDirty ||
+                  !uiValidation.ok
+                }
+                title={!uiIsDirty ? '未修改无需保存' : !uiValidation.ok ? '请先修正校验错误' : '保存'}
+              >
+                <Save size={16} />
+                保存
+              </Button>
+              <ConfirmTip
+                title="恢复默认？"
+                description={
+                  showUserPrompts
+                    ? '将删除管理员覆盖配置，所有阶段提示词回落到系统默认（不可恢复覆盖内容）。'
+                    : '将删除管理员覆盖配置，系统提示词回落到系统默认（不可恢复覆盖内容）。'
+                }
+                confirmText="确认恢复默认"
+                onConfirm={showUserPrompts ? reset : resetSystem}
+                disabled={uiLoading || uiSaving}
+                side="top"
+                align="end"
+              >
+                <Button variant="danger" size="sm" disabled={uiLoading || uiSaving}>
+                  <RotateCcw size={16} />
+                  恢复默认
+                </Button>
+              </ConfirmTip>
+            </>
+          ) : undefined
+        }
+      />
 
       {uiErr && (
         <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>

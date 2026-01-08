@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   deleteAdminGroup,
@@ -228,12 +229,10 @@ export default function GroupsPage() {
 
   return (
     <div className="h-full flex flex-col gap-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>群组管理</div>
-          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>共 {total} 个群组</div>
-        </div>
-      </div>
+      <PageHeader
+        title="群组管理"
+        description={`共 ${total} 个群组`}
+      />
 
       <Card className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-3">

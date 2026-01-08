@@ -3,6 +3,7 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
@@ -1034,33 +1035,12 @@ export default function LlmLogsPage() {
   if (tab === 'system') {
     return (
       <div className="h-full min-h-0 flex flex-col gap-4">
-        <div className="flex items-center gap-2 shrink-0">
-          <div
-            className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-          >
-            {tabs.map((x) => {
-              const active = tab === x.key;
-              return (
-                <button
-                  key={x.key}
-                  type="button"
-                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                  style={{
-                    color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                    background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                    border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                  }}
-                  aria-pressed={active}
-                  onClick={() => setTab(x.key)}
-                >
-                  {x.icon}
-                  {x.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <PageHeader
+          title="日志管理"
+          tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
+          activeTab={tab}
+          onTabChange={(key) => setTab(key as 'llm' | 'system')}
+        />
         <div className="flex-1 min-h-0">
           <SystemLogsTab />
         </div>
@@ -1079,50 +1059,24 @@ export default function LlmLogsPage() {
         @keyframes prd-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--prd-marquee-shift)))}}
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
-      <div className="flex items-center gap-2 shrink-0">
-        <div
-          className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-        >
-          {tabs.map((x) => {
-            const active = tab === x.key;
-            return (
-              <button
-                key={x.key}
-                type="button"
-                className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                style={{
-                  color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                  background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                  border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                }}
-                aria-pressed={active}
-                onClick={() => setTab(x.key)}
-              >
-                {x.icon}
-                {x.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>LLM 请求日志</div>
-          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            仅展示后端发往大模型 Provider 的请求与流式响应（仅隐藏密钥/Token；请求正文仍按后端落库策略保留摘要）
-          </div>
-        </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => load()}
-          disabled={loading}
-        >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </Button>
-      </div>
+      <PageHeader
+        title="LLM 请求日志"
+        description="仅展示后端发往大模型 Provider 的请求与流式响应（仅隐藏密钥/Token；请求正文仍按后端落库策略保留摘要）"
+        tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
+        activeTab={tab}
+        onTabChange={(key) => setTab(key as 'llm' | 'system')}
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => load()}
+            disabled={loading}
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            刷新
+          </Button>
+        }
+      />
 
       <Card className="p-4">
         <div className="grid gap-3 md:grid-cols-6">

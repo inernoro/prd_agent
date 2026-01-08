@@ -1,5 +1,6 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -390,22 +391,16 @@ export default function VisualAgentWorkspaceListPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
-              视觉创作 Agent
-            </div>
-            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              Workspace 列表：创建、共享与继续编辑（自动保存）
-            </div>
-          </div>
+      <PageHeader
+        title="视觉创作 Agent"
+        description="Workspace 列表：创建、共享与继续编辑（自动保存）"
+        actions={
           <Button variant="primary" onClick={() => void onCreate()} disabled={loading}>
             <Plus size={16} />
             新建 Workspace
           </Button>
-        </div>
-      </Card>
+        }
+      />
 
       {error ? (
         <Card>

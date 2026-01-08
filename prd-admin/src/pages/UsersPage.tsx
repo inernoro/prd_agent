@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate } from '@/services';
 import { CheckCircle2, Circle, KeyRound, MoreVertical, Pencil, XCircle, UserCog } from 'lucide-react';
@@ -615,37 +616,37 @@ export default function UsersPage() {
 
   return (
     <div className="h-full flex flex-col gap-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>用户管理</div>
-          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>共 {total} 个用户</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={openCreateUser}>
-            创建用户
-          </Button>
-          <Button variant="secondary" size="sm" onClick={openBulkCreate}>
-            批量创建
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              setInviteOpen(true);
-              setInviteCodes([]);
-            }}
-          >
-            生成邀请码
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={handleInitializeUsers}
-          >
-            初始化用户
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="用户管理"
+        description={`共 ${total} 个用户`}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={openCreateUser}>
+              创建用户
+            </Button>
+            <Button variant="secondary" size="sm" onClick={openBulkCreate}>
+              批量创建
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setInviteOpen(true);
+                setInviteCodes([]);
+              }}
+            >
+              生成邀请码
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleInitializeUsers}
+            >
+              初始化用户
+            </Button>
+          </>
+        }
+      />
 
       <Card className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-3">

@@ -3,6 +3,7 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { Select } from '@/components/design/Select';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -934,17 +935,15 @@ export default function ModelManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>模型管理</div>
-          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            平台 {selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个
-            {selectedPlatformId && selectedPlatformId !== '__all__'
-              ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
-              : ''}
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="模型管理"
+        description={
+          `平台 ${selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个` +
+          (selectedPlatformId && selectedPlatformId !== '__all__'
+            ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
+            : '')
+        }
+      />
 
       <div className={`grid gap-4 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格） */}

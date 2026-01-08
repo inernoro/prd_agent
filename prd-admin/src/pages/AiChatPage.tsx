@@ -1,5 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { getAiChatHistory, suggestGroupName, uploadAiChatDocument } from '@/services';
@@ -1259,7 +1260,7 @@ export default function AiChatPage() {
 
   const rightPanel = (
     <div className="flex-1 min-h-0 flex flex-col gap-4 relative">
-      {/* 顶部 Tab：专注模式下不占布局，避免压缩画布高度 */}
+      {/* 专注模式：浮动还原按钮 */}
       {tab === 'imageMaster' && navCollapsed ? (
         <div className="absolute left-0 top-0 z-30" style={{ paddingLeft: 12, paddingTop: 12 }}>
           <button
@@ -1280,35 +1281,7 @@ export default function AiChatPage() {
             <Minimize2 size={18} />
           </button>
         </div>
-      ) : (
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant={tab === 'chat' ? 'primary' : 'secondary'} onClick={() => setTab('chat')}>
-            初级对话交互
-          </Button>
-          <Button variant={tab === 'imageGen' ? 'primary' : 'secondary'} onClick={() => setTab('imageGen')}>
-            中级图片绘制
-          </Button>
-          <Button variant={tab === 'imageMaster' ? 'primary' : 'secondary'} onClick={() => setTab('imageMaster')}>
-            高级视觉创作
-          </Button>
-          {tab === 'imageMaster' ? (
-            <button
-              type="button"
-              className="h-10 w-10 rounded-full inline-flex items-center justify-center"
-              style={{
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(255,255,255,0.06)',
-                color: 'var(--text-secondary)',
-              }}
-              onClick={() => toggleNavCollapsed()}
-              aria-label={navCollapsed ? '还原布局' : '最大化'}
-              title={navCollapsed ? '还原布局' : '最大化'}
-            >
-              {navCollapsed ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
-          ) : null}
-        </div>
-      )}
+      ) : null}
 
       {isTestMode && tab === 'chat' ? (
         <Card className="p-4" variant="default">
@@ -1481,9 +1454,39 @@ export default function AiChatPage() {
   }, [navCollapsed, setFullBleedMain, tab]);
 
   return (
-    <div className="h-full min-h-0 flex gap-4">
-      {tab === 'chat' ? leftPanel : null}
-      {rightPanel}
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <PageHeader
+        title="AI 对话实验室"
+        tabs={[
+          { key: 'chat', label: '初级对话交互' },
+          { key: 'imageGen', label: '中级图片绘制' },
+          { key: 'imageMaster', label: '高级视觉创作' },
+        ]}
+        activeTab={tab}
+        onTabChange={(key) => setTab(key as 'chat' | 'imageGen' | 'imageMaster')}
+        actions={
+          tab === 'imageMaster' ? (
+            <button
+              type="button"
+              className="h-10 w-10 rounded-full inline-flex items-center justify-center"
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'var(--text-secondary)',
+              }}
+              onClick={() => toggleNavCollapsed()}
+              aria-label={navCollapsed ? '还原布局' : '最大化'}
+              title={navCollapsed ? '还原布局' : '最大化'}
+            >
+              {navCollapsed ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
+          ) : undefined
+        }
+      />
+      <div className="flex-1 min-h-0 flex gap-4">
+        {tab === 'chat' ? leftPanel : null}
+        {rightPanel}
+      </div>
 
       <Dialog
         open={createOpen}

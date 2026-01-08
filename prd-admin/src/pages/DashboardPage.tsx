@@ -4,6 +4,7 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { KpiCard } from '@/components/design/KpiCard';
 import { Select } from '@/components/design/Select';
+import { PageHeader } from '@/components/design/PageHeader';
 import { getActiveGroups, getGapStats, getLlmLogs, getMessageTrend, getOverviewStats, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem, TokenUsage } from '@/services/contracts/adminStats';
 import type { LlmRequestLogListItem } from '@/types/admin';
@@ -225,23 +226,21 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="text-[26px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>仪表盘</div>
-          <div className="mt-1.5 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-            LLM 可观测性 · Token · TTFB · 缓存 · 趋势
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium">
-            <option value={7}>最近7天</option>
-            <option value={14}>最近14天</option>
-            <option value={30}>最近30天</option>
-          </Select>
-          <Badge variant="new">LLM</Badge>
-          <Badge variant="featured">Observability</Badge>
-        </div>
-      </div>
+      <PageHeader
+        title="仪表盘"
+        description="LLM 可观测性 · Token · TTFB · 缓存 · 趋势"
+        actions={
+          <>
+            <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium">
+              <option value={7}>最近7天</option>
+              <option value={14}>最近14天</option>
+              <option value={30}>最近30天</option>
+            </Select>
+            <Badge variant="new">LLM</Badge>
+            <Badge variant="featured">Observability</Badge>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard title="总用户数" value={overview?.totalUsers ?? 0} loading={loadingBase} />

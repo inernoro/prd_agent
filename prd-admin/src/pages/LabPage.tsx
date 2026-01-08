@@ -1,4 +1,4 @@
-import { Button } from '@/components/design/Button';
+import { PageHeader } from '@/components/design/PageHeader';
 import DesktopLabTab from '@/pages/lab-desktop/DesktopLabTab';
 import LlmLabTab from '@/pages/lab-llm/LlmLabTab';
 import { Monitor, Sparkles } from 'lucide-react';
@@ -16,16 +16,15 @@ export default function LabPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <div className="flex items-center gap-2 shrink-0">
-        <Button variant={tab === 'llm' ? 'primary' : 'secondary'} onClick={() => setTab('llm')}>
-          <Sparkles size={16} />
-          大模型实验室
-        </Button>
-        <Button variant={tab === 'desktop' ? 'primary' : 'secondary'} onClick={() => setTab('desktop')}>
-          <Monitor size={16} />
-          桌面实验室
-        </Button>
-      </div>
+      <PageHeader
+        title="实验室"
+        tabs={[
+          { key: 'llm', label: '大模型实验室', icon: <Sparkles size={16} /> },
+          { key: 'desktop', label: '桌面实验室', icon: <Monitor size={16} /> },
+        ]}
+        activeTab={tab}
+        onTabChange={(key) => setTab(key as 'llm' | 'desktop')}
+      />
 
       <div className="flex-1 min-h-0">
         {tab === 'llm' ? <LlmLabTab /> : <DesktopLabTab />}
