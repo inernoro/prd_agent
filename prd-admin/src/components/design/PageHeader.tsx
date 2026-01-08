@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 type PageHeaderProps = {
   title: string;
   description?: ReactNode;
+  subtitle?: ReactNode;
   tabs?: Array<{ key: string; label: string; icon?: ReactNode }>;
   activeTab?: string;
   onTabChange?: (key: string) => void;
@@ -11,7 +12,7 @@ type PageHeaderProps = {
 };
 
 export function PageHeader(props: PageHeaderProps) {
-  const { title, description, tabs, activeTab, onTabChange, actions, variant = 'default' } = props;
+  const { title, description, subtitle, tabs, activeTab, onTabChange, actions, variant = 'default' } = props;
 
   return (
     <div
@@ -29,10 +30,17 @@ export function PageHeader(props: PageHeaderProps) {
       }}
     >
       <div className="flex items-center gap-6">
-        {/* 左侧：标题和描述 */}
+        {/* 左侧：标题、副标题和描述 */}
         <div className="min-w-0 shrink-0">
-          <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
-            {title}
+          <div className="flex items-center gap-2">
+            <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
+              {title}
+            </div>
+            {subtitle && (
+              <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)', opacity: 0.8 }}>
+                {subtitle}
+              </div>
+            )}
           </div>
           {description && (
             <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>

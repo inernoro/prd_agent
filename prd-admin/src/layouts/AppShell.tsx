@@ -148,13 +148,14 @@ export default function AppShell() {
             width: focusHideAside ? 0 : asideWidth,
             zIndex: 20,
             borderRadius: 18,
-            opacity: focusHideAside ? 0 : 0.8,
-            // 让线条能透出来，但内容依旧清晰
-            background:
-              'linear-gradient(180deg, rgba(10,10,12,0.78) 0%, rgba(10,10,12,0.72) 100%)',
-            border: '1px solid color-mix(in srgb, var(--border-subtle) 78%, rgba(255,255,255,0.10))',
-            boxShadow: '0 26px 120px rgba(0,0,0,0.60)',
+            opacity: focusHideAside ? 0 : 1,
+            // 与主内容区 Card 保持一致的配色方案
+            backgroundColor: 'var(--bg-elevated)',
+            backgroundImage: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
+            border: '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+            boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
             backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
@@ -195,8 +196,8 @@ export default function AppShell() {
             </button>
           </div>
 
-          <nav className={cn('flex-1 flex flex-col', collapsed ? 'gap-1' : 'gap-1')}
-               style={{ paddingTop: 2 }}>
+          <nav className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', collapsed ? 'gap-0.5' : 'gap-0.5')}
+               style={{ paddingTop: 2, paddingRight: 2 }}>
             {items.map((it) => {
               const active = it.key === activeKey;
               return (
@@ -208,7 +209,7 @@ export default function AppShell() {
                     'relative flex items-center gap-3 rounded-[12px] transition-colors',
                     'hover:bg-white/4',
                     // 收拢态：按钮点击区为正方形圆角矩形（避免扁长）
-                    collapsed ? 'justify-center px-0 py-0 w-[50px] h-[50px] self-center shrink-0' : 'px-3 py-2.5'
+                    collapsed ? 'justify-center px-0 py-0 w-[50px] h-[50px] self-center shrink-0' : 'px-3 py-2'
                   )}
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent',
@@ -224,7 +225,7 @@ export default function AppShell() {
                     <div className="min-w-0 flex-1 text-left">
                       <div className="text-sm font-medium truncate">{it.label}</div>
                       {it.description && (
-                        <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)', opacity: active ? 0.9 : 0.7 }}>
+                        <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.9 : 0.7 }}>
                           {it.description}
                         </div>
                       )}
