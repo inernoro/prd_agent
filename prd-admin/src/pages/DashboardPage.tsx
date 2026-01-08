@@ -231,13 +231,15 @@ export default function DashboardPage() {
         description="LLM 可观测性 · Token · TTFB · 缓存 · 趋势"
         actions={
           <>
-            <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium">
+            <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium h-[35px]" uiSize="sm">
               <option value={7}>最近7天</option>
               <option value={14}>最近14天</option>
               <option value={30}>最近30天</option>
             </Select>
-            <Badge variant="new">LLM</Badge>
-            <Badge variant="featured">Observability</Badge>
+            <div className="inline-flex items-center gap-2 h-[35px]">
+              <Badge variant="new">LLM</Badge>
+              <Badge variant="featured">Observability</Badge>
+            </div>
           </>
         }
       />

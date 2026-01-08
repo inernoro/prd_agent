@@ -921,7 +921,7 @@ export default function PromptStagesPage() {
       </style>
 
       {showUserPrompts ? (
-        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}>
+        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>
         <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>提示词总览</div>

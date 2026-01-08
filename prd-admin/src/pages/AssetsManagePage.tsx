@@ -614,7 +614,8 @@ export default function AssetsManagePage() {
                     <input
                       value={newSkin}
                       onChange={(e) => setNewSkin(e.target.value)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[160px]"
+                      className="h-9 px-3 rounded-[12px] text-sm w-[160px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                       placeholder="white / dark / blue"
                     />
                     <button
@@ -638,13 +639,15 @@ export default function AssetsManagePage() {
                     <input
                       value={newKey}
                       onChange={(e) => setNewKey(e.target.value)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                      className="h-9 px-3 rounded-[12px] text-sm w-[220px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                       placeholder="例如 load（不含扩展名）"
                     />
                     <select
                       value={newKeyKind}
                       onChange={(e) => setNewKeyKind(e.target.value as AssetKind)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm"
+                      className="h-9 px-3 rounded-[12px] text-sm"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                     >
                       <option value="image">image</option>
                       <option value="audio">audio</option>
@@ -654,7 +657,8 @@ export default function AssetsManagePage() {
                     <input
                       value={newKeyDesc}
                       onChange={(e) => setNewKeyDesc(e.target.value)}
-                      className="h-9 px-3 rounded-[12px] bg-black/15 border border-white/10 text-sm w-[220px]"
+                      className="h-9 px-3 rounded-[12px] text-sm w-[220px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                       placeholder="描述（可选）"
                     />
                     <button
@@ -691,15 +695,15 @@ export default function AssetsManagePage() {
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  className="px-3 py-2 text-sm rounded-xl ui-control hover:opacity-90"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={() => void saveBranding()}
                   disabled={brandingSaving}
                   title="保存 Desktop 品牌配置"
-                  type="button"
                 >
                   {brandingSaving ? '保存中...' : '保存'}
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -709,7 +713,8 @@ export default function AssetsManagePage() {
                   大标题
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  className="w-full px-3 py-2 rounded-[12px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   value={brandingName}
                   onChange={(e) => setBrandingName(e.target.value)}
                   placeholder="PRD Agent"
@@ -721,7 +726,8 @@ export default function AssetsManagePage() {
                   小标题
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  className="w-full px-3 py-2 rounded-[12px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   value={brandingSubtitle}
                   onChange={(e) => setBrandingSubtitle(e.target.value)}
                   placeholder="智能PRD解读助手"
@@ -733,7 +739,8 @@ export default function AssetsManagePage() {
                   窗口标题（title）
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded-xl ui-control"
+                  className="w-full px-3 py-2 rounded-[12px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   value={brandingWindowTitle}
                   onChange={(e) => setBrandingWindowTitle(e.target.value)}
                   placeholder="PRD Agent"
@@ -761,7 +768,7 @@ export default function AssetsManagePage() {
               </div>
             </div>
 
-            <div className="mt-3 overflow-auto rounded-[14px] border border-white/10 bg-black/10">
+            <div className="mt-3 overflow-auto rounded-[14px]" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
               <div
                 className="grid"
                 style={{

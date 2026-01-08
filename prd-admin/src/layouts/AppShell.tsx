@@ -11,7 +11,7 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { updateUserAvatar } from '@/services';
 
-type NavItem = { key: string; label: string; icon: React.ReactNode };
+type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
 
 export default function AppShell() {
   const navigate = useNavigate();
@@ -76,18 +76,18 @@ export default function AppShell() {
 
   const items: NavItem[] = useMemo(
     () => [
-      { key: '/', label: '仪表盘', icon: <LayoutDashboard size={18} /> },
-      { key: '/users', label: '用户管理', icon: <Users size={18} /> },
-      { key: '/groups', label: '群组管理', icon: <Users2 size={18} /> },
-      { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} /> },
-      { key: '/prompts', label: '提示词管理', icon: <FileText size={18} /> },
-      { key: '/ai-chat', label: 'AI 对话', icon: <MessagesSquare size={18} /> },
-      { key: '/visual-agent', label: '视觉创作 Agent', icon: <Wand2 size={18} /> },
-      { key: '/literary-agent', label: '文学创作 Agent', icon: <PenLine size={18} /> },
-      { key: '/assets', label: '资源管理', icon: <Image size={18} /> },
-      { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} /> },
-      { key: '/data', label: '数据管理', icon: <Database size={18} /> },
-      { key: '/lab', label: '实验室', icon: <FlaskConical size={18} /> },
+      { key: '/', label: '仪表盘', icon: <LayoutDashboard size={18} />, description: 'LLM 可观测性与数据概览' },
+      { key: '/users', label: '用户管理', icon: <Users size={18} />, description: '账号、角色与权限管理' },
+      { key: '/groups', label: '群组管理', icon: <Users2 size={18} />, description: '协作群组与成员管理' },
+      { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} />, description: '平台、模型与配置管理' },
+      { key: '/prompts', label: '提示词管理', icon: <FileText size={18} />, description: 'PRD 问答提示词配置' },
+      { key: '/ai-chat', label: 'AI 对话', icon: <MessagesSquare size={18} />, description: '对话测试与图片生成' },
+      { key: '/visual-agent', label: '视觉创作 Agent', icon: <Wand2 size={18} />, description: '高级视觉创作工作区' },
+      { key: '/literary-agent', label: '文学创作 Agent', icon: <PenLine size={18} />, description: '文章配图智能生成' },
+      { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置' },
+      { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} />, description: 'LLM 请求与系统日志' },
+      { key: '/data', label: '数据管理', icon: <Database size={18} />, description: '数据概览、清理与迁移' },
+      { key: '/lab', label: '实验室', icon: <FlaskConical size={18} />, description: '模型测试与实验功能' },
     ],
     []
   );
@@ -205,21 +205,31 @@ export default function AppShell() {
                   type="button"
                   onClick={() => navigate(it.key)}
                   className={cn(
-                    'relative flex items-center gap-3 rounded-[12px] px-3 py-2.5 transition-colors',
+                    'relative flex items-center gap-3 rounded-[12px] transition-colors',
                     'hover:bg-white/4',
                     // 收拢态：按钮点击区为正方形圆角矩形（避免扁长）
-                    collapsed && 'justify-center px-0 py-0 w-[50px] h-[50px] self-center shrink-0'
+                    collapsed ? 'justify-center px-0 py-0 w-[50px] h-[50px] self-center shrink-0' : 'px-3 py-2.5'
                   )}
                   style={{
                     background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent',
                     border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 35%, var(--border-subtle))' : '1px solid transparent',
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                   }}
+                  title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                 >
-                  <span className={cn('inline-flex items-center justify-center', active && 'drop-shadow')}>
+                  <span className={cn('inline-flex items-center justify-center shrink-0', active && 'drop-shadow')}>
                     {it.icon}
                   </span>
-                  {!collapsed && <span className="text-sm font-medium">{it.label}</span>}
+                  {!collapsed && (
+                    <div className="min-w-0 flex-1 text-left">
+                      <div className="text-sm font-medium truncate">{it.label}</div>
+                      {it.description && (
+                        <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)', opacity: active ? 0.9 : 0.7 }}>
+                          {it.description}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {active && (
                     <span
                       className="absolute left-0 top-1/2 -translate-y-1/2"
@@ -328,7 +338,7 @@ export default function AppShell() {
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              fullBleedMain ? 'px-3 py-3' : 'mx-auto max-w-[1440px] px-5 py-5'
+              fullBleedMain ? 'px-3 py-3' : 'mx-auto max-w-[1680px] px-5 py-5'
             )}
           >
             <div className="flex-1 min-h-0">
