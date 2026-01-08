@@ -74,12 +74,6 @@ function ownerIcon() {
   );
 }
 
-function initials(name: string): string {
-  const t = String(name || '').trim();
-  if (!t) return '?';
-  return t.slice(0, 1).toUpperCase();
-}
-
 export default function GroupInfoDrawer() {
   const isOpen = useGroupInfoDrawerStore((s) => s.isOpen);
   const groupId = useGroupInfoDrawerStore((s) => s.groupId);
@@ -279,7 +273,7 @@ export default function GroupInfoDrawer() {
                 {sortedMembers.slice(0, 16).map((m) => (
                   <div key={m.userId} className="min-w-0">
                     <div className="mx-auto w-12">
-                      <AvatarWithFallback userId={m.userId} size="lg" />
+                      <AvatarWithFallback avatarUrl={m.avatarUrl ?? null} displayName={m.displayName || m.username} size="lg" />
                     </div>
                     <div className="mt-2 text-xs text-text-secondary text-center truncate" title={m.displayName || m.username}>
                       {m.displayName || m.username}

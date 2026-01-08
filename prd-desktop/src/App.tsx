@@ -68,7 +68,6 @@ function App() {
     }
   });
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
-  const connectionStatus = useConnectionStore((s) => s.status);
 
   // 全局拉取 Desktop 品牌配置：覆盖"自动登录直达主界面"场景，确保 desktopName/logo/bg 能及时更新
   useEffect(() => {

@@ -348,7 +348,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       }),
   
   setMessages: (messages) => {
-    const list = Array.isArray(messages) ? messages : [];
+    const list = (Array.isArray(messages) ? messages : []).filter((m) => !isLocalEphemeralMessage(m));
     const sorted = maybeSortByGroupSeq(list);
     const { minSeq, maxSeq } = computeSeqBounds(sorted);
     set(() => ({
@@ -364,7 +364,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
   mergeMessages: (messages) => {
     let added = 0;
     set((state) => {
-      const list = Array.isArray(messages) ? messages : [];
+      const list = (Array.isArray(messages) ? messages : []).filter((m) => !isLocalEphemeralMessage(m));
       if (list.length === 0) return state;
       const existing = new Map(state.messages.map((m) => [m.id, m]));
       const toAdd: Message[] = [];
@@ -394,7 +394,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
   prependMessages: (messages) => {
     let added = 0;
     set((state) => {
-      const list = Array.isArray(messages) ? messages : [];
+      const list = (Array.isArray(messages) ? messages : []).filter((m) => !isLocalEphemeralMessage(m));
       if (list.length === 0) return state;
       const existing = new Set(state.messages.map((m) => m.id));
       const toAdd = list.filter((m) => m?.id && !existing.has(m.id));
@@ -553,6 +553,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
   ingestGroupBroadcastMessage: ({ message, currentUserId }) => set((state) => {
     const incoming = message;
     if (!incoming?.id) return state;
+    if (isLocalEphemeralMessage(incoming)) return state;
 
     // 更新 maxSeq
     const incomingSeq = typeof incoming.groupSeq === 'number' ? incoming.groupSeq : null;
