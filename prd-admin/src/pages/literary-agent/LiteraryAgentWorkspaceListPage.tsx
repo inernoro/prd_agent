@@ -11,8 +11,6 @@ import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -33,8 +31,11 @@ function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
   s = s.replace(/^\s*>\s*配图.*$/gm, '');
   s = s.trim();
 
-  if (s.length <= maxChars) return s;
-  return `${s.slice(0, maxChars)}…`;
+  // 列表预览不按固定字数提前截断：交给 CSS 做“按容器边界裁剪 + 省略号”
+  // 这里仅做轻量的长度保护，避免极端长文本影响渲染性能
+  const softLimit = Math.max(800, maxChars);
+  if (s.length <= softLimit) return s;
+  return s.slice(0, softLimit);
 }
 
 export default function LiteraryAgentWorkspaceListPage() {
@@ -155,59 +156,13 @@ export default function LiteraryAgentWorkspaceListPage() {
                     {ws.title}
                   </div>
                 </div>
-
-                <div
-                  className={[
-                    // 关键：操作按钮区始终 absolute 覆盖显示，避免 hover 时从 absolute 切到 relative 造成布局抖动/撑开页面
-                    'absolute right-3 top-3 z-10',
-                    'flex items-center justify-end gap-2',
-                    'opacity-0 translate-y-[-1px] pointer-events-none',
-                    'transition-all duration-150',
-                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto',
-                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto',
-                  ].join(' ')}
-                >
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/literary-agent/${ws.id}`);
-                    }}
-                    title="编辑"
-                  >
-                    <SquarePen size={12} />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onRename(ws);
-                    }}
-                    title="重命名"
-                  >
-                    <Pencil size={12} />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="danger"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onDelete(ws);
-                    }}
-                    title="删除"
-                  >
-                    <Trash2 size={12} />
-                  </Button>
-                </div>
               </div>
             </div>
 
             {/* 中栏：摘要区 */}
             <div className="px-3 pb-1 flex-1 min-h-0 overflow-hidden">
               <div
-                className="h-full overflow-auto border rounded-[8px] text-[12px] leading-5 flex flex-col"
+                className="h-full overflow-hidden border rounded-[8px] text-[12px] leading-5 flex flex-col"
                 style={{
                   borderColor: 'var(--border-subtle)',
                   background: 'rgba(255,255,255,0.02)',
@@ -216,19 +171,80 @@ export default function LiteraryAgentWorkspaceListPage() {
               >
                 <div className="p-3 flex-1">
                   {getArticlePreviewText(ws) ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{getArticlePreviewText(ws)}</ReactMarkdown>
+                    // 预览不渲染 Markdown：用纯文本 + CSS line-clamp，按容器边界裁剪并展示省略号
+                    <div
+                      style={{
+                        display: '-webkit-box',
+                        WebkitBoxOrient: 'vertical' as const,
+                        WebkitLineClamp: 10,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {getArticlePreviewText(ws)}
+                    </div>
                   ) : (
                     <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>
                   )}
                 </div>
-                {formatDate(ws.updatedAt) && (
+                <div
+                  className="px-3 py-2 text-[11px] border-t flex items-center gap-2"
+                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                >
+                  {/* 操作按钮：放到“更新于 …”左侧；hover/focus-within 显示；不参与高度变化，避免撑开 */}
                   <div
-                    className="px-3 py-2 text-right text-[11px] border-t"
-                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                    className={[
+                      'w-[104px] flex items-center gap-1.5',
+                      'opacity-0 pointer-events-none',
+                      'transition-opacity duration-150',
+                      'group-hover:opacity-100 group-hover:pointer-events-auto',
+                      'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
+                    ].join(' ')}
                   >
-                    更新于 {formatDate(ws.updatedAt)}
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/literary-agent/${ws.id}`);
+                      }}
+                      title="编辑"
+                    >
+                      <SquarePen size={14} />
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onRename(ws);
+                      }}
+                      title="重命名"
+                    >
+                      <Pencil size={14} />
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="danger"
+                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onDelete(ws);
+                      }}
+                      title="删除"
+                    >
+                      <Trash2 size={14} />
+                    </Button>
                   </div>
-                )}
+
+                  <div className="flex-1 text-right">
+                    {formatDate(ws.updatedAt) ? `更新于 ${formatDate(ws.updatedAt)}` : ''}
+                  </div>
+                </div>
               </div>
             </div>
 
