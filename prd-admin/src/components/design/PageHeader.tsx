@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 type PageHeaderProps = {
   title: ReactNode;
+  icon?: ReactNode;
   description?: ReactNode;
   subtitle?: ReactNode;
   tabs?: Array<{ key: string; label: string; icon?: ReactNode }>;
@@ -12,7 +13,7 @@ type PageHeaderProps = {
 };
 
 export function PageHeader(props: PageHeaderProps) {
-  const { title, description, subtitle, tabs, activeTab, onTabChange, actions, variant = 'default' } = props;
+  const { title, icon, description, subtitle, tabs, activeTab, onTabChange, actions, variant = 'default' } = props;
 
   return (
     <div
@@ -33,6 +34,11 @@ export function PageHeader(props: PageHeaderProps) {
         {/* 左侧：标题、副标题和描述 */}
         <div className="min-w-0 shrink-0">
           <div className="flex items-center gap-2">
+            {icon ? (
+              <span className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                {icon}
+              </span>
+            ) : null}
             <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
               {title}
             </div>

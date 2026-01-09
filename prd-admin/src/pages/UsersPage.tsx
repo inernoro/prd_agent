@@ -617,6 +617,7 @@ export default function UsersPage() {
   return (
     <div className="h-full flex flex-col gap-6">
       <PageHeader
+        icon={<UserCog size={18} />}
         title="用户管理"
         description="账号、角色与权限管理"
         actions={

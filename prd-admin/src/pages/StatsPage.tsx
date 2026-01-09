@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/design/PageHeader';
 import { getActiveGroups, getGapStats, getMessageTrend, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem } from '@/services/contracts/adminStats';
 import { useEffect, useMemo, useState } from 'react';
+import { BarChart3 } from 'lucide-react';
 
 type TokenData = {
   totalInput: number;
@@ -140,6 +141,7 @@ export default function StatsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        icon={<BarChart3 size={18} />}
         title="Token统计"
         description="API 使用量与内容缺失分析"
         actions={

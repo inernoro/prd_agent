@@ -1456,6 +1456,7 @@ export default function AiChatPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
+        icon={<Send size={18} />}
         title="AI 对话实验室"
         description="上传 PRD/文档进行对话实验（SSE 流式）；支持图片生成与高级视觉创作。"
         tabs={[

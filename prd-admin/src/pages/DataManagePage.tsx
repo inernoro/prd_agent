@@ -253,6 +253,7 @@ export default function DataManagePage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
+        icon={<Database size={18} />}
         title="数据管理"
         description="配置迁移（导入/导出）与数据概览/清理，仅管理员可用"
         actions={

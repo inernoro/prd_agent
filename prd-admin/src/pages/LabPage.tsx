@@ -17,6 +17,7 @@ export default function LabPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
+        icon={<Sparkles size={18} />}
         title="实验室"
         description="实验性功能集合：包含大模型与桌面端相关的调试/可视化工具。"
         tabs={[

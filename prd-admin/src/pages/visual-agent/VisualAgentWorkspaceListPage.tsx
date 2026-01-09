@@ -392,6 +392,7 @@ export default function VisualAgentWorkspaceListPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
+        icon={<Pencil size={18} />}
         title="视觉创作 Agent"
         description="Workspace 列表：创建、共享与继续编辑（自动保存）"
         actions={

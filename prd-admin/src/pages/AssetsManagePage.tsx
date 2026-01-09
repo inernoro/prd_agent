@@ -4,6 +4,7 @@ import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/co
 import { Card } from '@/components/design/Card';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Button } from '@/components/design/Button';
+import { Package } from 'lucide-react';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -448,6 +449,7 @@ export default function AssetsManagePage() {
       />
 
       <PageHeader
+        icon={<Package size={18} />}
         title="资源管理（Desktop / 单文件）"
         description={
           activeTab === 'desktop'

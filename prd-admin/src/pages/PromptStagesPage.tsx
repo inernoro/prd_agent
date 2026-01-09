@@ -850,6 +850,7 @@ export default function PromptStagesPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <PageHeader
+        icon={<Sparkles size={18} />}
         title="提示词管理"
         description="PRD 提示词与系统提示词配置：支持测试、保存与恢复默认。"
         variant="gold"

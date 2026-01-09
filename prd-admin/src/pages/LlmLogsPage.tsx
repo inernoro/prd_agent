@@ -8,7 +8,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
-import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, ScrollText, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1036,6 +1036,7 @@ export default function LlmLogsPage() {
     return (
       <div className="h-full min-h-0 flex flex-col gap-4">
         <PageHeader
+          icon={<ScrollText size={18} />}
           title="日志管理"
           description="查看系统日志与大模型请求日志，支持筛选、详情与相关资源预览。"
           tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
@@ -1061,6 +1062,7 @@ export default function LlmLogsPage() {
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
       <PageHeader
+        icon={<Sparkles size={18} />}
         title="LLM 请求日志"
         description="仅展示后端发往大模型 Provider 的请求与流式响应（仅隐藏密钥/Token；请求正文仍按后端落库策略保留摘要）"
         tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}

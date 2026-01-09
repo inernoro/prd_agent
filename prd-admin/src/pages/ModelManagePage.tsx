@@ -32,7 +32,7 @@ import {
   updatePlatform,
 } from '@/services';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Activity, Boxes, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
@@ -936,6 +936,7 @@ export default function ModelManagePage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
+        icon={<Boxes size={18} />}
         title="模型管理"
         description={
           `LLM 平台、模型配置与性能监控（平台 ${selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个` +

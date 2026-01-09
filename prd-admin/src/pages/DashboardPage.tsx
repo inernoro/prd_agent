@@ -228,12 +228,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={
-          <span className="inline-flex items-center gap-2">
-            <LayoutDashboard size={18} />
-            仪表盘
-          </span>
-        }
+        icon={<LayoutDashboard size={18} />}
+        title="仪表盘"
         description="LLM 可观测性 · Token · TTFB · 缓存 · 趋势"
         actions={
           <>

@@ -230,6 +230,7 @@ export default function GroupsPage() {
   return (
     <div className="h-full flex flex-col gap-6">
       <PageHeader
+        icon={<Users2 size={18} />}
         title="群组管理"
         description={`协作群组、成员与邀请管理（共 ${total} 个群组）`}
       />
