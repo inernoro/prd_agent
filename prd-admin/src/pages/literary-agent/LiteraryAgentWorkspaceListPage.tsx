@@ -11,6 +11,8 @@ import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -171,7 +173,7 @@ export default function LiteraryAgentWorkspaceListPage() {
               >
                 <div className="p-3 flex-1">
                   {getArticlePreviewText(ws) ? (
-                    // 预览不渲染 Markdown：用纯文本 + CSS line-clamp，按容器边界裁剪并展示省略号
+                    // 预览渲染 Markdown，但将块级结构扁平化为“单一文本流 + <br/>”，以便 line-clamp 正常工作（按边界裁剪 + 省略号）
                     <div
                       style={{
                         display: '-webkit-box',
@@ -183,7 +185,108 @@ export default function LiteraryAgentWorkspaceListPage() {
                         wordBreak: 'break-word',
                       }}
                     >
-                      {getArticlePreviewText(ws)}
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        skipHtml
+                        allowedElements={[
+                          'p',
+                          'strong',
+                          'em',
+                          'code',
+                          'pre',
+                          'blockquote',
+                          'ul',
+                          'ol',
+                          'li',
+                          'a',
+                          'br',
+                          'hr',
+                          'h1',
+                          'h2',
+                          'h3',
+                        ]}
+                        unwrapDisallowed
+                        components={{
+                          // 将块级内容尽量“拍扁”，避免多块布局破坏 clamp
+                          h1: ({ children }) => (
+                            <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          h2: ({ children }) => (
+                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          h3: ({ children }) => (
+                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          p: ({ children }) => (
+                            <span>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          blockquote: ({ children }) => (
+                            <span style={{ color: 'rgba(231,206,151,0.92)' }}>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          ul: ({ children }) => (
+                            <span>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          ol: ({ children }) => (
+                            <span>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          li: ({ children }) => (
+                            <span>
+                              • {children}
+                              <br />
+                            </span>
+                          ),
+                          code: ({ children }) => (
+                            <code
+                              style={{
+                                fontFamily:
+                                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                                fontSize: 11,
+                                background: 'rgba(255,255,255,0.06)',
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                padding: '0 6px',
+                                borderRadius: 8,
+                              }}
+                            >
+                              {children}
+                            </code>
+                          ),
+                          pre: ({ children }) => (
+                            <span>
+                              {children}
+                              <br />
+                            </span>
+                          ),
+                          a: ({ children }) => (
+                            <span style={{ color: 'rgba(147, 197, 253, 0.95)', textDecoration: 'underline' }}>
+                              {children}
+                            </span>
+                          ),
+                          hr: () => <br />,
+                        }}
+                      >
+                        {getArticlePreviewText(ws)}
+                      </ReactMarkdown>
                     </div>
                   ) : (
                     <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>
