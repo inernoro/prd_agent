@@ -1,18 +1,20 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
+import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
+import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
   createImageGenRun,
-  exportArticle,
   generateArticleMarkers,
   getImageMasterWorkspaceDetail,
   getModels,
   planImageGen,
   streamImageGenRunWithRetry,
   updateImageMasterWorkspace,
+  updateArticleMarker,
   uploadImageMasterWorkspaceAsset,
 } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,7 +25,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
 
-type WorkflowPhase = 'upload' | 'editing' | 'markers-generating' | 'markers-generated' | 'images-generating' | 'images-generated';
+type WorkflowPhase = 'upload' | 'editing' | 'markers-generating' | 'markers-generated' | 'images-generated';
 
 type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'error';
 
@@ -80,10 +82,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>('upload');
-  const [serverPhase, setServerPhase] = useState<WorkflowPhase>('upload'); // 服务端真实进度（用于判断按钮置灰）
   const [generating, setGenerating] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
+  const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
   
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -99,6 +101,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
+  const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
   
@@ -163,7 +166,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const workflowPhase = ws.articleWorkflow?.phase;
         if (workflowPhase) {
           setPhase(workflowPhase as WorkflowPhase);
-          setServerPhase(workflowPhase as WorkflowPhase); // 更新服务端真实进度
         } else {
           // 兼容旧数据：无 workflow 时按原逻辑推导
           if (ws.articleContentWithMarkers) {
@@ -171,12 +173,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             setMarkers(extracted);
             if (extracted.length > 0) {
               setPhase('markers-generated');
-              setServerPhase('markers-generated');
             }
           } else if (content) {
             setUploadedFileName('已上传的文章.md');
             setPhase('editing');
-            setServerPhase('editing');
           }
         }
         
@@ -184,6 +184,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         if (ws.articleContentWithMarkers) {
           const extracted = extractMarkers(ws.articleContentWithMarkers);
           setMarkers(extracted);
+        }
+        
+        // 新增：从 workflow.markers 恢复右侧运行状态
+        if (ws.articleWorkflow?.markers && ws.articleWorkflow.markers.length > 0) {
+          const restoredItems: MarkerRunItem[] = ws.articleWorkflow.markers.map((m: any) => ({
+            markerIndex: m.index,
+            markerText: m.text || '',
+            draftText: m.draftText || m.text || '',
+            status: (m.status || 'idle') as MarkerRunStatus,
+            planItem: null,
+            runId: m.runId || null,
+            base64: null,
+            url: null,
+            assetUrl: m.assetId ? (res.data.assets?.find((a: any) => a.id === m.assetId)?.url || null) : null,
+            errorMessage: m.errorMessage || null,
+          }));
+          setMarkerRunItems(restoredItems);
+          setMarkerRunItemsRestored(true); // 标记已恢复
         }
         
         // 加载用户自定义提示词（全局共享）
@@ -210,6 +228,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // markers 变化时：初始化/对齐右侧运行状态列表（保持用户已编辑内容）
   useEffect(() => {
+    // 如果已经从后端恢复过状态，就不要重新初始化
+    if (markerRunItemsRestored) {
+      setMarkerRunItemsRestored(false); // 重置标志位，下次 markers 变化时正常处理
+      return;
+    }
+    
     setMarkerRunItems((prev) => {
       const prevByIdx = new Map(prev.map((x) => [x.markerIndex, x]));
       const next: MarkerRunItem[] = markers.map((m) => {
@@ -237,7 +261,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       });
       return next;
     });
-  }, [markers]);
+  }, [markers, markerRunItemsRestored]);
 
   // 保存用户提示词到 localStorage（全局共享，不按 workspaceId 隔离）
   const saveUserPrompts = useCallback((prompts: PromptTemplate[]) => {
@@ -285,7 +309,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       
       // 上传后直接进入编辑模式并启用预览
       setPhase('editing');
-      setServerPhase('editing'); // 更新服务端真实进度
     } catch {
       await systemDialog.alert('文件读取失败');
     }
@@ -343,7 +366,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       
       // 上传后直接进入编辑模式
       setPhase('editing');
-      setServerPhase('editing');
     } catch {
       await systemDialog.alert('文件读取失败');
     }
@@ -370,7 +392,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     setGenerating(true);
     setPhase('markers-generating');
-    setArticleWithMarkers(articleContent); // 初始：从原文开始（流式会逐步变成带标记版本）
+    setArticleWithMarkers(''); // 初始为空，流式逐步填充
     setMarkers([]);
     
     try {
@@ -387,7 +409,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       for await (const chunk of stream) {
         if (chunk.type === 'chunk' && chunk.text) {
           fullText += chunk.text;
-          // 流式输出到“带标记预览”，避免覆盖原文
+          // 流式输出到"带标记预览"，实时显示 markdown
           setArticleWithMarkers(fullText);
         } else if (chunk.type === 'done' && chunk.fullText) {
           fullText = chunk.fullText;
@@ -397,9 +419,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
           
-          // 提交型操作成功：更新服务端真实进度
+          // 提交型操作成功：更新阶段
           setPhase('markers-generated');
-          setServerPhase('markers-generated');
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
         }
@@ -499,9 +520,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     [buildPreviewMarkdownWithImages]
   );
 
-  // markerRunItems 状态变化时：立即刷新左侧预览（支持“单条先生成”不乱序）
+  // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
   useEffect(() => {
-    if (phase === 'markers-generated' || phase === 'images-generating' || phase === 'images-generated') {
+    if (phase === 'markers-generated' || phase === 'images-generated') {
       rebuildMergedMarkdown(markerRunItems);
     }
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
@@ -527,18 +548,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           : x
       )
     );
+    await updateMarkerStatus(markerIndex, { status: 'parsing' }); // 保存到后端
     const planRes = await planImageGen({ text, maxItems: 1 });
     if (!planRes.success) {
+      const errorMsg = planRes.error?.message || '解析失败';
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: planRes.error?.message || '解析失败' } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
       return;
     }
     const first = (planRes.data?.items ?? [])[0] ?? null;
     if (!first || !String(first.prompt || '').trim()) {
+      const errorMsg = '解析失败：未返回有效 JSON';
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '解析失败：未返回有效 JSON' } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
       return;
     }
     const plannedPrompt = String(first.prompt || '').trim();
@@ -547,6 +573,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'parsed', planItem: first } : x))
     );
+    await updateMarkerStatus(markerIndex, { status: 'parsed', draftText: plannedPrompt }); // 保存
 
     // 2) 创建 run（实验室同款 createRun + SSE）
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'running' } : x)));
@@ -562,19 +589,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       idempotencyKey: idem,
     });
     if (!created.success) {
+      const errorMsg = created.error?.message || '生图失败';
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: created.error?.message || '生图失败' } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
       return;
     }
     const runId = String(created.data?.runId || '').trim();
     if (!runId) {
+      const errorMsg = '生图失败：未返回 runId';
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '生图失败：未返回 runId' } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
       return;
     }
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, runId } : x)));
+    await updateMarkerStatus(markerIndex, { status: 'running', runId }); // 保存
 
     // 3) 订阅 SSE，拿到 base64/url
     let gotBase64: string | null = null;
@@ -657,6 +689,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     );
   };
 
+  // 新增辅助函数：保存 marker 状态到后端
+  const updateMarkerStatus = async (markerIndex: number, updates: {
+    draftText?: string;
+    status?: string;
+    runId?: string;
+    errorMessage?: string;
+  }) => {
+    try {
+      await updateArticleMarker({
+        workspaceId,
+        markerIndex,
+        ...updates,
+      });
+    } catch (error) {
+      console.error('Failed to update marker status:', error);
+    }
+  };
+
   const handleBatchGenerate = async () => {
     if (!imageGenModel) {
       await systemDialog.alert(imageGenModelError || '未选择生图模型');
@@ -676,36 +726,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     genAbortRef.current = ac;
 
     setGenerating(true);
-    setPhase('images-generating');
     setArticleWithImages('');
 
-    let anyError = false;
     try {
-      // 按 marker 顺序逐条：parse JSON -> createRun+SSE -> assetUrl
+      // 并行发起所有生图任务
       const ordered = [...markerRunItemsRef.current].sort((a, b) => a.markerIndex - b.markerIndex);
-      for (const it of ordered) {
-        if (ac.signal.aborted) break;
-        await runSingleMarker(it.markerIndex);
-        const after = markerRunItemsRef.current.find((x) => x.markerIndex === it.markerIndex);
-        if (after?.status === 'error') anyError = true;
-        // 每条完成后：替换前缀已完成的 marker 行，写入左侧预览
-        rebuildMergedMarkdown(markerRunItemsRef.current);
-      }
-    } finally {
+      const results = await Promise.allSettled(
+        ordered.map(it => runSingleMarker(it.markerIndex))
+      );
+      
+      // 检查是否有失败
+      const anyError = results.some(r => r.status === 'rejected') || 
+                       markerRunItemsRef.current.some(x => x.status === 'error');
+      const allDone = markerRunItemsRef.current.length > 0 && 
+                      markerRunItemsRef.current.every(x => x.status === 'done');
+      
       setGenerating(false);
-      // 全部 done 才进入导出，否则回到配图标记阶段以便重试失败项
-      const allDone = markerRunItemsRef.current.length > 0 && markerRunItemsRef.current.every((x) => x.status === 'done');
       setPhase(allDone ? 'images-generated' : 'markers-generated');
+      
       if (anyError && !ac.signal.aborted) {
         await systemDialog.alert('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
+    } catch (error) {
+      console.error('Batch generate error:', error);
+      setGenerating(false);
+      setPhase('markers-generated');
     }
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
     if (generating) return;
     setGenerating(true);
-    setPhase('images-generating');
     try {
       await runSingleMarker(markerIndex);
     } finally {
@@ -758,22 +809,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   };
 
-  const handleExport = async (useCdn: boolean) => {
+  const handleExport = async () => {
     try {
-      const response = await exportArticle({
-        id: workspaceId,
-        useCdn,
-        exportFormat: 'markdown',
-      });
-
-      if (!response.success) {
-        await systemDialog.alert({ title: '导出失败', message: response.error?.message || '未知错误' });
-        return;
-      }
-
-      // TODO: 处理导出结果（下载文件或显示内容）
-      setExportOpen(false);
-    } catch {
+      // 将生成的图片插入到正文中
+      let contentWithImages = articleWithMarkers;
+      
+      // 遍历所有已完成的配图项，将标记替换为图片
+      markerRunItems
+        .filter(item => item.status === 'done' && (item.assetUrl || item.url || item.base64))
+        .forEach(item => {
+          const imageUrl = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`);
+          const markerPattern = new RegExp(`\\[配图-${item.markerIndex + 1}\\]`, 'g');
+          contentWithImages = contentWithImages.replace(markerPattern, `![配图-${item.markerIndex + 1}](${imageUrl})`);
+        });
+      
+      setArticleWithImages(contentWithImages);
+      
+      // 创建下载链接
+      const blob = new Blob([contentWithImages], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${uploadedFileName || '文章配图'}.md`;
+      link.click();
+      URL.revokeObjectURL(url);
+      
+      await systemDialog.alert({ title: '导出成功', message: '文章已下载到本地' });
+    } catch (error) {
+      console.error('Export error:', error);
       await systemDialog.alert('导出失败');
     }
   };
@@ -880,29 +943,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       action: handleBatchGenerate,
       icon: Sparkles,
       disabled: !imageGenModel || markerRunItems.length === 0,
-      show: phase === 'markers-generated',
-    },
-    {
-      label: '生成中...',
-      action: async () => {},
-      icon: Sparkles,
-      disabled: true,
-      show: phase === 'images-generating',
+      show: phase === 'markers-generated' && markerRunItems.filter(x => x.status === 'done').length === 0,
     },
     {
       label: '一键导出',
-      action: () => setExportOpen(true),
+      action: handleExport,
       icon: Download,
       disabled: false,
-      show: phase === 'images-generated',
+      show: (phase === 'markers-generated' || phase === 'images-generated') && markerRunItems.filter(x => x.status === 'done').length > 0,
     },
   ];
 
   const activeButton = buttonConfig.find((btn) => btn.show);
 
-  // 左侧统一作为“预览面板”：上传时渲染原文；AI 流式生成时直接渲染带标记版本
+  // 左侧统一作为"预览面板"：上传时渲染原文；AI 流式生成时直接渲染带标记版本
   const leftPreviewMarkdown =
-    phase === 'markers-generating' || phase === 'markers-generated' || phase === 'images-generating' || phase === 'images-generated'
+    phase === 'markers-generating' || phase === 'markers-generated' || phase === 'images-generated'
       ? (articleWithImages || articleWithMarkers || articleContent)
       : articleContent;
 
@@ -944,55 +1000,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     { key: 'upload', label: '上传' },
     { key: 'editing', label: '预览' },
     { key: 'markers-generated', label: '配图标记' },
-    { key: 'images-generating', label: '生图中' },
-    { key: 'images-generated', label: '导出' },
   ];
 
-  const jumpToPhase = async (target: WorkflowPhase) => {
-    if (target === phase) return;
-    if (generating) return;
+  const handleStepClick = async (stepKey: string) => {
+    const targetPhase = stepKey as WorkflowPhase;
+    if (targetPhase === phase || generating) return;
 
-    // 刷新 workspace detail，以服务端 workflow 为准判断是否可跳转
-    const res = await getImageMasterWorkspaceDetail({ id: workspaceId });
-    if (!res.success || !res.data?.workspace) {
-      await systemDialog.alert('获取工作空间状态失败');
-      return;
-    }
-    const ws = res.data.workspace;
-    const latestServerPhase = ws.articleWorkflow?.phase || 'upload';
-    
-    // 更新服务端真实进度
-    setServerPhase(latestServerPhase as WorkflowPhase);
-
-    // 定义阶段顺序（用于判断"未来阶段"）
-    const phaseOrder: Record<WorkflowPhase, number> = {
-      'upload': 0,
-      'editing': 1,
-      'markers-generating': 2,
-      'markers-generated': 2,
-      'images-generating': 3,
-      'images-generated': 4
-    };
-
-    const targetOrder = phaseOrder[target];
-    const serverOrder = phaseOrder[latestServerPhase as WorkflowPhase];
-
-    // 禁止跳到未生成过的未来阶段（这个判断应该在按钮渲染时就置灰，这里只是兜底）
-    if (targetOrder > serverOrder) {
-      // 理论上不应该走到这里（按钮应该已经置灰），但作为兜底保护
-      return;
-    }
-
-    // 允许跳转到任何"已生成过"的阶段（<= serverOrder）
-    // 只更新 UI 展示状态，不触发任何后端写入
-    setPhase(target);
-    setArticleContent(ws.articleContent || '');
-    setArticleWithMarkers(ws.articleContentWithMarkers || '');
-    if (ws.articleContentWithMarkers) {
-      const extracted = extractMarkers(ws.articleContentWithMarkers);
-      setMarkers(extracted);
-    }
+    // 简单切换阶段（不做复杂的服务端校验）
+    setPhase(targetPhase);
   };
+
 
   return (
     <div className="h-full min-h-0 flex gap-4">
@@ -1187,7 +1204,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 标记生成中/完成/生图等阶段：正文始终展示"原文"，预览单独展示"带标记版本" */}
+            {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
             {phase !== 'editing' && phase !== 'upload' && (
               <div className="p-4 relative">
                 {!isDragging && (
@@ -1221,45 +1238,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <div className="w-96 flex flex-col gap-4">
         {/* 顶部操作按钮 */}
         <Card>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            {phaseSteps.map((s) => {
-              const active = s.key === phase;
-              
-              // 判断是否是"未来阶段"（服务端还未到达的阶段）
-              const phaseOrder: Record<WorkflowPhase, number> = {
-                'upload': 0,
-                'editing': 1,
-                'markers-generating': 2,
-                'markers-generated': 2,
-                'images-generating': 3,
-                'images-generated': 4
-              };
-              const targetOrder = phaseOrder[s.key];
-              const serverOrder = phaseOrder[serverPhase];
-              const isFuture = targetOrder > serverOrder;
-              const disabled = generating || isFuture;
-              
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => void jumpToPhase(s.key)}
-                  className="px-3 py-1.5 rounded-full text-[12px] font-semibold transition-colors"
-                  style={{
-                    background: active ? 'color-mix(in srgb, var(--accent-gold) 18%, rgba(255,255,255,0.03))' : 'rgba(255,255,255,0.03)',
-                    border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 42%, rgba(255,255,255,0.10))' : '1px solid rgba(255,255,255,0.10)',
-                    color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    opacity: disabled ? 0.4 : 1,
-                    pointerEvents: disabled ? 'none' : 'auto',
-                    cursor: disabled ? 'not-allowed' : 'pointer',
-                  }}
-                  title={active ? '当前阶段' : isFuture ? '该阶段尚未生成' : `跳转到：${s.label}`}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
-          </div>
+          <WorkflowProgressBar 
+            steps={phaseSteps} 
+            currentStep={phase} 
+            onStepClick={handleStepClick}
+            disabled={generating}
+          />
           {activeButton && (
             <Button
               variant="primary"
@@ -1274,10 +1258,70 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         </Card>
 
         {/* 配图标记列表（含生图结果/重生成） */}
-        {(phase === 'markers-generated' || phase === 'images-generating' || phase === 'images-generated') && (
+        {(phase === 'markers-generated' || phase === 'images-generated') && (
           <Card className="flex-1 min-h-0 flex flex-col">
-            <div className="mb-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              配图标记列表 ({markerRunItems.length})
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  配图标记列表
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={markerRunItems.filter(x => x.status === 'done').length === 0}
+                  onClick={async () => {
+                    try {
+                      const JSZip = (await import('jszip')).default;
+                      const zip = new JSZip();
+                      
+                      const doneItems = markerRunItems.filter(x => x.status === 'done' && (x.assetUrl || x.url || x.base64));
+                      
+                      for (let i = 0; i < doneItems.length; i++) {
+                        const item = doneItems[i];
+                        const src = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`) || '';
+                        
+                        try {
+                          const response = await fetch(src);
+                          const blob = await response.blob();
+                          zip.file(`配图-${i + 1}.png`, blob);
+                        } catch (error) {
+                          console.error(`Failed to fetch image ${i + 1}:`, error);
+                        }
+                      }
+                      
+                      const content = await zip.generateAsync({ type: 'blob' });
+                      const link = document.createElement('a');
+                      link.href = URL.createObjectURL(content);
+                      link.download = `配图-${new Date().getTime()}.zip`;
+                      link.click();
+                      URL.revokeObjectURL(link.href);
+                      
+                      await systemDialog.alert({ title: '下载完成', message: `已打包 ${doneItems.length} 张图片` });
+                    } catch (error) {
+                      console.error('Batch download failed:', error);
+                      await systemDialog.alert({ title: '下载失败', message: '批量下载图片时出错' });
+                    }
+                  }}
+                  title="下载所有已生成的图片（ZIP 格式）"
+                >
+                  <DownloadCloud size={14} />
+                  下载全部
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  <div 
+                    className="h-full rounded-full transition-all duration-300" 
+                    style={{ 
+                      width: `${markerRunItems.length > 0 ? (markerRunItems.filter(x => x.status === 'done').length / markerRunItems.length * 100) : 0}%`,
+                      background: 'linear-gradient(90deg, rgba(34, 197, 94, 0.8), rgba(34, 197, 94, 0.6))'
+                    }}
+                  />
+                </div>
+                <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                  {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
+                </div>
+              </div>
             </div>
             {imageGenModel ? (
               <div className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -1367,10 +1411,71 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                   {canShow ? (
                     <div
-                      className="mt-2 rounded-[12px] overflow-hidden"
-                      style={{ height: 160, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)' }}
+                      className="mt-2 rounded-[12px] overflow-hidden relative group"
+                      style={{ height: 160, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', cursor: 'pointer' }}
+                      onClick={() => {
+                        const allImages = markerRunItems
+                          .filter(x => x.assetUrl || x.url || x.base64)
+                          .map((x, i) => ({
+                            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+                            alt: `配图 ${i + 1}`,
+                          }));
+                        const currentIdx = allImages.findIndex((_, i) => {
+                          const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
+                          return item?.markerIndex === it.markerIndex;
+                        });
+                        setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
+                        setImagePreviewOpen(true);
+                      }}
                     >
                       <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                      
+                      {/* Copy and Download icons */}
+                      <div 
+                        className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          className="p-2 rounded-lg"
+                          style={{
+                            background: 'rgba(0, 0, 0, 0.6)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            backdropFilter: 'blur(10px)',
+                          }}
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(src);
+                              await systemDialog.alert({ title: '已复制', message: '图片链接已复制到剪贴板' });
+                            } catch (error) {
+                              console.error('Copy failed:', error);
+                            }
+                          }}
+                          title="复制图片链接"
+                        >
+                          <Copy size={16} style={{ color: 'white' }} />
+                        </button>
+                        <button
+                          className="p-2 rounded-lg"
+                          style={{
+                            background: 'rgba(0, 0, 0, 0.6)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            backdropFilter: 'blur(10px)',
+                          }}
+                          onClick={async () => {
+                            try {
+                              const link = document.createElement('a');
+                              link.href = src;
+                              link.download = `配图-${idx + 1}.png`;
+                              link.click();
+                            } catch (error) {
+                              console.error('Download failed:', error);
+                            }
+                          }}
+                          title="下载图片"
+                        >
+                          <DownloadCloud size={16} style={{ color: 'white' }} />
+                        </button>
+                      </div>
                     </div>
                   ) : null}
 
@@ -1418,24 +1523,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </Card>
         )}
       </div>
-
-      {/* 导出对话框 */}
-      <Dialog
-        open={exportOpen}
-        onOpenChange={setExportOpen}
-        title="导出文章"
-        description="选择图片存储方式"
-        content={
-          <div className="p-4 space-y-3">
-            <Button variant="primary" className="w-full" onClick={() => void handleExport(true)}>
-              导出（使用 CDN 图片链接）
-            </Button>
-            <Button variant="secondary" className="w-full" onClick={() => void handleExport(false)}>
-              导出（下载图片到本地）
-            </Button>
-          </div>
-        }
-      />
 
       {/* 新建提示词对话框 */}
       <Dialog
@@ -1785,6 +1872,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             )}
           </div>
         }
+      />
+
+      {/* Image Preview Dialog */}
+      <ImagePreviewDialog
+        images={markerRunItems
+          .filter(x => x.assetUrl || x.url || x.base64)
+          .map((x, i) => ({
+            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+            alt: `配图 ${i + 1}`,
+          }))}
+        initialIndex={imagePreviewIndex}
+        open={imagePreviewOpen}
+        onClose={() => setImagePreviewOpen(false)}
       />
     </div>
   );

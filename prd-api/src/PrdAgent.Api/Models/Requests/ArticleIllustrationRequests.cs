@@ -24,3 +24,13 @@ public record ExportArticleRequest(
     string? ExportFormat
 );
 
+/// <summary>
+/// 更新单条 Marker 状态请求
+/// </summary>
+public class UpdateMarkerRequest
+{
+    public string? DraftText { get; set; }
+    public string? Status { get; set; }
+    public string? RunId { get; set; }
+    public string? ErrorMessage { get; set; }
+}

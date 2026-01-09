@@ -353,4 +353,22 @@ export async function exportArticleReal(input: {
   );
 }
 
+export async function updateArticleMarkerReal(params: {
+  workspaceId: string;
+  markerIndex: number;
+  draftText?: string;
+  status?: string;
+  runId?: string;
+  errorMessage?: string;
+}) {
+  const { workspaceId, markerIndex, ...body } = params;
+  return await apiRequest<{ marker: unknown }>(
+    `/api/v1/admin/image-master/workspaces/${encodeURIComponent(workspaceId)}/article/markers/${encodeURIComponent(String(markerIndex))}`,
+    {
+      method: 'PATCH',
+      body,
+    }
+  );
+}
+
 

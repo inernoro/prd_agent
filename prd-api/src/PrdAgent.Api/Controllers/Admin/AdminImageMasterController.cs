@@ -13,6 +13,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Api.Models.Requests;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -1106,8 +1107,18 @@ public class AdminImageMasterController : ControllerBase
                 ? "images-generated"
                 : "images-generating";
             wf.UpdatedAt = DateTime.UtcNow;
+            
+            // 新增：更新对应 marker 的状态
+            if (wf.Markers != null && idx < wf.Markers.Count)
+            {
+                var marker = wf.Markers[idx];
+                marker.Status = "done";
+                marker.AssetId = asset.Id;
+                marker.ErrorMessage = null;
+                marker.UpdatedAt = DateTime.UtcNow;
+            }
 
-            // history/debug 不在此写入；仅在“提交型修改”时快照
+            // history/debug 不在此写入；仅在"提交型修改"时快照
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 x => x.Id == wid,
                 Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
@@ -1950,6 +1961,53 @@ public class AdminImageMasterController : ControllerBase
             format = exportFormat,
             assetCount = assets.Count
         }));
+    }
+
+    /// <summary>
+    /// 文章配图场景：保存单条 marker 的编辑状态（用户修改提示词/生图状态变化时）
+    /// </summary>
+    [HttpPatch("workspaces/{id}/article/markers/{markerIndex}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateArticleMarker(
+        string id, 
+        int markerIndex, 
+        [FromBody] UpdateMarkerRequest request, 
+        CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) 
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") 
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var wf = ws.ArticleWorkflow;
+        if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "markerIndex 无效"));
+
+        var marker = wf.Markers[markerIndex];
+        
+        // 更新字段（只更新非 null 的字段）
+        if (request.DraftText != null) marker.DraftText = request.DraftText;
+        if (request.Status != null) marker.Status = request.Status;
+        if (request.RunId != null) marker.RunId = request.RunId;
+        if (request.ErrorMessage != null) marker.ErrorMessage = request.ErrorMessage;
+        marker.UpdatedAt = DateTime.UtcNow;
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == wid,
+            Builders<ImageMasterWorkspace>.Update
+                .Set(x => x.ArticleWorkflow, wf)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { marker }));
     }
 
     private async Task WriteJsonResponseAsync(object data, int statusCode, CancellationToken ct)

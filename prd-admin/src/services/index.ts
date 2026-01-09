@@ -193,6 +193,7 @@ import {
   generateArticleMarkersReal,
   extractArticleMarkersReal,
   exportArticleReal,
+  updateArticleMarkerReal,
 } from '@/services/real/imageMaster';
 import {
   exportConfigReal,
@@ -408,6 +409,7 @@ export const refreshImageMasterWorkspaceCover: RefreshImageMasterWorkspaceCoverC
 export const generateArticleMarkers = generateArticleMarkersReal;
 export const extractArticleMarkers = extractArticleMarkersReal;
 export const exportArticle = exportArticleReal;
+export const updateArticleMarker = updateArticleMarkerReal;
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);

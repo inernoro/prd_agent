@@ -37,5 +37,13 @@ public class ArticleIllustrationMarker
 {
     public int Index { get; set; }
     public string Text { get; set; } = string.Empty;
+    
+    // 新增：存储右侧运行状态
+    public string? DraftText { get; set; }  // 用户编辑的提示词
+    public string? Status { get; set; }  // idle/parsing/parsed/running/done/error
+    public string? RunId { get; set; }  // 生图任务 ID
+    public string? AssetId { get; set; }  // 已生成的图片资产 ID
+    public string? ErrorMessage { get; set; }  // 错误信息
+    public DateTime? UpdatedAt { get; set; }  // 最后更新时间
 }
 

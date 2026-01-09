@@ -146,7 +146,7 @@ async function tryRefreshAdminToken(): Promise<boolean> {
 export async function apiRequest<T>(
   path: string,
   options?: {
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
     body?: unknown;
     auth?: boolean;
     emptyResponseData?: T;
@@ -159,7 +159,7 @@ export async function apiRequest<T>(
 async function apiRequestInner<T>(
   path: string,
   options: {
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
     body?: unknown;
     auth?: boolean;
     emptyResponseData?: T;
