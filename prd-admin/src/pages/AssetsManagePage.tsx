@@ -433,12 +433,6 @@ export default function AssetsManagePage() {
     }
   };
 
-  const hardRefresh = async () => {
-    setBroken({});
-    setCacheBust(Date.now());
-    await reload();
-  };
-
   return (
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <input
@@ -463,30 +457,7 @@ export default function AssetsManagePage() {
         ]}
         activeTab={activeTab}
         onTabChange={(key) => setActiveTab(key as 'desktop' | 'single')}
-        actions={
-          <>
-            {activeTab === 'desktop' ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void reload()}
-                disabled={loading}
-                title="重新获取 skins/keys"
-              >
-                重新获取皮肤
-              </Button>
-            ) : null}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void hardRefresh()}
-              disabled={loading}
-              title="清空本页缓存（缺失标记 + 预览缓存）并重新获取"
-            >
-              清空缓存并刷新
-            </Button>
-          </>
-        }
+        actions={undefined}
       />
 
       {err ? (
