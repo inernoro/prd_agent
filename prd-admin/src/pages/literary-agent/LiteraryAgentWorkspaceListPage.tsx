@@ -9,7 +9,7 @@ import {
 } from '@/services';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -38,6 +38,103 @@ function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
   const softLimit = Math.max(800, maxChars);
   if (s.length <= softLimit) return s;
   return s.slice(0, softLimit);
+}
+
+function ArticlePreview({ markdown }: { markdown: string }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [overflowed, setOverflowed] = useState(false);
+
+  const md = useMemo(() => String(markdown || '').trim(), [markdown]);
+
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      // 轻量：判断是否溢出，决定是否显示 “...”
+      setOverflowed(el.scrollHeight - el.clientHeight > 1);
+    };
+
+    measure();
+
+    // 内容/容器变化时重测（响应式列宽、字体缩放等）
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
+    ro?.observe(el);
+
+    return () => {
+      ro?.disconnect();
+    };
+  }, [md]);
+
+  if (!md) return <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>;
+
+  return (
+    <div className="relative h-full min-h-0 overflow-hidden">
+      <div ref={rootRef} className="h-full min-h-0 overflow-hidden">
+        <style>{`
+          .literary-preview-md { font-size: 12px; line-height: 1.65; color: var(--text-secondary); white-space: normal; word-break: break-word; }
+          .literary-preview-md h1,.literary-preview-md h2,.literary-preview-md h3 { color: var(--text-primary); font-weight: 700; margin: 10px 0 6px; }
+          .literary-preview-md h1 { font-size: 14px; }
+          .literary-preview-md h2 { font-size: 13px; }
+          .literary-preview-md h3 { font-size: 12px; }
+          .literary-preview-md p { margin: 6px 0; }
+          .literary-preview-md ul,.literary-preview-md ol { margin: 6px 0; padding-left: 18px; }
+          .literary-preview-md li { margin: 3px 0; }
+          .literary-preview-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 10px 0; }
+          .literary-preview-md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+          .literary-preview-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+          .literary-preview-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
+          .literary-preview-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 10px; overflow: hidden; }
+          .literary-preview-md pre code { background: transparent; border: 0; padding: 0; }
+        `}</style>
+        <div className="literary-preview-md">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            skipHtml
+            // 列表预览：禁用图片/视频等，避免额外带宽开销
+            allowedElements={[
+              'p',
+              'strong',
+              'em',
+              'code',
+              'pre',
+              'blockquote',
+              'ul',
+              'ol',
+              'li',
+              'a',
+              'br',
+              'hr',
+              'h1',
+              'h2',
+              'h3',
+            ]}
+            unwrapDisallowed
+            components={{
+              // 预览中链接不跳转，避免误点离开列表
+              a: ({ children }) => <span>{children}</span>,
+            }}
+          >
+            {md}
+          </ReactMarkdown>
+        </div>
+      </div>
+
+      {overflowed ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0"
+          style={{
+            height: 44,
+            background: 'linear-gradient(to bottom, rgba(18,18,18,0), rgba(18,18,18,0.92))',
+          }}
+        >
+          <div className="absolute right-2 bottom-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.75)' }}>
+            …
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function LiteraryAgentWorkspaceListPage() {
@@ -172,125 +269,7 @@ export default function LiteraryAgentWorkspaceListPage() {
                 }}
               >
                 <div className="p-3 flex-1">
-                  {getArticlePreviewText(ws) ? (
-                    // 预览渲染 Markdown，但将块级结构扁平化为“单一文本流 + <br/>”，以便 line-clamp 正常工作（按边界裁剪 + 省略号）
-                    <div
-                      style={{
-                        display: '-webkit-box',
-                        WebkitBoxOrient: 'vertical' as const,
-                        WebkitLineClamp: 10,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        skipHtml
-                        allowedElements={[
-                          'p',
-                          'strong',
-                          'em',
-                          'code',
-                          'pre',
-                          'blockquote',
-                          'ul',
-                          'ol',
-                          'li',
-                          'a',
-                          'br',
-                          'hr',
-                          'h1',
-                          'h2',
-                          'h3',
-                        ]}
-                        unwrapDisallowed
-                        components={{
-                          // 将块级内容尽量“拍扁”，避免多块布局破坏 clamp
-                          h1: ({ children }) => (
-                            <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          h2: ({ children }) => (
-                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          h3: ({ children }) => (
-                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          p: ({ children }) => (
-                            <span>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          blockquote: ({ children }) => (
-                            <span style={{ color: 'rgba(231,206,151,0.92)' }}>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          ul: ({ children }) => (
-                            <span>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          ol: ({ children }) => (
-                            <span>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          li: ({ children }) => (
-                            <span>
-                              • {children}
-                              <br />
-                            </span>
-                          ),
-                          code: ({ children }) => (
-                            <code
-                              style={{
-                                fontFamily:
-                                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                                fontSize: 11,
-                                background: 'rgba(255,255,255,0.06)',
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                padding: '0 6px',
-                                borderRadius: 8,
-                              }}
-                            >
-                              {children}
-                            </code>
-                          ),
-                          pre: ({ children }) => (
-                            <span>
-                              {children}
-                              <br />
-                            </span>
-                          ),
-                          a: ({ children }) => (
-                            <span style={{ color: 'rgba(147, 197, 253, 0.95)', textDecoration: 'underline' }}>
-                              {children}
-                            </span>
-                          ),
-                          hr: () => <br />,
-                        }}
-                      >
-                        {getArticlePreviewText(ws)}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>
-                  )}
+                  <ArticlePreview markdown={getArticlePreviewText(ws)} />
                 </div>
                 <div
                   className="px-3 py-2 text-[11px] border-t flex items-center gap-2"
