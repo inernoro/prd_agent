@@ -64,6 +64,14 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 DocumentChars = start.DocumentChars,
                 DocumentHash = start.DocumentHash,
                 UserPromptChars = start.UserPromptChars,
+                    GroupContextCompressed = start.GroupContextCompressed,
+                    GroupContextCompressedFromSeq = start.GroupContextCompressedFromSeq,
+                    GroupContextCompressedToSeq = start.GroupContextCompressedToSeq,
+                    GroupContextOriginalChars = start.GroupContextOriginalChars,
+                    GroupContextCompressedChars = start.GroupContextCompressedChars,
+                    GroupContextCompressedText = string.IsNullOrWhiteSpace(start.GroupContextCompressedText)
+                        ? null
+                        : Truncate(start.GroupContextCompressedText, requestBodyMaxChars),
                 StartedAt = start.StartedAt,
                 Status = "running"
             };

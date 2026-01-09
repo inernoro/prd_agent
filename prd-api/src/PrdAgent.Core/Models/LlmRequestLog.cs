@@ -63,6 +63,17 @@ public class LlmRequestLog
     /// </summary>
     public int? UserPromptChars { get; set; }
 
+    // 群上下文压缩（不包含 PRD）
+    public bool? GroupContextCompressed { get; set; }
+    public long? GroupContextCompressedFromSeq { get; set; }
+    public long? GroupContextCompressedToSeq { get; set; }
+    public int? GroupContextOriginalChars { get; set; }
+    public int? GroupContextCompressedChars { get; set; }
+    /// <summary>
+    /// 压缩后的摘要文本（用于排障；可能被截断；不包含 PRD）
+    /// </summary>
+    public string? GroupContextCompressedText { get; set; }
+
     /// <summary>
     /// Token 统计来源：
     /// - reported：上游 Provider 返回 usage

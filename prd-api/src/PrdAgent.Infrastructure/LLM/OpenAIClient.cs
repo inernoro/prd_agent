@@ -164,6 +164,7 @@ public class OpenAIClient : ILLMClient
 
             var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqForLog));
             var (apiBaseForLog, pathForLog) = OpenAICompatUrl.SplitApiBaseAndPath(_chatCompletionsEndpointOrPath, _httpClient.BaseAddress);
+            var comp = ctx?.GroupContextCompression;
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
                     RequestId: requestId,
@@ -197,7 +198,13 @@ public class OpenAIClient : ILLMClient
                     UserPromptChars: userPromptChars,
                     StartedAt: startedAt,
                     PlatformId: _platformId,
-                    PlatformName: _platformName),
+                    PlatformName: _platformName,
+                    GroupContextCompressed: comp?.Applied,
+                    GroupContextCompressedFromSeq: comp?.FromSeq,
+                    GroupContextCompressedToSeq: comp?.ToSeq,
+                    GroupContextOriginalChars: comp?.OriginalChars,
+                    GroupContextCompressedChars: comp?.CompressedChars,
+                    GroupContextCompressedText: comp?.CompressedText),
                 cancellationToken);
         }
 

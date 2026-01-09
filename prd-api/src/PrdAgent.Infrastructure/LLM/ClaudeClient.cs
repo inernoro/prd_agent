@@ -203,6 +203,7 @@ public class ClaudeClient : ILLMClient
             };
             if (enablePromptCache) headers["anthropic-beta"] = "prompt-caching-2024-07-31";
 
+            var comp = ctx?.GroupContextCompression;
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
                     RequestId: requestId,
@@ -230,7 +231,13 @@ public class ClaudeClient : ILLMClient
                     UserPromptChars: userPromptChars,
                     StartedAt: startedAt,
                     PlatformId: _platformId,
-                    PlatformName: _platformName),
+                    PlatformName: _platformName,
+                    GroupContextCompressed: comp?.Applied,
+                    GroupContextCompressedFromSeq: comp?.FromSeq,
+                    GroupContextCompressedToSeq: comp?.ToSeq,
+                    GroupContextOriginalChars: comp?.OriginalChars,
+                    GroupContextCompressedChars: comp?.CompressedChars,
+                    GroupContextCompressedText: comp?.CompressedText),
                 cancellationToken);
         }
 
