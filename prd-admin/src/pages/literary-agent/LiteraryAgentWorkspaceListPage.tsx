@@ -158,15 +158,17 @@ export default function LiteraryAgentWorkspaceListPage() {
 
                 <div
                   className={[
-                    'flex items-center justify-end gap-2 flex-shrink-0',
-                    'opacity-0 translate-y-[-1px] pointer-events-none absolute right-3 top-3',
+                    // 关键：操作按钮区始终 absolute 覆盖显示，避免 hover 时从 absolute 切到 relative 造成布局抖动/撑开页面
+                    'absolute right-3 top-3 z-10',
+                    'flex items-center justify-end gap-2',
+                    'opacity-0 translate-y-[-1px] pointer-events-none',
                     'transition-all duration-150',
-                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto group-hover:relative group-hover:right-auto group-hover:top-auto',
-                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto group-focus-within:relative group-focus-within:right-auto group-focus-within:top-auto',
+                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto',
+                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto',
                   ].join(' ')}
                 >
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="secondary"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -174,10 +176,10 @@ export default function LiteraryAgentWorkspaceListPage() {
                     }}
                     title="编辑"
                   >
-                    <SquarePen size={14} />
+                    <SquarePen size={12} />
                   </Button>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="secondary"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -185,10 +187,10 @@ export default function LiteraryAgentWorkspaceListPage() {
                     }}
                     title="重命名"
                   >
-                    <Pencil size={14} />
+                    <Pencil size={12} />
                   </Button>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="danger"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -196,7 +198,7 @@ export default function LiteraryAgentWorkspaceListPage() {
                     }}
                     title="删除"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={12} />
                   </Button>
                 </div>
               </div>
