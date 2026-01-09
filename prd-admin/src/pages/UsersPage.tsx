@@ -618,7 +618,6 @@ export default function UsersPage() {
     <div className="h-full flex flex-col gap-6">
       <PageHeader
         title="用户管理"
-        subtitle={`共 ${total} 个用户`}
         description="账号、角色与权限管理"
         actions={
           <>

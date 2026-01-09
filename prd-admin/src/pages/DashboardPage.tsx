@@ -9,6 +9,7 @@ import { getActiveGroups, getGapStats, getLlmLogs, getMessageTrend, getOverviewS
 import type { ActiveGroup, GapStats, TrendItem, TokenUsage } from '@/services/contracts/adminStats';
 import type { LlmRequestLogListItem } from '@/types/admin';
 import { useEffect, useMemo, useState } from 'react';
+import { LayoutDashboard } from 'lucide-react';
 
 type ObsMetrics = {
   sample: number;
@@ -227,7 +228,12 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="仪表盘"
+        title={
+          <span className="inline-flex items-center gap-2">
+            <LayoutDashboard size={18} />
+            仪表盘
+          </span>
+        }
         description="LLM 可观测性 · Token · TTFB · 缓存 · 趋势"
         actions={
           <>
@@ -236,10 +242,6 @@ export default function DashboardPage() {
               <option value={14}>最近14天</option>
               <option value={30}>最近30天</option>
             </Select>
-            <div className="inline-flex items-center gap-2 h-[35px]">
-              <Badge variant="new">LLM</Badge>
-              <Badge variant="featured">Observability</Badge>
-            </div>
           </>
         }
       />
