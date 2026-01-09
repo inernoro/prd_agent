@@ -741,7 +741,16 @@ export default function AssetsManagePage() {
               </div>
             </div>
 
-            <div className="mt-3 overflow-auto rounded-[14px]" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+            <div
+              className="mt-3 overflow-auto rounded-[14px]"
+              style={{
+                border: '1px solid var(--border-subtle)',
+                background: 'rgba(255,255,255,0.02)',
+                // 避免矩阵过高导致页面滚动/触控不稳定：在卡片内滚动
+                maxHeight: '70vh',
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
               <div
                 className="grid"
                 style={{
