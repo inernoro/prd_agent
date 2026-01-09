@@ -1457,6 +1457,7 @@ export default function AiChatPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
         title="AI 对话实验室"
+        description="上传 PRD/文档进行对话实验（SSE 流式）；支持图片生成与高级视觉创作。"
         tabs={[
           { key: 'chat', label: '初级对话交互' },
           { key: 'imageGen', label: '中级图片绘制' },

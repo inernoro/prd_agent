@@ -1037,6 +1037,7 @@ export default function LlmLogsPage() {
       <div className="h-full min-h-0 flex flex-col gap-4">
         <PageHeader
           title="日志管理"
+          description="查看系统日志与大模型请求日志，支持筛选、详情与相关资源预览。"
           tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
           activeTab={tab}
           onTabChange={(key) => setTab(key as 'llm' | 'system')}

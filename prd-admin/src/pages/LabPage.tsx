@@ -18,6 +18,7 @@ export default function LabPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
         title="实验室"
+        description="实验性功能集合：包含大模型与桌面端相关的调试/可视化工具。"
         tabs={[
           { key: 'llm', label: '大模型实验室', icon: <Sparkles size={16} /> },
           { key: 'desktop', label: '桌面实验室', icon: <Monitor size={16} /> },

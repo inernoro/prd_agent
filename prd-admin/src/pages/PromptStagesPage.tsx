@@ -776,6 +776,16 @@ export default function PromptStagesPage() {
 
   const headerActionButtons = !showOther ? (
     <>
+      {(showUserPrompts || showSystemPrompts) && !uiValidation.ok ? (
+        <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
+          校验失败
+        </Badge>
+      ) : null}
+      {uiIsDirty ? (
+        <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
+          未保存
+        </Badge>
+      ) : null}
       <Button
         variant="secondary"
         size="xs"
@@ -841,20 +851,7 @@ export default function PromptStagesPage() {
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <PageHeader
         title="提示词管理"
-        description={
-          <div className="flex items-center gap-2">
-            {(showUserPrompts || showSystemPrompts) && !uiValidation.ok && (
-              <span style={{ color: 'rgba(255,120,120,0.95)' }}>
-                {uiValidation.message}
-              </span>
-            )}
-            {uiIsDirty && (
-              <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
-                未保存
-              </Badge>
-            )}
-          </div>
-        }
+        description="PRD 提示词与系统提示词配置：支持测试、保存与恢复默认。"
         variant="gold"
         tabs={[
           { key: 'prd', label: 'PRD提示词' },

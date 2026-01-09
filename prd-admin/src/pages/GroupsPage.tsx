@@ -231,8 +231,7 @@ export default function GroupsPage() {
     <div className="h-full flex flex-col gap-6">
       <PageHeader
         title="群组管理"
-        subtitle={`共 ${total} 个群组`}
-        description="协作群组、成员与邀请管理"
+        description={`协作群组、成员与邀请管理（共 ${total} 个群组）`}
       />
 
       <Card className="flex-1 min-h-0 flex flex-col">
