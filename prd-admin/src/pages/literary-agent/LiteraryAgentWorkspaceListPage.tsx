@@ -45,6 +45,7 @@ function ArticlePreview({ markdown }: { markdown: string }) {
   const [overflowed, setOverflowed] = useState(false);
 
   const md = useMemo(() => String(markdown || '').trim(), [markdown]);
+  const maxHeightPx = 200; // 摘要预览固定高度：避免整篇文章把卡片撑高
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -69,8 +70,8 @@ function ArticlePreview({ markdown }: { markdown: string }) {
   if (!md) return <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>;
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden">
-      <div ref={rootRef} className="h-full min-h-0 overflow-hidden">
+    <div className="relative overflow-hidden" style={{ maxHeight: maxHeightPx }}>
+      <div ref={rootRef} className="overflow-hidden" style={{ maxHeight: maxHeightPx }}>
         <style>{`
           .literary-preview-md { font-size: 12px; line-height: 1.65; color: var(--text-secondary); white-space: normal; word-break: break-word; }
           .literary-preview-md h1,.literary-preview-md h2,.literary-preview-md h3 { color: var(--text-primary); font-weight: 700; margin: 10px 0 6px; }
