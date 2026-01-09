@@ -9,7 +9,7 @@ import {
 } from '@/services';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -33,8 +33,109 @@ function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
   s = s.replace(/^\s*>\s*配图.*$/gm, '');
   s = s.trim();
 
-  if (s.length <= maxChars) return s;
-  return `${s.slice(0, maxChars)}…`;
+  // 列表预览不按固定字数提前截断：交给 CSS 做“按容器边界裁剪 + 省略号”
+  // 这里仅做轻量的长度保护，避免极端长文本影响渲染性能
+  const softLimit = Math.max(800, maxChars);
+  if (s.length <= softLimit) return s;
+  return s.slice(0, softLimit);
+}
+
+function ArticlePreview({ markdown }: { markdown: string }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [overflowed, setOverflowed] = useState(false);
+
+  const md = useMemo(() => String(markdown || '').trim(), [markdown]);
+  const maxHeightPx = 200; // 摘要预览固定高度：避免整篇文章把卡片撑高
+
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      // 轻量：判断是否溢出，决定是否显示 “...”
+      setOverflowed(el.scrollHeight - el.clientHeight > 1);
+    };
+
+    measure();
+
+    // 内容/容器变化时重测（响应式列宽、字体缩放等）
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
+    ro?.observe(el);
+
+    return () => {
+      ro?.disconnect();
+    };
+  }, [md]);
+
+  if (!md) return <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>;
+
+  return (
+    <div className="relative overflow-hidden" style={{ maxHeight: maxHeightPx }}>
+      <div ref={rootRef} className="overflow-hidden" style={{ maxHeight: maxHeightPx }}>
+        <style>{`
+          .literary-preview-md { font-size: 12px; line-height: 1.65; color: var(--text-secondary); white-space: normal; word-break: break-word; }
+          .literary-preview-md h1,.literary-preview-md h2,.literary-preview-md h3 { color: var(--text-primary); font-weight: 700; margin: 10px 0 6px; }
+          .literary-preview-md h1 { font-size: 14px; }
+          .literary-preview-md h2 { font-size: 13px; }
+          .literary-preview-md h3 { font-size: 12px; }
+          .literary-preview-md p { margin: 6px 0; }
+          .literary-preview-md ul,.literary-preview-md ol { margin: 6px 0; padding-left: 18px; }
+          .literary-preview-md li { margin: 3px 0; }
+          .literary-preview-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 10px 0; }
+          .literary-preview-md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+          .literary-preview-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+          .literary-preview-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
+          .literary-preview-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 10px; overflow: hidden; }
+          .literary-preview-md pre code { background: transparent; border: 0; padding: 0; }
+        `}</style>
+        <div className="literary-preview-md">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            skipHtml
+            // 列表预览：禁用图片/视频等，避免额外带宽开销
+            allowedElements={[
+              'p',
+              'strong',
+              'em',
+              'code',
+              'pre',
+              'blockquote',
+              'ul',
+              'ol',
+              'li',
+              'a',
+              'br',
+              'hr',
+              'h1',
+              'h2',
+              'h3',
+            ]}
+            unwrapDisallowed
+            components={{
+              // 预览中链接不跳转，避免误点离开列表
+              a: ({ children }) => <span>{children}</span>,
+            }}
+          >
+            {md}
+          </ReactMarkdown>
+        </div>
+      </div>
+
+      {overflowed ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0"
+          style={{
+            height: 44,
+            background: 'linear-gradient(to bottom, rgba(18,18,18,0), rgba(18,18,18,0.92))',
+          }}
+        >
+          <div className="absolute right-2 bottom-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.75)' }}>
+            …
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function LiteraryAgentWorkspaceListPage() {
@@ -155,57 +256,13 @@ export default function LiteraryAgentWorkspaceListPage() {
                     {ws.title}
                   </div>
                 </div>
-
-                <div
-                  className={[
-                    'flex items-center justify-end gap-2 flex-shrink-0',
-                    'opacity-0 translate-y-[-1px] pointer-events-none absolute right-3 top-3',
-                    'transition-all duration-150',
-                    'group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto group-hover:relative group-hover:right-auto group-hover:top-auto',
-                    'group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto group-focus-within:relative group-focus-within:right-auto group-focus-within:top-auto',
-                  ].join(' ')}
-                >
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/literary-agent/${ws.id}`);
-                    }}
-                    title="编辑"
-                  >
-                    <SquarePen size={14} />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onRename(ws);
-                    }}
-                    title="重命名"
-                  >
-                    <Pencil size={14} />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onDelete(ws);
-                    }}
-                    title="删除"
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
               </div>
             </div>
 
             {/* 中栏：摘要区 */}
             <div className="px-3 pb-1 flex-1 min-h-0 overflow-hidden">
               <div
-                className="h-full overflow-auto border rounded-[8px] text-[12px] leading-5 flex flex-col"
+                className="h-full overflow-hidden border rounded-[8px] text-[12px] leading-5 flex flex-col"
                 style={{
                   borderColor: 'var(--border-subtle)',
                   background: 'rgba(255,255,255,0.02)',
@@ -213,20 +270,64 @@ export default function LiteraryAgentWorkspaceListPage() {
                 }}
               >
                 <div className="p-3 flex-1">
-                  {getArticlePreviewText(ws) ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{getArticlePreviewText(ws)}</ReactMarkdown>
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>
-                  )}
+                  <ArticlePreview markdown={getArticlePreviewText(ws)} />
                 </div>
-                {formatDate(ws.updatedAt) && (
+                <div
+                  className="px-3 py-2 text-[11px] border-t flex items-center gap-2"
+                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                >
+                  {/* 操作按钮：放到“更新于 …”左侧；hover/focus-within 显示；不参与高度变化，避免撑开 */}
                   <div
-                    className="px-3 py-2 text-right text-[11px] border-t"
-                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                    className={[
+                      'w-[104px] flex items-center gap-1.5',
+                      'opacity-0 pointer-events-none',
+                      'transition-opacity duration-150',
+                      'group-hover:opacity-100 group-hover:pointer-events-auto',
+                      'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
+                    ].join(' ')}
                   >
-                    更新于 {formatDate(ws.updatedAt)}
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/literary-agent/${ws.id}`);
+                      }}
+                      title="编辑"
+                    >
+                      <SquarePen size={14} />
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onRename(ws);
+                      }}
+                      title="重命名"
+                    >
+                      <Pencil size={14} />
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="danger"
+                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onDelete(ws);
+                      }}
+                      title="删除"
+                    >
+                      <Trash2 size={14} />
+                    </Button>
                   </div>
-                )}
+
+                  <div className="flex-1 text-right">
+                    {formatDate(ws.updatedAt) ? `更新于 ${formatDate(ws.updatedAt)}` : ''}
+                  </div>
+                </div>
               </div>
             </div>
 
