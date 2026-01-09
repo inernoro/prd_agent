@@ -620,33 +620,6 @@ export default function UsersPage() {
         title="用户管理"
         subtitle={`共 ${total} 个用户`}
         description="账号、角色与权限管理"
-        actions={
-          <>
-            <Button variant="secondary" size="sm" onClick={openCreateUser}>
-              创建用户
-            </Button>
-            <Button variant="secondary" size="sm" onClick={openBulkCreate}>
-              批量创建
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => {
-                setInviteOpen(true);
-                setInviteCodes([]);
-              }}
-            >
-              生成邀请码
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={handleInitializeUsers}
-            >
-              初始化用户
-            </Button>
-          </>
-        }
       />
 
       <Card className="flex-1 min-h-0 flex flex-col">
@@ -694,7 +667,27 @@ export default function UsersPage() {
             <option value="Disabled">禁用</option>
           </select>
 
-          {null}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            <Button variant="secondary" size="sm" onClick={openCreateUser}>
+              创建用户
+            </Button>
+            <Button variant="secondary" size="sm" onClick={openBulkCreate}>
+              批量创建
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setInviteOpen(true);
+                setInviteCodes([]);
+              }}
+            >
+              生成邀请码
+            </Button>
+            <Button variant="danger" size="sm" onClick={handleInitializeUsers}>
+              初始化用户
+            </Button>
+          </div>
         </div>
 
         <div className="mt-5 flex-1 min-h-0 overflow-auto rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
