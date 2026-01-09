@@ -662,6 +662,7 @@ export default function AiChatPage() {
     const sid = String(res.data.sessionId || '');
     const docId = String(res.data.document?.id || '');
     const docTitleRaw = String(res.data.document?.title || '');
+    const docTitle = docTitleRaw.trim();
     if (!sid) {
       await systemDialog.alert('后端未返回 sessionId');
       return;
@@ -681,7 +682,6 @@ export default function AiChatPage() {
       const fileName = normalizeFileName(prdFileName);
       const snippet = extractFirstNonEmptyLines(content, 3).slice(0, 800);
       const mdTitle = extractMarkdownTitle(content);
-      const docTitle = docTitleRaw.trim();
       const fileBase = normalizeCandidateName(stripFileExtension(fileName));
 
       let suggestedTitle = '';

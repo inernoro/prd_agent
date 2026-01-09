@@ -360,6 +360,8 @@ export async function updateArticleMarkerReal(params: {
   status?: string;
   runId?: string;
   errorMessage?: string;
+  planItem?: { prompt: string; count: number; size?: string };
+  url?: string;
 }) {
   const { workspaceId, markerIndex, ...body } = params;
   return await apiRequest<{ marker: unknown }>(

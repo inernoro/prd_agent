@@ -276,7 +276,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     try {
       const res = await listLiteraryPrompts({ scenarioType: 'article-illustration' });
       if (res.success && res.data?.items) {
-        const prompts: PromptTemplate[] = res.data.items.map((p) => ({
+        const prompts: PromptTemplate[] = res.data.items.map((p: { id: string; title: string; content: string; isSystem?: boolean; scenarioType?: string | null; order?: number }) => ({
           id: p.id,
           title: p.title,
           content: p.content,
@@ -433,7 +433,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
       let fullText = '';
       let currentLineBuffer = ''; // 当前行缓冲区
-      let extractedMarkers: ArticleMarker[] = []; // 已提取的标记
+      const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
       
       for await (const chunk of stream) {
         if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
@@ -580,8 +580,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             setMarkerRunItems((prev) => {
               const existingItem = prev.find((x) => x.markerIndex === markerIndex);
               
-              // 如果已经存在且不是 pending 状态，说明已经在流式输出时处理过了，跳过
-              if (existingItem && existingItem.status !== 'pending') {
+              // 如果已经存在且不是 idle 状态，说明已经在流式输出时处理过了，跳过
+              if (existingItem && existingItem.status !== 'idle') {
                 return prev;
               }
               

@@ -1,4 +1,4 @@
-import type { ApiResponse } from './common';
+import type { ApiResponse } from '@/types/api';
 
 /**
  * 文学创作提示词
