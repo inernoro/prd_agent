@@ -33,6 +33,15 @@ public class PromptEntry
 
     /// <summary>提示词模板</summary>
     public string PromptTemplate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 场景类型（可选）：
+    /// - null/"global": 全局共享（所有场景可用）
+    /// - "article-illustration": 文章配图专用
+    /// - "image-gen": 图片生成专用
+    /// - "other": 其他场景
+    /// </summary>
+    public string? ScenarioType { get; set; }
 }
 
 /// <summary>

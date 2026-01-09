@@ -118,6 +118,12 @@ import type {
   UpdateAdminGapStatusContract,
   UpdateAdminGroupContract,
 } from '@/services/contracts/adminGroups';
+import type {
+  ListLiteraryPromptsContract,
+  CreateLiteraryPromptContract,
+  UpdateLiteraryPromptContract,
+  DeleteLiteraryPromptContract,
+} from '@/services/contracts/literaryPrompts';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
@@ -241,6 +247,12 @@ import {
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
+import {
+  listLiteraryPromptsReal,
+  createLiteraryPromptReal,
+  updateLiteraryPromptReal,
+  deleteLiteraryPromptReal,
+} from '@/services/real/literaryPrompts';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -418,3 +430,8 @@ export const getDataSummary: GetDataSummaryContract = withAuth(getDataSummaryRea
 export const purgeData: PurgeDataContract = withAuth(purgeDataReal);
 export const previewUsersPurge: PreviewUsersPurgeContract = withAuth(previewUsersPurgeReal);
 export const purgeUsers: PurgeUsersContract = withAuth(purgeUsersReal);
+
+export const listLiteraryPrompts: ListLiteraryPromptsContract = withAuth(listLiteraryPromptsReal);
+export const createLiteraryPrompt: CreateLiteraryPromptContract = withAuth(createLiteraryPromptReal);
+export const updateLiteraryPrompt: UpdateLiteraryPromptContract = withAuth(updateLiteraryPromptReal);
+export const deleteLiteraryPrompt: DeleteLiteraryPromptContract = withAuth(deleteLiteraryPromptReal);

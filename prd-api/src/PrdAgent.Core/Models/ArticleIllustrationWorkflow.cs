@@ -2,18 +2,18 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 文章配图工作流（服务端状态机，作为前后端一致性的唯一来源）。
-/// - phase 使用前端同款字符串：upload/editing/markers-generating/markers-generated/images-generating/images-generated
+/// - phase 使用 int 枚举：0=Upload, 1=Editing, 2=MarkersGenerated
 /// - history 仅用于 debug，不提供前端切换入口（由 ImageMasterWorkspace.ArticleWorkflowHistory 承载）
 /// </summary>
 public class ArticleIllustrationWorkflow
 {
     /// <summary>
-    /// 版本号：每次“提交型修改”（如重新上传文章、重新生成配图标记）都会 +1，并清空后续阶段数据。
+    /// 版本号：每次"提交型修改"（如重新上传文章、重新生成配图标记）都会 +1，并清空后续阶段数据。
     /// </summary>
     public int Version { get; set; } = 0;
 
-    /// <summary>当前阶段（见类注释）</summary>
-    public string Phase { get; set; } = "upload";
+    /// <summary>当前阶段（0=Upload, 1=Editing, 2=MarkersGenerated）</summary>
+    public int Phase { get; set; } = 0;
 
     /// <summary>标记列表（以生成/解析结果为准）</summary>
     public List<ArticleIllustrationMarker> Markers { get; set; } = new();

@@ -17,6 +17,22 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,
+        // 禁用代理缓冲，确保 SSE 流式响应能立即传递到浏览器
+        configure: (proxy, _options) => {
+          proxy.on('proxyReq', (proxyReq, req, _res) => {
+            // 如果是 SSE 请求，禁用缓冲
+            if (req.headers.accept?.includes('text/event-stream')) {
+              proxyReq.setHeader('X-Accel-Buffering', 'no');
+            }
+          });
+          proxy.on('proxyRes', (proxyRes, req, _res) => {
+            // 如果是 SSE 响应，禁用缓冲
+            if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
+              proxyRes.headers['x-accel-buffering'] = 'no';
+              proxyRes.headers['cache-control'] = 'no-cache';
+            }
+          });
+        },
       },
     },
   },

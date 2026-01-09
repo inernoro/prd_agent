@@ -17,9 +17,14 @@ export function extractMarkers(content: string): ArticleMarker[] {
   let index = 0;
 
   while ((match = regex.exec(content)) !== null) {
+    const text = match[1].trim();
+    // 跳过空标记（流式输出时可能只有 [插图] : 但还没有描述内容）
+    if (text.length === 0) {
+      continue;
+    }
     markers.push({
       index: index++,
-      text: match[1].trim(),
+      text,
       startPos: match.index,
       endPos: match.index + match[0].length,
     });

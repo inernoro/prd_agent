@@ -77,6 +77,7 @@ public class MongoDbContext
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
     public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
     public IMongoCollection<DesktopAsset> DesktopAssets => _database.GetCollection<DesktopAsset>("desktop_assets");
+    public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
 
     private void CreateIndexes()
     {
@@ -507,5 +508,11 @@ public class MongoDbContext
         DesktopAssets.Indexes.CreateOne(new CreateIndexModel<DesktopAsset>(
             Builders<DesktopAsset>.IndexKeys.Ascending(x => x.Key),
             new CreateIndexOptions { Name = "idx_desktop_assets_key" }));
+
+        // LiteraryPrompts：按 owner + scenarioType + order；按 scenarioType + order（用于全局共享查询）
+        LiteraryPrompts.Indexes.CreateOne(new CreateIndexModel<LiteraryPrompt>(
+            Builders<LiteraryPrompt>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.ScenarioType).Ascending(x => x.Order)));
+        LiteraryPrompts.Indexes.CreateOne(new CreateIndexModel<LiteraryPrompt>(
+            Builders<LiteraryPrompt>.IndexKeys.Ascending(x => x.ScenarioType).Ascending(x => x.Order)));
     }
 }

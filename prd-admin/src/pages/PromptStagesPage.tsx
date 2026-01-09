@@ -5,7 +5,7 @@ import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
-import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts } from '@/services';
+import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts, listLiteraryPrompts, createLiteraryPrompt, updateLiteraryPrompt, deleteLiteraryPrompt } from '@/services';
 import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contracts/systemPrompts';
 import { readSseStream } from '@/lib/sse';
@@ -22,7 +22,7 @@ function safeIdempotencyKey() {
 type RoleKey = 'pm' | 'dev' | 'qa';
 type RoleEnum = 'PM' | 'DEV' | 'QA';
 
-type TopTabKey = 'prd' | 'other';
+type TopTabKey = 'prd' | 'literary';
 type PrdTabKey = 'user' | 'system';
 
 function SegmentedTabs<T extends string>(props: {
@@ -209,6 +209,25 @@ export default function PromptStagesPage() {
 
   const [topTab, setTopTab] = useState<TopTabKey>('prd');
   const [prdTab, setPrdTab] = useState<PrdTabKey>('user');
+  
+  // 文学创作提示词状态
+  const [literaryLoading, setLiteraryLoading] = useState(false);
+  const [literaryPrompts, setLiteraryPrompts] = useState<Array<{
+    id: string;
+    title: string;
+    content: string;
+    scenarioType?: string | null;
+    order: number;
+    isSystem: boolean;
+  }>>([]);
+  const [literaryScenarioFilter, setLiteraryScenarioFilter] = useState<string | null>('article-illustration');
+  const [literaryEditingId, setLiteraryEditingId] = useState<string | null>(null);
+  const [literaryEditingTitle, setLiteraryEditingTitle] = useState('');
+  const [literaryEditingContent, setLiteraryEditingContent] = useState('');
+  const [literaryCreating, setLiteraryCreating] = useState(false);
+  const [literaryNewTitle, setLiteraryNewTitle] = useState('');
+  const [literaryNewContent, setLiteraryNewContent] = useState('');
+  const [literaryError, setLiteraryError] = useState<string | null>(null);
 
   const [, setIsOverridden] = useState(false);
   const [settings, setSettings] = useState<PromptSettings | null>(null);
@@ -294,6 +313,27 @@ export default function PromptStagesPage() {
     if (sysSettings) return;
     void loadSystem();
   }, [topTab, prdTab, sysSettings, loadSystem]);
+
+  // 加载文学创作提示词
+  const loadLiterary = useCallback(async () => {
+    setLiteraryLoading(true);
+    setLiteraryError(null);
+    try {
+      const res = await listLiteraryPrompts({ scenarioType: literaryScenarioFilter });
+      if (!res.success) {
+        setLiteraryError(`${res.error?.code || 'ERROR'}：${res.error?.message || '加载失败'}`);
+        return;
+      }
+      setLiteraryPrompts(res.data?.items || []);
+    } finally {
+      setLiteraryLoading(false);
+    }
+  }, [literaryScenarioFilter]);
+
+  useEffect(() => {
+    if (topTab !== 'literary') return;
+    void loadLiterary();
+  }, [topTab, loadLiterary]);
 
   const prompts = useMemo(() => normalizePrompts(settings?.prompts), [settings?.prompts]);
   const roleEnum = useMemo(() => roleKeyToEnum(activeRole), [activeRole]);
@@ -730,7 +770,7 @@ export default function PromptStagesPage() {
   };
 
   const showPrd = topTab === 'prd';
-  const showOther = topTab === 'other';
+  const showLiterary = topTab === 'literary';
   const showUserPrompts = showPrd && prdTab === 'user';
   const showSystemPrompts = showPrd && prdTab === 'system';
 
@@ -753,13 +793,23 @@ export default function PromptStagesPage() {
 
   const goTest = useCallback(
     (args: { role: RoleEnum; promptKey?: string | null }) => {
-      const qs = new URLSearchParams();
-      qs.set('mode', 'test');
-      qs.set('role', args.role);
-      if (args.promptKey) qs.set('promptKey', args.promptKey);
-      navigate(`/ai-chat?${qs.toString()}`);
+      // 获取当前提示词的完整数据
+      const prompt = showUserPrompts && args.promptKey
+        ? prompts.find((p) => p.promptKey === args.promptKey)
+        : null;
+      
+      // 通过 state 传递临时数据
+      navigate('/ai-chat', {
+        state: {
+          testMode: true,
+          role: args.role,
+          promptKey: args.promptKey || '',
+          promptTitle: prompt?.title || '',
+          promptTemplate: prompt?.promptTemplate || '',
+        },
+      });
     },
-    [navigate]
+    [navigate, showUserPrompts, prompts]
   );
 
   const onChangePrdTab = useCallback((next: PrdTabKey) => {
@@ -795,7 +845,7 @@ export default function PromptStagesPage() {
         variant="gold"
         tabs={[
           { key: 'prd', label: 'PRD提示词' },
-          { key: 'other', label: '其他提示词' },
+          { key: 'literary', label: '文学创作' },
         ]}
         activeTab={topTab}
         onTabChange={(next) => {
@@ -805,70 +855,7 @@ export default function PromptStagesPage() {
           setSysErr(null);
           setSysMsg(null);
         }}
-        actions={
-          !showOther ? (
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  if (showUserPrompts) {
-                    goTest({ role: roleEnum, promptKey: activePromptKey || null });
-                    return;
-                  }
-                  goTest({ role: roleEnum, promptKey: null });
-                }}
-                disabled={uiLoading || uiSaving}
-                title="跳转到 AI 对话页进行测试（上传 PRD / 选择角色与提示词 / 一键运行）"
-              >
-                测试
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={showUserPrompts ? load : loadSystem}
-                disabled={uiLoading || uiSaving}
-              >
-                <RefreshCw size={16} />
-                刷新
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={showUserPrompts ? save : saveSystem}
-                disabled={
-                  uiLoading ||
-                  uiSaving ||
-                  (showUserPrompts ? !settings : !sysSettings) ||
-                  !uiIsDirty ||
-                  !uiValidation.ok
-                }
-                title={!uiIsDirty ? '未修改无需保存' : !uiValidation.ok ? '请先修正校验错误' : '保存'}
-              >
-                <Save size={16} />
-                保存
-              </Button>
-              <ConfirmTip
-                title="恢复默认？"
-                description={
-                  showUserPrompts
-                    ? '将删除管理员覆盖配置，所有阶段提示词回落到系统默认（不可恢复覆盖内容）。'
-                    : '将删除管理员覆盖配置，系统提示词回落到系统默认（不可恢复覆盖内容）。'
-                }
-                confirmText="确认恢复默认"
-                onConfirm={showUserPrompts ? reset : resetSystem}
-                disabled={uiLoading || uiSaving}
-                side="top"
-                align="end"
-              >
-                <Button variant="danger" size="sm" disabled={uiLoading || uiSaving}>
-                  <RotateCcw size={16} />
-                  恢复默认
-                </Button>
-              </ConfirmTip>
-            </>
-          ) : undefined
-        }
+        actions={undefined}
       />
 
       {uiErr && (
@@ -920,12 +907,12 @@ export default function PromptStagesPage() {
         `}
       </style>
 
-      {showUserPrompts ? (
+      {showUserPrompts && (
         <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>
         <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>提示词总览</div>
-            <div className="shrink-0 flex items-center gap-2">
+          <div className="flex items-center justify-between gap-3 min-w-0">
+            <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>快捷指令</div>
+            <div className="shrink-0">
               <SegmentedTabs<PrdTabKey>
                 ariaLabel="PRD 提示词类型切换"
                 items={[
@@ -936,14 +923,16 @@ export default function PromptStagesPage() {
                 onChange={onChangePrdTab}
                 disabled={loading || saving}
               />
-              <Button variant="secondary" size="xs" onClick={addPrompt} disabled={loading || saving}>
-                <Plus size={14} />
-                新增
-              </Button>
             </div>
           </div>
-          <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            共 {roleStages.length} 个提示词（{roleEnum}；支持新增/删除/排序/切换）
+          <div className="mt-1 flex items-center justify-between gap-2 min-w-0">
+            <div className="text-[11px] min-w-0 truncate" style={{ color: 'var(--text-muted)' }}>
+              共 {roleStages.length} 个提示词（{roleEnum}；支持新增/删除/排序/切换）
+            </div>
+            <Button variant="secondary" size="xs" onClick={addPrompt} disabled={loading || saving} className="shrink-0">
+              <Plus size={14} />
+              新增
+            </Button>
           </div>
           <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0 content-start items-start auto-rows-min">
             {roleStages.map((s) => {
@@ -1077,7 +1066,67 @@ export default function PromptStagesPage() {
                 />
               </div>
               <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                提示词模板用于“聚焦指令”：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
+                提示词模板用于"聚焦指令"：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
+              </div>
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    if (showUserPrompts) {
+                      goTest({ role: roleEnum, promptKey: activePromptKey || null });
+                      return;
+                    }
+                    goTest({ role: roleEnum, promptKey: null });
+                  }}
+                  disabled={uiLoading || uiSaving}
+                  title="跳转到 AI 对话页进行测试（上传 PRD / 选择角色与提示词 / 一键运行）"
+                >
+                  测试
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={showUserPrompts ? load : loadSystem}
+                  disabled={uiLoading || uiSaving}
+                >
+                  <RefreshCw size={16} />
+                  刷新
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={showUserPrompts ? save : saveSystem}
+                  disabled={
+                    uiLoading ||
+                    uiSaving ||
+                    (showUserPrompts ? !settings : !sysSettings) ||
+                    !uiIsDirty ||
+                    !uiValidation.ok
+                  }
+                  title={!uiIsDirty ? '未修改无需保存' : !uiValidation.ok ? '请先修正校验错误' : '保存'}
+                >
+                  <Save size={16} />
+                  保存
+                </Button>
+                <ConfirmTip
+                  title="恢复默认？"
+                  description={
+                    showUserPrompts
+                      ? '将删除管理员覆盖配置，所有阶段提示词回落到系统默认（不可恢复覆盖内容）。'
+                      : '将删除管理员覆盖配置，系统提示词回落到系统默认（不可恢复覆盖内容）。'
+                  }
+                  confirmText="确认恢复默认"
+                  onConfirm={showUserPrompts ? reset : resetSystem}
+                  disabled={uiLoading || uiSaving}
+                  side="top"
+                  align="end"
+                >
+                  <Button variant="danger" size="sm" disabled={uiLoading || uiSaving}>
+                    <RotateCcw size={16} />
+                    恢复默认
+                  </Button>
+                </ConfirmTip>
               </div>
             </div>
 
@@ -1172,14 +1221,16 @@ export default function PromptStagesPage() {
           </div>
         </Card>
       </div>
-      ) : showSystemPrompts ? (
+      )}
+
+      {showSystemPrompts && (
         <div
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-          style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}
+          style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
         >
-          <Card className="p-4 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>系统提示词总览</div>
+          <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 min-w-0">
+              <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
               <div className="shrink-0">
                 <SegmentedTabs<PrdTabKey>
                   ariaLabel="PRD 提示词类型切换"
@@ -1193,12 +1244,12 @@ export default function PromptStagesPage() {
                 />
               </div>
             </div>
-            <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              按角色（PM/DEV/QA）分别配置 PRD 问答 system prompt；仅用于“输出结构/边界/资料使用说明”等非 JSON 约束。
+            <div className="mt-1 text-[11px] min-w-0 truncate" style={{ color: 'var(--text-muted)' }}>
+              按角色（PM/DEV/QA）分别配置 PRD 问答 system prompt；仅用于"输出结构/边界/资料使用说明"等非 JSON 约束。
             </div>
             {/* 角色按钮行按需求删除：改为直接点击下方卡片选中 */}
 
-            <div className="mt-3 grid gap-2 min-w-0 content-start items-start auto-rows-min">
+            <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0 content-start items-start auto-rows-min">
               {(['PM', 'DEV', 'QA'] as const).map((r) => {
                 const active = r === roleEnum;
                 const label = roleEnumToChineseLabel(r);
@@ -1350,14 +1401,143 @@ export default function PromptStagesPage() {
             </div>
           </Card>
         </div>
-      ) : (
-        <Card className="p-4 flex-1 min-h-0" variant="default">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>其他提示词</div>
-          <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-            暂未开放：后续可在这里接入与 PRD 问答无关的提示词（例如模型实验室、图片/工具类等）。
-          </div>
-        </Card>
       )}
+
+      {/* 文学创作提示词管理 */}
+      {showLiterary && (
+        <div className="flex-1 min-h-0 flex flex-col gap-4">
+          {literaryError && (
+            <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>
+              {literaryError}
+            </div>
+          )}
+
+          <Card className="p-5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>文学创作提示词</div>
+                <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  管理文学创作场景的提示词模板（支持场景分类与全局共享）
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <SegmentedTabs<string>
+                  ariaLabel="场景筛选"
+                  items={[
+                    { key: 'article-illustration', label: '文章配图' },
+                    { key: 'global', label: '全局共享' },
+                  ]}
+                  value={literaryScenarioFilter || 'article-illustration'}
+                  onChange={(next) => {
+                    setLiteraryScenarioFilter(next === 'global' ? null : next);
+                  }}
+                  disabled={literaryLoading}
+                />
+                <Button variant="secondary" size="sm" onClick={() => void loadLiterary()} disabled={literaryLoading}>
+                  <RefreshCw size={16} />
+                  刷新
+                </Button>
+                <Button variant="primary" size="sm" onClick={() => setLiteraryCreating(true)} disabled={literaryLoading}>
+                  <Plus size={16} />
+                  新建
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+              {literaryPrompts.map((prompt) => (
+                <Card key={prompt.id} className="p-4">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {prompt.title}
+                      </div>
+                      <div className="flex items-center gap-1 mt-1">
+                        {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: 'rgba(168, 85, 247, 0.12)', color: 'rgba(168, 85, 247, 0.95)', border: '1px solid rgba(168, 85, 247, 0.28)' }}>
+                            全局
+                          </span>
+                        ) : prompt.scenarioType === 'article-illustration' ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: 'rgba(34, 197, 94, 0.12)', color: 'rgba(34, 197, 94, 0.95)', border: '1px solid rgba(34, 197, 94, 0.28)' }}>
+                            文章配图
+                          </span>
+                        ) : null}
+                        {prompt.isSystem && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: 'rgba(147, 197, 253, 0.12)', color: 'rgba(147, 197, 253, 0.95)', border: '1px solid rgba(147, 197, 253, 0.28)' }}>
+                            系统
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-xs mt-2 line-clamp-3" style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    {prompt.content}
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <Button variant="secondary" size="xs" onClick={() => { setLiteraryEditingId(prompt.id); setLiteraryEditingTitle(prompt.title); setLiteraryEditingContent(prompt.content); }} disabled={literaryLoading}>
+                      编辑
+                    </Button>
+                    {!prompt.isSystem && (
+                      <Button variant="danger" size="xs" onClick={async () => { if (!confirm(`确定要删除「${prompt.title}」吗？`)) return; const res = await deleteLiteraryPrompt({ id: prompt.id }); if (res.success) { await loadLiterary(); } else { setLiteraryError(res.error?.message || '删除失败'); } }} disabled={literaryLoading}>
+                        <Trash2 size={12} />
+                        删除
+                      </Button>
+                    )}
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            {literaryPrompts.length === 0 && !literaryLoading && (
+              <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
+                暂无提示词，点击「新建」创建第一个模板
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* 新建文学创作提示词对话框 */}
+      <Dialog open={literaryCreating} onOpenChange={(open) => !open && setLiteraryCreating(false)} title="新建文学创作提示词" description="创建一个新的提示词模板" maxWidth={800} content={
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>标题</label>
+              <input type="text" value={literaryNewTitle} onChange={(e) => setLiteraryNewTitle(e.target.value)} placeholder="例如：文章配图标准模板" className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none prd-field" />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>内容</label>
+              <textarea value={literaryNewContent} onChange={(e) => setLiteraryNewContent(e.target.value)} placeholder="输入提示词内容..." rows={12} className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none font-mono prd-field" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setLiteraryCreating(false)}>取消</Button>
+              <Button variant="primary" onClick={async () => { if (!literaryNewTitle.trim() || !literaryNewContent.trim()) { setLiteraryError('标题和内容不能为空'); return; } const res = await createLiteraryPrompt({ title: literaryNewTitle, content: literaryNewContent, scenarioType: literaryScenarioFilter || 'article-illustration' }); if (res.success) { setLiteraryCreating(false); setLiteraryNewTitle(''); setLiteraryNewContent(''); await loadLiterary(); } else { setLiteraryError(res.error?.message || '创建失败'); } }} disabled={!literaryNewTitle.trim() || !literaryNewContent.trim()}>
+                创建
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* 编辑文学创作提示词对话框 */}
+      <Dialog open={!!literaryEditingId} onOpenChange={(open) => !open && setLiteraryEditingId(null)} title="编辑文学创作提示词" description="修改提示词模板" maxWidth={800} content={
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>标题</label>
+              <input type="text" value={literaryEditingTitle} onChange={(e) => setLiteraryEditingTitle(e.target.value)} className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none prd-field" />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>内容</label>
+              <textarea value={literaryEditingContent} onChange={(e) => setLiteraryEditingContent(e.target.value)} rows={12} className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none font-mono prd-field" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setLiteraryEditingId(null)}>取消</Button>
+              <Button variant="primary" onClick={async () => { if (!literaryEditingId || !literaryEditingTitle.trim() || !literaryEditingContent.trim()) { setLiteraryError('标题和内容不能为空'); return; } const res = await updateLiteraryPrompt({ id: literaryEditingId, title: literaryEditingTitle, content: literaryEditingContent }); if (res.success) { setLiteraryEditingId(null); await loadLiterary(); } else { setLiteraryError(res.error?.message || '保存失败'); } }} disabled={!literaryEditingTitle.trim() || !literaryEditingContent.trim()}>
+                保存
+              </Button>
+            </div>
+          </div>
+        }
+      />
 
       <Dialog
         open={optOpen}

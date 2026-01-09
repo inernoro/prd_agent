@@ -122,6 +122,9 @@ public class StubOpenAIController : ControllerBase
     [HttpPost("v1/chat/completions")]
     public async Task ChatCompletions([FromBody] StubChatRequest request, CancellationToken ct)
     {
+        var requestStartTime = DateTime.UtcNow;
+        Console.WriteLine($"[Stub] 接收到请求: {requestStartTime:HH:mm:ss.fff}");
+        
         var model = (request?.Model ?? "stub-chat").Trim();
         var stream = request?.Stream ?? false;
         var content = ExtractUserText(request);
@@ -132,7 +135,7 @@ public class StubOpenAIController : ControllerBase
         {
             "intent" => $"[stub-intent]\nintent=demo_intent\ntext={content}",
             "vision" => $"[stub-vision]\nvision_ok=true\ntext={content}",
-            _ => $"[stub-chat]\ntext={content}"
+            _ => $"# [stub-chat]\n{content}"
         };
 
         if (!stream)
@@ -166,7 +169,9 @@ public class StubOpenAIController : ControllerBase
         var id = "stubcmpl_" + Guid.NewGuid().ToString("N");
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        // 先发 role
+        Console.WriteLine($"[Stub] 准备发送 role chunk: {DateTime.UtcNow:HH:mm:ss.fff}");
+        
+        // 先发 role（不延迟）
         await WriteSseAsync(new
         {
             id,
@@ -174,10 +179,19 @@ public class StubOpenAIController : ControllerBase
             created,
             model,
             choices = new[] { new { index = 0, delta = new { role = "assistant" }, finish_reason = (string?)null } }
-        }, ct);
+        }, ct, addDelay: false);
+        
+        var firstTokenTime = DateTime.UtcNow;
+        var ttft = (firstTokenTime - requestStartTime).TotalMilliseconds;
+        Console.WriteLine($"[Stub] role chunk 已发送并 flush: {firstTokenTime:HH:mm:ss.fff}");
+        Console.WriteLine($"[Stub] 首字延迟 (TTFT): {ttft:F1}ms");
 
-        // 分段输出内容（不做逐字，避免过慢）
-        foreach (var part in SplitIntoChunks(reply, 24))
+        // 分段输出内容（按逗号分隔，模拟大模型行为，每次延迟 10ms）
+        var partsList = SplitByComma(reply).ToList();
+        Console.WriteLine($"[Stub] 开始发送 {partsList.Count} 个 content chunks: {DateTime.UtcNow:HH:mm:ss.fff}");
+        
+        var chunkIndex = 0;
+        foreach (var part in partsList)
         {
             await WriteSseAsync(new
             {
@@ -186,10 +200,19 @@ public class StubOpenAIController : ControllerBase
                 created,
                 model,
                 choices = new[] { new { index = 0, delta = new { content = part }, finish_reason = (string?)null } }
-            }, ct);
+            }, ct, addDelay: true);
+            
+            // 只打印前3个和最后1个chunk的时间
+            if (chunkIndex < 3 || chunkIndex == partsList.Count - 1)
+            {
+                Console.WriteLine($"[Stub] chunk[{chunkIndex}] 已发送: {DateTime.UtcNow:HH:mm:ss.fff}");
         }
+            chunkIndex++;
+        }
+        
+        Console.WriteLine($"[Stub] 所有 content chunks 发送完毕: {DateTime.UtcNow:HH:mm:ss.fff}");
 
-        // 结束
+        // 结束（不延迟）
         await WriteSseAsync(new
         {
             id,
@@ -197,9 +220,13 @@ public class StubOpenAIController : ControllerBase
             created,
             model,
             choices = new[] { new { index = 0, delta = new { }, finish_reason = "stop" } }
-        }, ct);
+        }, ct, addDelay: false);
         await Response.WriteAsync("data: [DONE]\n\n", ct);
         await Response.Body.FlushAsync(ct);
+        
+        var requestEndTime = DateTime.UtcNow;
+        var totalTime = (requestEndTime - requestStartTime).TotalMilliseconds;
+        Console.WriteLine($"[Stub] 请求完成，总时长: {totalTime:F1}ms");
     }
 
     [HttpPost("v1/images/generations")]
@@ -603,8 +630,14 @@ public class StubOpenAIController : ControllerBase
         }
     }
 
-    private async Task WriteSseAsync(object obj, CancellationToken ct)
+    private async Task WriteSseAsync(object obj, CancellationToken ct, bool addDelay = false)
     {
+        // 模拟大模型延迟：先延迟再写入（10ms，既能看到流式效果又不会太慢）
+        if (addDelay)
+    {
+            await Task.Delay(10, ct);
+        }
+        
         var json = JsonSerializer.Serialize(obj);
         await Response.WriteAsync("data: " + json + "\n\n", ct);
         await Response.Body.FlushAsync(ct);
@@ -621,6 +654,42 @@ public class StubOpenAIController : ControllerBase
             list.Add(raw.Substring(i, n));
         }
         return list;
+    }
+
+    /// <summary>
+    /// 按逗号分隔文本，模拟大模型流式返回行为
+    /// </summary>
+    private static IEnumerable<string> SplitByComma(string s)
+    {
+        var raw = s ?? string.Empty;
+        if (string.IsNullOrEmpty(raw)) return new[] { raw };
+        
+        var parts = new List<string>();
+        var lastIndex = 0;
+        
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] == ',' || raw[i] == '，') // 支持中英文逗号
+            {
+                // 包含逗号本身
+                parts.Add(raw.Substring(lastIndex, i - lastIndex + 1));
+                lastIndex = i + 1;
+            }
+        }
+        
+        // 添加最后一段（如果有）
+        if (lastIndex < raw.Length)
+        {
+            parts.Add(raw.Substring(lastIndex));
+        }
+        
+        // 如果没有逗号，按固定长度分段（兼容无标点文本）
+        if (parts.Count == 0 || (parts.Count == 1 && parts[0].Length > 50))
+        {
+            return SplitIntoChunks(raw, 24);
+        }
+        
+        return parts;
     }
 
     private static string ExtractUserText(StubChatRequest? req)

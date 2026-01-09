@@ -13,9 +13,14 @@ import {
   updateImageMasterWorkspace,
   updateArticleMarker,
   uploadImageMasterWorkspaceAsset,
+  listLiteraryPrompts,
+  createLiteraryPrompt,
+  updateLiteraryPrompt,
+  deleteLiteraryPrompt,
 } from '@/services';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -25,7 +30,8 @@ import { systemDialog } from '@/lib/systemDialog';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
 
-type WorkflowPhase = 'upload' | 'editing' | 'markers-generating' | 'markers-generated' | 'images-generated';
+// 3 个状态：0=upload, 1=editing, 2=markersGenerated
+type WorkflowPhase = 0 | 1 | 2;
 
 type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'error';
 
@@ -69,19 +75,21 @@ const PRD_MD_STYLE = `
   }
 `;
 
-// 用户自定义提示词模板类型
+// 用户自定义提示词模板类型（对应后端 LiteraryPrompt）
 type PromptTemplate = {
   id: string;
   title: string;
   content: string;
   isSystem?: boolean;
+  scenarioType?: string | null;
+  order?: number;
 };
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
   const [articleContent, setArticleContent] = useState('');
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
-  const [phase, setPhase] = useState<WorkflowPhase>('upload');
+  const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
@@ -104,6 +112,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
+  const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
+  
+  // 当配图列表增加时，自动滚动到底部
+  useEffect(() => {
+    if (markerListRef.current && markerRunItems.length > 0) {
+      markerListRef.current.scrollTop = markerListRef.current.scrollHeight;
+    }
+  }, [markerRunItems.length]);
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
@@ -172,11 +188,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             const extracted = extractMarkers(ws.articleContentWithMarkers);
             setMarkers(extracted);
             if (extracted.length > 0) {
-              setPhase('markers-generated');
+              setPhase(2); // MarkersGenerated
             }
           } else if (content) {
             setUploadedFileName('已上传的文章.md');
-            setPhase('editing');
+            setPhase(1); // Editing
           }
         }
         
@@ -193,10 +209,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             markerText: m.text || '',
             draftText: m.draftText || m.text || '',
             status: (m.status || 'idle') as MarkerRunStatus,
-            planItem: null,
+            // 恢复 planItem（意图解析结果）
+            planItem: m.planItem ? {
+              prompt: m.planItem.prompt || '',
+              count: m.planItem.count || 1,
+              size: m.planItem.size || undefined,
+            } : null,
             runId: m.runId || null,
-            base64: null,
-            url: null,
+            // 恢复图片数据（只使用 URL，不使用 base64 以减少存储压力）
+            base64: null, // 前端不从后端恢复 base64
+            url: m.url || null,
             assetUrl: m.assetId ? (res.data.assets?.find((a: any) => a.id === m.assetId)?.url || null) : null,
             errorMessage: m.errorMessage || null,
           }));
@@ -204,22 +226,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           setMarkerRunItemsRestored(true); // 标记已恢复
         }
         
-        // 加载用户自定义提示词（全局共享）
-        const saved = localStorage.getItem('literary-prompts-global');
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed)) {
-              setUserPrompts(parsed);
-              // 如果有提示词但没有选中，自动选中第一个
-              if (parsed.length > 0 && !selectedPrompt) {
-                setSelectedPrompt(parsed[0]);
-              }
-            }
-          } catch (e) {
-            console.error('Failed to parse saved prompts:', e);
-          }
-        }
+        // 加载文学创作提示词（从后端）
+        await loadLiteraryPrompts();
       }
     } catch (error) {
       console.error('Failed to load workspace:', error);
@@ -263,14 +271,32 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
   }, [markers, markerRunItemsRestored]);
 
-  // 保存用户提示词到 localStorage（全局共享，不按 workspaceId 隔离）
-  const saveUserPrompts = useCallback((prompts: PromptTemplate[]) => {
-    localStorage.setItem('literary-prompts-global', JSON.stringify(prompts));
-    setUserPrompts(prompts);
-  }, []);
+  // 加载文学创作提示词（从后端）
+  const loadLiteraryPrompts = useCallback(async () => {
+    try {
+      const res = await listLiteraryPrompts({ scenarioType: 'article-illustration' });
+      if (res.success && res.data?.items) {
+        const prompts: PromptTemplate[] = res.data.items.map((p) => ({
+          id: p.id,
+          title: p.title,
+          content: p.content,
+          isSystem: p.isSystem,
+          scenarioType: p.scenarioType,
+          order: p.order,
+        }));
+        setUserPrompts(prompts);
+        // 如果有提示词但没有选中，自动选中第一个
+        if (prompts.length > 0 && !selectedPrompt) {
+          setSelectedPrompt(prompts[0]);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load literary prompts:', error);
+    }
+  }, [selectedPrompt]);
 
   useEffect(() => {
-    if (debouncedArticleContent && workspaceId && phase === 'editing' && !generating) {
+    if (debouncedArticleContent && workspaceId && phase === 1 && !generating) { // Editing
       void saveArticleContent();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -308,7 +334,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       });
       
       // 上传后直接进入编辑模式并启用预览
-      setPhase('editing');
+      setPhase(1); // Editing
     } catch {
       await systemDialog.alert('文件读取失败');
     }
@@ -365,7 +391,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       });
       
       // 上传后直接进入编辑模式
-      setPhase('editing');
+      setPhase(1); // Editing
     } catch {
       await systemDialog.alert('文件读取失败');
     }
@@ -373,7 +399,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 进入预览阶段（保留 phase=editing，表示“已上传可生成标记”）
   const handleEnterPreview = useCallback(() => {
-    setPhase('editing');
+    setPhase(1); // Editing
   }, []);
 
   const handleGenerateMarkers = async () => {
@@ -391,7 +417,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const systemPrompt = selectedPrompt.content;
 
     setGenerating(true);
-    setPhase('markers-generating');
+    // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
+    setPhase(2); // MarkersGenerated
     setArticleWithMarkers(''); // 初始为空，流式逐步填充
     setMarkers([]);
     
@@ -405,22 +432,282 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       });
 
       let fullText = '';
+      let currentLineBuffer = ''; // 当前行缓冲区
+      let extractedMarkers: ArticleMarker[] = []; // 已提取的标记
       
       for await (const chunk of stream) {
-        if (chunk.type === 'chunk' && chunk.text) {
+        if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
           fullText += chunk.text;
-          // 流式输出到"带标记预览"，实时显示 markdown
-          setArticleWithMarkers(fullText);
+          currentLineBuffer += chunk.text;
+          
+          // 检查是否有完整的行（以 \n 结尾）
+          if (currentLineBuffer.includes('\n')) {
+            const lines = currentLineBuffer.split('\n');
+            // 最后一个元素是不完整的行（或空字符串），保留在缓冲区
+            currentLineBuffer = lines.pop() || '';
+            
+            // 处理所有完整的行
+            for (const line of lines) {
+              // 对这一行进行标记匹配
+              const markerRegex = /\[插图\]\s*:\s*(.+)/;
+              const match = markerRegex.exec(line);
+              
+              if (match) {
+                const markerText = match[1].trim();
+                
+                // 只有当 markerText 不为空时才添加
+                if (markerText.length > 0) {
+                  const markerIndex = extractedMarkers.length;
+                  extractedMarkers.push({
+                    index: markerIndex,
+                    text: markerText,
+                    startPos: -1, // 流式输出时不需要精确位置
+                    endPos: -1,
+                  });
+                  
+                  // 更新 UI
+                  setMarkers([...extractedMarkers]);
+                  
+                  // 添加到运行列表（状态为 parsing，立即触发意图解析）
+                  setMarkerRunItems((prev) => {
+                    if (prev.some((x) => x.markerIndex === markerIndex)) {
+                      return prev;
+                    }
+                    return [
+                      ...prev,
+                      {
+                        markerIndex,
+                        markerText,
+                        draftText: markerText,
+                        status: 'parsing' as MarkerRunStatus,
+                      },
+                    ];
+                  });
+                  
+                  // 立即触发意图解析（不等待流式输出完成）
+                  void (async () => {
+                    try {
+                      const planRes = await planImageGen({
+                        text: markerText,
+                        maxItems: 1,
+                      });
+                      
+                      if (planRes.success && planRes.data?.items?.[0]) {
+                        const planItem = planRes.data.items[0];
+                        
+                        setMarkerRunItems((prev) =>
+                          prev.map((x) =>
+                            x.markerIndex === markerIndex
+                              ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                              : x
+                          )
+                        );
+                        
+                        // 保存意图解析结果到后端
+                        await updateMarkerStatus(markerIndex, {
+                          status: 'parsed',
+                          draftText: planItem.prompt,
+                        });
+                        
+                        // 保存 planItem 到后端（需要扩展 API）
+                        try {
+                          await updateArticleMarker({
+                            workspaceId,
+                            markerIndex,
+                            planItem: {
+                              prompt: planItem.prompt,
+                              count: planItem.count,
+                              size: planItem.size,
+                            },
+                          });
+                        } catch (error) {
+                          console.error('Failed to save planItem:', error);
+                        }
+                      } else {
+                        setMarkerRunItems((prev) =>
+                          prev.map((x) =>
+                            x.markerIndex === markerIndex
+                              ? {
+                                  ...x,
+                                  status: 'error' as MarkerRunStatus,
+                                  errorMessage: planRes.error?.message || '意图解析失败',
+                                }
+                              : x
+                          )
+                        );
+                      }
+                    } catch (error) {
+                      console.error('Plan image gen error:', error);
+                      setMarkerRunItems((prev) =>
+                        prev.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? {
+                                ...x,
+                                status: 'error' as MarkerRunStatus,
+                                errorMessage: error instanceof Error ? error.message : '意图解析失败',
+                              }
+                            : x
+                        )
+                      );
+                    }
+                  })();
+                }
+              }
+            }
+          }
+          
+          // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
+          flushSync(() => {
+            setArticleWithMarkers(fullText);
+          });
+          
+          // 人工延迟 10ms，让用户能看到流式渲染效果（配合后端 10ms 延迟）
+          await new Promise(resolve => setTimeout(resolve, 10));
         } else if (chunk.type === 'done' && chunk.fullText) {
           fullText = chunk.fullText;
           setArticleWithMarkers(fullText);
           
-          // 提取标记
+          // 提取标记（确保最终状态一致）
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
           
+          // 对于那些还没有被处理的标记（状态为 pending），触发意图解析
+          // 注意：流式输出过程中已经处理过的标记（parsing/parsed/error）不需要重复处理
+          extracted.forEach((marker) => {
+            const markerIndex = marker.index;
+            const markerText = marker.text;
+            
+            setMarkerRunItems((prev) => {
+              const existingItem = prev.find((x) => x.markerIndex === markerIndex);
+              
+              // 如果已经存在且不是 pending 状态，说明已经在流式输出时处理过了，跳过
+              if (existingItem && existingItem.status !== 'pending') {
+                return prev;
+              }
+              
+              // 如果不存在或状态为 pending，则触发意图解析
+              if (!existingItem) {
+                // 添加新项并触发解析
+                const newPrev = [
+                  ...prev,
+                  {
+                    markerIndex,
+                    markerText,
+                    draftText: markerText,
+                    status: 'parsing' as MarkerRunStatus,
+                  },
+                ];
+                
+                // 异步调用意图解析
+                void (async () => {
+                  try {
+                    const planRes = await planImageGen({
+                      text: markerText,
+                      maxItems: 1,
+                    });
+                    
+                    if (planRes.success && planRes.data?.items?.[0]) {
+                      const planItem = planRes.data.items[0];
+                      
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                            : x
+                        )
+                      );
+                    } else {
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? {
+                                ...x,
+                                status: 'error' as MarkerRunStatus,
+                                errorMessage: planRes.error?.message || '意图解析失败',
+                              }
+                            : x
+                        )
+                      );
+                    }
+                  } catch (error) {
+                    console.error('Plan image gen error:', error);
+                    setMarkerRunItems((p) =>
+                      p.map((x) =>
+                        x.markerIndex === markerIndex
+                          ? {
+                              ...x,
+                              status: 'error' as MarkerRunStatus,
+                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
+                            }
+                          : x
+                      )
+                    );
+                  }
+                })();
+                
+                return newPrev;
+              } else {
+                // 状态为 pending，更新为 parsing 并触发解析
+                const updatedPrev = prev.map((x) =>
+                  x.markerIndex === markerIndex
+                    ? { ...x, markerText, draftText: markerText, status: 'parsing' as MarkerRunStatus }
+                    : x
+                );
+                
+                // 异步调用意图解析
+                void (async () => {
+                  try {
+                    const planRes = await planImageGen({
+                      text: markerText,
+                      maxItems: 1,
+                    });
+                    
+                    if (planRes.success && planRes.data?.items?.[0]) {
+                      const planItem = planRes.data.items[0];
+                      
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                            : x
+                        )
+                      );
+                    } else {
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? {
+                                ...x,
+                                status: 'error' as MarkerRunStatus,
+                                errorMessage: planRes.error?.message || '意图解析失败',
+                              }
+                            : x
+                        )
+                      );
+                    }
+                  } catch (error) {
+                    console.error('Plan image gen error:', error);
+                    setMarkerRunItems((p) =>
+                      p.map((x) =>
+                        x.markerIndex === markerIndex
+                          ? {
+                              ...x,
+                              status: 'error' as MarkerRunStatus,
+                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
+                            }
+                          : x
+                      )
+                    );
+                  }
+                })();
+                
+                return updatedPrev;
+              }
+            });
+          });
+          
           // 提交型操作成功：更新阶段
-          setPhase('markers-generated');
+          setPhase(2); // MarkersGenerated
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
         }
@@ -432,7 +719,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         message: error instanceof Error ? error.message : '未知错误' 
       });
       setMarkers([]);
-      setPhase('editing');
+      setPhase(1); // Editing
     } finally {
       setGenerating(false);
     }
@@ -488,8 +775,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           continue;
         }
 
-        // “立刻插入”：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
-        const isGenerating = it.status === 'parsing' || it.status === 'parsed' || it.status === 'running';
+        // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
+        // 注意：只有在 running 状态时才插入提示，parsing 和 parsed 状态不插入（意图解析是静默的）
+        const isGenerating = it.status === 'running';
         if (isGenerating) {
           changed = true;
           patches.push({
@@ -522,7 +810,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
   useEffect(() => {
-    if (phase === 'markers-generated' || phase === 'images-generated') {
+    if (phase === 2) { // MarkersGenerated
       rebuildMergedMarkdown(markerRunItems);
     }
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
@@ -652,8 +940,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const finalB64 = String(gotBase64 || '').trim();
     if (finalUrl) {
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl } : x))
       );
+      // 保存图片URL到后端
+      await updateMarkerStatus(markerIndex, { status: 'done' });
+      try {
+        await updateArticleMarker({
+          workspaceId,
+          markerIndex,
+          url: finalUrl,
+        });
+      } catch (error) {
+        console.error('Failed to save image url:', error);
+      }
       return;
     }
     if (!finalB64) {
@@ -687,6 +986,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl } : x))
     );
+    // 图片已经通过 uploadImageMasterWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
+    // 不需要保存 base64，减少存储压力
+    await updateMarkerStatus(markerIndex, { status: 'done' });
   };
 
   // 新增辅助函数：保存 marker 状态到后端
@@ -738,11 +1040,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       // 检查是否有失败
       const anyError = results.some(r => r.status === 'rejected') || 
                        markerRunItemsRef.current.some(x => x.status === 'error');
-      const allDone = markerRunItemsRef.current.length > 0 && 
-                      markerRunItemsRef.current.every(x => x.status === 'done');
       
       setGenerating(false);
-      setPhase(allDone ? 'images-generated' : 'markers-generated');
+      // 3 状态模式：生图完成后仍保持在 MarkersGenerated
+      setPhase(2); // MarkersGenerated
       
       if (anyError && !ac.signal.aborted) {
         await systemDialog.alert('部分配图生成失败：可在右侧逐条修改并重新生成');
@@ -750,7 +1051,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     } catch (error) {
       console.error('Batch generate error:', error);
       setGenerating(false);
-      setPhase('markers-generated');
+      setPhase(2); // MarkersGenerated
     }
   };
 
@@ -761,8 +1062,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       await runSingleMarker(markerIndex);
     } finally {
       setGenerating(false);
-      const allDone = markerRunItemsRef.current.length > 0 && markerRunItemsRef.current.every((x) => x.status === 'done');
-      setPhase(allDone ? 'images-generated' : 'markers-generated');
+      // 3 状态模式：生图完成后仍保持在 MarkersGenerated
+      setPhase(2); // MarkersGenerated
     }
   };
 
@@ -805,26 +1106,60 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems(nextRunItems);
 
     if (nextMarkers.length === 0) {
-      setPhase('editing');
+      setPhase(1); // Editing
     }
   };
 
   const handleExport = async () => {
     try {
-      // 将生成的图片插入到正文中
-      let contentWithImages = articleWithMarkers;
-      
-      // 遍历所有已完成的配图项，将标记替换为图片
-      markerRunItems
-        .filter(item => item.status === 'done' && (item.assetUrl || item.url || item.base64))
-        .forEach(item => {
-          const imageUrl = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`);
-          const markerPattern = new RegExp(`\\[配图-${item.markerIndex + 1}\\]`, 'g');
-          contentWithImages = contentWithImages.replace(markerPattern, `![配图-${item.markerIndex + 1}](${imageUrl})`);
+      // 使用与预览相同的逻辑：精确替换标记为图片
+      const base = String(articleWithMarkers || articleContent || '');
+      if (!base) {
+        await systemDialog.alert({ title: '导出失败', message: '文章内容为空' });
+        return;
+      }
+
+      const byIndex = new Map<number, MarkerRunItem>(markerRunItems.map((x) => [x.markerIndex, x]));
+      const patches: Array<{ start: number; end: number; replacement: string }> = [];
+
+      // 遍历所有标记，将已完成的配图替换为图片 Markdown
+      for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        const it = byIndex.get(m.index);
+        if (!it) continue;
+
+        const url =
+          String(it.assetUrl || it.url || '').trim() ||
+          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+
+        if (url && it.status === 'done') {
+          patches.push({
+            start: m.startPos,
+            end: m.endPos,
+            replacement: `![配图 ${i + 1}](${url})`,
+          });
+        }
+      }
+
+      // 从后往前替换，避免偏移
+      patches.sort((a, b) => b.start - a.start);
+      let contentWithImages = base;
+      for (const p of patches) {
+        contentWithImages = contentWithImages.slice(0, p.start) + p.replacement + contentWithImages.slice(p.end);
+      }
+
+      // 如果没有任何替换，提示用户
+      if (patches.length === 0) {
+        const ok = await systemDialog.confirm({
+          title: '确认导出',
+          message: '当前没有已完成的配图，是否导出原始文章（包含 [插图] 标记）？',
         });
-      
+        if (!ok) return;
+        contentWithImages = base;
+      }
+
       setArticleWithImages(contentWithImages);
-      
+
       // 创建下载链接
       const blob = new Blob([contentWithImages], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -833,8 +1168,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       link.download = `${uploadedFileName || '文章配图'}.md`;
       link.click();
       URL.revokeObjectURL(url);
-      
-      await systemDialog.alert({ title: '导出成功', message: '文章已下载到本地' });
+
+      await systemDialog.alert({ 
+        title: '导出成功', 
+        message: `已导出 ${patches.length} 张配图到文章中` 
+      });
     } catch (error) {
       console.error('Export error:', error);
       await systemDialog.alert('导出失败');
@@ -843,28 +1181,48 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 创建新提示词模板
   const [creatingPrompt, setCreatingPrompt] = useState<{ title: string; content: string } | null>(null);
+  // 小屏：编辑/预览切换；大屏：左右分栏同时显示
+  const [promptPanel, setPromptPanel] = useState<'edit' | 'preview'>('edit');
 
   const handleCreatePrompt = () => {
+    setPromptPanel('edit');
     setCreatingPrompt({
       title: '',
       content: '',
     });
   };
 
-  const handleSaveNewPrompt = () => {
+  const handleSaveNewPrompt = async () => {
     if (!creatingPrompt) return;
 
-    const newPrompt: PromptTemplate = {
-      id: `user-${Date.now()}`,
-      title: creatingPrompt.title,
-      content: creatingPrompt.content,
-      isSystem: false,
-    };
+    try {
+      const res = await createLiteraryPrompt({
+        title: creatingPrompt.title,
+        content: creatingPrompt.content,
+        scenarioType: 'article-illustration',
+      });
 
-    const updated = [...userPrompts, newPrompt];
-    saveUserPrompts(updated);
-    setSelectedPrompt(newPrompt);
-    setCreatingPrompt(null);
+      if (res.success && res.data?.prompt) {
+        const newPrompt: PromptTemplate = {
+          id: res.data.prompt.id,
+          title: res.data.prompt.title,
+          content: res.data.prompt.content,
+          isSystem: res.data.prompt.isSystem,
+          scenarioType: res.data.prompt.scenarioType,
+          order: res.data.prompt.order,
+        };
+
+        const updated = [...userPrompts, newPrompt];
+        setUserPrompts(updated);
+        setSelectedPrompt(newPrompt);
+        setCreatingPrompt(null);
+      } else {
+        await systemDialog.alert({ title: '创建失败', message: res.error?.message || '未知错误' });
+      }
+    } catch (error) {
+      console.error('Failed to create prompt:', error);
+      await systemDialog.alert('创建失败');
+    }
   };
 
   const handleCancelCreate = () => {
@@ -875,6 +1233,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [editingPrompt, setEditingPrompt] = useState<{ id: string; title: string; content: string } | null>(null);
 
   const handleEditPrompt = (prompt: PromptTemplate) => {
+    setPromptPanel('edit');
     setEditingPrompt({
       id: prompt.id,
       title: prompt.title,
@@ -882,19 +1241,41 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingPrompt) return;
 
-    const updated = userPrompts.map((p) =>
-      p.id === editingPrompt.id ? { ...p, title: editingPrompt.title, content: editingPrompt.content } : p
-    );
-    saveUserPrompts(updated);
-    
-    if (selectedPrompt?.id === editingPrompt.id) {
-      setSelectedPrompt({ ...selectedPrompt, title: editingPrompt.title, content: editingPrompt.content });
+    try {
+      const res = await updateLiteraryPrompt({
+        id: editingPrompt.id,
+        title: editingPrompt.title,
+        content: editingPrompt.content,
+      });
+
+      if (res.success && res.data?.prompt) {
+        const updated = userPrompts.map((p) =>
+          p.id === editingPrompt.id
+            ? {
+                ...p,
+                title: res.data.prompt.title,
+                content: res.data.prompt.content,
+                order: res.data.prompt.order,
+              }
+            : p
+        );
+        setUserPrompts(updated);
+
+        if (selectedPrompt?.id === editingPrompt.id) {
+          setSelectedPrompt({ ...selectedPrompt, title: editingPrompt.title, content: editingPrompt.content });
+        }
+
+        setEditingPrompt(null);
+      } else {
+        await systemDialog.alert({ title: '保存失败', message: res.error?.message || '未知错误' });
+      }
+    } catch (error) {
+      console.error('Failed to update prompt:', error);
+      await systemDialog.alert('保存失败');
     }
-    
-    setEditingPrompt(null);
   };
 
   const handleCancelEdit = () => {
@@ -915,11 +1296,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
     if (!ok) return;
 
-    const updated = userPrompts.filter((p) => p.id !== prompt.id);
-    saveUserPrompts(updated);
-    
-    if (selectedPrompt?.id === prompt.id) {
-      setSelectedPrompt(updated.length > 0 ? updated[0] : null);
+    try {
+      const res = await deleteLiteraryPrompt({ id: prompt.id });
+
+      if (res.success) {
+        const updated = userPrompts.filter((p) => p.id !== prompt.id);
+        setUserPrompts(updated);
+
+        if (selectedPrompt?.id === prompt.id) {
+          setSelectedPrompt(updated.length > 0 ? updated[0] : null);
+        }
+      } else {
+        await systemDialog.alert({ title: '删除失败', message: res.error?.message || '未知错误' });
+      }
+    } catch (error) {
+      console.error('Failed to delete prompt:', error);
+      await systemDialog.alert('删除失败');
     }
   };
 
@@ -929,28 +1321,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       action: handleGenerateMarkers,
       icon: Wand2,
       disabled: !articleContent.trim() || !selectedPrompt,
-      show: phase === 'editing',
+      show: phase === 1, // Editing
     },
     {
       label: '生成配图标记中...',
       action: async () => {},
       icon: Wand2,
       disabled: true,
-      show: phase === 'markers-generating',
+      show: false, // 3 状态模式：无 MarkersGenerating 中间态
     },
     {
       label: '一键生图',
       action: handleBatchGenerate,
       icon: Sparkles,
       disabled: !imageGenModel || markerRunItems.length === 0,
-      show: phase === 'markers-generated' && markerRunItems.filter(x => x.status === 'done').length === 0,
+      show: phase === 2 && markerRunItems.filter(x => x.status === 'done').length === 0, // MarkersGenerated
     },
     {
       label: '一键导出',
       action: handleExport,
       icon: Download,
       disabled: false,
-      show: (phase === 'markers-generated' || phase === 'images-generated') && markerRunItems.filter(x => x.status === 'done').length > 0,
+      show: phase === 2 && markerRunItems.filter(x => x.status === 'done').length > 0, // MarkersGenerated
     },
   ];
 
@@ -958,7 +1350,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 左侧统一作为"预览面板"：上传时渲染原文；AI 流式生成时直接渲染带标记版本
   const leftPreviewMarkdown =
-    phase === 'markers-generating' || phase === 'markers-generated' || phase === 'images-generated'
+    phase === 2 // MarkersGenerated
       ? (articleWithImages || articleWithMarkers || articleContent)
       : articleContent;
 
@@ -997,12 +1389,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const phaseSteps: Array<{ key: WorkflowPhase; label: string }> = [
-    { key: 'upload', label: '上传' },
-    { key: 'editing', label: '预览' },
-    { key: 'markers-generated', label: '配图标记' },
+    { key: 0, label: '上传' },
+    { key: 1, label: '预览' },
+    { key: 2, label: '配图标记' },
   ];
 
-  const handleStepClick = async (stepKey: string) => {
+  const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
     if (targetPhase === phase || generating) return;
 
@@ -1024,7 +1416,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {phase === 'upload' && uploadedFileName && (
+              {phase === 0 && uploadedFileName && ( // Upload
                 <Button size="sm" variant="primary" onClick={handleEnterPreview}>
                   <Edit2 size={14} />
                   进入预览
@@ -1120,7 +1512,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             )}
             
             {/* 上传阶段：显示上传区域或已上传文件信息 */}
-            {phase === 'upload' && !uploadedFileName && (
+            {phase === 0 && !uploadedFileName && ( // Upload
               <div className="h-full flex flex-col items-center justify-center p-8">
                 <input
                   ref={fileInputRef}
@@ -1146,7 +1538,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             )}
             
             {/* 上传阶段：已有文件 */}
-            {phase === 'upload' && uploadedFileName && (
+            {phase === 0 && uploadedFileName && ( // Upload
               <div className="h-full flex flex-col items-center justify-center p-8">
                 <input
                   ref={fileInputRef}
@@ -1178,8 +1570,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             )}
 
             {/* 预览阶段：渲染原文（不提供手动编辑入口） */}
-            {phase === 'editing' && (
-              <div className="p-4 relative">
+            {phase === 1 && ( // Editing
+              <div className="p-4 pt-10 relative">
                 {!isDragging && (
                   <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded font-semibold" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
                     正文
@@ -1205,8 +1597,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             )}
 
             {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
-            {phase !== 'editing' && phase !== 'upload' && (
-              <div className="p-4 relative">
+            {phase === 2 && ( // MarkersGenerated
+              <div className="p-4 pt-10 relative">
                 {!isDragging && (
                   <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded font-semibold" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
                     正文
@@ -1214,6 +1606,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 )}
                 <div className="prd-md">
                   <ReactMarkdown
+                    key={leftPreviewMarkdown.length}
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeRaw]}
                     components={{
@@ -1243,6 +1636,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             currentStep={phase} 
             onStepClick={handleStepClick}
             disabled={generating}
+            allCompleted={
+              phase === 2 && 
+              markerRunItems.length > 0 && 
+              markerRunItems.every(x => x.status === 'done')
+            }
           />
           {activeButton && (
             <Button
@@ -1258,7 +1656,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         </Card>
 
         {/* 配图标记列表（含生图结果/重生成） */}
-        {(phase === 'markers-generated' || phase === 'images-generated') && (
+        {phase === 2 && ( // MarkersGenerated
           <Card className="flex-1 min-h-0 flex flex-col">
             <div className="mb-3">
               <div className="flex items-center justify-between mb-2">
@@ -1276,17 +1674,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       
                       const doneItems = markerRunItems.filter(x => x.status === 'done' && (x.assetUrl || x.url || x.base64));
                       
-                      for (let i = 0; i < doneItems.length; i++) {
-                        const item = doneItems[i];
+                      if (doneItems.length === 0) {
+                        await systemDialog.alert({ title: '无可下载图片', message: '还没有已完成的配图' });
+                        return;
+                      }
+                      
+                      let successCount = 0;
+                      for (const item of doneItems) {
                         const src = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`) || '';
+                        
+                        if (!src) {
+                          console.warn(`配图 ${item.markerIndex + 1} 没有图片数据`);
+                          continue;
+                        }
                         
                         try {
                           const response = await fetch(src);
+                          if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                          }
                           const blob = await response.blob();
-                          zip.file(`配图-${i + 1}.png`, blob);
+                          zip.file(`配图-${item.markerIndex + 1}.png`, blob);
+                          successCount++;
                         } catch (error) {
-                          console.error(`Failed to fetch image ${i + 1}:`, error);
+                          console.error(`Failed to fetch image ${item.markerIndex + 1}:`, error);
                         }
+                      }
+                      
+                      if (successCount === 0) {
+                        await systemDialog.alert({ title: '下载失败', message: '所有图片下载失败，请检查网络连接' });
+                        return;
                       }
                       
                       const content = await zip.generateAsync({ type: 'blob' });
@@ -1296,7 +1713,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       link.click();
                       URL.revokeObjectURL(link.href);
                       
-                      await systemDialog.alert({ title: '下载完成', message: `已打包 ${doneItems.length} 张图片` });
+                      await systemDialog.alert({ 
+                        title: '下载完成', 
+                        message: `已打包 ${successCount} 张图片${successCount < doneItems.length ? `（${doneItems.length - successCount} 张失败）` : ''}` 
+                      });
                     } catch (error) {
                       console.error('Batch download failed:', error);
                       await systemDialog.alert({ title: '下载失败', message: '批量下载图片时出错' });
@@ -1324,8 +1744,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
             {imageGenModel ? (
-              <div className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-                生图模型：{imageGenModel.modelName}（platformId={imageGenModel.platformId}）
+              <div className="mb-3 flex items-center gap-2">
+                <div 
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium"
+                  style={{
+                    background: 'rgba(139, 92, 246, 0.12)',
+                    border: '1px solid rgba(139, 92, 246, 0.24)',
+                    color: 'rgba(139, 92, 246, 0.95)',
+                  }}
+                >
+                  <Sparkles size={14} />
+                  <span>生图模型：{imageGenModel.modelName}</span>
+                </div>
               </div>
             ) : imageGenModelError ? (
               <div className="mb-3 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
@@ -1333,7 +1763,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             ) : null}
 
-            <div className="flex-1 min-h-0 overflow-auto space-y-2">
+            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
               {markerRunItems.map((it, idx) => {
                 const statusLabel =
                   it.status === 'parsing'
@@ -1369,37 +1799,54 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                       配图 {idx + 1}
                     </div>
-                    <div
-                      className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                      style={{
-                        background:
-                          it.status === 'done'
-                            ? 'rgba(34, 197, 94, 0.12)'
-                            : it.status === 'error'
-                              ? 'rgba(239, 68, 68, 0.12)'
-                              : it.status === 'running' || it.status === 'parsing'
-                                ? 'rgba(250, 204, 21, 0.12)'
-                                : 'rgba(255,255,255,0.06)',
-                        border:
-                          it.status === 'done'
-                            ? '1px solid rgba(34, 197, 94, 0.28)'
-                            : it.status === 'error'
-                              ? '1px solid rgba(239, 68, 68, 0.28)'
-                              : it.status === 'running' || it.status === 'parsing'
-                                ? '1px solid rgba(250, 204, 21, 0.24)'
-                                : '1px solid rgba(255,255,255,0.10)',
-                        color:
-                          it.status === 'done'
-                            ? 'rgba(34, 197, 94, 0.95)'
-                            : it.status === 'error'
-                              ? 'rgba(239, 68, 68, 0.95)'
-                              : it.status === 'running' || it.status === 'parsing'
-                                ? 'rgba(250, 204, 21, 0.95)'
-                                : 'var(--text-secondary)',
-                      }}
-                      title={it.errorMessage || ''}
-                    >
-                      {statusLabel}
+                    <div className="flex items-center gap-2">
+                      {/* 显示图片尺寸（如果已解析） */}
+                      {it.planItem?.size && (
+                        <div
+                          className="text-[11px] px-2 py-0.5 rounded-full font-medium"
+                          style={{
+                            background: 'rgba(99, 102, 241, 0.12)',
+                            border: '1px solid rgba(99, 102, 241, 0.24)',
+                            color: 'rgba(99, 102, 241, 0.95)',
+                          }}
+                          title={`图片尺寸：${it.planItem.size}`}
+                        >
+                          {it.planItem.size}
+                        </div>
+                      )}
+                      {/* 状态标签 */}
+                      <div
+                        className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+                        style={{
+                          background:
+                            it.status === 'done'
+                              ? 'rgba(34, 197, 94, 0.12)'
+                              : it.status === 'error'
+                                ? 'rgba(239, 68, 68, 0.12)'
+                                : it.status === 'running' || it.status === 'parsing'
+                                  ? 'rgba(250, 204, 21, 0.12)'
+                                  : 'rgba(255,255,255,0.06)',
+                          border:
+                            it.status === 'done'
+                              ? '1px solid rgba(34, 197, 94, 0.28)'
+                              : it.status === 'error'
+                                ? '1px solid rgba(239, 68, 68, 0.28)'
+                                : it.status === 'running' || it.status === 'parsing'
+                                  ? '1px solid rgba(250, 204, 21, 0.24)'
+                                  : '1px solid rgba(255,255,255,0.10)',
+                          color:
+                            it.status === 'done'
+                              ? 'rgba(34, 197, 94, 0.95)'
+                              : it.status === 'error'
+                                ? 'rgba(239, 68, 68, 0.95)'
+                                : it.status === 'running' || it.status === 'parsing'
+                                  ? 'rgba(250, 204, 21, 0.95)'
+                                  : 'var(--text-secondary)',
+                        }}
+                        title={it.errorMessage || ''}
+                      >
+                        {statusLabel}
+                      </div>
                     </div>
                   </div>
 
@@ -1549,52 +1996,70 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                    模板内容
-                  </label>
-                  <textarea
-                    value={creatingPrompt.content}
-                    onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
-                    placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
-                    rows={12}
-                    className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                    预览
-                  </label>
-                  <div
-                    className="rounded-[14px] px-3 py-2.5 overflow-auto"
-                    style={{
-                      background: 'rgba(0,0,0,0.28)',
-                      border: '1px solid var(--border-subtle)',
-                      maxHeight: '300px',
-                    }}
-                  >
-                    <style>{`
-                      .create-prompt-md { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
-                      .create-prompt-md h1,.create-prompt-md h2,.create-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 12px 0 6px; }
-                      .create-prompt-md h1 { font-size: 16px; }
-                      .create-prompt-md h2 { font-size: 14px; }
-                      .create-prompt-md h3 { font-size: 13px; }
-                      .create-prompt-md p { margin: 6px 0; }
-                      .create-prompt-md ul,.create-prompt-md ol { margin: 6px 0; padding-left: 18px; }
-                      .create-prompt-md li { margin: 3px 0; }
-                      .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                      .create-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
-                      .create-prompt-md pre code { background: transparent; border: 0; padding: 0; }
-                    `}</style>
-                    <div className="create-prompt-md">
-                      {creatingPrompt.content ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {creatingPrompt.content}
-                        </ReactMarkdown>
-                      ) : (
-                        <div style={{ color: 'var(--text-muted)' }}>（输入内容后显示预览）</div>
-                      )}
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="xs"
+                        variant={promptPanel === 'edit' ? 'primary' : 'secondary'}
+                        onClick={() => setPromptPanel('edit')}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={promptPanel === 'preview' ? 'primary' : 'secondary'}
+                        onClick={() => setPromptPanel('preview')}
+                      >
+                        预览
+                      </Button>
                     </div>
                   </div>
+
+                  {/* 编辑模式：显示 textarea */}
+                  {promptPanel === 'edit' && (
+                    <textarea
+                      value={creatingPrompt.content}
+                      onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
+                      placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
+                      rows={14}
+                      className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
+                    />
+                  )}
+
+                  {/* 预览模式：显示 markdown 只读 */}
+                  {promptPanel === 'preview' && (
+                    <div
+                      className="rounded-[14px] px-3 py-2.5 overflow-auto"
+                      style={{
+                        background: 'rgba(0,0,0,0.28)',
+                        border: '1px solid var(--border-subtle)',
+                        maxHeight: '360px',
+                      }}
+                    >
+                      <style>{`
+                        .create-prompt-md { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+                        .create-prompt-md h1,.create-prompt-md h2,.create-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 12px 0 6px; }
+                        .create-prompt-md h1 { font-size: 16px; }
+                        .create-prompt-md h2 { font-size: 14px; }
+                        .create-prompt-md h3 { font-size: 13px; }
+                        .create-prompt-md p { margin: 6px 0; }
+                        .create-prompt-md ul,.create-prompt-md ol { margin: 6px 0; padding-left: 18px; }
+                        .create-prompt-md li { margin: 3px 0; }
+                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                        .create-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .create-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                      `}</style>
+                      <div className="create-prompt-md">
+                        {creatingPrompt.content ? (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {creatingPrompt.content}
+                          </ReactMarkdown>
+                        ) : (
+                          <div style={{ color: 'var(--text-muted)' }}>（输入内容后显示预览）</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2 justify-end">
                   <Button variant="secondary" onClick={handleCancelCreate}>
@@ -1638,52 +2103,70 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                    模板内容
-                  </label>
-                  <textarea
-                    value={editingPrompt.content}
-                    onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
-                    placeholder="输入模板内容..."
-                    rows={12}
-                    className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--text-primary)' }}>
-                    预览
-                  </label>
-                  <div
-                    className="rounded-[14px] px-3 py-2.5 overflow-auto"
-                    style={{
-                      background: 'rgba(0,0,0,0.28)',
-                      border: '1px solid var(--border-subtle)',
-                      maxHeight: '300px',
-                    }}
-                  >
-                    <style>{`
-                      .edit-prompt-md { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
-                      .edit-prompt-md h1,.edit-prompt-md h2,.edit-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 12px 0 6px; }
-                      .edit-prompt-md h1 { font-size: 16px; }
-                      .edit-prompt-md h2 { font-size: 14px; }
-                      .edit-prompt-md h3 { font-size: 13px; }
-                      .edit-prompt-md p { margin: 6px 0; }
-                      .edit-prompt-md ul,.edit-prompt-md ol { margin: 6px 0; padding-left: 18px; }
-                      .edit-prompt-md li { margin: 3px 0; }
-                      .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                      .edit-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
-                      .edit-prompt-md pre code { background: transparent; border: 0; padding: 0; }
-                    `}</style>
-                    <div className="edit-prompt-md">
-                      {editingPrompt.content ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {editingPrompt.content}
-                        </ReactMarkdown>
-                      ) : (
-                        <div style={{ color: 'var(--text-muted)' }}>（输入内容后显示预览）</div>
-                      )}
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="xs"
+                        variant={promptPanel === 'edit' ? 'primary' : 'secondary'}
+                        onClick={() => setPromptPanel('edit')}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={promptPanel === 'preview' ? 'primary' : 'secondary'}
+                        onClick={() => setPromptPanel('preview')}
+                      >
+                        预览
+                      </Button>
                     </div>
                   </div>
+
+                  {/* 编辑模式：显示 textarea */}
+                  {promptPanel === 'edit' && (
+                    <textarea
+                      value={editingPrompt.content}
+                      onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
+                      placeholder="输入模板内容..."
+                      rows={14}
+                      className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
+                    />
+                  )}
+
+                  {/* 预览模式：显示 markdown 只读 */}
+                  {promptPanel === 'preview' && (
+                    <div
+                      className="rounded-[14px] px-3 py-2.5 overflow-auto"
+                      style={{
+                        background: 'rgba(0,0,0,0.28)',
+                        border: '1px solid var(--border-subtle)',
+                        maxHeight: '360px',
+                      }}
+                    >
+                      <style>{`
+                        .edit-prompt-md { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+                        .edit-prompt-md h1,.edit-prompt-md h2,.edit-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 12px 0 6px; }
+                        .edit-prompt-md h1 { font-size: 16px; }
+                        .edit-prompt-md h2 { font-size: 14px; }
+                        .edit-prompt-md h3 { font-size: 13px; }
+                        .edit-prompt-md p { margin: 6px 0; }
+                        .edit-prompt-md ul,.edit-prompt-md ol { margin: 6px 0; padding-left: 18px; }
+                        .edit-prompt-md li { margin: 3px 0; }
+                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                        .edit-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .edit-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                      `}</style>
+                      <div className="edit-prompt-md">
+                        {editingPrompt.content ? (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {editingPrompt.content}
+                          </ReactMarkdown>
+                        ) : (
+                          <div style={{ color: 'var(--text-muted)' }}>（输入内容后显示预览）</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2 justify-end">
                   <Button variant="secondary" onClick={handleCancelEdit}>
@@ -1766,17 +2249,47 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               </div>
                             </div>
                             
-                            {selectedPrompt?.id === prompt.id && (
-                              <span
-                                className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
-                                style={{
-                                  background: 'var(--accent-primary)',
-                                  color: 'white',
-                                }}
-                              >
-                                当前
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {/* 分类标签 */}
+                              {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
+                                <span
+                                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                  style={{
+                                    background: 'rgba(168, 85, 247, 0.12)',
+                                    color: 'rgba(168, 85, 247, 0.95)',
+                                    border: '1px solid rgba(168, 85, 247, 0.28)',
+                                  }}
+                                  title="全局共享（所有场景可用）"
+                                >
+                                  全局
+                                </span>
+                              ) : prompt.scenarioType === 'article-illustration' ? (
+                                <span
+                                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                  style={{
+                                    background: 'rgba(34, 197, 94, 0.12)',
+                                    color: 'rgba(34, 197, 94, 0.95)',
+                                    border: '1px solid rgba(34, 197, 94, 0.28)',
+                                  }}
+                                  title="文章配图专用"
+                                >
+                                  文章配图
+                                </span>
+                              ) : null}
+                              
+                              {/* 当前选中标签 */}
+                              {selectedPrompt?.id === prompt.id && (
+                                <span
+                                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                  style={{
+                                    background: 'var(--accent-primary)',
+                                    color: 'white',
+                                  }}
+                                >
+                                  当前
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 

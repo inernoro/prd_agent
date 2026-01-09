@@ -1,25 +1,24 @@
 interface WorkflowStep {
-  key: string;
+  key: number;
   label: string;
 }
 
 interface WorkflowProgressBarProps {
   steps: WorkflowStep[];
-  currentStep: string;
-  onStepClick?: (stepKey: string) => void;
+  currentStep: number;
+  onStepClick?: (stepKey: number) => void;
   disabled?: boolean;
+  allCompleted?: boolean; // 所有任务完成时，所有步骤都标亮
 }
 
-export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled }: WorkflowProgressBarProps) {
-  // 处理 markers-generating -> markers-generated 的映射
-  const normalizedStep = currentStep === 'markers-generating' ? 'markers-generated' : currentStep;
-  const currentIndex = steps.findIndex((s) => s.key === normalizedStep);
+export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled, allCompleted }: WorkflowProgressBarProps) {
+  const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
   return (
     <div className="mb-3 flex items-center justify-center gap-2">
       {steps.map((step, index) => {
-        const isActive = index === currentIndex;
-        const isCompleted = index < currentIndex;
+        const isActive = !allCompleted && index === currentIndex;
+        const isCompleted = allCompleted || index < currentIndex;
         const isClickable = !disabled && onStepClick;
 
         return (

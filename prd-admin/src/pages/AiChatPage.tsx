@@ -248,6 +248,20 @@ export default function AiChatPage() {
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const highlightPromptKey = useMemo(() => (query.get('promptKey') ?? '').trim(), [query]);
 
+  // 接收测试模式数据
+  const testData = useMemo(() => {
+    const state = location.state as any;
+    if (!state?.testMode) return null;
+    return {
+      role: state.role as 'PM' | 'DEV' | 'QA',
+      promptKey: String(state.promptKey || ''),
+      promptTitle: String(state.promptTitle || ''),
+      promptTemplate: String(state.promptTemplate || ''),
+    };
+  }, [location.state]);
+
+  const isTestMode = !!testData;
+
 
   const [sessions, setSessions] = useState<LocalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
@@ -333,6 +347,29 @@ export default function AiChatPage() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, currentRole]);
+
+  // 测试模式：自动切换角色、填充输入框
+  useEffect(() => {
+    if (!testData) return;
+
+    // 1. 切换角色
+    if (testData.role && testData.role !== currentRole) {
+      setCurrentRole(testData.role);
+    }
+
+    // 2. 自动填充输入框（显示完整的 promptTemplate）
+    if (testData.promptTemplate && !composer) {
+      setComposer(testData.promptTemplate);
+      // 自动调整输入框高度
+      requestAnimationFrame(() => {
+        const el = composerRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${el.scrollHeight}px`;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [testData]);
 
   useEffect(() => {
     if (!userId || !activeSessionId) {
@@ -544,7 +581,10 @@ export default function AiChatPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ content: finalText }),
+        body: JSON.stringify({ 
+          content: finalText,
+          role: currentRole,
+        }),
         signal: ac.signal,
       });
     } catch (e) {
@@ -627,34 +667,40 @@ export default function AiChatPage() {
       return;
     }
 
-    // 生成一个更像人话的标题：
-    // 1) fileName + 前三行 -> 意图模型建议名
-    // 2) Markdown 一级标题
-    // 3) 后端解析出来的 document.title（若非“未命名”）
-    // 4) 文件名（去扩展名、归一化；若不“无意义”）
-    // 5) 会话短 id 兜底
-    const fileName = normalizeFileName(prdFileName);
-    const snippet = extractFirstNonEmptyLines(content, 3).slice(0, 800);
-    const mdTitle = extractMarkdownTitle(content);
-    const docTitle = docTitleRaw.trim();
-    const fileBase = normalizeCandidateName(stripFileExtension(fileName));
+    // 测试模式：跳过 LLM 标题生成，使用简单标题
+    let finalTitle: string;
+    if (isTestMode) {
+      finalTitle = `测试会话 ${new Date().toLocaleTimeString()}`;
+    } else {
+      // 生成一个更像人话的标题：
+      // 1) fileName + 前三行 -> 意图模型建议名
+      // 2) Markdown 一级标题
+      // 3) 后端解析出来的 document.title（若非"未命名"）
+      // 4) 文件名（去扩展名、归一化；若不"无意义"）
+      // 5) 会话短 id 兜底
+      const fileName = normalizeFileName(prdFileName);
+      const snippet = extractFirstNonEmptyLines(content, 3).slice(0, 800);
+      const mdTitle = extractMarkdownTitle(content);
+      const docTitle = docTitleRaw.trim();
+      const fileBase = normalizeCandidateName(stripFileExtension(fileName));
 
-    let suggestedTitle = '';
-    if (snippet) {
-      try {
-        const sres = await suggestGroupName({ fileName: fileName || null, snippet });
-        if (sres.success) suggestedTitle = String(sres.data?.name ?? '').trim();
-      } catch {
-        // ignore: fallback below
+      let suggestedTitle = '';
+      if (snippet) {
+        try {
+          const sres = await suggestGroupName({ fileName: fileName || null, snippet });
+          if (sres.success) suggestedTitle = String(sres.data?.name ?? '').trim();
+        } catch {
+          // ignore: fallback below
+        }
       }
-    }
 
-    const finalTitle =
-      (!isPlaceholderTitle(suggestedTitle) ? suggestedTitle : '') ||
-      (!isPlaceholderTitle(mdTitle) ? mdTitle : '') ||
-      (!isPlaceholderTitle(docTitle) ? docTitle : '') ||
-      (!isMeaninglessName(fileBase) ? fileBase : '') ||
-      `会话 ${sid.slice(0, 8)}`;
+      finalTitle =
+        (!isPlaceholderTitle(suggestedTitle) ? suggestedTitle : '') ||
+        (!isPlaceholderTitle(mdTitle) ? mdTitle : '') ||
+        (!isPlaceholderTitle(docTitle) ? docTitle : '') ||
+        (!isMeaninglessName(fileBase) ? fileBase : '') ||
+        `会话 ${sid.slice(0, 8)}`;
+    }
 
     const now = Date.now();
     const next: LocalSession = {
@@ -743,15 +789,23 @@ export default function AiChatPage() {
           <div className="flex gap-2 shrink-0">
             <button
               type="button"
-              className="text-[11px] px-2.5 py-1.5 rounded-[8px] hover:bg-white/5 transition-colors"
+              className="text-[11px] px-2.5 py-1.5 rounded-[8px] transition-colors"
               style={{ 
                 border: '1px solid var(--border-subtle)', 
-                color: debugMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
-                background: debugMode ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent'
+                color: isTestMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                background: isTestMode ? 'rgba(214, 178, 106, 0.08)' : 'transparent',
+                cursor: isTestMode ? 'default' : 'pointer',
               }}
-              onClick={() => setDebugMode((v) => !v)}
+              onClick={() => !isTestMode && setDebugMode((v) => !v)}
+              title={isTestMode && testData ? `测试提示词：${testData.promptTitle}` : ''}
             >
-              调试
+              {isTestMode && testData?.promptTemplate 
+                ? '未保存的提示词测试' 
+                : isTestMode 
+                  ? '使用已生效的提示词'
+                  : debugMode
+                    ? '调试模式'
+                    : '正常对话'}
             </button>
             {isStreaming ? (
               <Button variant="danger" size="sm" onClick={() => stopStreaming()}>

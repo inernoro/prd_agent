@@ -51,7 +51,7 @@ export type ArticleIllustrationMarker = {
 
 export type ArticleIllustrationWorkflow = {
   version: number;
-  phase: 'upload' | 'editing' | 'markersGenerated' | 'imagesGenerating' | 'imagesGenerated';
+  phase: number; // 0=Upload, 1=Editing, 2=MarkersGenerated
   markers: ArticleIllustrationMarker[];
   expectedImageCount?: number | null;
   doneImageCount: number;

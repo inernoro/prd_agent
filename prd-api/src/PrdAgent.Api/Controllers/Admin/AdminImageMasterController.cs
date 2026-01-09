@@ -345,7 +345,7 @@ public class AdminImageMasterController : ControllerBase
             var newWorkflow = new ArticleIllustrationWorkflow
             {
                 Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
-                Phase = "editing",
+                Phase = 1, // Editing
                 Markers = new List<ArticleIllustrationMarker>(),
                 ExpectedImageCount = null,
                 DoneImageCount = 0,
@@ -1103,9 +1103,7 @@ public class AdminImageMasterController : ControllerBase
             wf.AssetIdByMarkerIndex[idx.ToString()] = asset.Id;
             wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
             wf.ExpectedImageCount ??= (wf.Markers?.Count ?? 0);
-            wf.Phase = wf.DoneImageCount >= (wf.ExpectedImageCount ?? 0) && (wf.ExpectedImageCount ?? 0) > 0
-                ? "images-generated"
-                : "images-generating";
+            // 3 个状态模式：生图完成后仍保持在 MarkersGenerated (2) 状态
             wf.UpdatedAt = DateTime.UtcNow;
             
             // 新增：更新对应 marker 的状态
@@ -1860,7 +1858,7 @@ public class AdminImageMasterController : ControllerBase
             var newWorkflow = new ArticleIllustrationWorkflow
             {
                 Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
-                Phase = "markersGenerated",
+                Phase = 2, // MarkersGenerated
                 Markers = extractedMarkers.Select(m => new ArticleIllustrationMarker { Index = m.Index, Text = m.Text }).ToList(),
                 ExpectedImageCount = extractedMarkers.Count,
                 DoneImageCount = 0,
