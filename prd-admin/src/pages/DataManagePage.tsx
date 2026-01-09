@@ -8,7 +8,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { getDataSummary, previewUsersPurge, purgeData, purgeUsers } from '@/services';
 import type { AdminUserPreviewItem, AdminUsersPurgePreviewResponse, DataSummaryResponse } from '@/services/contracts/data';
 import { DataTransferDialog } from '@/pages/model-manage/DataTransferDialog';
-import { Database, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Database, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 function safeIdempotencyKey() {
@@ -69,33 +69,99 @@ function MetricCard({
   );
 }
 
-function OverviewGroup({
-  title,
-  items,
-}: {
+type OverviewTreeGroup = {
+  key: string;
   title: string;
+  count: number;
   items: Array<{ label: string; value: string }>;
+};
+
+function OverviewTreeList({
+  groups,
+  loading,
+}: {
+  groups: OverviewTreeGroup[];
+  loading?: boolean;
 }) {
+  const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set(groups.map((g) => g.key)));
+
+  // 仅在首屏初始化时使用 groups 默认值；后续保持用户展开状态不抖动
+  useEffect(() => {
+    setOpenKeys((prev) => {
+      if (prev.size > 0) return prev;
+      return new Set(groups.map((g) => g.key));
+    });
+  }, [groups]);
+
+  const toggle = (k: string) => {
+    setOpenKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+
   return (
     <div
-      className="rounded-[14px] p-4"
+      className="rounded-[14px] overflow-hidden"
       style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        border: '1px solid rgba(255,255,255,0.10)',
+        background: 'rgba(255,255,255,0.02)',
       }}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</div>
-      </div>
-      <div className="mt-3 grid gap-2">
-        {items.map((it) => (
-          <div key={it.label} className="flex items-center justify-between gap-3">
-            <div className="min-w-0 text-sm truncate" style={{ color: 'var(--text-secondary)' }}>{it.label}</div>
-            <div className="shrink-0 text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-              {it.value}
+      <div className="divide-y divide-white/15">
+        {groups.map((g) => {
+          const open = openKeys.has(g.key);
+          return (
+            <div key={g.key}>
+              <button
+                type="button"
+                onClick={() => toggle(g.key)}
+                className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-white/2"
+                disabled={loading}
+                aria-expanded={open}
+              >
+                <div className="min-w-0 flex items-center gap-2">
+                  <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
+                    {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                      {g.title}
+                    </div>
+                    <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                      {loading ? '加载中…' : `${fmtNum(g.count)} 项`}
+                    </div>
+                  </div>
+                </div>
+                <Badge size="sm" variant="subtle">{loading ? '—' : fmtNum(g.count)}</Badge>
+              </button>
+
+              {open && (
+                <div className="px-4 pb-3">
+                  <div
+                    className="rounded-[12px] overflow-hidden"
+                    style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.10)' }}
+                  >
+                    <div className="divide-y divide-white/10">
+                      {g.items.map((it) => (
+                        <div key={it.label} className="px-3 py-2 flex items-center justify-between gap-3">
+                          <div className="min-w-0 text-sm truncate" style={{ color: 'var(--text-secondary)' }}>
+                            {it.label}
+                          </div>
+                          <div className="shrink-0 text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                            {loading ? '—' : it.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -351,35 +417,50 @@ export default function DataManagePage() {
               <div className="min-w-0">
                 <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>数据概览</div>
                 <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-                  按领域分组展示集合数据量，用于快速定位与清理。
+                  以“文件夹分组”的方式展示集合数据量：点击分组可展开查看子项。
                 </div>
               </div>
               <Badge variant="subtle">{loading ? '同步中' : '已同步'}</Badge>
             </div>
 
-            {/* 概览：列数稳定，避免宽屏拉伸过大导致空旷 */}
-            <div className="mt-5 grid gap-4 lg:grid-cols-3">
-              <OverviewGroup
-                title="LLM / Logs"
-                items={[
-                  { label: 'LLM 请求日志', value: fmtNum(summary?.llmRequestLogs ?? 0) },
-                ]}
-              />
-              <OverviewGroup
-                title="会话 / 消息"
-                items={[
-                  { label: '消息', value: fmtNum(summary?.messages ?? 0) },
-                  { label: 'ImageMaster 会话', value: fmtNum(summary?.imageMasterSessions ?? 0) },
-                  { label: 'ImageMaster 消息', value: fmtNum(summary?.imageMasterMessages ?? 0) },
-                ]}
-              />
-              <OverviewGroup
-                title="文档 / 知识库"
-                items={[
-                  { label: '文档', value: fmtNum(summary?.documents ?? 0) },
-                  { label: '附件', value: fmtNum(summary?.attachments ?? 0) },
-                  { label: '内容缺口', value: fmtNum(summary?.contentGaps ?? 0) },
-                  { label: 'PRD 评论', value: fmtNum(summary?.prdComments ?? 0) },
+            <div className="mt-5">
+              <OverviewTreeList
+                loading={loading}
+                groups={[
+                  {
+                    key: 'llmLogs',
+                    title: 'LLM / Logs',
+                    count: Number(summary?.llmRequestLogs ?? 0),
+                    items: [{ label: 'LLM 请求日志', value: fmtNum(summary?.llmRequestLogs ?? 0) }],
+                  },
+                  {
+                    key: 'sessions',
+                    title: '会话 / 消息',
+                    count:
+                      Number(summary?.messages ?? 0) +
+                      Number(summary?.imageMasterSessions ?? 0) +
+                      Number(summary?.imageMasterMessages ?? 0),
+                    items: [
+                      { label: '消息', value: fmtNum(summary?.messages ?? 0) },
+                      { label: 'ImageMaster 会话', value: fmtNum(summary?.imageMasterSessions ?? 0) },
+                      { label: 'ImageMaster 消息', value: fmtNum(summary?.imageMasterMessages ?? 0) },
+                    ],
+                  },
+                  {
+                    key: 'docsKb',
+                    title: '文档 / 知识库',
+                    count:
+                      Number(summary?.documents ?? 0) +
+                      Number(summary?.attachments ?? 0) +
+                      Number(summary?.contentGaps ?? 0) +
+                      Number(summary?.prdComments ?? 0),
+                    items: [
+                      { label: '文档', value: fmtNum(summary?.documents ?? 0) },
+                      { label: '附件', value: fmtNum(summary?.attachments ?? 0) },
+                      { label: '内容缺口', value: fmtNum(summary?.contentGaps ?? 0) },
+                      { label: 'PRD 评论', value: fmtNum(summary?.prdComments ?? 0) },
+                    ],
+                  },
                 ]}
               />
             </div>
