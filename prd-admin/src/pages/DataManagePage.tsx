@@ -29,46 +29,6 @@ function fmtDate(s: string | null | undefined) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function MetricCard({
-  title,
-  value,
-  hint,
-  loading,
-  accent,
-}: {
-  title: string;
-  value: string;
-  hint?: string;
-  loading?: boolean;
-  accent?: 'gold' | 'green';
-}) {
-  return (
-    <Card className="p-5" variant={accent === 'gold' ? 'gold' : 'default'}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-            {title}
-          </div>
-          {hint && (
-            <div className="mt-1 text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
-              {hint}
-            </div>
-          )}
-        </div>
-        {loading ? <Badge size="sm">加载中</Badge> : <Badge size="sm" variant="new">已更新</Badge>}
-      </div>
-      <div className="mt-4 flex items-baseline gap-2">
-        <div
-          className="text-[34px] font-semibold tracking-[-0.03em] leading-none"
-          style={{ color: accent === 'green' ? 'var(--accent-green)' : 'var(--text-primary)' }}
-        >
-          {loading ? '—' : value}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 type OverviewTreeGroup = {
   key: string;
   title: string;
@@ -212,16 +172,6 @@ export default function DataManagePage() {
     ] as Array<{ key: string; title: string; count: number; domains: string[] }>;
   }, [summary]);
 
-  const coreCounts = useMemo(() => {
-    const s = summary;
-    return {
-      users: fmtNum(s?.users ?? 0),
-      platforms: fmtNum(s?.llmPlatforms ?? 0),
-      enabledModels: fmtNum(s?.llmModelsEnabled ?? 0),
-      totalModels: fmtNum(s?.llmModelsTotal ?? 0),
-    };
-  }, [summary]);
-
   const doPurge = async (domains: string[]) => {
     setMsg(null);
     setErr(null);
@@ -332,17 +282,7 @@ export default function DataManagePage() {
 
       {/* 删除/危险操作置顶：保持小屏样式，宽屏下两列排布减少“很高很挤” */}
       <Card className="p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>危险操作</div>
-            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              这些操作会删除核心或账号相关数据，请谨慎。
-            </div>
-          </div>
-          <Badge variant="featured">Danger</Badge>
-        </div>
-
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2">
           <div
             className="rounded-[14px] px-4 py-3"
             style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.12)' }}
@@ -404,14 +344,6 @@ export default function DataManagePage() {
 
       <div className="grid gap-4">
         <div className="min-w-0 grid gap-4">
-          {/* KPI：避免 auto-fit 在临界宽度出现 3+1 断行；改为稳定的 2×2 / 宽屏 4×1 */}
-          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-            <MetricCard title="Users" hint="users（核心保留）" value={coreCounts.users} loading={loading} />
-            <MetricCard title="Platforms" hint="llmplatforms（核心保留）" value={coreCounts.platforms} loading={loading} />
-            <MetricCard title="Enabled Models" hint="llmmodels.enabled=true（核心保留）" value={coreCounts.enabledModels} loading={loading} accent="gold" />
-            <MetricCard title="Total Models" hint="llmmodels（核心保留）" value={coreCounts.totalModels} loading={loading} />
-          </div>
-
           <Card className="p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
