@@ -113,13 +113,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const genAbortRef = useRef<AbortController | null>(null);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
+  const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
+  const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   
-  // 当配图列表增加时，自动滚动到底部
+  // 当配图列表增加时，只在流式输出过程中自动滚动到底部
   useEffect(() => {
-    if (markerListRef.current && markerRunItems.length > 0) {
+    if (isStreamingRef.current && markerListRef.current && markerRunItems.length > 0) {
       markerListRef.current.scrollTop = markerListRef.current.scrollHeight;
     }
   }, [markerRunItems.length]);
+  
+  // 当文章内容更新时，只在流式输出过程中自动滚动到底部
+  useEffect(() => {
+    if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
+      articlePreviewRef.current.scrollTop = articlePreviewRef.current.scrollHeight;
+    }
+  }, [articleWithMarkers]);
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
@@ -417,6 +426,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const systemPrompt = selectedPrompt.content;
 
     setGenerating(true);
+    isStreamingRef.current = true; // 标记开始流式输出
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
     setArticleWithMarkers(''); // 初始为空，流式逐步填充
@@ -722,6 +732,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setPhase(1); // Editing
     } finally {
       setGenerating(false);
+      isStreamingRef.current = false; // 标记流式输出结束
     }
   };
 
@@ -1482,6 +1493,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
 
           <div 
+            ref={articlePreviewRef}
             className="flex-1 min-h-0 overflow-auto relative"
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -1689,20 +1701,61 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         }
                         
                         try {
-                          const response = await fetch(src);
-                          if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}`);
+                          let blob: Blob;
+                          
+                          // 如果是 data URL（base64），直接转换为 blob
+                          if (src.startsWith('data:')) {
+                            const response = await fetch(src);
+                            blob = await response.blob();
+                          } else {
+                            // 对于外部 URL，使用 Image + Canvas 方式绕过 CORS
+                            blob = await new Promise<Blob>((resolve, reject) => {
+                              const img = new Image();
+                              img.crossOrigin = 'anonymous'; // 尝试启用 CORS
+                              
+                              img.onload = () => {
+                                try {
+                                  // 创建 canvas 并绘制图片
+                                  const canvas = document.createElement('canvas');
+                                  canvas.width = img.naturalWidth;
+                                  canvas.height = img.naturalHeight;
+                                  const ctx = canvas.getContext('2d');
+                                  if (!ctx) {
+                                    reject(new Error('无法创建 canvas context'));
+                                    return;
+                                  }
+                                  ctx.drawImage(img, 0, 0);
+                                  
+                                  // 转换为 blob
+                                  canvas.toBlob((b) => {
+                                    if (b) {
+                                      resolve(b);
+                                    } else {
+                                      reject(new Error('Canvas toBlob 失败'));
+                                    }
+                                  }, 'image/png');
+                                } catch (error) {
+                                  reject(error);
+                                }
+                              };
+                              
+                              img.onerror = () => {
+                                reject(new Error('图片加载失败'));
+                              };
+                              
+                              img.src = src;
+                            });
                           }
-                          const blob = await response.blob();
+                          
                           zip.file(`配图-${item.markerIndex + 1}.png`, blob);
                           successCount++;
                         } catch (error) {
-                          console.error(`Failed to fetch image ${item.markerIndex + 1}:`, error);
+                          console.error(`Failed to download image ${item.markerIndex + 1}:`, error);
                         }
                       }
                       
                       if (successCount === 0) {
-                        await systemDialog.alert({ title: '下载失败', message: '所有图片下载失败，请检查网络连接' });
+                        await systemDialog.alert({ title: '下载失败', message: '所有图片下载失败，可能是跨域限制导致' });
                         return;
                       }
                       

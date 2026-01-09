@@ -93,6 +93,17 @@ public class ClaudeClient : ILLMClient
         }
 
         var ctx = _contextAccessor?.Current;
+        
+        // Debug: Log context retrieval
+        if (ctx != null)
+        {
+            Console.WriteLine($"[ClaudeClient] Context retrieved: RequestType={ctx.RequestType}, RequestPurpose={ctx.RequestPurpose}");
+        }
+        else
+        {
+            Console.WriteLine("[ClaudeClient] Context is NULL!");
+        }
+        
         var requestId = ctx?.RequestId ?? Guid.NewGuid().ToString();
         var startedAt = DateTime.UtcNow;
         string? logId = null;

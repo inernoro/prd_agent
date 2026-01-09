@@ -116,7 +116,7 @@ public class AdminImageGenController : ControllerBase
 
         try
         {
-            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            var requestContext = new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
                 SessionId: null,
@@ -126,7 +126,12 @@ public class AdminImageGenController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[IMAGE_GEN_PLAN]",
                 RequestType: "intent",
-                RequestPurpose: "imageGen.plan"));
+                RequestPurpose: "imageGen.plan");
+            
+            _logger.LogInformation("ImageGen.Plan: BeginScope with RequestType={RequestType}, RequestPurpose={RequestPurpose}", 
+                requestContext.RequestType, requestContext.RequestPurpose);
+            
+            using var _ = _llmRequestContext.BeginScope(requestContext);
 
             var client = await _modelDomain.GetClientAsync(ModelPurpose.Intent, ct);
             var messages = new List<LLMMessage> { new() { Role = "user", Content = text } };

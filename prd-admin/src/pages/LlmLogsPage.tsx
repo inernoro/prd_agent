@@ -9,7 +9,7 @@ import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -773,6 +773,9 @@ export default function LlmLogsPage() {
   const [artifacts, setArtifacts] = useState<UploadArtifact[]>([]);
   const artifactsRidRef = useRef<string>('');
 
+  const [autoRefreshing, setAutoRefreshing] = useState(false);
+  const autoRefreshTimerRef = useRef<number | null>(null);
+
   const resetJsonCheck = () => {
     jsonCheckLastRef.current = null;
     setJsonCheckPhase('idle');
@@ -905,20 +908,27 @@ export default function LlmLogsPage() {
     }
   };
 
-  const loadDetail = async (id: string) => {
-    setSelectedId(id);
-    setDetailLoading(true);
-    setDetail(null);
-    setCopiedHint('');
-    setAnswerVisibleChars(false);
-    resetJsonCheck();
+  const loadDetail = useCallback(async (id: string, silent = false) => {
+    if (!silent) {
+      setSelectedId(id);
+      setDetailLoading(true);
+      setDetail(null);
+      setCopiedHint('');
+      setAnswerVisibleChars(false);
+      resetJsonCheck();
+    }
     try {
       const res = await getLlmLogDetail(id);
       if (res.success) setDetail(res.data);
     } finally {
-      setDetailLoading(false);
+      if (!silent) setDetailLoading(false);
     }
-  };
+  }, []);
+
+  const refreshDetail = useCallback(async () => {
+    if (!selectedId) return;
+    await loadDetail(selectedId, true);
+  }, [selectedId, loadDetail]);
 
   const ensureAllowedSizes = async (logId: string) => {
     const existing = allowedSizesByLogId[logId];
@@ -937,13 +947,54 @@ export default function LlmLogsPage() {
   };
 
   useEffect(() => {
-    return () => undefined;
+    return () => {
+      if (autoRefreshTimerRef.current) {
+        window.clearTimeout(autoRefreshTimerRef.current);
+        autoRefreshTimerRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
+
+  useEffect(() => {
+    if (autoRefreshTimerRef.current) {
+      window.clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+
+    if (!detailOpen || !detail || !selectedId) {
+      setAutoRefreshing(false);
+      return;
+    }
+
+    const status = (detail.status ?? '').toLowerCase().trim();
+    if (status !== 'running') {
+      setAutoRefreshing(false);
+      return;
+    }
+
+    setAutoRefreshing(true);
+    const scheduleNext = () => {
+      autoRefreshTimerRef.current = window.setTimeout(async () => {
+        await refreshDetail();
+        if (detailOpen && selectedId) {
+          scheduleNext();
+        }
+      }, 2000);
+    };
+    scheduleNext();
+
+    return () => {
+      if (autoRefreshTimerRef.current) {
+        window.clearTimeout(autoRefreshTimerRef.current);
+        autoRefreshTimerRef.current = null;
+      }
+    };
+  }, [detailOpen, detail?.status, selectedId, refreshDetail]);
 
   useEffect(() => {
     (async () => {
@@ -1629,7 +1680,28 @@ export default function LlmLogsPage() {
               </Card>
 
               <Card className="p-3 overflow-hidden flex flex-col min-h-0">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
+                  {autoRefreshing ? (
+                    <div className="flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(34,197,94,0.95)' }} />
+                      <span className="text-[11px] font-semibold" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                        自动刷新中（2s）
+                      </span>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={refreshDetail}
+                      disabled={!selectedId}
+                      title="手动刷新详情"
+                    >
+                      <RefreshCw size={14} />
+                      刷新
+                    </Button>
+                  )}
+                </div>
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {(() => {
                     const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
