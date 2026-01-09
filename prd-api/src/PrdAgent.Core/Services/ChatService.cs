@@ -25,6 +25,13 @@ public class ChatService : IChatService
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IIdGenerator _idGenerator;
     private static readonly TimeSpan ChatHistoryExpiry = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan GroupContextCompressionExpiry = TimeSpan.FromHours(24);
+    private const int GroupContextCompressionThresholdChars = 50_000; // 群上下文超过 5 万字触发（不含 PRD）
+    private const int GroupContextCompressionTargetKeepChars = 18_000; // 保留“未压缩近期消息”的目标字符数（不含 PRD）
+    private const int GroupContextCompressionMinKeepCount = 8; // 至少保留最近 N 条原文消息
+    private const string SysCompressionNoticeMarker = "[[SYS:CONTEXT_COMPRESSED]]";
+    private const string LlmGroupSummaryMarkerOpen = "[[CONTEXT:GROUP_COMPRESSED]]";
+    private const string LlmGroupSummaryMarkerClose = "[[/CONTEXT:GROUP_COMPRESSED]]";
 
     public ChatService(
         ILLMClient llmClient,
@@ -181,12 +188,131 @@ public class ChatService : IChatService
         }
 
         // 获取对话历史
-        var history = await GetHistoryAsync(sessionId, 20);
+        var historyLimit = string.IsNullOrWhiteSpace(session.GroupId) ? 20 : 100;
+        var history = await GetHistoryAsync(sessionId, historyLimit);
+
+        // 群上下文压缩：当群上下文（不含 PRD）超过 5 万字时，将较早消息压缩成摘要注入 LLM
+        GroupContextCompressionState? compressionState = null;
+        GroupContextCompressionInfo? compressionInfoForLog = null;
+        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        {
+            var gid = session.GroupId.Trim();
+            compressionState = await TryLoadGroupCompressionStateAsync(gid);
+            if (compressionState != null && compressionState.ToSeq > 0 && !string.IsNullOrWhiteSpace(compressionState.CompressedText))
+            {
+                // 即使本次没有“新发生压缩”，也要在主请求日志里标记“使用了压缩后的群上下文”
+                compressionInfoForLog = new GroupContextCompressionInfo(
+                    Applied: true,
+                    GroupId: gid,
+                    FromSeq: compressionState.FromSeq,
+                    ToSeq: compressionState.ToSeq,
+                    OriginalChars: compressionState.OriginalChars,
+                    CompressedChars: compressionState.CompressedChars,
+                    CompressedText: compressionState.CompressedText);
+            }
+
+            static bool IsSysNotice(Message m)
+                => !string.IsNullOrEmpty(m?.Content) && m.Content.Contains(SysCompressionNoticeMarker, StringComparison.Ordinal);
+
+            // 仅对“将要拼进 LLM 上下文的消息”做压缩规划（不影响历史回放接口）
+            var ordered = history
+                .Where(m => m != null && !IsSysNotice(m))
+                .OrderBy(m => m.GroupSeq ?? long.MaxValue)
+                .ThenBy(m => m.Timestamp)
+                .ToList();
+
+            // 若已有压缩状态，则避免重复喂入已覆盖范围的原始消息
+            if (compressionState != null && compressionState.ToSeq > 0)
+            {
+                ordered = ordered
+                    .Where(m => (m.GroupSeq ?? long.MaxValue) > compressionState.ToSeq)
+                    .ToList();
+            }
+
+            var totalCharsBefore = ordered.Sum(m => (m.Content ?? string.Empty).Length) +
+                                   (compressionState?.CompressedText?.Length ?? 0);
+
+            if (totalCharsBefore > GroupContextCompressionThresholdChars && ordered.Count > 0)
+            {
+                var plan = GroupContextCompressionPlanner.CreatePlan(
+                    ordered,
+                    thresholdChars: GroupContextCompressionThresholdChars,
+                    targetKeepMaxChars: GroupContextCompressionTargetKeepChars,
+                    minKeepCount: GroupContextCompressionMinKeepCount);
+
+                var toCompress = plan.ToCompress.ToList();
+                var keepRaw = plan.KeepRaw.ToList();
+
+                // 若没有可压缩内容但仍超阈值，退化：压缩 keep 的前半段，至少保留 2 条原文
+                if (toCompress.Count == 0 && keepRaw.Count > 2)
+                {
+                    var split = Math.Max(0, keepRaw.Count - 2);
+                    toCompress = keepRaw.Take(split).ToList();
+                    keepRaw = keepRaw.Skip(split).ToList();
+                }
+
+                if (toCompress.Count > 0)
+                {
+                    var fromSeq = toCompress.FirstOrDefault()?.GroupSeq;
+                    var toSeq = toCompress.LastOrDefault()?.GroupSeq;
+                    if (fromSeq.HasValue && toSeq.HasValue)
+                    {
+                        var newState = await CompressGroupContextAsync(
+                            groupId: gid,
+                            currentUserContent: llmUserContent,
+                            previousState: compressionState,
+                            toCompress: toCompress,
+                            cancellationToken: cancellationToken);
+
+                        if (newState != null)
+                        {
+                            compressionState = newState;
+                            await _cache.SetAsync(CacheKeys.ForGroupContextCompression(gid), compressionState, GroupContextCompressionExpiry);
+                            await TryPublishCompressionNoticeAsync(session, compressionState);
+
+                            compressionInfoForLog = new GroupContextCompressionInfo(
+                                Applied: true,
+                                GroupId: gid,
+                                FromSeq: compressionState.FromSeq,
+                                ToSeq: compressionState.ToSeq,
+                                OriginalChars: compressionState.OriginalChars,
+                                CompressedChars: compressionState.CompressedChars,
+                                CompressedText: compressionState.CompressedText);
+
+                            // 更新 ordered：仅保留压缩范围之后的原文（keepRaw 会自然落在其中）
+                            ordered = ordered
+                                .Where(m => (m.GroupSeq ?? long.MaxValue) > compressionState.ToSeq)
+                                .ToList();
+                        }
+                    }
+                }
+
+                history = ordered;
+            }
+            else
+            {
+                history = ordered;
+            }
+        }
+
         var messages = new List<LLMMessage>
         {
             // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
             new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
         };
+
+        // 压缩摘要作为资料注入（不含 PRD）
+        if (compressionState != null &&
+            compressionState.ToSeq > 0 &&
+            !string.IsNullOrWhiteSpace(compressionState.CompressedText))
+        {
+            var summary = BuildLlmGroupCompressedContextMessage(compressionState);
+            if (!string.IsNullOrWhiteSpace(summary))
+            {
+                messages.Add(new LLMMessage { Role = "user", Content = summary });
+            }
+        }
+
         messages.AddRange(history.Select(m => new LLMMessage
         {
             Role = m.Role == MessageRole.User ? "user" : "assistant",
@@ -220,7 +346,8 @@ public class ChatService : IChatService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: "chat.sendMessage"));
+            RequestPurpose: "chat.sendMessage",
+            GroupContextCompression: compressionInfoForLog));
 
         // 检查用户消息是否已存在（CreateRun 可能已创建）
         Message userMessage;
@@ -590,6 +717,208 @@ public class ChatService : IChatService
         var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string BuildLlmGroupCompressedContextMessage(GroupContextCompressionState state)
+    {
+        var gid = (state.GroupId ?? string.Empty).Trim();
+        var text = (state.CompressedText ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(gid) || string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        // 作为“资料”而非指令：使用明确标记包裹，便于日志/排障和未来扩展过滤
+        return $"{LlmGroupSummaryMarkerOpen}\n" +
+               $"<GROUP id=\"{gid}\" seqFrom=\"{state.FromSeq}\" seqTo=\"{state.ToSeq}\" createdAtUtc=\"{state.CreatedAtUtc:O}\">\n" +
+               $"{text}\n" +
+               "</GROUP>\n" +
+               $"{LlmGroupSummaryMarkerClose}";
+    }
+
+    private async Task<GroupContextCompressionState?> TryLoadGroupCompressionStateAsync(string groupId)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(gid)) return null;
+        try
+        {
+            var state = await _cache.GetAsync<GroupContextCompressionState>(CacheKeys.ForGroupContextCompression(gid));
+            if (state == null) return null;
+            if (!string.Equals(state.GroupId, gid, StringComparison.Ordinal)) state.GroupId = gid;
+            if (state.ToSeq <= 0) return null;
+            if (string.IsNullOrWhiteSpace(state.CompressedText)) return null;
+            return state;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<GroupContextCompressionState?> CompressGroupContextAsync(
+        string groupId,
+        string currentUserContent,
+        GroupContextCompressionState? previousState,
+        List<Message> toCompress,
+        CancellationToken cancellationToken)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(gid)) return null;
+        if (toCompress.Count == 0) return null;
+
+        // 要求按 seq 升序
+        toCompress = toCompress
+            .Where(m => m.GroupSeq.HasValue)
+            .OrderBy(m => m.GroupSeq!.Value)
+            .ToList();
+        if (toCompress.Count == 0) return null;
+
+        var fromSeq = toCompress.First().GroupSeq!.Value;
+        var toSeq = toCompress.Last().GroupSeq!.Value;
+        if (fromSeq <= 0 || toSeq <= 0 || toSeq < fromSeq) return null;
+
+        // 组装原文（不包含 PRD）
+        var sb = new StringBuilder(capacity: 8 * 1024);
+        if (previousState != null && previousState.ToSeq > 0 && !string.IsNullOrWhiteSpace(previousState.CompressedText))
+        {
+            sb.AppendLine("[[PREVIOUS_COMPRESSED_SUMMARY]]");
+            sb.AppendLine($"groupId={gid} seqFrom={previousState.FromSeq} seqTo={previousState.ToSeq}");
+            sb.AppendLine(previousState.CompressedText.Trim());
+            sb.AppendLine("[[/PREVIOUS_COMPRESSED_SUMMARY]]");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("[[TRANSCRIPT]]");
+        foreach (var m in toCompress)
+        {
+            var seq = m.GroupSeq ?? 0;
+            var role = m.Role == MessageRole.User ? "user" : "assistant";
+            var content = (m.Content ?? string.Empty).Trim();
+            if (content.Length == 0) continue;
+            sb.Append("[seq=").Append(seq).Append(' ').Append(role).AppendLine("]");
+            sb.AppendLine(content);
+            sb.AppendLine();
+        }
+        sb.AppendLine("[[/TRANSCRIPT]]");
+
+        var originalText = sb.ToString();
+        var originalChars = originalText.Length;
+
+        // 压缩 prompt：聚焦当前请求核心
+        var compressorSystemPrompt = """
+你是一个“群聊上下文压缩器”。你的任务是把历史对话压缩成一段可供后续继续对话的【资料摘要】，用于替代冗长历史。
+
+严格要求：
+- 只基于提供的历史对话，不得编造任何不存在的信息。
+- 必须保留与“当前用户请求/目标”相关的事实、决定、约束、已完成/未完成事项、重要数字/ID/命名、关键分歧与结论。
+- 允许丢弃闲聊、重复、与当前目标无关的细枝末节。
+- 输出必须是中文，且不要输出任何解释过程，只输出摘要正文。
+- 不要输出 PRD 原文（本输入不包含 PRD；如你发现类似资料标记，也只需概括，不要复述长文）。
+
+推荐结构（可按需调整，但请保持清晰）：
+1) 当前目标/问题
+2) 已确认事实与约束
+3) 已做决定/结论
+4) 未决问题/待办
+5) 关键上下文（必要时用短段落/要点）
+""";
+
+        var compressorUserPrompt = $"""
+当前用户请求/目标（必须优先围绕它保留信息）：
+{(currentUserContent ?? string.Empty).Trim()}
+
+需要压缩的历史内容（按 seq 顺序）：
+{originalText}
+""";
+
+        // 单独记录一次“压缩调用”的 LLM 日志；主请求日志会以字段形式记录“压缩发生了什么”
+        var compressRequestId = Guid.NewGuid().ToString();
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: compressRequestId,
+            GroupId: gid,
+            SessionId: null,
+            UserId: null,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[GROUP_CONTEXT_COMPRESSOR]",
+            RequestType: "reasoning",
+            RequestPurpose: "chat.groupContextCompress"));
+
+        var chunks = _llmClient.StreamGenerateAsync(
+            compressorSystemPrompt,
+            new List<LLMMessage> { new() { Role = "user", Content = compressorUserPrompt } },
+            cancellationToken);
+
+        var outSb = new StringBuilder(capacity: 8 * 1024);
+        await foreach (var c in chunks.WithCancellation(cancellationToken))
+        {
+            if (c.Type == "delta" && !string.IsNullOrEmpty(c.Content))
+            {
+                outSb.Append(c.Content);
+            }
+            else if (c.Type == "error")
+            {
+                return null;
+            }
+        }
+
+        var compressed = outSb.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(compressed)) return null;
+
+        // 扩展覆盖范围：previousState 存在则从 previous.FromSeq 起覆盖到新的 toSeq
+        var finalFrom = previousState != null && previousState.FromSeq > 0 ? previousState.FromSeq : fromSeq;
+        var finalTo = toSeq;
+
+        return new GroupContextCompressionState
+        {
+            GroupId = gid,
+            FromSeq = finalFrom,
+            ToSeq = finalTo,
+            OriginalChars = originalChars,
+            CompressedChars = compressed.Length,
+            CompressedText = compressed,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    private async Task TryPublishCompressionNoticeAsync(Session session, GroupContextCompressionState state)
+    {
+        try
+        {
+            var gid = (session.GroupId ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(gid)) return;
+
+            // 用当前会话角色对应的 bot 发一条“系统提示”
+            var botUsername = session.CurrentRole switch
+            {
+                UserRole.PM => "bot_pm",
+                UserRole.DEV => "bot_dev",
+                UserRole.QA => "bot_qa",
+                _ => "bot_dev"
+            };
+            var botUser = await _userService.GetByUsernameAsync(botUsername);
+
+            var notice = $"{SysCompressionNoticeMarker}\n" +
+                         "系统提示：由于群上下文历史内容过长（超过 50000 字），已自动进行上下文压缩。\n" +
+                         $"已压缩范围：seq{state.FromSeq}-seq{state.ToSeq}。\n" +
+                         "后续对话将以“压缩摘要”替代更早的原始历史作为上下文（PRD 不受影响）。";
+
+            var msg = new Message
+            {
+                Id = await _idGenerator.GenerateIdAsync("message"),
+                SessionId = session.SessionId,
+                GroupId = gid,
+                SenderId = botUser?.UserId,
+                Role = MessageRole.Assistant,
+                Content = notice,
+                Timestamp = DateTime.UtcNow
+            };
+            msg.GroupSeq = await _groupMessageSeqService.NextAsync(gid, CancellationToken.None);
+            await _messageRepository.InsertManyAsync(new[] { msg });
+            _groupMessageStreamHub.Publish(msg);
+        }
+        catch
+        {
+            // 通知失败不影响主流程
+        }
     }
 
     public async Task<List<Message>> GetHistoryAsync(string sessionId, int limit = 50)

@@ -28,7 +28,14 @@ public record LlmLogStart(
     string? RequestType = null,
     string? RequestPurpose = null,
     string? PlatformId = null,
-    string? PlatformName = null);
+    string? PlatformName = null,
+    // 群上下文压缩信息（用于管理后台清晰展示“压缩发生了什么”）
+    bool? GroupContextCompressed = null,
+    long? GroupContextCompressedFromSeq = null,
+    long? GroupContextCompressedToSeq = null,
+    int? GroupContextOriginalChars = null,
+    int? GroupContextCompressedChars = null,
+    string? GroupContextCompressedText = null);
 
 public record LlmLogDone(
     int? StatusCode,

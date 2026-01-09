@@ -1,5 +1,14 @@
 namespace PrdAgent.Core.Interfaces;
 
+public record GroupContextCompressionInfo(
+    bool Applied,
+    string? GroupId,
+    long? FromSeq,
+    long? ToSeq,
+    int? OriginalChars,
+    int? CompressedChars,
+    string? CompressedText);
+
 public record LlmRequestContext(
     string RequestId,
     string? GroupId,
@@ -12,7 +21,8 @@ public record LlmRequestContext(
     string? RequestType = null,
     string? RequestPurpose = null,
     string? PlatformId = null,
-    string? PlatformName = null);
+    string? PlatformName = null,
+    GroupContextCompressionInfo? GroupContextCompression = null);
 
 public interface ILLMRequestContextAccessor
 {
