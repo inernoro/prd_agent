@@ -55,60 +55,62 @@ export function PageHeader(props: PageHeaderProps) {
           )}
         </div>
 
-        {/* 切换按钮：紧跟标题右侧 */}
-        {tabs && tabs.length > 0 && (
-          <div
-            className="inline-flex items-center p-1 rounded-[12px] shrink-0"
-            style={{
-              background: 'rgba(0, 0, 0, 0.32)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              boxShadow: '0 8px 20px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.20) inset',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-            }}
-          >
-            {tabs.map((tab) => {
-              const active = activeTab === tab.key;
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => onTabChange?.(tab.key)}
-                  className="h-[28px] px-3 rounded-[9px] text-[12px] font-semibold transition-all duration-150 inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                  style={{
-                    color: active ? '#1a1206' : 'rgba(255, 255, 255, 0.75)',
-                    background: active ? 'var(--gold-gradient)' : 'transparent',
-                    boxShadow: active
-                      ? '0 2px 8px -1px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12) inset'
-                      : 'none',
-                    opacity: active ? 1 : 0.85,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!active) {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
-                      e.currentTarget.style.opacity = '1';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!active) {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.opacity = '0.85';
-                    }
-                  }}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
         {/* 占位符：推动右侧按钮到最右边 */}
         <div className="flex-1 min-w-0" />
 
-        {/* 右侧：操作按钮 */}
-        {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+        {/* 右侧：切换 + 操作（统一靠右） */}
+        {(tabs && tabs.length > 0) || actions ? (
+          <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap">
+            {tabs && tabs.length > 0 && (
+              <div
+                className="inline-flex items-center p-1 rounded-[12px] shrink-0"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.32)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  boxShadow: '0 8px 20px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.20) inset',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                }}
+              >
+                {tabs.map((tab) => {
+                  const active = activeTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => onTabChange?.(tab.key)}
+                      className="h-[28px] px-3 rounded-[9px] text-[12px] font-semibold transition-all duration-150 inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                      style={{
+                        color: active ? '#1a1206' : 'rgba(255, 255, 255, 0.75)',
+                        background: active ? 'var(--gold-gradient)' : 'transparent',
+                        boxShadow: active
+                          ? '0 2px 8px -1px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12) inset'
+                          : 'none',
+                        opacity: active ? 1 : 0.85,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active) {
+                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                          e.currentTarget.style.opacity = '1';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active) {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.opacity = '0.85';
+                        }
+                      }}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {actions}
+          </div>
+        ) : null}
       </div>
     </div>
   );
