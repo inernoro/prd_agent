@@ -22,6 +22,7 @@ import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriang
 import { systemDialog } from '@/lib/systemDialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { LlmRequestDetailDialog } from '@/components/llm/LlmRequestDetailDialog';
 
 type GroupRow = {
@@ -82,6 +83,7 @@ function MessageMarkdown({ content }: { content: string }) {
     <div className="prd-md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
         components={{
           a: ({ href, children, ...props }) => (
             <a href={href} target="_blank" rel="noreferrer" {...props}>

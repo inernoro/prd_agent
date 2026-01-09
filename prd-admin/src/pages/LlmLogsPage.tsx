@@ -12,6 +12,7 @@ import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useSearchParams } from 'react-router-dom';
 import SystemLogsTab from '@/pages/system-logs/SystemLogsTab';
@@ -2028,6 +2029,7 @@ export default function LlmLogsPage() {
                         <div className="prd-md">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeRaw]}
                             components={{
                               a: ({ href, children, ...props }) => (
                                 <a href={href} target="_blank" rel="noreferrer" {...props}>

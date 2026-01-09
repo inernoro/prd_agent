@@ -16,6 +16,7 @@ import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
 import { systemDialog } from '@/lib/systemDialog';
@@ -1170,6 +1171,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div className="prd-md">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
                     components={{
                       p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
                       li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
@@ -1196,6 +1198,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div className="prd-md">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
                     components={{
                       p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
                       li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,

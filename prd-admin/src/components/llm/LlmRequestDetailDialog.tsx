@@ -5,6 +5,7 @@ import type { LlmRequestLog } from '@/types/admin';
 import { Copy, ExternalLink } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 function formatLocalTime(iso: string | null | undefined): string {
@@ -265,6 +266,7 @@ export function LlmRequestDetailDialog({
                   <div className="prd-md">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
                       components={{
                         a: ({ href, children, ...props }) => (
                           <a href={href} target="_blank" rel="noreferrer" {...props}>

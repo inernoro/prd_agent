@@ -1,22 +1,20 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
-import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { getAiChatHistory, suggestGroupName, uploadAiChatDocument } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
-import { Maximize2, Minimize2, Paperclip, Plus, Send, Square, Sparkles } from 'lucide-react';
+import { Paperclip, Plus, Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
-import ImageGenPanel from '@/pages/ai-chat/ImageGenPanel';
-import { useLayoutStore } from '@/stores/layoutStore';
 import { systemDialog } from '@/lib/systemDialog';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { getAdminPrompts } from '@/services';
+import { useLocation } from 'react-router-dom';
 
 type LocalSession = {
   sessionId: string;
@@ -38,54 +36,11 @@ type UiMessage = {
   citations?: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>;
 };
 
-type RoleEnum = 'PM' | 'DEV' | 'QA';
-
-function parseLegacyPromptOrder(promptKey: string): number | null {
-  const m = String(promptKey || '').match(/(?:^|-)prompt-(\d+)(?:-|$)/i) || String(promptKey || '').match(/legacy-prompt-(\d+)-/i);
-  if (!m?.[1]) return null;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : null;
-}
-
-function SegmentedTabs<T extends string>(props: {
-  items: Array<{ key: T; label: string }>;
-  value: T;
-  onChange: (next: T) => void;
-  disabled?: boolean;
-  ariaLabel?: string;
-}) {
-  const { items, value, onChange, disabled, ariaLabel } = props;
-  return (
-    <div
-      className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
-      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-      aria-label={ariaLabel}
-    >
-      {items.map((x) => {
-        const active = x.key === value;
-        return (
-          <button
-            key={x.key}
-            type="button"
-            className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-            style={{
-              color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-              background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-              border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-              opacity: disabled ? 0.6 : 1,
-              cursor: disabled ? 'not-allowed' : 'pointer',
-            }}
-            disabled={!!disabled}
-            aria-pressed={active}
-            onClick={() => onChange(x.key)}
-          >
-            {x.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+type PromptItem = {
+  promptKey: string;
+  title: string;
+  order?: number;
+};
 
 function StreamingDot() {
   return (
@@ -283,27 +238,16 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
-function formatTime(ts: number) {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString();
-}
-
 export default function AiChatPage() {
   const location = useLocation();
-  const navigate = useNavigate();
   const authUser = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
-  const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
-  const navCollapsed = useLayoutStore((s) => s.navCollapsed);
-  const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
 
   const userId = authUser?.userId ?? '';
 
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
-  const isTestMode = query.get('mode') === 'test';
+  const highlightPromptKey = useMemo(() => (query.get('promptKey') ?? '').trim(), [query]);
 
-  const [tab, setTab] = useState<'chat' | 'imageGen' | 'imageMaster'>('chat');
 
   const [sessions, setSessions] = useState<LocalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
@@ -318,6 +262,10 @@ export default function AiChatPage() {
   const [composer, setComposer] = useState('');
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [resendTargetMessageId, setResendTargetMessageId] = useState<string>('');
+
+  // 提示词快捷标签
+  const [prompts, setPrompts] = useState<PromptItem[]>([]);
+  const [currentRole, setCurrentRole] = useState<'PM' | 'DEV' | 'QA'>('PM');
   const [debugMode, setDebugMode] = useState(false);
 
   // 新建会话（上传 PRD）
@@ -350,43 +298,6 @@ export default function AiChatPage() {
   const [pendingAttachmentText, setPendingAttachmentText] = useState<string>('');
   const [pendingAttachmentName, setPendingAttachmentName] = useState<string>('');
 
-  const [testRole, setTestRole] = useState<RoleEnum>('PM');
-  const [testPromptKey, setTestPromptKey] = useState<string>('');
-  const [testPromptsLoading, setTestPromptsLoading] = useState(false);
-  const [testPrompts, setTestPrompts] = useState<Array<{ promptKey: string; role: RoleEnum; title: string }>>([]);
-  const [testMsg, setTestMsg] = useState<string | null>(null);
-  const [testErr, setTestErr] = useState<string | null>(null);
-
-  const promptsForTestRole = useMemo(() => {
-    const list = Array.isArray(testPrompts) ? testPrompts : [];
-    const filtered = list.filter((x) => x.role === testRole);
-    return filtered
-      .slice()
-      .sort((a, b) => {
-        const oa = parseLegacyPromptOrder(a.promptKey);
-        const ob = parseLegacyPromptOrder(b.promptKey);
-        if (oa != null && ob != null && oa !== ob) return oa - ob;
-        if (oa != null && ob == null) return -1;
-        if (oa == null && ob != null) return 1;
-        return String(a.title || a.promptKey).localeCompare(String(b.title || b.promptKey));
-      });
-  }, [testPrompts, testRole]);
-
-  useEffect(() => {
-    if (!isTestMode) return;
-    // 测试模式强制在 chat tab，避免用户进入后看到图片页
-    setTab('chat');
-  }, [isTestMode]);
-
-  useEffect(() => {
-    if (!isTestMode) return;
-    const roleRaw = (query.get('role') ?? '').trim().toUpperCase();
-    const role = roleRaw === 'DEV' ? 'DEV' : roleRaw === 'QA' ? 'QA' : 'PM';
-    const pk = (query.get('promptKey') ?? '').trim();
-    setTestRole(role);
-    if (pk) setTestPromptKey(pk);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTestMode, location.search]);
 
   useEffect(() => {
     if (!userId) return;
@@ -398,33 +309,30 @@ export default function AiChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // 加载提示词列表（用于底部快捷标签）
   useEffect(() => {
-    if (!isTestMode) return;
     if (!token) return;
-    if (testPrompts.length > 0) return;
-    setTestPromptsLoading(true);
-    setTestErr(null);
-    setTestMsg(null);
     getAdminPrompts()
       .then((res) => {
-        if (!res.success) {
-          setTestErr(res.error?.message || '加载提示词失败');
-          return;
-        }
+        if (!res.success) return;
         const items = Array.isArray(res.data?.settings?.prompts) ? res.data.settings.prompts : [];
-        const mapped = items
+        const mapped: PromptItem[] = items
           .map((x: any) => ({
             promptKey: String(x.promptKey ?? '').trim(),
-            role: (String(x.role ?? '').trim().toUpperCase() as RoleEnum) || 'PM',
             title: String(x.title ?? '').trim(),
+            order: typeof x.order === 'number' ? x.order : 999,
+            role: String(x.role ?? '').trim().toUpperCase(),
           }))
-          .filter((x) => x.promptKey && (x.role === 'PM' || x.role === 'DEV' || x.role === 'QA'));
-        setTestPrompts(mapped);
+          .filter((x) => x.promptKey && x.title && x.role === currentRole);
+        // 按 order 排序
+        mapped.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        setPrompts(mapped);
       })
-      .catch(() => setTestErr('加载提示词失败（网络错误）'))
-      .finally(() => setTestPromptsLoading(false));
+      .catch(() => {
+        // 静默失败
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTestMode, token]);
+  }, [token, currentRole]);
 
   useEffect(() => {
     if (!userId || !activeSessionId) {
@@ -504,108 +412,6 @@ export default function AiChatPage() {
     while (end < list.length && list[end].role !== 'User') end += 1;
     return list.slice(0, idx).concat(list.slice(end));
   }, []);
-
-  const switchRole = async (sid: string, role: RoleEnum) => {
-    if (!token) {
-      await systemDialog.alert('未登录');
-      return false;
-    }
-    const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(sid)}/role`);
-    try {
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ role }),
-      });
-      const text = await res.text().catch(() => '');
-      if (!res.ok) {
-        await systemDialog.alert(text || `切换角色失败：HTTP ${res.status}`);
-        return false;
-      }
-      return true;
-    } catch (e) {
-      await systemDialog.alert(e instanceof Error ? e.message : '网络错误');
-      return false;
-    }
-  };
-
-  const streamSendMessage = async (args: { sid: string; content: string; promptKey?: string | null }) => {
-    if (!token) {
-      await systemDialog.alert('未登录');
-      return;
-    }
-    if (isStreaming) return;
-
-    const finalText = String(args.content ?? '').trim();
-    if (!finalText) return;
-
-    setMessages((prev) =>
-      prev.concat({
-        id: `user-${Date.now()}`,
-        role: 'User',
-        content: finalText,
-        timestamp: Date.now(),
-      })
-    );
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-    setIsStreaming(true);
-
-    let res: Response;
-    try {
-      const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(args.sid)}/messages`);
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/event-stream',
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ content: finalText, promptKey: args.promptKey ?? null }),
-        signal: ac.signal,
-      });
-    } catch (e) {
-      setIsStreaming(false);
-      abortRef.current = null;
-      const msg = e instanceof Error ? e.message : '网络错误';
-      setMessages((prev) => prev.concat({ id: `neterr-${Date.now()}`, role: 'Assistant', content: `请求失败：${msg}`, timestamp: Date.now() }));
-      return;
-    }
-
-    if (!res.ok) {
-      setIsStreaming(false);
-      abortRef.current = null;
-      const t = await res.text();
-      setMessages((prev) =>
-        prev.concat({
-          id: `httperr-${Date.now()}`,
-          role: 'Assistant',
-          content: t || `HTTP ${res.status} ${res.statusText}`,
-          timestamp: Date.now(),
-        })
-      );
-      return;
-    }
-
-    await readSseStream(
-      res,
-      (evt) => {
-        if (!evt.data) return;
-        try {
-          const obj = JSON.parse(evt.data) as AiChatStreamEvent;
-          applyStreamEvent(obj);
-        } catch {
-          // ignore
-        }
-      },
-      ac.signal
-    );
-  };
 
   const adjustComposerHeight = () => {
     const el = composerRef.current;
@@ -873,50 +679,6 @@ export default function AiChatPage() {
     setPrdFileName('');
   };
 
-  const renameSession = async (sid: string) => {
-    const cur = sessions.find((x) => x.sessionId === sid);
-    const nextName = await systemDialog.prompt({
-      title: '会话名称',
-      message: '请输入会话名称',
-      defaultValue: cur?.title || '',
-      confirmText: '确认',
-      cancelText: '取消',
-    });
-    if (nextName == null) return;
-    const name = nextName.trim();
-    setSessions((prev) => {
-      const next = prev.map((x) => (x.sessionId === sid ? { ...x, title: name || x.title, updatedAt: Date.now() } : x));
-      saveSessions(userId, next);
-      return next;
-    });
-  };
-
-  const deleteSession = async (sid: string) => {
-    const ok = await systemDialog.confirm({
-      title: '确认删除',
-      message: '确认删除该会话（仅删除本地记录）？',
-      tone: 'danger',
-      confirmText: '删除',
-      cancelText: '取消',
-    });
-    if (!ok) return;
-    stopStreaming();
-    setSessions((prev) => {
-      const next = prev.filter((x) => x.sessionId !== sid);
-      saveSessions(userId, next);
-      return next;
-    });
-    try {
-      localStorage.removeItem(storageKeyMessages(userId, sid));
-    } catch {
-      // ignore
-    }
-    if (activeSessionId === sid) {
-      setActiveSessionId('');
-      setMessages([]);
-    }
-  };
-
   const pickAttachment = async (file: File | null) => {
     if (!file) return;
     const fileName = normalizeFileName(file.name || '');
@@ -945,96 +707,52 @@ export default function AiChatPage() {
     setPendingAttachmentText(text || '');
   };
 
-  const leftPanel = (
-    <div className="w-[340px] shrink-0 min-h-0 flex flex-col gap-4">
-      <Card>
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              临时会话
-            </div>
-            <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-              上传 PRD → sessionId → 对话（功能测试向）
-            </div>
-          </div>
-          <Button variant="primary" size="sm" className="shrink-0" onClick={() => setCreateOpen(true)} disabled={!userId}>
-            <Plus size={16} />
-            新建
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="flex-1 min-h-0 overflow-hidden">
-        <div className="h-full min-h-0 flex flex-col">
-          <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-            会话列表（本地）
-          </div>
-          <div className="flex-1 min-h-0 overflow-auto pr-1 space-y-2">
-            {sessions.length === 0 ? (
-              <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                暂无会话，请先新建并上传 PRD
-              </div>
-            ) : (
-              sessions.map((s) => {
-                const active = s.sessionId === activeSessionId;
-                const displayTitle =
-                  (!isPlaceholderTitle(s.title) ? s.title.trim() : '') ||
-                  (!isPlaceholderTitle(s.documentTitle) ? s.documentTitle.trim() : '') ||
-                  `会话 ${s.sessionId.slice(0, 8)}`;
-                return (
-                  <div
-                    key={s.sessionId}
-                    className="rounded-[14px] p-3"
-                    style={{
-                      border: active ? '1px solid var(--border-default)' : '1px solid var(--border-subtle)',
-                      background: active ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)',
-                    }}
-                  >
-                    <button type="button" className="w-full text-left" onClick={() => setActiveSessionId(s.sessionId)}>
-                      <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                        {displayTitle}
-                      </div>
-                      <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                        {s.sessionId}
-                      </div>
-                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {formatTime(s.updatedAt || s.createdAt)}
-                      </div>
-                    </button>
-                    <div className="mt-2 flex gap-2">
-                      <Button size="xs" variant="secondary" onClick={() => void renameSession(s.sessionId)}>
-                        重命名
-                      </Button>
-                      <Button size="xs" variant="danger" onClick={() => void deleteSession(s.sessionId)}>
-                        删除
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-
   const chatPanel = (
-    <Card className="flex-1 min-h-0 overflow-hidden">
+    <Card className="h-full min-h-0 overflow-hidden">
       <div className="h-full min-h-0 flex flex-col">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-              {activeSession?.title || activeSession?.documentTitle || '未选择会话'}
-            </div>
-            <div className="mt-1 text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-              {activeSessionId ? `sessionId: ${activeSessionId}` : '请先新建会话并上传 PRD'}
+        <div className="flex items-center justify-between gap-3 pb-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+          <div className="min-w-0 flex items-center gap-3">
+            <button
+              type="button"
+              className="px-3 py-1.5 rounded-[10px] text-[13px] font-semibold hover:bg-white/5 transition-colors truncate"
+              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', maxWidth: '400px' }}
+              onClick={() => setCreateOpen(true)}
+              disabled={!userId}
+              title="点击上传新的 PRD 文档"
+            >
+              {activeSession?.title || activeSession?.documentTitle || '点击上传 PRD'}
+            </button>
+            <div className="flex gap-1.5">
+              {(['PM', 'DEV', 'QA'] as const).map((role) => (
+                <button
+                  key={role}
+                  type="button"
+                  className="px-2.5 py-1 rounded-[8px] text-[11px] font-medium hover:bg-white/5 transition-colors"
+                  style={{
+                    border: currentRole === role ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, var(--border-subtle))' : '1px solid var(--border-subtle)',
+                    background: currentRole === role ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent',
+                    color: currentRole === role ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                  }}
+                  onClick={() => setCurrentRole(role)}
+                >
+                  {role}
+                </button>
+              ))}
             </div>
           </div>
           <div className="flex gap-2 shrink-0">
-            <Button size="sm" variant={debugMode ? 'primary' : 'ghost'} onClick={() => setDebugMode((v) => !v)}>
+            <button
+              type="button"
+              className="text-[11px] px-2.5 py-1.5 rounded-[8px] hover:bg-white/5 transition-colors"
+              style={{ 
+                border: '1px solid var(--border-subtle)', 
+                color: debugMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                background: debugMode ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent'
+              }}
+              onClick={() => setDebugMode((v) => !v)}
+            >
               调试
-            </Button>
+            </button>
             {isStreaming ? (
               <Button variant="danger" size="sm" onClick={() => stopStreaming()}>
                 <Square size={16} />
@@ -1044,13 +762,13 @@ export default function AiChatPage() {
           </div>
         </div>
 
-        <div ref={scrollRef} className="mt-4 flex-1 min-h-0 overflow-auto pr-1 space-y-3">
+        <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-3">
           {messages.length === 0 ? (
-            <div className="py-14 text-center">
-              <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div className="py-20 text-center">
+              <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {activeSessionId ? '开始提问吧' : '先上传 PRD'}
               </div>
-              <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1.5 text-[13px]" style={{ color: 'var(--text-muted)' }}>
                 {activeSessionId ? '这是一条临时会话，用于功能测试对话链路。' : '新建会话后会获得 sessionId，然后可进行 SSE 流式对话。'}
               </div>
             </div>
@@ -1061,10 +779,10 @@ export default function AiChatPage() {
               return (
                 <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className="max-w-[82%] rounded-[16px] px-4 py-3 relative group"
+                    className="max-w-[85%] rounded-[14px] px-3.5 py-2.5 relative group"
                     style={{
-                      background: isUser ? 'color-mix(in srgb, var(--accent-gold) 28%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.04)',
-                      border: '1px solid var(--border-subtle)',
+                      background: isUser ? 'color-mix(in srgb, var(--accent-gold) 22%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.03)',
+                      border: isUser ? '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))' : '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
                       wordBreak: 'break-word',
                     }}
@@ -1094,8 +812,26 @@ export default function AiChatPage() {
                     {isUser ? (
                       <div className="text-sm whitespace-pre-wrap">{m.content}</div>
                     ) : (
-                      <div className="text-sm">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || ''}</ReactMarkdown>
+                      <div className="text-sm prd-md">
+                        <style>{`
+                          .prd-md { font-size: 13px; line-height: 1.7; color: var(--text-primary); }
+                          .prd-md h1, .prd-md h2, .prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 16px 0 10px; }
+                          .prd-md h1 { font-size: 18px; }
+                          .prd-md h2 { font-size: 16px; }
+                          .prd-md h3 { font-size: 14px; }
+                          .prd-md p { margin: 10px 0; }
+                          .prd-md ul, .prd-md ol { margin: 10px 0; padding-left: 20px; }
+                          .prd-md li { margin: 5px 0; }
+                          .prd-md strong { font-weight: 600; color: var(--text-primary); }
+                          .prd-md em { font-style: italic; color: var(--text-secondary); }
+                          .prd-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); padding: 2px 6px; border-radius: 6px; }
+                          .prd-md pre { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px; overflow: auto; margin: 12px 0; }
+                          .prd-md pre code { background: transparent; border: 0; padding: 0; }
+                          .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid color-mix(in srgb, var(--accent-gold) 40%, transparent); background: color-mix(in srgb, var(--accent-gold) 6%, transparent); color: var(--text-primary); border-radius: 10px; }
+                          .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+                          .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.12); margin: 16px 0; }
+                        `}</style>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{m.content || ''}</ReactMarkdown>
                         {isThisStreaming ? (
                           <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                             输出中
@@ -1156,18 +892,49 @@ export default function AiChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* 输入框：参照你给的“多能力输入框”布局（v1 仅接文件附件+跳转图片创作） */}
-        <div className="mt-4 rounded-[20px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.03)' }}>
-          <div className="flex items-end gap-3">
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+          {/* 提示词快捷标签 */}
+          {prompts.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {prompts.map((p) => {
+                const isHighlighted = highlightPromptKey && p.promptKey === highlightPromptKey;
+                return (
+                  <button
+                    key={p.promptKey}
+                    type="button"
+                    className="px-3 py-1.5 rounded-[10px] text-[12px] hover:bg-white/5 transition-all duration-200"
+                    style={{
+                      border: isHighlighted ? '1px solid color-mix(in srgb, var(--accent-gold) 50%, var(--border-subtle))' : '1px solid var(--border-subtle)',
+                      background: isHighlighted ? 'color-mix(in srgb, var(--accent-gold) 12%, transparent)' : 'transparent',
+                      color: isHighlighted ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                    }}
+                    onClick={() => {
+                      setComposer(p.title);
+                      requestAnimationFrame(() => {
+                        adjustComposerHeight();
+                        composerRef.current?.focus();
+                      });
+                    }}
+                    disabled={!activeSessionId || isStreaming}
+                    title={`点击插入：${p.title}`}
+                  >
+                    {p.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-start gap-2">
             <button
               type="button"
-              className="h-10 w-10 inline-flex items-center justify-center rounded-[14px] hover:bg-white/5"
-              style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
+              className="h-9 w-9 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5 transition-colors shrink-0"
+              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
               onClick={() => attachInputRef.current?.click()}
-              title="添加附件（v1：读取为文本）"
+              title="添加附件"
               disabled={!activeSessionId || isStreaming}
             >
-              <Plus size={18} />
+              <Plus size={17} />
             </button>
 
             <div className="flex-1 min-w-0">
@@ -1185,61 +952,43 @@ export default function AiChatPage() {
                   }
                 }}
                 placeholder={activeSessionId ? '输入你的问题…（Enter 发送，Shift+Enter 换行）' : '请先新建会话并上传 PRD'}
-                className="w-full min-w-0 min-h-[44px] resize-none rounded-[16px] px-4 py-3 text-sm outline-none"
+                className="w-full min-w-0 min-h-[40px] resize-none rounded-[12px] px-3.5 py-2.5 text-[13px] outline-none transition-colors"
                 style={{
-                  background: 'rgba(0,0,0,0.18)',
-                  border: '1px solid rgba(255,255,255,0.10)',
+                  background: 'rgba(0,0,0,0.15)',
+                  border: '1px solid var(--border-subtle)',
                   color: 'var(--text-primary)',
                 }}
                 rows={1}
                 disabled={!activeSessionId || isStreaming}
               />
 
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] hover:bg-white/5"
-                  style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
-                  onClick={() => attachInputRef.current?.click()}
-                  disabled={!activeSessionId || isStreaming}
-                  title="文件附件（v1：读取为文本注入）"
-                >
-                  <Paperclip size={14} />
-                  文件附件
-                  {pendingAttachmentText ? (
-                    <span className="ml-1" style={{ color: 'var(--text-muted)' }}>
-                      （已选）
-                    </span>
-                  ) : null}
-                </button>
-
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] hover:bg-white/5"
-                  style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
-                  onClick={() => setTab('imageGen')}
-                  title="图片创作（跳转到同页 Tab）"
-                >
-                  <Sparkles size={14} />
-                  图片创作
-                </button>
-
-                {pendingAttachmentText ? (
-                  <span className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }} title={pendingAttachmentName}>
-                    附件：{pendingAttachmentName || 'unknown'}
+              {pendingAttachmentText ? (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1 text-[11px] hover:bg-white/5 transition-colors"
+                    style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                    onClick={() => attachInputRef.current?.click()}
+                    disabled={!activeSessionId || isStreaming}
+                  >
+                    <Paperclip size={12} />
+                    文件附件
+                  </button>
+                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }} title={pendingAttachmentName}>
+                    {pendingAttachmentName || 'unknown'}
                   </span>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
             </div>
 
             <Button
               variant="primary"
-              className="h-10 w-10 px-0! rounded-[999px]!"
+              className="h-9 w-9 px-0! rounded-[10px]! shrink-0"
               onClick={() => void sendMessage()}
               disabled={!activeSessionId || isStreaming || !composer.trim()}
               title="发送"
             >
-              <Send size={18} />
+              <Send size={17} />
             </Button>
           </div>
 
@@ -1258,235 +1007,12 @@ export default function AiChatPage() {
     </Card>
   );
 
-  const rightPanel = (
-    <div className="flex-1 min-h-0 flex flex-col gap-4 relative">
-      {/* 专注模式：浮动还原按钮 */}
-      {tab === 'imageMaster' && navCollapsed ? (
-        <div className="absolute left-0 top-0 z-30" style={{ paddingLeft: 12, paddingTop: 12 }}>
-          <button
-            type="button"
-            className="h-10 w-10 rounded-full inline-flex items-center justify-center"
-            style={{
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(0,0,0,0.28)',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
-              color: 'var(--text-secondary)',
-            }}
-            onClick={() => toggleNavCollapsed()}
-            aria-label="还原布局"
-            title="还原布局"
-          >
-            <Minimize2 size={18} />
-          </button>
-        </div>
-      ) : null}
+  const rightPanel = chatPanel;
 
-      {isTestMode && tab === 'chat' ? (
-        <Card className="p-4" variant="default">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>提示词测试模式</div>
-              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                流程：上传 PRD → 选择角色与提示词 → 一键运行。结果以 Markdown 渲染（与正常对话一致）。
-              </div>
-            </div>
-            <div className="shrink-0 flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={!userId}>
-                上传 PRD
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={!activeSessionId || isStreaming}
-                onClick={async () => {
-                  setTestErr(null);
-                  setTestMsg(null);
-                  if (!activeSessionId) {
-                    setCreateOpen(true);
-                    return;
-                  }
-                  const ok = await switchRole(activeSessionId, testRole);
-                  if (!ok) return;
-                  const pk = testPromptKey.trim();
-                  const content = '请按所选提示词对该 PRD 进行解读（测试）。输出必须为 Markdown，并严格遵守结构与边界约束。';
-                  await streamSendMessage({ sid: activeSessionId, content, promptKey: pk || null });
-                  setTestMsg('已触发测试运行（请查看下方对话流）');
-                }}
-              >
-                一键运行
-              </Button>
-            </div>
-          </div>
-
-          {testErr ? (
-            <div className="mt-3 text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
-              {testErr}
-            </div>
-          ) : null}
-          {testMsg ? (
-            <div className="mt-3 text-sm" style={{ color: 'rgba(34,197,94,0.95)' }}>
-              {testMsg}
-            </div>
-          ) : null}
-
-          <div className="mt-3 grid gap-3">
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>角色</div>
-              <div className="mt-2">
-                <SegmentedTabs<RoleEnum>
-                  ariaLabel="测试角色切换"
-                  items={[
-                    { key: 'PM', label: '产品经理（PM）' },
-                    { key: 'DEV', label: '开发工程师（DEV）' },
-                    { key: 'QA', label: '质量工程师（QA）' },
-                  ]}
-                  value={testRole}
-                  onChange={(r) => setTestRole(r)}
-                />
-              </div>
-              <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                当前会话：{activeSessionId ? `${activeSessionId.slice(0, 8)}...` : '未创建（请先上传 PRD）'}
-              </div>
-            </div>
-
-            <div className="min-w-0">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>提示词（title）</div>
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  {testPromptsLoading ? '加载中...' : `${promptsForTestRole.length} 个`}
-                </div>
-              </div>
-              <div
-                className="mt-2 inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
-                style={{
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.10)',
-                }}
-              >
-                <button
-                  type="button"
-                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                  style={{
-                    color: !testPromptKey ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                    background: !testPromptKey ? 'rgba(250,204,21,0.10)' : 'transparent',
-                    border: !testPromptKey ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                    opacity: testPromptsLoading ? 0.6 : 1,
-                    cursor: testPromptsLoading ? 'not-allowed' : 'pointer',
-                  }}
-                  disabled={testPromptsLoading}
-                  aria-pressed={!testPromptKey}
-                  onClick={() => setTestPromptKey('')}
-                  title="不选择：仅按系统提示词回答"
-                >
-                  （不选择）
-                </button>
-                {promptsForTestRole.map((x) => {
-                  const active = x.promptKey === testPromptKey;
-                  const label = x.title || x.promptKey;
-                  return (
-                    <button
-                      key={x.promptKey}
-                      type="button"
-                      className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center shrink-0 whitespace-nowrap"
-                      style={{
-                        color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                        background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                        border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                        opacity: testPromptsLoading ? 0.6 : 1,
-                        cursor: testPromptsLoading ? 'not-allowed' : 'pointer',
-                      }}
-                      disabled={testPromptsLoading}
-                      aria-pressed={active}
-                      onClick={() => setTestPromptKey(x.promptKey)}
-                      title={`${label}${x.promptKey ? ` — ${x.promptKey}` : ''}`}
-                    >
-                      <span className="max-w-[200px] truncate">{label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                提示：若从 /prompts 点击“测试”跳转，会自动带入 role/promptKey。
-              </div>
-            </div>
-          </div>
-        </Card>
-      ) : null}
-
-      <div className="flex-1 min-h-0 flex flex-col">
-        {tab === 'chat' ? (
-          chatPanel
-        ) : tab === 'imageGen' ? (
-          <ImageGenPanel />
-        ) : (
-          <Card className="flex-1 min-h-0">
-            <div className="h-full min-h-0 flex flex-col gap-3">
-              <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
-                高级视觉创作已迁移到 Workspace
-              </div>
-              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                现在请在「视觉创作 Agent」中创建/选择一个 Workspace 进入编辑器（支持自动保存与共享）。
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="primary" onClick={() => navigate('/visual-agent')}>
-                  <Sparkles size={16} />
-                  前往视觉创作 Agent
-                </Button>
-                <Button variant="secondary" onClick={() => navigate('/visual-agent')}>
-                  打开 Workspace 列表
-                </Button>
-              </div>
-            </div>
-          </Card>
-        )}
-      </div>
-    </div>
-  );
-
-  // 专注模式：同时开启 full-bleed 主内容区（跳出 AppShell 的 max-width 框架）
-  // 仅在 高级视觉创作 + 已折叠导航 时启用
-  useEffect(() => {
-    const on = tab === 'imageMaster' && navCollapsed;
-    setFullBleedMain(on);
-    return () => setFullBleedMain(false);
-  }, [navCollapsed, setFullBleedMain, tab]);
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      <PageHeader
-        title="AI 对话实验室"
-        tabs={[
-          { key: 'chat', label: '初级对话交互' },
-          { key: 'imageGen', label: '中级图片绘制' },
-          { key: 'imageMaster', label: '高级视觉创作' },
-        ]}
-        activeTab={tab}
-        onTabChange={(key) => setTab(key as 'chat' | 'imageGen' | 'imageMaster')}
-        actions={
-          tab === 'imageMaster' ? (
-            <button
-              type="button"
-              className="h-10 w-10 rounded-full inline-flex items-center justify-center"
-              style={{
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(255,255,255,0.06)',
-                color: 'var(--text-secondary)',
-              }}
-              onClick={() => toggleNavCollapsed()}
-              aria-label={navCollapsed ? '还原布局' : '最大化'}
-              title={navCollapsed ? '还原布局' : '最大化'}
-            >
-              {navCollapsed ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
-          ) : undefined
-        }
-      />
-      <div className="flex-1 min-h-0 flex gap-4">
-        {tab === 'chat' ? leftPanel : null}
-        {rightPanel}
-      </div>
+    <>
+      {rightPanel}
 
       <Dialog
         open={createOpen}
@@ -1618,7 +1144,7 @@ export default function AiChatPage() {
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
-    </div>
+    </>
   );
 }
 

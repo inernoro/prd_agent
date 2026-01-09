@@ -81,7 +81,7 @@ export default function AppShell() {
       { key: '/groups', label: '群组管理', icon: <Users2 size={18} />, description: '协作群组与成员管理' },
       { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} />, description: '平台、模型与配置管理' },
       { key: '/prompts', label: '提示词管理', icon: <FileText size={18} />, description: 'PRD 问答提示词配置' },
-      { key: '/ai-chat', label: 'AI 对话', icon: <MessagesSquare size={18} />, description: '对话测试与图片生成' },
+      { key: '/ai-chat', label: 'PRD Agent', icon: <MessagesSquare size={18} />, description: 'PRD 智能解读与问答' },
       { key: '/visual-agent', label: '视觉创作 Agent', icon: <Wand2 size={18} />, description: '高级视觉创作工作区' },
       { key: '/literary-agent', label: '文学创作 Agent', icon: <PenLine size={18} />, description: '文章配图智能生成' },
       { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置' },
@@ -416,7 +416,11 @@ export default function AppShell() {
               if (!user?.userId) return;
               const res = await updateUserAvatar(user.userId, avatarFileName);
               if (!res.success) throw new Error(res.error?.message || '保存失败');
-              patchUser({ avatarFileName: avatarFileName ?? null });
+              // 同时更新 avatarFileName 和 avatarUrl，确保左下角头像立即更新
+              patchUser({ 
+                avatarFileName: avatarFileName ?? null,
+                avatarUrl: res.data?.avatarUrl ?? null
+              });
             }}
           />
         </aside>

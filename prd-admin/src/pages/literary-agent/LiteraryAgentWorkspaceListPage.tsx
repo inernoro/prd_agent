@@ -13,6 +13,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -91,6 +92,7 @@ function ArticlePreview({ markdown }: { markdown: string }) {
         <div className="literary-preview-md">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeRaw]}
             skipHtml
             // 列表预览：禁用图片/视频等，避免额外带宽开销
             allowedElements={[
