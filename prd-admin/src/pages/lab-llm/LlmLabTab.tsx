@@ -2866,6 +2866,9 @@ export default function LlmLabTab() {
                   })}
                 </div>
 
+                {/* 分隔：区分主模式与子模式 */}
+                <div className="h-7 w-px shrink-0" style={{ background: 'rgba(255,255,255,0.14)' }} />
+
                 {mainMode === 'infer' ? (
                   <div
                     className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
@@ -2901,31 +2904,36 @@ export default function LlmLabTab() {
                   </div>
                 ) : (
                   <div className="inline-flex items-center gap-2 w-max">
-                    <div className="flex gap-2 shrink-0">
-                      <Button
-                        size="xs"
-                        variant={imageSubMode === 'single' ? 'primary' : 'secondary'}
-                        className="shrink-0"
-                        onClick={() => setImageSubMode('single')}
-                      >
-                        单张
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant={imageSubMode === 'batch' ? 'primary' : 'secondary'}
-                        className="shrink-0"
-                        onClick={() => setImageSubMode('batch')}
-                      >
-                        批量
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant={imageSubMode === 'fullSize' ? 'primary' : 'secondary'}
-                        className="shrink-0"
-                        onClick={() => setImageSubMode('fullSize')}
-                      >
-                        全尺寸(所有)
-                      </Button>
+                    <div
+                      className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1 shrink-0"
+                      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
+                      aria-label="生图模式切换（单张/批量/全尺寸）"
+                    >
+                      {(
+                        [
+                          { key: 'single' as const, label: '单张' },
+                          { key: 'batch' as const, label: '批量' },
+                          { key: 'fullSize' as const, label: '全尺寸(所有)' },
+                        ] as const
+                      ).map((x) => {
+                        const active = imageSubMode === x.key;
+                        return (
+                          <button
+                            key={x.key}
+                            type="button"
+                            className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                            style={{
+                              color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                              background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                              border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                            }}
+                            aria-pressed={active}
+                            onClick={() => setImageSubMode(x.key)}
+                          >
+                            {x.label}
+                          </button>
+                        );
+                      })}
                     </div>
                     {imageSubMode === 'single' ? (
                       <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -3070,13 +3078,13 @@ export default function LlmLabTab() {
                 />
               ) : imageSubMode === 'single' ? (
                 <>
-                  <Button variant="primary" size="md" onClick={startGenerateImage} disabled={imageRunning}>
-                    <ImagePlus size={16} />
+                  <Button variant="primary" size="xs" onClick={startGenerateImage} disabled={imageRunning}>
+                    <ImagePlus size={14} />
                     {imageRunning ? '生成中' : `生成 ${Math.max(1, Math.min(20, Number(singleN || 1)))} 张`}
                   </Button>
                   <Button
                     variant="secondary"
-                    size="md"
+                    size="xs"
                     onClick={() => {
                       void clearLabLocalCacheAndResults();
                     }}
@@ -3088,27 +3096,27 @@ export default function LlmLabTab() {
               ) : imageSubMode === 'batch' ? (
                 <Button
                   variant={batchRunning ? 'danger' : 'primary'}
-                  size="md"
+                  size="xs"
                   onClick={() => (batchRunning ? stopBatchRun() : void parseBatchPlan())}
                   disabled={planLoading}
                 >
-                  <Sparkles size={16} />
+                  <Sparkles size={14} />
                   {batchRunning ? '停止' : planLoading ? '解析中' : '解析并预览'}
                 </Button>
               ) : (
                 <>
                   <Button
                     variant="primary"
-                    size="md"
+                    size="xs"
                     onClick={() => void startFullSizeGeneration()}
                     disabled={fullSizeRunning}
                   >
-                    <Layers size={16} />
+                    <Layers size={14} />
                     {fullSizeRunning ? '生成中' : '生成全部 30 张'}
                   </Button>
                   <Button
                     variant="secondary"
-                    size="md"
+                    size="xs"
                     onClick={() => {
                       setFullSizeItems({});
                     }}
