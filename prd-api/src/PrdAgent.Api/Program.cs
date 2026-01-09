@@ -629,6 +629,12 @@ builder.Services.AddScoped<IGroupMemberRepository>(sp =>
     return new GroupMemberRepository(db.GroupMembers);
 });
 
+builder.Services.AddScoped<IOpenPlatformApiKeyRepository>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    return new OpenPlatformApiKeyRepository(db.OpenPlatformApiKeys);
+});
+
 builder.Services.AddScoped<IContentGapRepository>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();

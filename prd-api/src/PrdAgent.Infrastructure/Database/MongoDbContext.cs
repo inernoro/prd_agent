@@ -77,6 +77,7 @@ public class MongoDbContext
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
     public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
     public IMongoCollection<DesktopAsset> DesktopAssets => _database.GetCollection<DesktopAsset>("desktop_assets");
+    public IMongoCollection<OpenPlatformApiKey> OpenPlatformApiKeys => _database.GetCollection<OpenPlatformApiKey>("open_platform_api_keys");
 
     private void CreateIndexes()
     {
@@ -507,5 +508,10 @@ public class MongoDbContext
         DesktopAssets.Indexes.CreateOne(new CreateIndexModel<DesktopAsset>(
             Builders<DesktopAsset>.IndexKeys.Ascending(x => x.Key),
             new CreateIndexOptions { Name = "idx_desktop_assets_key" }));
+
+        // OpenPlatformApiKeys：按 ownerUserId 查询；keyPrefix 用于展示；owner+createdAt 便于排序
+        OpenPlatformApiKeys.Indexes.CreateOne(new CreateIndexModel<OpenPlatformApiKey>(
+            Builders<OpenPlatformApiKey>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_open_platform_api_keys_owner_createdAt" }));
     }
 }

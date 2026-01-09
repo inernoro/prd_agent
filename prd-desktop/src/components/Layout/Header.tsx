@@ -9,6 +9,7 @@ import { assistantFontScaleBounds, useUiPrefsStore } from '../../stores/uiPrefsS
 import { useConnectionStore } from '../../stores/connectionStore';
 import RoleSelector from '../Role/RoleSelector';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
+import { useOpenPlatformStore } from '../../stores/openPlatformStore';
 
 interface HeaderProps {
   isDark: boolean;
@@ -28,6 +29,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
   const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
   const isAdmin = user?.role === 'ADMIN';
+  const openOpenPlatform = useOpenPlatformStore((s) => s.open);
   const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
   const loginIconUrl = useDesktopBrandingStore((s) => s.branding.loginIconUrl);
 
@@ -179,6 +181,15 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                   align="end"
                   className="z-50 min-w-[120px] rounded-md ui-glass-panel p-1"
                 >
+                  <DropdownMenu.Item
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary"
+                    onSelect={() => {
+                      openOpenPlatform();
+                    }}
+                  >
+                    开放平台
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />
                   {isAdmin ? (
                     <>
                       <DropdownMenu.Item

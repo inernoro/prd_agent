@@ -15,6 +15,7 @@ import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
 import AssetsDiagPage from './components/Assets/AssetsDiagPage';
 import StartLoadOverlay from './components/Assets/StartLoadOverlay';
+import OpenPlatformModal from './components/OpenPlatform/OpenPlatformModal';
 import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
@@ -417,6 +418,9 @@ function App() {
 
       {/* 全局系统级错误弹窗（invoke 层统一拦截触发） */}
       <SystemErrorModal />
+
+      {/* 开放平台 Key 管理（对外服务） */}
+      <OpenPlatformModal />
 
       {/* 冷启动全局加载遮罩（唯一加载动画） */}
       <StartLoadOverlay open={showColdStartLoading} />
