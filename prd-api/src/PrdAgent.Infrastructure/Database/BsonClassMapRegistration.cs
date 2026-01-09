@@ -56,6 +56,7 @@ public static class BsonClassMapRegistration
             RegisterSystemPromptSettings();
             RegisterDesktopAssetSkin();
             RegisterDesktopAssetKey();
+            RegisterOpenPlatformApiKey();
 
             _registered = true;
         }
@@ -615,6 +616,28 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(x => x.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterOpenPlatformApiKey()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(OpenPlatformApiKey))) return;
+        BsonClassMap.RegisterClassMap<OpenPlatformApiKey>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.MapMember(x => x.OwnerUserId).SetElementName("ownerUserId");
+            cm.MapMember(x => x.Name).SetElementName("name");
+            cm.MapMember(x => x.AllowedGroupIds).SetElementName("allowedGroupIds");
+            cm.MapMember(x => x.KeyPrefix).SetElementName("keyPrefix");
+            cm.MapMember(x => x.SaltBase64).SetElementName("saltBase64");
+            cm.MapMember(x => x.SecretHashBase64).SetElementName("secretHashBase64");
+            cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
+            cm.MapMember(x => x.LastUsedAt).SetElementName("lastUsedAt");
+            cm.MapMember(x => x.RevokedAt).SetElementName("revokedAt");
             cm.SetIgnoreExtraElements(true);
         });
     }

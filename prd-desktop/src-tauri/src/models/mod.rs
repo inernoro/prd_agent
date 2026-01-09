@@ -204,6 +204,30 @@ pub struct PromptsClientResponse {
     pub prompts: Vec<PromptClientItem>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenPlatformApiKeyDto {
+    pub id: String,
+    pub owner_user_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    pub key_prefix: String,
+    #[serde(default)]
+    pub allowed_group_ids: Vec<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOpenPlatformApiKeyResponse {
+    pub api_key: String,
+    pub key: OpenPlatformApiKeyDto,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamEvent {
