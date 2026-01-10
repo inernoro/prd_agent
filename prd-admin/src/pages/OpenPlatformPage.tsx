@@ -4,10 +4,12 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
+import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Power, PowerOff, Eye } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import type { OpenPlatformApp, CreateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 function fmtDate(v?: string | null) {
   if (!v) return '-';
@@ -195,13 +197,10 @@ curl -X POST '${endpoint}' \\
             <thead className="bg-muted/50">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">绑定用户</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">绑定群组</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">状态</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">绑定信息</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">API Key</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">总请求数</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">最后使用</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">创建时间</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">时间</th>
                 <th className="px-4 py-3 text-right text-sm font-medium">操作</th>
               </tr>
             </thead>
@@ -212,69 +211,99 @@ curl -X POST '${endpoint}' \\
                     <div className="font-medium">{app.appName}</div>
                     {app.description && <div className="text-sm text-muted-foreground">{app.description}</div>}
                   </td>
-                  <td className="px-4 py-3 text-sm">{app.boundUserName}</td>
-                  <td className="px-4 py-3 text-sm">{app.boundGroupName || '-'}</td>
                   <td className="px-4 py-3">
-                    <Badge variant={app.isActive ? 'success' : 'subtle'}>
-                      {app.isActive ? '启用' : '禁用'}
-                    </Badge>
+                    <div className="space-y-2">
+                      <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
+                          {app.boundUserName.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="font-medium">{app.boundUserName}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                        <div className="w-5 h-5 rounded flex items-center justify-center text-xs" style={{ background: 'rgba(59,130,246,0.15)', color: 'rgba(96,165,250,0.95)' }}>
+                          #
+                        </div>
+                        <span className="font-medium">{app.boundGroupName || '-'}</span>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <code className="text-xs bg-muted px-2 py-1 rounded">{app.apiKeyMasked}</code>
                   </td>
                   <td className="px-4 py-3 text-sm">{app.totalRequests}</td>
-                  <td className="px-4 py-3 text-sm">{fmtDate(app.lastUsedAt)}</td>
-                  <td className="px-4 py-3 text-sm">{fmtDate(app.createdAt)}</td>
                   <td className="px-4 py-3">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => showCurlCommand(app)}
-                        title="查看 curl 命令"
-                        disabled={generatingCurl}
-                      >
-                        {generatingCurl ? (
-                          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                        ) : (
-                          <Copy size={14} />
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleViewLogs(app.id)}
-                        title="查看日志"
-                      >
-                        <Eye size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleToggleStatus(app.id)}
-                        title={app.isActive ? '禁用' : '启用'}
-                      >
-                        {app.isActive ? <PowerOff size={14} /> : <Power size={14} />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRegenerateKey(app.id, app.appName)}
-                        title="重新生成密钥"
-                      >
-                        <RefreshCw size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(app.id, app.appName)}
-                        title="删除"
-                      >
-                        <Trash2 size={14} />
-                      </Button>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">使用:</span>
+                        <span>{fmtDate(app.lastUsedAt)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">创建:</span>
+                        <span>{fmtDate(app.createdAt)}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end items-center gap-2">
+                      <Switch
+                        checked={app.isActive}
+                        onCheckedChange={() => handleToggleStatus(app.id)}
+                        ariaLabel={app.isActive ? '禁用应用' : '启用应用'}
+                      />
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <Button variant="ghost" size="sm" title="更多操作">
+                            <MoreVertical size={14} />
+                          </Button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={8}
+                            className="z-50 rounded-[14px] p-2 min-w-[180px]"
+                            style={{
+                              background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+                              border: '1px solid var(--border-default)',
+                              boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+                            }}
+                          >
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={() => showCurlCommand(app)}
+                              disabled={generatingCurl}
+                            >
+                              <Copy size={14} />
+                              <span>查看 curl 命令</span>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={() => handleViewLogs(app.id)}
+                            >
+                              <Eye size={14} />
+                              <span>查看日志</span>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={() => handleRegenerateKey(app.id, app.appName)}
+                            >
+                              <RefreshCw size={14} />
+                              <span>重新生成密钥</span>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator className="my-1 h-px" style={{ background: 'rgba(255,255,255,0.10)' }} />
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
+                              style={{ color: 'rgba(239,68,68,0.95)' }}
+                              onSelect={() => handleDelete(app.id, app.appName)}
+                            >
+                              <Trash2 size={14} />
+                              <span>删除应用</span>
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     </div>
                   </td>
                 </tr>
