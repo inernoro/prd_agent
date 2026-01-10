@@ -56,6 +56,8 @@ public static class BsonClassMapRegistration
             RegisterSystemPromptSettings();
             RegisterDesktopAssetSkin();
             RegisterDesktopAssetKey();
+            RegisterOpenPlatformApp();
+            RegisterOpenPlatformRequestLog();
 
             _registered = true;
         }
@@ -610,6 +612,32 @@ public static class BsonClassMapRegistration
     {
         if (BsonClassMap.IsClassMapRegistered(typeof(ImageGenRunEvent))) return;
         BsonClassMap.RegisterClassMap<ImageGenRunEvent>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterOpenPlatformApp()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(OpenPlatformApp))) return;
+        BsonClassMap.RegisterClassMap<OpenPlatformApp>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true); // 忽略旧字段如 ConversationMode
+        });
+    }
+
+    private static void RegisterOpenPlatformRequestLog()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(OpenPlatformRequestLog))) return;
+        BsonClassMap.RegisterClassMap<OpenPlatformRequestLog>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)

@@ -99,6 +99,9 @@ public class OpenPlatformServiceImpl : OpenPlatformService
                 case "DisableGroupContext":
                     updateList.Add(updateDef.Set(a => a.DisableGroupContext, (bool)kvp.Value));
                     break;
+                case "ConversationSystemPrompt":
+                    updateList.Add(updateDef.Set(a => a.ConversationSystemPrompt, (string)kvp.Value));
+                    break;
                 case "TotalRequests":
                     updateList.Add(updateDef.Inc(a => a.TotalRequests, (int)kvp.Value));
                     break;
@@ -115,7 +118,8 @@ public class OpenPlatformServiceImpl : OpenPlatformService
             updateDef.Combine(updateList)
         );
 
-        return result.ModifiedCount > 0;
+        // 用 MatchedCount 而非 ModifiedCount：即使值相同（未实际修改）也视为成功
+        return result.MatchedCount > 0;
     }
 
     protected override async Task<bool> DeleteAppByIdAsync(string appId)

@@ -66,6 +66,7 @@ public class AdminOpenPlatformController : ControllerBase
                 BoundGroupName = group?.GroupName,
                 IgnoreUserSystemPrompt = app.IgnoreUserSystemPrompt,
                 DisableGroupContext = app.DisableGroupContext,
+                ConversationSystemPrompt = app.ConversationSystemPrompt,
                 IsActive = app.IsActive,
                 CreatedAt = app.CreatedAt,
                 LastUsedAt = app.LastUsedAt,
@@ -119,13 +120,19 @@ public class AdminOpenPlatformController : ControllerBase
             }
         }
 
+        // 如果未提供对话系统提示词，使用默认值
+        var conversationPrompt = string.IsNullOrWhiteSpace(request.ConversationSystemPrompt)
+            ? PrdAgent.Infrastructure.Prompts.PromptManager.DefaultConversationSystemPrompt
+            : request.ConversationSystemPrompt;
+        
         var (app, apiKey) = await _openPlatformService.CreateAppAsync(
             request.AppName,
             request.Description,
             request.BoundUserId,
             request.BoundGroupId,
             request.IgnoreUserSystemPrompt,
-            request.DisableGroupContext);
+            request.DisableGroupContext,
+            conversationPrompt);
 
         var response = new CreateAppResponse
         {
@@ -182,7 +189,8 @@ public class AdminOpenPlatformController : ControllerBase
             request.BoundUserId,
             request.BoundGroupId,
             request.IgnoreUserSystemPrompt,
-            request.DisableGroupContext);
+            request.DisableGroupContext,
+            request.ConversationSystemPrompt);
 
         if (!success)
         {
@@ -312,6 +320,11 @@ public class CreateAppRequest
     public bool IgnoreUserSystemPrompt { get; set; } = true;
     /// <summary>是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true）</summary>
     public bool DisableGroupContext { get; set; } = true;
+    /// <summary>
+    /// 对话系统提示词（可选）。非空时使用该值作为系统提示词覆盖默认提示词。
+    /// 如果未提供或为空，系统会自动填充默认对话提示词。
+    /// </summary>
+    public string? ConversationSystemPrompt { get; set; }
 }
 
 public class UpdateAppRequest
@@ -322,6 +335,10 @@ public class UpdateAppRequest
     public string? BoundGroupId { get; set; }
     public bool? IgnoreUserSystemPrompt { get; set; }
     public bool? DisableGroupContext { get; set; }
+    /// <summary>
+    /// 对话系统提示词（可选）。非空时使用该值作为系统提示词覆盖默认提示词。
+    /// </summary>
+    public string? ConversationSystemPrompt { get; set; }
 }
 
 public class CreateAppResponse
@@ -352,6 +369,8 @@ public class AppListItem
     public string? BoundGroupName { get; set; }
     public bool IgnoreUserSystemPrompt { get; set; }
     public bool DisableGroupContext { get; set; }
+    /// <summary>对话系统提示词（可选）。非空时表示启用对话模式。</summary>
+    public string? ConversationSystemPrompt { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastUsedAt { get; set; }

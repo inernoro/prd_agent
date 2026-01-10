@@ -38,6 +38,14 @@ public class OpenPlatformApp
     /// <summary>是否禁用群上下文。禁用后不使用群历史对话上下文，仅使用用户传递的上下文，但保留系统提示词和 PRD（默认 true，即默认禁用群上下文）</summary>
     public bool DisableGroupContext { get; set; } = true;
     
+    /// <summary>
+    /// 对话系统提示词（可选）。
+    /// - 非空字符串：使用该值作为系统提示词覆盖默认提示词，专门用于对话场景。
+    /// - 空或 null：使用默认系统提示词（Markdown 格式输出）。
+    /// 首次创建时，如果未提供，系统会自动填充默认对话提示词。
+    /// </summary>
+    public string? ConversationSystemPrompt { get; set; }
+    
     /// <summary>API Key 哈希值（SHA256）</summary>
     public string ApiKeyHash { get; set; } = string.Empty;
     

@@ -34,7 +34,8 @@ public abstract class OpenPlatformService : IOpenPlatformService
         string boundUserId,
         string? boundGroupId,
         bool ignoreUserSystemPrompt = true,
-        bool disableGroupContext = true)
+        bool disableGroupContext = true,
+        string? conversationSystemPrompt = null)
     {
         var apiKey = GenerateApiKey();
         var apiKeyHash = ComputeSha256(apiKey);
@@ -48,6 +49,7 @@ public abstract class OpenPlatformService : IOpenPlatformService
             BoundGroupId = boundGroupId,
             IgnoreUserSystemPrompt = ignoreUserSystemPrompt,
             DisableGroupContext = disableGroupContext,
+            ConversationSystemPrompt = conversationSystemPrompt,
             ApiKeyHash = apiKeyHash,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
@@ -85,7 +87,8 @@ public abstract class OpenPlatformService : IOpenPlatformService
         string? boundUserId = null,
         string? boundGroupId = null,
         bool? ignoreUserSystemPrompt = null,
-        bool? disableGroupContext = null)
+        bool? disableGroupContext = null,
+        string? conversationSystemPrompt = null)
     {
         var updates = new Dictionary<string, object>();
         if (appName != null) updates["AppName"] = appName;
@@ -94,8 +97,10 @@ public abstract class OpenPlatformService : IOpenPlatformService
         if (boundGroupId != null) updates["BoundGroupId"] = boundGroupId;
         if (ignoreUserSystemPrompt.HasValue) updates["IgnoreUserSystemPrompt"] = ignoreUserSystemPrompt.Value;
         if (disableGroupContext.HasValue) updates["DisableGroupContext"] = disableGroupContext.Value;
+        if (conversationSystemPrompt != null) updates["ConversationSystemPrompt"] = conversationSystemPrompt;
 
-        if (updates.Count == 0) return false;
+        // 没有字段需要更新时，视为成功（用户未修改任何内容）
+        if (updates.Count == 0) return true;
         return await UpdateAppFieldsAsync(appId, updates);
     }
 

@@ -278,7 +278,7 @@ public class OpenPlatformChatController : ControllerBase
         if (isPrdAgentMode)
         {
             // PRD 问答模式
-            await HandlePrdAgentMode(request, appId, boundUserId, boundGroupId, requestId, startedAt, sw, cancellationToken);
+            await HandlePrdAgentMode(request, app, appId, boundUserId, boundGroupId, requestId, startedAt, sw, cancellationToken);
         }
         else
         {
@@ -287,11 +287,13 @@ public class OpenPlatformChatController : ControllerBase
         }
     }
 
+
     /// <summary>
     /// PRD 问答模式
     /// </summary>
     private async Task HandlePrdAgentMode(
         ChatCompletionRequest request,
+        OpenPlatformApp app,
         string appId,
         string boundUserId,
         string? boundGroupId,
@@ -382,6 +384,8 @@ public class OpenPlatformChatController : ControllerBase
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var modelName = "prdagent";
 
+        var userMessageContent = lastUserMessage.Content;
+
         int? inputTokens = null;
         int? outputTokens = null;
         string? errorCode = null;
@@ -391,16 +395,16 @@ public class OpenPlatformChatController : ControllerBase
         {
             // SSE 流式响应
             await HandlePrdAgentModeStreaming(
-                request, appId, boundUserId, targetGroupId, sessionId,
-                lastUserMessage.Content, chatId, created, modelName,
+                request, app, appId, boundUserId, targetGroupId, sessionId,
+                userMessageContent, chatId, created, modelName,
                 requestId, startedAt, sw, cancellationToken);
         }
         else
         {
             // 非流式响应：收集完整内容后一次性返回
             await HandlePrdAgentModeNonStreaming(
-                request, appId, boundUserId, targetGroupId, sessionId,
-                lastUserMessage.Content, chatId, created, modelName,
+                request, app, appId, boundUserId, targetGroupId, sessionId,
+                userMessageContent, chatId, created, modelName,
                 requestId, startedAt, sw, cancellationToken);
         }
     }
@@ -410,6 +414,7 @@ public class OpenPlatformChatController : ControllerBase
     /// </summary>
     private async Task HandlePrdAgentModeStreaming(
         ChatCompletionRequest request,
+        OpenPlatformApp app,
         string appId,
         string boundUserId,
         string? targetGroupId,
@@ -444,6 +449,11 @@ public class OpenPlatformChatController : ControllerBase
                 promptKey: null,
                 userId: boundUserId,
                 attachmentIds: null,
+                runId: null,
+                fixedUserMessageId: null,
+                fixedAssistantMessageId: null,
+                disableGroupContext: app.DisableGroupContext,
+                systemPromptOverride: app.ConversationSystemPrompt,
                 cancellationToken: cancellationToken))
             {
                 if (ev.Type == "error")
@@ -574,6 +584,7 @@ public class OpenPlatformChatController : ControllerBase
     /// </summary>
     private async Task HandlePrdAgentModeNonStreaming(
         ChatCompletionRequest request,
+        OpenPlatformApp app,
         string appId,
         string boundUserId,
         string? targetGroupId,
@@ -601,6 +612,11 @@ public class OpenPlatformChatController : ControllerBase
                 promptKey: null,
                 userId: boundUserId,
                 attachmentIds: null,
+                runId: null,
+                fixedUserMessageId: null,
+                fixedAssistantMessageId: null,
+                disableGroupContext: app.DisableGroupContext,
+                systemPromptOverride: app.ConversationSystemPrompt,
                 cancellationToken: cancellationToken))
             {
                 if (ev.Type == "error")

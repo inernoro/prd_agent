@@ -8,6 +8,14 @@ namespace PrdAgent.Core.Interfaces;
 public interface IChatService
 {
     /// <summary>发送消息并获取AI响应（流式）</summary>
+    /// <param name="disableGroupContext">
+    /// 禁用群上下文：true 时仅使用系统提示词+PRD+当前用户消息，不拼接历史对话。
+    /// 用于开放平台 API 等场景，避免多轮对话干扰。默认 false（保留历史上下文）。
+    /// </param>
+    /// <param name="systemPromptOverride">
+    /// 系统提示词覆盖：非空时用该值完全替换默认系统提示词。
+    /// 用于开放平台对话场景，使用对话风格的系统提示词。默认 null（使用默认提示词）。
+    /// </param>
     IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
         string sessionId, 
         string content, 
@@ -18,6 +26,8 @@ public interface IChatService
         string? runId = null,
         string? fixedUserMessageId = null,
         string? fixedAssistantMessageId = null,
+        bool disableGroupContext = false,
+        string? systemPromptOverride = null,
         CancellationToken cancellationToken = default);
     
     /// <summary>获取对话历史</summary>

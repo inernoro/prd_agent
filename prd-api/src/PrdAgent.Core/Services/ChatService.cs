@@ -66,6 +66,8 @@ public class ChatService : IChatService
         string? runId = null,
         string? fixedUserMessageId = null,
         string? fixedAssistantMessageId = null,
+        bool disableGroupContext = false,
+        string? systemPromptOverride = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // 真实“用户输入时间”：以服务端收到请求并进入业务处理的时间为准（UTC）
@@ -139,11 +141,14 @@ public class ChatService : IChatService
         var gidForSeq = (session.GroupId ?? string.Empty).Trim();
 
         // 构建系统Prompt
-        var baseSystemPrompt = await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
+        // 如果提供了 systemPromptOverride，直接使用覆盖值；否则使用默认的角色系统提示词
+        var baseSystemPrompt = !string.IsNullOrWhiteSpace(systemPromptOverride)
+            ? systemPromptOverride
+            : await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
         var systemPromptRedacted = baseSystemPrompt;
         var docHash = Sha256Hex(document.RawContent);
 
-        // 提示词（可选）：将提示词模板作为“聚焦指令”注入 system prompt
+        // 提示词（可选）：将提示词模板作为"聚焦指令"注入 system prompt（仅当未使用覆盖提示词时）
         string systemPrompt = baseSystemPrompt;
         string llmUserContent = content ?? string.Empty;
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
@@ -180,18 +185,21 @@ public class ChatService : IChatService
             }
         }
 
-        // 获取对话历史
-        var history = await GetHistoryAsync(sessionId, 20);
+        // 获取对话历史（disableGroupContext=true 时跳过，仅使用系统提示词+PRD+当前消息）
         var messages = new List<LLMMessage>
         {
             // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
             new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
         };
-        messages.AddRange(history.Select(m => new LLMMessage
+        if (!disableGroupContext)
         {
-            Role = m.Role == MessageRole.User ? "user" : "assistant",
-            Content = m.Content
-        }));
+            var history = await GetHistoryAsync(sessionId, 20);
+            messages.AddRange(history.Select(m => new LLMMessage
+            {
+                Role = m.Role == MessageRole.User ? "user" : "assistant",
+                Content = m.Content
+            }));
+        }
 
         // 添加当前消息
         messages.Add(new LLMMessage

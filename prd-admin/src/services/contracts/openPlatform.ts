@@ -11,6 +11,8 @@ export interface OpenPlatformApp {
   ignoreUserSystemPrompt?: boolean;
   /** 是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true） */
   disableGroupContext?: boolean;
+  /** 对话系统提示词（可选）。非空时使用该值作为系统提示词覆盖默认提示词。 */
+  conversationSystemPrompt?: string;
   isActive: boolean;
   createdAt: string;
   lastUsedAt?: string;
@@ -44,6 +46,8 @@ export interface CreateAppRequest {
   ignoreUserSystemPrompt?: boolean;
   /** 是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true） */
   disableGroupContext?: boolean;
+  /** 对话系统提示词（可选）。非空时使用该值作为系统提示词覆盖默认提示词。 */
+  conversationSystemPrompt?: string;
 }
 
 export interface UpdateAppRequest {
@@ -53,6 +57,8 @@ export interface UpdateAppRequest {
   boundGroupId?: string;
   ignoreUserSystemPrompt?: boolean;
   disableGroupContext?: boolean;
+  /** 对话系统提示词（可选）。非空时使用该值作为系统提示词覆盖默认提示词。 */
+  conversationSystemPrompt?: string;
 }
 
 export interface CreateAppResponse {
