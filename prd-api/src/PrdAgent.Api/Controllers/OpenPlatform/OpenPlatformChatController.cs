@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -377,15 +378,56 @@ public class OpenPlatformChatController : ControllerBase
             return;
         }
 
+        var chatId = $"chatcmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var modelName = "prdagent";
+
+        int? inputTokens = null;
+        int? outputTokens = null;
+        string? errorCode = null;
+
+        // 根据 stream 参数决定响应模式
+        if (request.Stream)
+        {
+            // SSE 流式响应
+            await HandlePrdAgentModeStreaming(
+                request, appId, boundUserId, targetGroupId, sessionId,
+                lastUserMessage.Content, chatId, created, modelName,
+                requestId, startedAt, sw, cancellationToken);
+        }
+        else
+        {
+            // 非流式响应：收集完整内容后一次性返回
+            await HandlePrdAgentModeNonStreaming(
+                request, appId, boundUserId, targetGroupId, sessionId,
+                lastUserMessage.Content, chatId, created, modelName,
+                requestId, startedAt, sw, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// PRD 问答模式 - SSE 流式响应
+    /// </summary>
+    private async Task HandlePrdAgentModeStreaming(
+        ChatCompletionRequest request,
+        string appId,
+        string boundUserId,
+        string? targetGroupId,
+        string sessionId,
+        string userMessageContent,
+        string chatId,
+        long created,
+        string modelName,
+        string requestId,
+        DateTime startedAt,
+        Stopwatch sw,
+        CancellationToken cancellationToken)
+    {
         // 设置 SSE 响应头
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
         Response.Headers["X-Accel-Buffering"] = "no";
-
-        var chatId = $"chatcmpl-{Guid.NewGuid():N}";
-        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var modelName = "prdagent";
 
         int? inputTokens = null;
         int? outputTokens = null;
@@ -397,7 +439,7 @@ public class OpenPlatformChatController : ControllerBase
 
             await foreach (var ev in _chatService.SendMessageAsync(
                 sessionId,
-                lastUserMessage.Content,
+                userMessageContent,
                 resendOfMessageId: null,
                 promptKey: null,
                 userId: boundUserId,
@@ -457,7 +499,7 @@ public class OpenPlatformChatController : ControllerBase
                         isFirstChunk = false;
                     }
 
-                    // 发送内容
+                    // 发送内容 chunk
                     var contentChunk = new
                     {
                         id = chatId,
@@ -522,7 +564,118 @@ public class OpenPlatformChatController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in OpenPlatform PRD Agent mode for appId={AppId}", appId);
+            _logger.LogError(ex, "Error in OpenPlatform PRD Agent mode (streaming) for appId={AppId}", appId);
+            await LogRequestAsync(appId, requestId, startedAt, 500, "INTERNAL_ERROR", boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds);
+        }
+    }
+
+    /// <summary>
+    /// PRD 问答模式 - 非流式响应
+    /// </summary>
+    private async Task HandlePrdAgentModeNonStreaming(
+        ChatCompletionRequest request,
+        string appId,
+        string boundUserId,
+        string? targetGroupId,
+        string sessionId,
+        string userMessageContent,
+        string chatId,
+        long created,
+        string modelName,
+        string requestId,
+        DateTime startedAt,
+        Stopwatch sw,
+        CancellationToken cancellationToken)
+    {
+        int? inputTokens = null;
+        int? outputTokens = null;
+        string? errorCode = null;
+        var contentBuilder = new StringBuilder();
+
+        try
+        {
+            await foreach (var ev in _chatService.SendMessageAsync(
+                sessionId,
+                userMessageContent,
+                resendOfMessageId: null,
+                promptKey: null,
+                userId: boundUserId,
+                attachmentIds: null,
+                cancellationToken: cancellationToken))
+            {
+                if (ev.Type == "error")
+                {
+                    errorCode = ev.ErrorCode;
+                    Response.StatusCode = 500;
+                    Response.ContentType = "application/json";
+                    var errorResponse = JsonSerializer.Serialize(new
+                    {
+                        error = new
+                        {
+                            code = ev.ErrorCode,
+                            message = ev.ErrorMessage,
+                            type = "api_error"
+                        }
+                    });
+                    await Response.WriteAsync(errorResponse, cancellationToken);
+                    await LogRequestAsync(appId, requestId, startedAt, 500, errorCode, boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds, responseBody: errorResponse);
+                    return;
+                }
+
+                if (ev.Type == "blockDelta" && !string.IsNullOrEmpty(ev.Content))
+                {
+                    contentBuilder.Append(ev.Content);
+                }
+
+                if (ev.Type == "done")
+                {
+                    inputTokens = ev.TokenUsage?.Input;
+                    outputTokens = ev.TokenUsage?.Output;
+                    break;
+                }
+            }
+
+            // 返回完整的 JSON 响应（OpenAI 兼容格式）
+            Response.ContentType = "application/json";
+            var response = new
+            {
+                id = chatId,
+                @object = "chat.completion",
+                created,
+                model = modelName,
+                choices = new[]
+                {
+                    new
+                    {
+                        index = 0,
+                        message = new
+                        {
+                            role = "assistant",
+                            content = contentBuilder.ToString()
+                        },
+                        finish_reason = "stop"
+                    }
+                },
+                usage = new
+                {
+                    prompt_tokens = inputTokens ?? 0,
+                    completion_tokens = outputTokens ?? 0,
+                    total_tokens = (inputTokens ?? 0) + (outputTokens ?? 0)
+                }
+            };
+            var responseJson = JsonSerializer.Serialize(response, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+            await Response.WriteAsync(responseJson, cancellationToken);
+
+            // 记录日志
+            await LogRequestAsync(appId, requestId, startedAt, 200, errorCode, boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds, inputTokens, outputTokens);
+        }
+        catch (OperationCanceledException)
+        {
+            await LogRequestAsync(appId, requestId, startedAt, 499, "CLIENT_CANCELLED", boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in OpenPlatform PRD Agent mode (non-streaming) for appId={AppId}", appId);
             await LogRequestAsync(appId, requestId, startedAt, 500, "INTERNAL_ERROR", boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds);
         }
     }
@@ -540,15 +693,48 @@ public class OpenPlatformChatController : ControllerBase
         Stopwatch sw,
         CancellationToken cancellationToken)
     {
+        var chatId = $"chatcmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var modelName = request.Model ?? "master";
+
+        // 根据 stream 参数决定响应模式
+        if (request.Stream)
+        {
+            await HandleLlmProxyModeStreaming(
+                request, appId, boundUserId, boundGroupId,
+                chatId, created, modelName,
+                requestId, startedAt, sw, cancellationToken);
+        }
+        else
+        {
+            await HandleLlmProxyModeNonStreaming(
+                request, appId, boundUserId, boundGroupId,
+                chatId, created, modelName,
+                requestId, startedAt, sw, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// LLM 代理模式 - SSE 流式响应
+    /// </summary>
+    private async Task HandleLlmProxyModeStreaming(
+        ChatCompletionRequest request,
+        string appId,
+        string boundUserId,
+        string? boundGroupId,
+        string chatId,
+        long created,
+        string modelName,
+        string requestId,
+        DateTime startedAt,
+        Stopwatch sw,
+        CancellationToken cancellationToken)
+    {
         // 设置 SSE 响应头
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
         Response.Headers["X-Accel-Buffering"] = "no";
-
-        var chatId = $"chatcmpl-{Guid.NewGuid():N}";
-        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var modelName = request.Model ?? "master";
 
         int? inputTokens = null;
         int? outputTokens = null;
@@ -627,7 +813,7 @@ public class OpenPlatformChatController : ControllerBase
                         isFirstChunk = false;
                     }
 
-                    // 发送内容
+                    // 发送内容 chunk
                     var contentChunk = new
                     {
                         id = chatId,
@@ -692,7 +878,123 @@ public class OpenPlatformChatController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in OpenPlatform LLM Proxy mode for appId={AppId}", appId);
+            _logger.LogError(ex, "Error in OpenPlatform LLM Proxy mode (streaming) for appId={AppId}", appId);
+            await LogRequestAsync(appId, requestId, startedAt, 500, "INTERNAL_ERROR", boundUserId, boundGroupId, null, sw.ElapsedMilliseconds);
+        }
+    }
+
+    /// <summary>
+    /// LLM 代理模式 - 非流式响应
+    /// </summary>
+    private async Task HandleLlmProxyModeNonStreaming(
+        ChatCompletionRequest request,
+        string appId,
+        string boundUserId,
+        string? boundGroupId,
+        string chatId,
+        long created,
+        string modelName,
+        string requestId,
+        DateTime startedAt,
+        Stopwatch sw,
+        CancellationToken cancellationToken)
+    {
+        int? inputTokens = null;
+        int? outputTokens = null;
+        string? errorCode = null;
+        var contentBuilder = new StringBuilder();
+
+        try
+        {
+            // 转换消息格式
+            var llmMessages = request.Messages?.Select(m => new LLMMessage
+            {
+                Role = m.Role,
+                Content = m.Content
+            }).ToList() ?? new List<LLMMessage>();
+
+            // 使用简单的系统提示
+            var systemPrompt = "You are a helpful AI assistant.";
+
+            // 调用主模型
+            await foreach (var chunk in _llmClient.StreamGenerateAsync(
+                systemPrompt,
+                llmMessages,
+                cancellationToken))
+            {
+                if (chunk.Type == "error")
+                {
+                    errorCode = "LLM_ERROR";
+                    Response.StatusCode = 500;
+                    Response.ContentType = "application/json";
+                    var errorResponse = JsonSerializer.Serialize(new
+                    {
+                        error = new
+                        {
+                            code = "LLM_ERROR",
+                            message = chunk.ErrorMessage ?? "LLM request failed",
+                            type = "api_error"
+                        }
+                    });
+                    await Response.WriteAsync(errorResponse, cancellationToken);
+                    await LogRequestAsync(appId, requestId, startedAt, 500, errorCode, boundUserId, boundGroupId, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
+                    return;
+                }
+
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    contentBuilder.Append(chunk.Content);
+                }
+
+                if (chunk.Type == "done")
+                {
+                    inputTokens = chunk.InputTokens;
+                    outputTokens = chunk.OutputTokens;
+                    break;
+                }
+            }
+
+            // 返回完整的 JSON 响应（OpenAI 兼容格式）
+            Response.ContentType = "application/json";
+            var response = new
+            {
+                id = chatId,
+                @object = "chat.completion",
+                created,
+                model = modelName,
+                choices = new[]
+                {
+                    new
+                    {
+                        index = 0,
+                        message = new
+                        {
+                            role = "assistant",
+                            content = contentBuilder.ToString()
+                        },
+                        finish_reason = "stop"
+                    }
+                },
+                usage = new
+                {
+                    prompt_tokens = inputTokens ?? 0,
+                    completion_tokens = outputTokens ?? 0,
+                    total_tokens = (inputTokens ?? 0) + (outputTokens ?? 0)
+                }
+            };
+            var responseJson = JsonSerializer.Serialize(response, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+            await Response.WriteAsync(responseJson, cancellationToken);
+
+            // 记录日志
+            await LogRequestAsync(appId, requestId, startedAt, 200, errorCode, boundUserId, boundGroupId, null, sw.ElapsedMilliseconds, inputTokens, outputTokens);
+        }
+        catch (OperationCanceledException)
+        {
+            await LogRequestAsync(appId, requestId, startedAt, 499, "CLIENT_CANCELLED", boundUserId, boundGroupId, null, sw.ElapsedMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in OpenPlatform LLM Proxy mode (non-streaming) for appId={AppId}", appId);
             await LogRequestAsync(appId, requestId, startedAt, 500, "INTERNAL_ERROR", boundUserId, boundGroupId, null, sw.ElapsedMilliseconds);
         }
     }

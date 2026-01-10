@@ -74,7 +74,12 @@ public class RequestResponseLoggingMiddleware
         var absoluteUrl = BuildAbsoluteUrl(context, path, query);
 
         var accept = context.Request.Headers.Accept.ToString();
-        var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase);
+        // 检查是否为 SSE 流式请求：
+        // 1. 客户端显式请求 Accept: text/event-stream
+        // 2. Open Platform chat/completions 接口（始终可能是流式响应）
+        var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/open-platform/", StringComparison.OrdinalIgnoreCase) 
+               && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase);
         var startedAt = DateTime.UtcNow;
 
         // 记录所有 /api/v1/ 开头的请求（包括 admin、open-platform 等）
