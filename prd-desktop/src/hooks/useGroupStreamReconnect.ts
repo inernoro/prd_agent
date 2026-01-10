@@ -172,23 +172,33 @@ export function useGroupStreamReconnect(options: UseGroupStreamReconnectOptions)
     
     isActiveRef.current = true;
     reconnectAttemptsRef.current = 0;
-    updateStatus('connecting');
-
-    // 执行初始订阅
-    (async () => {
-      const success = await subscribe(afterSeq);
-      if (success && isActiveRef.current) {
-        startHeartbeat();
-      } else if (!success && isActiveRef.current) {
-        console.warn('[useGroupStreamReconnect] 初始订阅失败，开始重连');
-        updateStatus('reconnecting');
-        manualReconnect();
-      }
-    })();
+    
+    // 延迟初始化，避免 StrictMode 双重调用导致的快速重连
+    // StrictMode 会在短时间内执行 mount -> unmount -> mount，
+    // 通过短暂延迟可以让第一次 mount 的清理函数在订阅建立前就被调用，
+    // 从而避免建立不必要的连接
+    const initTimer = window.setTimeout(() => {
+      if (!isActiveRef.current) return; // 已经被清理了，不再执行
+      
+      updateStatus('connecting');
+      
+      // 执行初始订阅
+      (async () => {
+        const success = await subscribe(lastSeqRef.current); // 使用 ref 中的最新值
+        if (success && isActiveRef.current) {
+          startHeartbeat();
+        } else if (!success && isActiveRef.current) {
+          console.warn('[useGroupStreamReconnect] 初始订阅失败，开始重连');
+          updateStatus('reconnecting');
+          manualReconnect();
+        }
+      })();
+    }, 50); // 50ms 延迟足以避开 StrictMode 的双重调用，同时保持响应速度
 
     // 清理函数
     return () => {
       console.log('[useGroupStreamReconnect] 清理订阅 groupId:', groupId);
+      window.clearTimeout(initTimer); // 清理延迟定时器
       isActiveRef.current = false;
       clearTimers();
       invoke('cancel_stream', { kind: 'group' }).catch(() => {});

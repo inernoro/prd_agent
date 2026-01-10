@@ -3,7 +3,6 @@ import { invoke } from '../lib/tauri';
 
 interface AppConfig {
   apiBaseUrl: string;
-  assetsBaseUrl?: string;
   isDeveloper: boolean;
   clientId?: string;
 }
@@ -33,7 +32,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       console.error('Failed to load config:', err);
       // 使用默认配置
       set({
-        config: { apiBaseUrl: 'https://pa.759800.com', assetsBaseUrl: '', isDeveloper: false },
+        config: { apiBaseUrl: 'https://pa.759800.com', isDeveloper: false },
       });
     } finally {
       set({ isLoading: false });

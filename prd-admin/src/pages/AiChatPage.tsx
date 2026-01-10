@@ -345,7 +345,7 @@ export default function AiChatPage() {
       .catch(() => {
         // 静默失败
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [token, currentRole]);
 
   // 测试模式：自动切换角色、填充输入框

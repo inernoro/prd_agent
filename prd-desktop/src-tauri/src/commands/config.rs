@@ -16,8 +16,6 @@ const DEFAULT_API_URL_DEV: &str = "http://localhost:5000";
 pub struct AppConfig {
     pub api_base_url: String,
     #[serde(default)]
-    pub assets_base_url: String,
-    #[serde(default)]
     pub is_developer: bool,
     #[serde(default)]
     pub client_id: String,
@@ -27,7 +25,6 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             api_base_url: api_client::get_default_api_url(),
-            assets_base_url: "".to_string(), // 默认为空，由前端 SettingsModal 引导用户配置或后端下发
             is_developer: false,
             client_id: Uuid::new_v4().to_string(),
         }

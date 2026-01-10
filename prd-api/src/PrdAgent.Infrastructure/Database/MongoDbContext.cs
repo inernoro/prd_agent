@@ -78,6 +78,8 @@ public class MongoDbContext
     public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
     public IMongoCollection<DesktopAsset> DesktopAssets => _database.GetCollection<DesktopAsset>("desktop_assets");
     public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
+    public IMongoCollection<OpenPlatformApp> OpenPlatformApps => _database.GetCollection<OpenPlatformApp>("openplatformapps");
+    public IMongoCollection<OpenPlatformRequestLog> OpenPlatformRequestLogs => _database.GetCollection<OpenPlatformRequestLog>("openplatformrequestlogs");
 
     private void CreateIndexes()
     {
@@ -514,5 +516,25 @@ public class MongoDbContext
             Builders<LiteraryPrompt>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.ScenarioType).Ascending(x => x.Order)));
         LiteraryPrompts.Indexes.CreateOne(new CreateIndexModel<LiteraryPrompt>(
             Builders<LiteraryPrompt>.IndexKeys.Ascending(x => x.ScenarioType).Ascending(x => x.Order)));
+
+        // OpenPlatformApps：按 ApiKeyHash 查询（用于认证）
+        OpenPlatformApps.Indexes.CreateOne(new CreateIndexModel<OpenPlatformApp>(
+            Builders<OpenPlatformApp>.IndexKeys.Ascending(x => x.ApiKeyHash)));
+        OpenPlatformApps.Indexes.CreateOne(new CreateIndexModel<OpenPlatformApp>(
+            Builders<OpenPlatformApp>.IndexKeys.Ascending(x => x.BoundUserId)));
+        OpenPlatformApps.Indexes.CreateOne(new CreateIndexModel<OpenPlatformApp>(
+            Builders<OpenPlatformApp>.IndexKeys.Descending(x => x.CreatedAt)));
+
+        // OpenPlatformRequestLogs：按 appId + startedAt；按 appId + statusCode
+        OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
+            Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.AppId).Descending(x => x.StartedAt)));
+        OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
+            Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.AppId).Ascending(x => x.StatusCode)));
+        OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
+            Builders<OpenPlatformRequestLog>.IndexKeys.Descending(x => x.StartedAt)));
+        // TTL（默认保留 30 天）：基于 EndedAt
+        OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
+            Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
+            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(30) }));
     }
 }

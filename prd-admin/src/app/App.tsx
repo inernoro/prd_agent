@@ -15,6 +15,7 @@ import VisualAgentWorkspaceListPage from '@/pages/visual-agent/VisualAgentWorksp
 import VisualAgentWorkspaceEditorPage from '@/pages/visual-agent/VisualAgentWorkspaceEditorPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import AssetsManagePage from '@/pages/AssetsManagePage';
+import OpenPlatformPage from '@/pages/OpenPlatformPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -67,6 +68,7 @@ export default function App() {
         <Route path="literary-agent/:workspaceId" element={<LiteraryAgentEditorPageWrapper />} />
         <Route path="llm-logs" element={<LlmLogsPage />} />
         <Route path="data" element={<DataManagePage />} />
+        <Route path="open-platform" element={<OpenPlatformPage />} />
         <Route path="prompts" element={<PromptStagesPage />} />
         <Route path="assets" element={<AssetsManagePage />} />
         <Route path="lab" element={<LabPage />} />

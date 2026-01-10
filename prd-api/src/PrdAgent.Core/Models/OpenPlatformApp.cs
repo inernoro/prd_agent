@@ -1,0 +1,52 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 开放平台应用代理模式
+/// </summary>
+public enum OpenPlatformProxyMode
+{
+    /// <summary>PRD 问答模式（默认）- 通过 model=prdagent 触发</summary>
+    PrdAgent = 0,
+    
+    /// <summary>LLM 代理模式 - 直接转发到主模型</summary>
+    LlmProxy = 1
+}
+
+/// <summary>
+/// 开放平台应用实体
+/// </summary>
+public class OpenPlatformApp
+{
+    /// <summary>应用唯一标识（Guid 字符串）</summary>
+    public string Id { get; set; } = string.Empty;
+    
+    /// <summary>应用名称</summary>
+    public string AppName { get; set; } = string.Empty;
+    
+    /// <summary>应用描述</summary>
+    public string? Description { get; set; }
+    
+    /// <summary>绑定的用户 ID（必选）</summary>
+    public string BoundUserId { get; set; } = string.Empty;
+    
+    /// <summary>绑定的群组 ID（可选）</summary>
+    public string? BoundGroupId { get; set; }
+    
+    /// <summary>是否忽略用户系统提示词（默认 true）</summary>
+    public bool IgnoreUserSystemPrompt { get; set; } = true;
+    
+    /// <summary>API Key 哈希值（SHA256）</summary>
+    public string ApiKeyHash { get; set; } = string.Empty;
+    
+    /// <summary>是否启用</summary>
+    public bool IsActive { get; set; } = true;
+    
+    /// <summary>创建时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    
+    /// <summary>最后使用时间</summary>
+    public DateTime? LastUsedAt { get; set; }
+    
+    /// <summary>总请求数</summary>
+    public long TotalRequests { get; set; }
+}

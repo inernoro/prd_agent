@@ -124,6 +124,7 @@ import type {
   UpdateLiteraryPromptContract,
   DeleteLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
+import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
@@ -253,6 +254,7 @@ import {
   updateLiteraryPromptReal,
   deleteLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
+import { OpenPlatformService } from '@/services/real/openPlatform';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -435,3 +437,5 @@ export const listLiteraryPrompts: ListLiteraryPromptsContract = withAuth(listLit
 export const createLiteraryPrompt: CreateLiteraryPromptContract = withAuth(createLiteraryPromptReal);
 export const updateLiteraryPrompt: UpdateLiteraryPromptContract = withAuth(updateLiteraryPromptReal);
 export const deleteLiteraryPrompt: DeleteLiteraryPromptContract = withAuth(deleteLiteraryPromptReal);
+
+export const openPlatformService: IOpenPlatformService = new OpenPlatformService();

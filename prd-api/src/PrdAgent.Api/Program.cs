@@ -335,7 +335,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 await context.Response.WriteAsync(JsonSerializer.Serialize(payload, jsonOptions));
             }
         };
-    });
+    })
+    .AddScheme<PrdAgent.Api.Authentication.ApiKeyAuthenticationOptions, PrdAgent.Api.Authentication.ApiKeyAuthenticationHandler>(
+        "ApiKey", 
+        options => { });
 
 builder.Services.AddAuthorization();
 
@@ -775,6 +778,14 @@ builder.Services.AddScoped<ITokenUsageService>(sp =>
 {
     var cache = sp.GetRequiredService<ICacheManager>();
     return new TokenUsageService(cache);
+});
+
+// 注册开放平台服务
+builder.Services.AddScoped<IOpenPlatformService>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new PrdAgent.Infrastructure.Services.OpenPlatformServiceImpl(db, idGenerator);
 });
 
 // 注册缺口通知服务

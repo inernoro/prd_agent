@@ -31,7 +31,7 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
     password: '',
   });
 
-  // 启动时：同步 config（让 assetsBaseUrl 生效）+ 在线模式拉一次品牌配置（登录 icon + 名称）
+  // 启动时：同步 config + 在线模式拉一次品牌配置（登录 icon + 名称）
   useEffect(() => {
     if (!isTauri()) return;
     void loadConfig();

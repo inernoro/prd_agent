@@ -4,3 +4,4 @@ export { default as UsersPage } from './UsersPage';
 export { default as GroupsPage } from './GroupsPage';
 export { default as ModelManagePage } from './ModelManagePage';
 export { default as StatsPage } from './StatsPage';
+export { default as OpenPlatformPage } from './OpenPlatformPage';

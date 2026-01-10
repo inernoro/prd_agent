@@ -19,7 +19,6 @@ interface ApiTestResult {
 
 const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
-const DEFAULT_ASSETS_URL = ''; // 默认为空（不写死旧域名），等待后端配置下发或用户手动输入
 
 function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
@@ -69,7 +68,6 @@ export default function SettingsModal() {
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
   const [apiUrl, setApiUrl] = useState('');
-  const [assetsUrl, setAssetsUrl] = useState('');
   const [error, setError] = useState('');
   const [isDeveloper, setIsDeveloper] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
@@ -140,9 +138,6 @@ export default function SettingsModal() {
       setIsDeveloper(dev);
       const cfgApi = String(config.apiBaseUrl || '').trim();
       setApiUrl(cfgApi || getDefaultApiUrl(dev));
-
-      const cfgAssets = (config.assetsBaseUrl || '').trim();
-      setAssetsUrl(cfgAssets || DEFAULT_ASSETS_URL);
     }
   }, [config]);
 
@@ -150,7 +145,6 @@ export default function SettingsModal() {
     setError('');
     
     const urlToSave = apiUrl.trim();
-    const assetsToSave = assetsUrl.trim();
     
     // 验证 URL 格式
     if (!urlToSave) {
@@ -164,21 +158,10 @@ export default function SettingsModal() {
       setError('请输入有效的 URL 地址');
       return;
     }
-
-    if (!assetsToSave) {
-      setError('资源地址不能为空');
-      return;
-    }
-    try {
-      new URL(assetsToSave);
-    } catch {
-      setError('请输入有效的资源 URL 地址');
-      return;
-    }
     
     try {
-      await saveConfig({ apiBaseUrl: urlToSave, assetsBaseUrl: assetsToSave, isDeveloper });
-      // 切换服务地址/资源域名后，刷新一次 Desktop 品牌配置（在线模式）
+      await saveConfig({ apiBaseUrl: urlToSave, isDeveloper });
+      // 切换服务地址后，刷新一次 Desktop 品牌配置（在线模式）
       void refreshBranding('save');
       closeModal();
     } catch (err) {
@@ -652,38 +635,6 @@ export default function SettingsModal() {
                 placeholder={getDefaultApiUrl(isDeveloper)}
                 className="w-full px-4 py-3 ui-control transition-colors"
               />
-            </div>
-          </div>
-
-          {/* 资源地址配置 */}
-          <div className="space-y-3">
-            <label className="block text-sm font-medium text-text-secondary">
-              资源地址（图标/皮肤）
-            </label>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <label className="block text-xs text-text-secondary">资源地址</label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAssetsUrl(DEFAULT_ASSETS_URL);
-                  }}
-                  className="px-2.5 py-1 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-100 rounded-lg transition-colors"
-                >
-                  恢复默认
-                </button>
-              </div>
-              <input
-                type="url"
-                value={assetsUrl}
-                onChange={(e) => setAssetsUrl(e.target.value)}
-                placeholder={DEFAULT_ASSETS_URL}
-                className="w-full px-4 py-3 ui-control transition-colors"
-              />
-              <div className="text-xs text-text-secondary">
-                规则固定：会拼接为 <span className="font-mono">/icon/desktop/&lt;skin?&gt;/&lt;key&gt;</span>；Desktop 仅拉取皮肤列表，不从 API 获取地址规则。
-              </div>
             </div>
           </div>
 

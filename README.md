@@ -9,9 +9,10 @@ PRD Agent is a purpose-built assistant for **understanding Product Requirement D
   - Q&A (SSE streaming)
   - Guided walkthrough (step-by-step explanation)
 - **Group collaboration**: PM creates groups bound to a PRD; others join via invite; shared session timeline.
-- **Content-gap detection**: flags questions not covered by the PRD and records actionable “missing spec” items.
+- **Content-gap detection**: flags questions not covered by the PRD and records actionable "missing spec" items.
 - **Attachments**: images (clipboard paste/drag-drop) and documents as message context.
 - **Admin console**: user management, LLM configuration, request logs, token usage statistics.
+- **Open Platform API**: OpenAI-compatible API for external integrations (PRD Q&A + LLM proxy modes).
 
 ### Architecture (high level)
 - **Desktop app**: Tauri (Rust core) + React UI
@@ -198,6 +199,8 @@ Sync helper:
 - `doc/3.prd.md`: product requirements and acceptance criteria
 - `doc/4.dev.md`: developer guide (deeper details)
 - `doc/7.data-dictionary.md`: persistent storage dictionary (must keep updated)
+- `doc/11.open-platform-overview.md`: Open Platform API feature overview
+- `doc/open-platform-complete-test.md`: comprehensive testing guide for Open Platform
 
 ---
 
