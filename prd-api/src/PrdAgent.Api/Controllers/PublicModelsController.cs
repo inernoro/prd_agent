@@ -19,10 +19,28 @@ public class PublicModelsController : ControllerBase
 
     /// <summary>
     /// 获取可用模型列表（公开接口，兼容 OpenAI 格式）
-    /// 路径: GET /api/v1/models
+    /// 路径: GET /api/v1/config/models (OpenAI 标准路径)
+    /// </summary>
+    [HttpGet("api/v1/config/models")]
+    public IActionResult GetConfigModels()
+    {
+        return GetModelsInternal();
+    }
+
+    /// <summary>
+    /// 获取可用模型列表（公开接口，兼容 OpenAI 格式）
+    /// 路径: GET /api/v1/models (备用路径)
     /// </summary>
     [HttpGet("api/v1/models")]
     public IActionResult GetModels()
+    {
+        return GetModelsInternal();
+    }
+
+    /// <summary>
+    /// 内部实现：返回模型列表
+    /// </summary>
+    private IActionResult GetModelsInternal()
     {
         try
         {

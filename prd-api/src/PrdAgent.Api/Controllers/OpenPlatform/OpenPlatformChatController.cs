@@ -97,6 +97,9 @@ public class OpenPlatformChatController : ControllerBase
 
     /// <summary>
     /// Chat Completion 接口（兼容 OpenAI）- GET 方式
+    /// 支持两种方式：
+    /// 1. 查询参数: ?message=xxx&model=prdagent&groupId=xxx
+    /// 2. Body (非标准但兼容): 与 POST 相同的 JSON body
     /// </summary>
     [HttpGet("chat/completions")]
     [Produces("text/event-stream")]
@@ -107,19 +110,49 @@ public class OpenPlatformChatController : ControllerBase
         [FromQuery] bool stream = true,
         CancellationToken cancellationToken = default)
     {
-        // 将 GET 参数转换为标准请求格式
-        var request = new ChatCompletionRequest
+        ChatCompletionRequest request;
+        
+        // 尝试从 Body 读取（虽然不符合 HTTP 标准，但有些客户端会这样做）
+        if (Request.ContentLength > 0 && Request.ContentType?.Contains("application/json") == true)
         {
-            Model = model,
-            GroupId = groupId,
-            Stream = stream,
-            Messages = string.IsNullOrWhiteSpace(message) 
-                ? new List<ChatMessage>() 
-                : new List<ChatMessage> 
-                { 
-                    new ChatMessage { Role = "user", Content = message } 
-                }
-        };
+            try
+            {
+                request = await JsonSerializer.DeserializeAsync<ChatCompletionRequest>(Request.Body, cancellationToken: cancellationToken)
+                    ?? new ChatCompletionRequest();
+            }
+            catch
+            {
+                // Body 解析失败，回退到查询参数
+                request = new ChatCompletionRequest
+                {
+                    Model = model,
+                    GroupId = groupId,
+                    Stream = stream,
+                    Messages = string.IsNullOrWhiteSpace(message) 
+                        ? new List<ChatMessage>() 
+                        : new List<ChatMessage> 
+                        { 
+                            new ChatMessage { Role = "user", Content = message } 
+                        }
+                };
+            }
+        }
+        else
+        {
+            // 从查询参数构建请求
+            request = new ChatCompletionRequest
+            {
+                Model = model,
+                GroupId = groupId,
+                Stream = stream,
+                Messages = string.IsNullOrWhiteSpace(message) 
+                    ? new List<ChatMessage>() 
+                    : new List<ChatMessage> 
+                    { 
+                        new ChatMessage { Role = "user", Content = message } 
+                    }
+            };
+        }
 
         await ChatCompletionsInternal(request, cancellationToken);
     }

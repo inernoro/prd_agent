@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// 管理后台 - LLM模型控制器
 /// </summary>
 [ApiController]
-[Route("api/v1/config")]
+[Route("api/v1/admin/models")]
 [Authorize(Roles = "ADMIN")]
 public class AdminModelsController : ControllerBase
 {
@@ -41,7 +41,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 获取所有模型
     /// </summary>
-    [HttpGet("models")]
+    [HttpGet]
     public async Task<IActionResult> GetModels()
     {
         var models = await _db.LLMModels.Find(_ => true)
@@ -61,7 +61,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 获取单个模型
     /// </summary>
-    [HttpGet("models/{id}")]
+    [HttpGet("{id}")]
     public async Task<IActionResult> GetModel(string id)
     {
         var model = await _db.LLMModels.Find(m => m.Id == id).FirstOrDefaultAsync();
@@ -84,7 +84,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 创建模型
     /// </summary>
-    [HttpPost("models")]
+    [HttpPost]
     public async Task<IActionResult> CreateModel([FromBody] CreateModelRequest request)
     {
         // 检查模型名唯一性（按 platformId + modelId(ModelName) 维度；允许跨平台同名）
@@ -146,7 +146,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 更新模型
     /// </summary>
-    [HttpPut("models/{id}")]
+    [HttpPut("{id}")]
     public async Task<IActionResult> UpdateModel(string id, [FromBody] UpdateModelRequest request)
     {
         // 检查模型名唯一性（按 platformId + modelId(ModelName) 维度；排除自身）
@@ -201,7 +201,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 删除模型
     /// </summary>
-    [HttpDelete("models/{id}")]
+    [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteModel(string id)
     {
         var result = await _db.LLMModels.DeleteOneAsync(m => m.Id == id);
@@ -217,7 +217,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 删除所有模型
     /// </summary>
-    [HttpDelete("models/all")]
+    [HttpDelete("all")]
     public async Task<IActionResult> DeleteAllModels()
     {
         var result = await _db.LLMModels.DeleteManyAsync(_ => true);
@@ -228,7 +228,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 测试模型连接
     /// </summary>
-    [HttpPost("models/{id}/test")]
+    [HttpPost("{id}/test")]
     public async Task<IActionResult> TestModel(string id)
     {
         var model = await _db.LLMModels.Find(m => m.Id == id).FirstOrDefaultAsync();
@@ -320,7 +320,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 批量更新模型优先级（用于拖拽排序）
     /// </summary>
-    [HttpPut("models/priorities")]
+    [HttpPut("priorities")]
     public async Task<IActionResult> UpdatePriorities([FromBody] List<ModelPriorityUpdate> updates)
     {
         foreach (var item in updates)
@@ -579,7 +579,7 @@ public class AdminModelsController : ControllerBase
     /// <summary>
     /// 从平台批量添加模型
     /// </summary>
-    [HttpPost("models/batch-from-platform")]
+    [HttpPost("batch-from-platform")]
     public async Task<IActionResult> BatchAddFromPlatform([FromBody] BatchAddModelsRequest request)
     {
         var platform = await _db.LLMPlatforms.Find(p => p.Id == request.PlatformId).FirstOrDefaultAsync();
