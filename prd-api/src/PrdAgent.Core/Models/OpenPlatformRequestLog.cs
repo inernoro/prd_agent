@@ -52,4 +52,28 @@ public class OpenPlatformRequestLog
     
     /// <summary>输出 Token 数</summary>
     public int? OutputTokens { get; set; }
+    
+    /// <summary>客户端 IP</summary>
+    public string? ClientIp { get; set; }
+    
+    /// <summary>User-Agent</summary>
+    public string? UserAgent { get; set; }
+    
+    /// <summary>客户端类型（从 X-Client 头获取）</summary>
+    public string? ClientType { get; set; }
+    
+    /// <summary>客户端实例 ID（从 X-Client-Id 头获取）</summary>
+    public string? ClientId { get; set; }
+    
+    /// <summary>请求查询字符串</summary>
+    public string? Query { get; set; }
+    
+    /// <summary>完整 URL</summary>
+    public string? AbsoluteUrl { get; set; }
+    
+    /// <summary>响应内容（用于错误调试，仅记录非 SSE 响应）</summary>
+    public string? ResponseBody { get; set; }
+    
+    /// <summary>响应内容是否被截断</summary>
+    public bool ResponseBodyTruncated { get; set; }
 }

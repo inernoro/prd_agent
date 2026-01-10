@@ -157,6 +157,24 @@ pub struct ApiTestResult {
     pub server_status: Option<String>,
 }
 
+/// 网络诊断结果（详细版）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkDiagnosticsResult {
+    pub timestamp: String,
+    pub tests: Vec<DiagnosticTest>,
+}
+
+/// 单项诊断测试结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticTest {
+    pub name: String,
+    pub status: String,
+    pub message: String,
+    pub duration: i32,
+}
+
 fn is_localhost_url(api_base_url: &str) -> bool {
     let parsed = match Url::parse(api_base_url) {
         Ok(v) => v,
@@ -233,6 +251,57 @@ pub async fn test_api_connection(api_url: String) -> ApiTestResult {
                 error: Some(error_msg),
                 server_status: None,
             }
+        }
+    }
+}
+
+/// 网络诊断（详细版，调用后端 API）
+#[tauri::command]
+pub async fn run_network_diagnostics(api_url: String) -> Result<NetworkDiagnosticsResult, String> {
+    let mut builder = Client::builder().timeout(Duration::from_secs(30));
+    if is_localhost_url(api_url.trim()) {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let diagnostics_url = format!("{}/api/v1/diagnostics/network", api_url.trim_end_matches('/'));
+    
+    // 构造请求体
+    let request_body = serde_json::json!({
+        "clientUrl": api_url
+    });
+
+    match client.post(&diagnostics_url).json(&request_body).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                // 解析 ApiResponse<NetworkDiagnosticsResult>
+                match response.json::<serde_json::Value>().await {
+                    Ok(json) => {
+                        // 提取 data 字段
+                        if let Some(data) = json.get("data") {
+                            match serde_json::from_value::<NetworkDiagnosticsResult>(data.clone()) {
+                                Ok(result) => Ok(result),
+                                Err(e) => Err(format!("解析诊断结果失败: {}", e))
+                            }
+                        } else {
+                            Err("响应中缺少 data 字段".to_string())
+                        }
+                    }
+                    Err(e) => Err(format!("解析响应失败: {}", e))
+                }
+            } else {
+                Err(format!("服务器返回错误: HTTP {}", response.status().as_u16()))
+            }
+        }
+        Err(e) => {
+            let error_msg = if e.is_timeout() {
+                "诊断请求超时".to_string()
+            } else if e.is_connect() {
+                "无法连接到服务器".to_string()
+            } else {
+                format!("诊断请求失败: {}", e)
+            };
+            Err(error_msg)
         }
     }
 }

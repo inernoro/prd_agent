@@ -9,6 +9,7 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
+import NetworkDiagnosticsModal from '../NetworkDiagnosticsModal';
 
 interface ApiTestResult {
   success: boolean;
@@ -86,6 +87,9 @@ export default function SettingsModal() {
   // API 测试状态
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null);
+  
+  // 网络诊断模态框
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 
   useEffect(() => {
     if (isModalOpen) {
@@ -644,28 +648,39 @@ export default function SettingsModal() {
               <label className="block text-sm font-medium text-text-secondary">
                 连接测试
               </label>
-              <button
-                onClick={handleTestConnection}
-                disabled={isTesting}
-                className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
-              >
-                {isTesting ? (
-                  <>
-                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    测试中...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    测试连接
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsDiagnosticsOpen(true)}
+                  className="px-3 py-1.5 text-xs font-medium bg-blue-500/20 hover:bg-blue-500/30 text-blue-100 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                  网络诊断
+                </button>
+                <button
+                  onClick={handleTestConnection}
+                  disabled={isTesting}
+                  className="px-3 py-1.5 text-xs font-medium bg-black/5 hover:bg-black/10 text-text-secondary rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white/80"
+                >
+                  {isTesting ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      测试中...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      快速测试
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* 测试结果 */}
@@ -828,6 +843,13 @@ export default function SettingsModal() {
           </button>
         </div>
       </div>
+
+      {/* 网络诊断模态框 */}
+      <NetworkDiagnosticsModal
+        isOpen={isDiagnosticsOpen}
+        onClose={() => setIsDiagnosticsOpen(false)}
+        apiUrl={apiUrl || getDefaultApiUrl(isDeveloper)}
+      />
     </div>
   );
 }

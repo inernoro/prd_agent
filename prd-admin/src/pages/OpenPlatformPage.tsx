@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, Zap, ExternalLink, Clock, Filter, Search, X } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import type { OpenPlatformApp, CreateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -31,6 +31,9 @@ export default function OpenPlatformPage() {
   const [logs, setLogs] = useState<OpenPlatformRequestLog[]>([]);
   const [logsTotal, setLogsTotal] = useState(0);
   const [logsPage, setLogsPage] = useState(1);
+  const [logsFilterAppId, setLogsFilterAppId] = useState<string>('');
+  const [logsFilterStatus, setLogsFilterStatus] = useState<string>('');
+  const [logsLoading, setLogsLoading] = useState(false);
   const [curlDialogOpen, setCurlDialogOpen] = useState(false);
   const [currentCurlCommand, setCurrentCurlCommand] = useState('');
   const [generatingCurl, setGeneratingCurl] = useState(false);
@@ -111,30 +114,48 @@ export default function OpenPlatformPage() {
 
   const handleViewLogs = async (appId?: string) => {
     setLogsPage(1);
+    setLogsFilterAppId(appId || '');
+    setLogsFilterStatus('');
     setLogsDialogOpen(true);
     loadLogs(1, appId);
   };
 
-  const loadLogs = async (p: number, appId?: string) => {
+  const loadLogs = async (p: number, appId?: string, statusFilter?: string) => {
+    setLogsLoading(true);
     try {
       const res = await openPlatformService.getLogs(p, 20, appId);
-      setLogs(res.items);
-      setLogsTotal(res.total);
+      // 前端过滤状态码（如果后端不支持）
+      let filteredItems = res.items;
+      if (statusFilter === 'success') {
+        filteredItems = res.items.filter(log => log.statusCode >= 200 && log.statusCode < 300);
+      } else if (statusFilter === 'error') {
+        filteredItems = res.items.filter(log => log.statusCode >= 400);
+      }
+      setLogs(filteredItems);
+      setLogsTotal(statusFilter ? filteredItems.length : res.total);
       setLogsPage(p);
     } catch (err) {
       await systemDialog.alert({ title: '加载日志失败', message: String(err) });
+    } finally {
+      setLogsLoading(false);
     }
+  };
+
+  const handleLogsFilter = () => {
+    loadLogs(1, logsFilterAppId || undefined, logsFilterStatus || undefined);
+  };
+
+  const handleLogsClearFilter = () => {
+    setLogsFilterAppId('');
+    setLogsFilterStatus('');
+    loadLogs(1);
   };
 
   const buildCurlCommand = (app: OpenPlatformApp) => {
     const apiUrl = window.location.origin;
     const endpoint = `${apiUrl}/api/v1/open-platform/v1/chat/completions`;
     
-    const curlCommand = `# 请将 YOUR_API_KEY 替换为应用的真实 API Key
-# 应用: ${app.appName}
-# 绑定群组: ${app.boundGroupName || '未绑定'}
-
-curl -X POST '${endpoint}' \\
+    const curlCommand = `curl -X POST '${endpoint}' \\
   -H 'Content-Type: application/json' \\
   -H 'Authorization: Bearer YOUR_API_KEY' \\
   -d '{
@@ -166,7 +187,12 @@ curl -X POST '${endpoint}' \\
   return (
     <div className="h-full w-full overflow-auto p-6">
       <PageHeader
-        title="开放平台"
+        title={
+          <div className="flex items-center gap-2">
+            <Zap size={20} style={{ color: 'var(--accent-gold)' }} />
+            <span>开放平台</span>
+          </div>
+        }
         description="管理 API 应用与调用日志"
         actions={
           <div className="flex gap-2">
@@ -182,19 +208,24 @@ curl -X POST '${endpoint}' \\
       />
 
       <Card className="mt-6">
-        <div className="p-4 border-b border-border">
+        <div className="p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
           <input
             type="text"
             placeholder="搜索应用名称或描述..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full px-3 py-2 bg-background border border-border rounded-md"
+            className="w-full px-3 py-2 rounded-md outline-none transition-colors"
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              color: 'var(--text-primary)',
+            }}
           />
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-muted/50">
+            <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">绑定信息</th>
@@ -206,20 +237,20 @@ curl -X POST '${endpoint}' \\
             </thead>
             <tbody>
               {apps.map((app) => (
-                <tr key={app.id} className="border-t border-border hover:bg-muted/30">
+                <tr key={app.id} className="transition-colors" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
                   <td className="px-4 py-3">
                     <div className="font-medium">{app.appName}</div>
                     {app.description && <div className="text-sm text-muted-foreground">{app.description}</div>}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="space-y-2">
-                      <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
                         <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
                           {app.boundUserName.charAt(0).toUpperCase()}
                         </div>
                         <span className="font-medium">{app.boundUserName}</span>
                       </div>
-                      <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
                         <div className="w-5 h-5 rounded flex items-center justify-center text-xs" style={{ background: 'rgba(59,130,246,0.15)', color: 'rgba(96,165,250,0.95)' }}>
                           #
                         </div>
@@ -319,7 +350,7 @@ curl -X POST '${endpoint}' \\
         </div>
 
         {total > pageSize && (
-          <div className="p-4 border-t border-border flex justify-between items-center">
+          <div className="p-4 border-t flex justify-between items-center" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             <div className="text-sm text-muted-foreground">
               共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
             </div>
@@ -342,7 +373,22 @@ curl -X POST '${endpoint}' \\
 
       <CreateAppDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} onCreate={handleCreate} />
       <ApiKeyDialog open={apiKeyDialogOpen} onClose={() => setApiKeyDialogOpen(false)} apiKey={newApiKey} />
-      <LogsDialog open={logsDialogOpen} onClose={() => setLogsDialogOpen(false)} logs={logs} total={logsTotal} page={logsPage} onPageChange={loadLogs} />
+      <LogsDialog 
+        open={logsDialogOpen} 
+        onClose={() => setLogsDialogOpen(false)} 
+        logs={logs} 
+        total={logsTotal} 
+        page={logsPage} 
+        loading={logsLoading}
+        apps={apps}
+        filterAppId={logsFilterAppId}
+        filterStatus={logsFilterStatus}
+        onFilterAppIdChange={setLogsFilterAppId}
+        onFilterStatusChange={setLogsFilterStatus}
+        onFilter={handleLogsFilter}
+        onClearFilter={handleLogsClearFilter}
+        onPageChange={loadLogs} 
+      />
       <CurlCommandDialog open={curlDialogOpen} onClose={() => setCurlDialogOpen(false)} curlCommand={currentCurlCommand} />
     </div>
   );
@@ -577,6 +623,14 @@ function LogsDialog({
   logs,
   total,
   page,
+  loading,
+  apps,
+  filterAppId,
+  filterStatus,
+  onFilterAppIdChange,
+  onFilterStatusChange,
+  onFilter,
+  onClearFilter,
   onPageChange,
 }: {
   open: boolean;
@@ -584,82 +638,353 @@ function LogsDialog({
   logs: OpenPlatformRequestLog[];
   total: number;
   page: number;
-  onPageChange: (page: number) => void;
+  loading: boolean;
+  apps: OpenPlatformApp[];
+  filterAppId: string;
+  filterStatus: string;
+  onFilterAppIdChange: (value: string) => void;
+  onFilterStatusChange: (value: string) => void;
+  onFilter: () => void;
+  onClearFilter: () => void;
+  onPageChange: (page: number, appId?: string, status?: string) => void;
 }) {
   const pageSize = 20;
+  const [selectedLog, setSelectedLog] = useState<OpenPlatformRequestLog | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+
+  const handleViewDetail = (log: OpenPlatformRequestLog) => {
+    setSelectedLog(log);
+    setDetailOpen(true);
+  };
+
+  const hasActiveFilters = filterAppId || filterStatus;
 
   return (
-    <Dialog 
-      open={open} 
-      onOpenChange={(isOpen) => !isOpen && onClose()} 
-      title="调用日志"
-      maxWidth={900}
-      content={
-        <div className="space-y-4">
-        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 sticky top-0">
-              <tr>
-                <th className="px-3 py-2 text-left">时间</th>
-                <th className="px-3 py-2 text-left">应用</th>
-                <th className="px-3 py-2 text-left">路径</th>
-                <th className="px-3 py-2 text-left">状态码</th>
-                <th className="px-3 py-2 text-left">耗时</th>
-                <th className="px-3 py-2 text-left">Token</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id} className="border-t border-border">
-                  <td className="px-3 py-2">{fmtDate(log.startedAt)}</td>
-                  <td className="px-3 py-2">{log.appName}</td>
-                  <td className="px-3 py-2">
-                    <code className="text-xs">{log.path}</code>
-                  </td>
-                  <td className="px-3 py-2">
-                    <Badge variant={log.statusCode >= 200 && log.statusCode < 300 ? 'success' : 'subtle'}>
-                      {log.statusCode}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2">{log.durationMs}ms</td>
-                  <td className="px-3 py-2">
-                    {log.inputTokens !== null && log.outputTokens !== null
-                      ? `${log.inputTokens} / ${log.outputTokens}`
-                      : '-'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {logs.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">暂无调用日志</div>
-          )}
-        </div>
-
-        {total > pageSize && (
-          <div className="flex justify-between items-center pt-4">
-            <div className="text-sm text-muted-foreground">
-              共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
+    <>
+      <Dialog 
+        open={open} 
+        onOpenChange={(isOpen) => !isOpen && onClose()} 
+        title={
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2">
+              <Clock size={18} style={{ color: 'var(--accent-gold)' }} />
+              <span>调用日志</span>
+              {hasActiveFilters && (
+                <Badge variant="featured" size="sm">已筛选</Badge>
+              )}
             </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
-                上一页
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={page >= Math.ceil(total / pageSize)}
-                onClick={() => onPageChange(page + 1)}
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setShowFilters(!showFilters)}
+                title={showFilters ? '隐藏筛选' : '显示筛选'}
               >
-                下一页
+                <Filter size={14} />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => window.open('/#/system-logs', '_blank')}
+                title="在系统日志中查看更多"
+              >
+                <ExternalLink size={14} />
               </Button>
             </div>
           </div>
-        )}
-      </div>
-      }
-    />
+        }
+        maxWidth={1100}
+        content={
+          <div className="space-y-4">
+          {/* 提示信息 */}
+          <div className="flex items-start gap-3 p-3 rounded-lg" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
+            <ExternalLink size={16} className="mt-0.5 flex-shrink-0" style={{ color: 'rgba(96,165,250,0.95)' }} />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>查看更详细的日志</div>
+              <div className="text-xs mt-1" style={{ color: 'rgba(96,165,250,0.8)' }}>
+                需要查看请求详情、错误堆栈或关联系统日志？
+                <button 
+                  onClick={() => window.open('/#/system-logs', '_blank')}
+                  className="ml-1 underline hover:no-underline"
+                  style={{ color: 'rgba(96,165,250,0.95)' }}
+                >
+                  前往系统日志页面
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 筛选面板 */}
+          {showFilters && (
+            <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-center gap-2 mb-3">
+                <Filter size={14} style={{ color: 'var(--accent-gold)' }} />
+                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>筛选条件</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>应用</label>
+                  <select
+                    value={filterAppId}
+                    onChange={(e) => onFilterAppIdChange(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg text-sm outline-none transition-colors"
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <option value="">全部应用</option>
+                    {apps.map((app) => (
+                      <option key={app.id} value={app.id}>{app.appName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>状态</label>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => onFilterStatusChange(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg text-sm outline-none transition-colors"
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <option value="">全部状态</option>
+                    <option value="success">成功 (2xx)</option>
+                    <option value="error">失败 (4xx/5xx)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mt-3">
+                <Button variant="primary" size="sm" onClick={onFilter} disabled={loading}>
+                  {loading ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 animate-spin mr-1" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span>筛选中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Search size={14} className="mr-1" />
+                      <span>应用筛选</span>
+                    </>
+                  )}
+                </Button>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" onClick={onClearFilter}>
+                    <X size={14} className="mr-1" />
+                    <span>清除筛选</span>
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>时间</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>应用</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>路径</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>状态</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>耗时</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Token</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium" style={{ color: 'var(--text-muted)' }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr 
+                    key={log.id} 
+                    className="transition-colors cursor-pointer"
+                    style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleViewDetail(log)}
+                  >
+                    <td className="px-3 py-2.5">
+                      <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        {fmtDate(log.startedAt)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="font-medium" style={{ color: 'var(--text-primary)' }}>{log.appName}</div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                        {log.path}
+                      </code>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <Badge variant={log.statusCode >= 200 && log.statusCode < 300 ? 'success' : 'subtle'} size="sm">
+                        {log.statusCode}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        <Clock size={12} />
+                        <span>{log.durationMs}ms</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        {log.inputTokens !== null && log.outputTokens !== null
+                          ? `${log.inputTokens} / ${log.outputTokens}`
+                          : '-'}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <Button 
+                        variant="ghost" 
+                        size="xs" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleViewDetail(log);
+                        }}
+                      >
+                        <ExternalLink size={12} />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {logs.length === 0 && (
+              <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>暂无调用日志</div>
+            )}
+          </div>
+
+          {total > pageSize && (
+            <div className="flex justify-between items-center pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
+                  上一页
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={page >= Math.ceil(total / pageSize)}
+                  onClick={() => onPageChange(page + 1)}
+                >
+                  下一页
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+        }
+      />
+
+      {/* 日志详情对话框 */}
+      <Dialog
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        title={
+          <div className="flex items-center gap-2">
+            <ExternalLink size={18} style={{ color: 'var(--accent-gold)' }} />
+            <span>请求详情</span>
+          </div>
+        }
+        maxWidth={800}
+        content={
+          selectedLog && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>请求 ID</div>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                    {selectedLog.requestId}
+                  </code>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>应用名称</div>
+                  <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedLog.appName}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>请求时间</div>
+                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{fmtDate(selectedLog.startedAt)}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>完成时间</div>
+                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{fmtDate(selectedLog.endedAt)}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>状态码</div>
+                  <Badge variant={selectedLog.statusCode >= 200 && selectedLog.statusCode < 300 ? 'success' : 'subtle'}>
+                    {selectedLog.statusCode}
+                  </Badge>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>耗时</div>
+                  <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedLog.durationMs}ms</div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>请求路径</div>
+                <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                  {selectedLog.method} {selectedLog.path}
+                </code>
+              </div>
+
+              {(selectedLog.inputTokens !== null || selectedLog.outputTokens !== null) && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>输入 Token</div>
+                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedLog.inputTokens ?? '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>输出 Token</div>
+                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedLog.outputTokens ?? '-'}</div>
+                  </div>
+                </div>
+              )}
+
+              {selectedLog.groupId && (
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>群组 ID</div>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                    {selectedLog.groupId}
+                  </code>
+                </div>
+              )}
+
+              {selectedLog.sessionId && (
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>会话 ID</div>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                    {selectedLog.sessionId}
+                  </code>
+                </div>
+              )}
+
+              {selectedLog.errorCode && (
+                <div>
+                  <div className="text-xs font-medium mb-1" style={{ color: 'rgba(239,68,68,0.95)' }}>错误码</div>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(239,68,68,0.1)', color: 'rgba(239,68,68,0.95)' }}>
+                    {selectedLog.errorCode}
+                  </code>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-4">
+                <Button onClick={() => setDetailOpen(false)}>关闭</Button>
+              </div>
+            </div>
+          )
+        }
+      />
+    </>
   );
 }
 
@@ -670,6 +995,7 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
     setIsCopyingCurl(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 100));
+      // 只复制纯净的 curl 命令，不包含注释
       navigator.clipboard.writeText(curlCommand);
       await systemDialog.alert('已复制到剪贴板');
     } finally {
@@ -681,20 +1007,32 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
     <Dialog 
       open={open} 
       onOpenChange={(isOpen) => !isOpen && onClose()} 
-      title="curl 调用示例"
+      title={
+        <div className="flex items-center gap-2">
+          <Copy size={18} style={{ color: 'var(--accent-gold)' }} />
+          <span>curl 调用示例</span>
+        </div>
+      }
       maxWidth={800}
       content={
         <div className="space-y-4">
-          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-md p-4">
-            <p className="text-sm text-yellow-600 dark:text-yellow-400 font-medium">使用说明</p>
-            <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-1">
-              请将命令中的 <code className="bg-yellow-500/20 px-1 rounded">YOUR_API_KEY</code> 替换为应用的真实 API Key，然后在终端中执行。
-            </p>
+          <div className="p-4 rounded-lg" style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)' }}>
+            <div className="flex items-start gap-2">
+              <svg className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: 'rgba(250,204,21,0.95)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-medium" style={{ color: 'rgba(250,204,21,0.95)' }}>使用说明</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(250,204,21,0.85)' }}>
+                  请将命令中的 <code className="px-1.5 py-0.5 rounded" style={{ background: 'rgba(234,179,8,0.15)' }}>YOUR_API_KEY</code> 替换为应用的真实 API Key，然后在终端中执行。
+                </p>
+              </div>
+            </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium">curl 命令</label>
+              <label className="block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>curl 命令</label>
               <Button variant="secondary" size="sm" onClick={copyCommand} disabled={isCopyingCurl}>
                 {isCopyingCurl ? (
                   <svg className="w-3.5 h-3.5 animate-spin mr-1" fill="none" viewBox="0 0 24 24">
@@ -707,12 +1045,12 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
                 复制命令
               </Button>
             </div>
-            <pre className="bg-muted p-4 rounded-md text-xs overflow-x-auto">
-              <code>{curlCommand}</code>
+            <pre className="p-4 rounded-lg text-xs overflow-x-auto" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <code style={{ color: 'var(--text-secondary)' }}>{curlCommand}</code>
             </pre>
           </div>
 
-          <div className="flex justify-end pt-4">
+          <div className="flex justify-end pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             <Button onClick={onClose}>关闭</Button>
           </div>
         </div>

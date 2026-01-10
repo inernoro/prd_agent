@@ -45,12 +45,90 @@ public class OpenPlatformChatController : ControllerBase
     }
 
     /// <summary>
-    /// Chat Completion 接口（兼容 OpenAI）
+    /// 获取可用模型列表（兼容 OpenAI）
+    /// </summary>
+    [HttpGet("models")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetModels()
+    {
+        try
+        {
+            // 返回固定的模型列表（开放平台只支持 prdagent 模型）
+            var models = new[]
+            {
+                new
+                {
+                    id = "prdagent",
+                    @object = "model",
+                    created = 1704067200, // 2024-01-01 00:00:00 UTC
+                    owned_by = "prdagent",
+                    permission = new object[] { },
+                    root = "prdagent",
+                    parent = (string?)null
+                }
+            };
+
+            var response = new
+            {
+                @object = "list",
+                data = models
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting models list");
+            return StatusCode(500, new { error = new { message = "Internal server error", type = "internal_error" } });
+        }
+    }
+
+    /// <summary>
+    /// Chat Completion 接口（兼容 OpenAI）- POST 方式
     /// </summary>
     [HttpPost("chat/completions")]
     [Produces("text/event-stream")]
-    public async Task ChatCompletions(
+    public async Task ChatCompletionsPost(
         [FromBody] ChatCompletionRequest request,
+        CancellationToken cancellationToken)
+    {
+        await ChatCompletionsInternal(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Chat Completion 接口（兼容 OpenAI）- GET 方式
+    /// </summary>
+    [HttpGet("chat/completions")]
+    [Produces("text/event-stream")]
+    public async Task ChatCompletionsGet(
+        [FromQuery] string? model,
+        [FromQuery] string? message,
+        [FromQuery] string? groupId,
+        [FromQuery] bool stream = true,
+        CancellationToken cancellationToken = default)
+    {
+        // 将 GET 参数转换为标准请求格式
+        var request = new ChatCompletionRequest
+        {
+            Model = model,
+            GroupId = groupId,
+            Stream = stream,
+            Messages = string.IsNullOrWhiteSpace(message) 
+                ? new List<ChatMessage>() 
+                : new List<ChatMessage> 
+                { 
+                    new ChatMessage { Role = "user", Content = message } 
+                }
+        };
+
+        await ChatCompletionsInternal(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Chat Completion 内部实现（POST 和 GET 共用）
+    /// </summary>
+    private async Task ChatCompletionsInternal(
+        ChatCompletionRequest request,
         CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
@@ -65,7 +143,9 @@ public class OpenPlatformChatController : ControllerBase
         if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(boundUserId))
         {
             Response.StatusCode = 401;
-            await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "Invalid API Key", type = "invalid_request_error" } }));
+            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Invalid API Key", type = "invalid_request_error" } });
+            await Response.WriteAsync(errorResponse);
+            await LogRequestAsync(appId ?? "unknown", requestId, startedAt, 401, "UNAUTHORIZED", boundUserId, null, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
             return;
         }
 
@@ -74,7 +154,9 @@ public class OpenPlatformChatController : ControllerBase
         if (app == null || !app.IsActive)
         {
             Response.StatusCode = 401;
-            await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "Invalid or inactive API Key", type = "invalid_request_error" } }));
+            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Invalid or inactive API Key", type = "invalid_request_error" } });
+            await Response.WriteAsync(errorResponse);
+            await LogRequestAsync(appId, requestId, startedAt, 401, "UNAUTHORIZED", boundUserId, null, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
             return;
         }
 
@@ -82,7 +164,9 @@ public class OpenPlatformChatController : ControllerBase
         if (request.Messages == null || request.Messages.Count == 0)
         {
             Response.StatusCode = 400;
-            await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "Messages cannot be empty", type = "invalid_request_error" } }));
+            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Messages cannot be empty", type = "invalid_request_error" } });
+            await Response.WriteAsync(errorResponse);
+            await LogRequestAsync(appId, requestId, startedAt, 400, "INVALID_FORMAT", boundUserId, null, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
             return;
         }
 
@@ -135,8 +219,9 @@ public class OpenPlatformChatController : ControllerBase
                 if (request.GroupId != boundGroupId)
                 {
                     Response.StatusCode = 403;
-                    await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "Access to this group is denied", type = "permission_denied" } }));
-                    await LogRequestAsync(appId, requestId, startedAt, 403, "PERMISSION_DENIED", null, null, null, sw.ElapsedMilliseconds);
+                    var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Access to this group is denied", type = "permission_denied" } });
+                    await Response.WriteAsync(errorResponse);
+                    await LogRequestAsync(appId, requestId, startedAt, 403, "PERMISSION_DENIED", boundUserId, request.GroupId, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
                     return;
                 }
                 targetGroupId = boundGroupId;
@@ -148,8 +233,9 @@ public class OpenPlatformChatController : ControllerBase
                 if (!isMember)
                 {
                     Response.StatusCode = 403;
-                    await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "User is not a member of this group", type = "permission_denied" } }));
-                    await LogRequestAsync(appId, requestId, startedAt, 403, "PERMISSION_DENIED", null, null, null, sw.ElapsedMilliseconds);
+                    var errorResponse = JsonSerializer.Serialize(new { error = new { message = "User is not a member of this group", type = "permission_denied" } });
+                    await Response.WriteAsync(errorResponse);
+                    await LogRequestAsync(appId, requestId, startedAt, 403, "PERMISSION_DENIED", boundUserId, request.GroupId, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
                     return;
                 }
                 targetGroupId = request.GroupId;
@@ -167,8 +253,9 @@ public class OpenPlatformChatController : ControllerBase
             {
                 // 应用未绑定群组，需要用户指定
                 Response.StatusCode = 400;
-                await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "groupId is required for prdagent model", type = "invalid_request_error" } }));
-                await LogRequestAsync(appId, requestId, startedAt, 400, "INVALID_FORMAT", null, null, null, sw.ElapsedMilliseconds);
+                var errorResponse = JsonSerializer.Serialize(new { error = new { message = "groupId is required for prdagent model", type = "invalid_request_error" } });
+                await Response.WriteAsync(errorResponse);
+                await LogRequestAsync(appId, requestId, startedAt, 400, "INVALID_FORMAT", boundUserId, null, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
                 return;
             }
         }
@@ -178,8 +265,9 @@ public class OpenPlatformChatController : ControllerBase
         if (group == null || string.IsNullOrWhiteSpace(group.PrdDocumentId))
         {
             Response.StatusCode = 404;
-            await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "Group or PRD document not found", type = "not_found" } }));
-            await LogRequestAsync(appId, requestId, startedAt, 404, "GROUP_NOT_FOUND", boundUserId, targetGroupId, null, sw.ElapsedMilliseconds);
+            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Group or PRD document not found", type = "not_found" } });
+            await Response.WriteAsync(errorResponse);
+            await LogRequestAsync(appId, requestId, startedAt, 404, "GROUP_NOT_FOUND", boundUserId, targetGroupId, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
             return;
         }
 
@@ -188,12 +276,13 @@ public class OpenPlatformChatController : ControllerBase
         var sessionId = session.SessionId;
 
         // 提取最后一条用户消息
-        var lastUserMessage = request.Messages.LastOrDefault(m => m.Role == "user");
+        var lastUserMessage = request.Messages?.LastOrDefault(m => m.Role == "user");
         if (lastUserMessage == null || string.IsNullOrWhiteSpace(lastUserMessage.Content))
         {
             Response.StatusCode = 400;
-            await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "No user message found", type = "invalid_request_error" } }));
-            await LogRequestAsync(appId, requestId, startedAt, 400, "INVALID_FORMAT", boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds);
+            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "No user message found", type = "invalid_request_error" } });
+            await Response.WriteAsync(errorResponse);
+            await LogRequestAsync(appId, requestId, startedAt, 400, "INVALID_FORMAT", boundUserId, targetGroupId, sessionId, sw.ElapsedMilliseconds, responseBody: errorResponse);
             return;
         }
 
@@ -377,11 +466,11 @@ public class OpenPlatformChatController : ControllerBase
         try
         {
             // 转换消息格式
-            var llmMessages = request.Messages.Select(m => new LLMMessage
+            var llmMessages = request.Messages?.Select(m => new LLMMessage
             {
                 Role = m.Role,
                 Content = m.Content
-            }).ToList();
+            }).ToList() ?? new List<LLMMessage>();
 
             // 使用简单的系统提示
             var systemPrompt = "You are a helpful AI assistant.";
@@ -535,10 +624,26 @@ public class OpenPlatformChatController : ControllerBase
         string? sessionId,
         long durationMs,
         int? inputTokens = null,
-        int? outputTokens = null)
+        int? outputTokens = null,
+        string? responseBody = null)
     {
         try
         {
+            var path = Request.Path.Value ?? "";
+            var query = Request.QueryString.HasValue ? Request.QueryString.Value : null;
+            var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var userAgent = Request.Headers.UserAgent.ToString();
+            var clientType = Request.Headers["X-Client"].ToString();
+            if (string.IsNullOrWhiteSpace(clientType)) clientType = "unknown";
+            var clientId = Request.Headers["X-Client-Id"].ToString();
+            if (string.IsNullOrWhiteSpace(clientId)) clientId = null;
+            
+            var scheme = Request.Scheme;
+            var host = Request.Host.HasValue ? Request.Host.Value : "";
+            var absoluteUrl = !string.IsNullOrWhiteSpace(host) 
+                ? $"{scheme}://{host}{path}{(query ?? "")}" 
+                : path + (query ?? "");
+            
             var log = new OpenPlatformRequestLog
             {
                 Id = await _idGenerator.GenerateIdAsync("openplatformlog"),
@@ -548,7 +653,9 @@ public class OpenPlatformChatController : ControllerBase
                 EndedAt = DateTime.UtcNow,
                 DurationMs = durationMs,
                 Method = "POST",
-                Path = "/api/v1/open-platform/v1/chat/completions",
+                Path = path,
+                Query = query,
+                AbsoluteUrl = absoluteUrl,
                 RequestBodyRedacted = "[redacted]",
                 StatusCode = statusCode,
                 ErrorCode = errorCode,
@@ -556,7 +663,13 @@ public class OpenPlatformChatController : ControllerBase
                 GroupId = groupId,
                 SessionId = sessionId,
                 InputTokens = inputTokens,
-                OutputTokens = outputTokens
+                OutputTokens = outputTokens,
+                ClientIp = clientIp,
+                UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
+                ClientType = clientType,
+                ClientId = clientId,
+                ResponseBody = responseBody,
+                ResponseBodyTruncated = !string.IsNullOrEmpty(responseBody) && responseBody.Length >= 64 * 1024
             };
 
             await _openPlatformService.LogRequestAsync(log);

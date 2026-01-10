@@ -77,9 +77,10 @@ public class RequestResponseLoggingMiddleware
         var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase);
         var startedAt = DateTime.UtcNow;
 
-        // 仅记录用户侧请求（避免把后台自检/查询也塞进“系统日志”）
+        // 仅记录用户侧请求（避免把后台自检/查询也塞进"系统日志"）
         var shouldPersistApiLog = path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)
-                                  && !path.StartsWith("/api/v1/admin/", StringComparison.OrdinalIgnoreCase);
+                                  && !path.StartsWith("/api/v1/admin/", StringComparison.OrdinalIgnoreCase)
+                                  && !path.StartsWith("/api/v1/open-platform/", StringComparison.OrdinalIgnoreCase);
         // heartbeat 属于系统噪音：不落 Mongo（但会更新 Redis presence）
         if (path.StartsWith("/api/v1/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase))
         {

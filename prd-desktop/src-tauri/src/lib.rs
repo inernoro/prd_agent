@@ -107,6 +107,7 @@ pub fn run() {
             commands::config::save_config,
             commands::config::get_default_api_url,
             commands::config::test_api_connection,
+            commands::config::run_network_diagnostics,
             commands::preview_ask_history::get_preview_ask_history,
             commands::preview_ask_history::append_preview_ask_history,
             commands::preview_ask_history::clear_preview_ask_history,
