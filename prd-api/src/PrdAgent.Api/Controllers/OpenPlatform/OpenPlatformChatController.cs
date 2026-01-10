@@ -12,9 +12,12 @@ namespace PrdAgent.Api.Controllers.OpenPlatform;
 /// 支持两种模式：
 /// 1. model=prdagent -> PRD 问答（需要 groupId）
 /// 2. model=其他 -> LLM 代理（直接转发到主模型）
+/// 
+/// 兼容多种路由格式：
+/// - /api/v1/open-platform/v1/chat/completions (标准)
+/// - /api/v1/open-platform/chat/completions (兼容)
 /// </summary>
 [ApiController]
-[Route("api/v1/open-platform/v1")]
 [Authorize(AuthenticationSchemes = "ApiKey")]
 public class OpenPlatformChatController : ControllerBase
 {
@@ -45,11 +48,26 @@ public class OpenPlatformChatController : ControllerBase
     }
 
     /// <summary>
-    /// 获取可用模型列表（兼容 OpenAI）
+    /// 获取可用模型列表（兼容 OpenAI）- 标准路由
     /// </summary>
-    [HttpGet("models")]
+    [HttpGet("~/api/v1/open-platform/v1/models")]
+    [AllowAnonymous]
+    public IActionResult GetModelsV1()
+    {
+        return GetModelsInternal();
+    }
+
+    /// <summary>
+    /// 获取可用模型列表（兼容 OpenAI）- 兼容路由
+    /// </summary>
+    [HttpGet("~/api/v1/open-platform/models")]
     [AllowAnonymous]
     public IActionResult GetModels()
+    {
+        return GetModelsInternal();
+    }
+
+    private IActionResult GetModelsInternal()
     {
         try
         {
@@ -84,9 +102,21 @@ public class OpenPlatformChatController : ControllerBase
     }
 
     /// <summary>
-    /// Chat Completion 接口（兼容 OpenAI）- POST 方式
+    /// Chat Completion 接口（兼容 OpenAI）- POST 方式 - 标准路由
     /// </summary>
-    [HttpPost("chat/completions")]
+    [HttpPost("~/api/v1/open-platform/v1/chat/completions")]
+    [Produces("text/event-stream")]
+    public async Task ChatCompletionsPostV1(
+        [FromBody] ChatCompletionRequest request,
+        CancellationToken cancellationToken)
+    {
+        await ChatCompletionsInternal(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Chat Completion 接口（兼容 OpenAI）- POST 方式 - 兼容路由
+    /// </summary>
+    [HttpPost("~/api/v1/open-platform/chat/completions")]
     [Produces("text/event-stream")]
     public async Task ChatCompletionsPost(
         [FromBody] ChatCompletionRequest request,
@@ -96,12 +126,30 @@ public class OpenPlatformChatController : ControllerBase
     }
 
     /// <summary>
-    /// Chat Completion 接口（兼容 OpenAI）- GET 方式
+    /// Chat Completion 接口（兼容 OpenAI）- GET 方式 - 标准路由
     /// 支持两种方式：
     /// 1. 查询参数: ?message=xxx&model=prdagent&groupId=xxx
     /// 2. Body (非标准但兼容): 与 POST 相同的 JSON body
     /// </summary>
-    [HttpGet("chat/completions")]
+    [HttpGet("~/api/v1/open-platform/v1/chat/completions")]
+    [Produces("text/event-stream")]
+    public async Task ChatCompletionsGetV1(
+        [FromQuery] string? model,
+        [FromQuery] string? message,
+        [FromQuery] string? groupId,
+        [FromQuery] bool stream = true,
+        CancellationToken cancellationToken = default)
+    {
+        await ChatCompletionsGetInternal(model, message, groupId, stream, cancellationToken);
+    }
+
+    /// <summary>
+    /// Chat Completion 接口（兼容 OpenAI）- GET 方式 - 兼容路由
+    /// 支持两种方式：
+    /// 1. 查询参数: ?message=xxx&model=prdagent&groupId=xxx
+    /// 2. Body (非标准但兼容): 与 POST 相同的 JSON body
+    /// </summary>
+    [HttpGet("~/api/v1/open-platform/chat/completions")]
     [Produces("text/event-stream")]
     public async Task ChatCompletionsGet(
         [FromQuery] string? model,
@@ -109,6 +157,16 @@ public class OpenPlatformChatController : ControllerBase
         [FromQuery] string? groupId,
         [FromQuery] bool stream = true,
         CancellationToken cancellationToken = default)
+    {
+        await ChatCompletionsGetInternal(model, message, groupId, stream, cancellationToken);
+    }
+
+    private async Task ChatCompletionsGetInternal(
+        string? model,
+        string? message,
+        string? groupId,
+        bool stream,
+        CancellationToken cancellationToken)
     {
         ChatCompletionRequest request;
         
