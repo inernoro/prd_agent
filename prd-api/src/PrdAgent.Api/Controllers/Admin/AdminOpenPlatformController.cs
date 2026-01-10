@@ -65,6 +65,7 @@ public class AdminOpenPlatformController : ControllerBase
                 BoundGroupId = app.BoundGroupId,
                 BoundGroupName = group?.GroupName,
                 IgnoreUserSystemPrompt = app.IgnoreUserSystemPrompt,
+                DisableGroupContext = app.DisableGroupContext,
                 IsActive = app.IsActive,
                 CreatedAt = app.CreatedAt,
                 LastUsedAt = app.LastUsedAt,
@@ -123,7 +124,8 @@ public class AdminOpenPlatformController : ControllerBase
             request.Description,
             request.BoundUserId,
             request.BoundGroupId,
-            request.IgnoreUserSystemPrompt);
+            request.IgnoreUserSystemPrompt,
+            request.DisableGroupContext);
 
         var response = new CreateAppResponse
         {
@@ -178,7 +180,9 @@ public class AdminOpenPlatformController : ControllerBase
             request.AppName,
             request.Description,
             request.BoundUserId,
-            request.BoundGroupId);
+            request.BoundGroupId,
+            request.IgnoreUserSystemPrompt,
+            request.DisableGroupContext);
 
         if (!success)
         {
@@ -306,6 +310,8 @@ public class CreateAppRequest
     public string BoundUserId { get; set; } = string.Empty;
     public string? BoundGroupId { get; set; }
     public bool IgnoreUserSystemPrompt { get; set; } = true;
+    /// <summary>是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true）</summary>
+    public bool DisableGroupContext { get; set; } = true;
 }
 
 public class UpdateAppRequest
@@ -314,6 +320,8 @@ public class UpdateAppRequest
     public string? Description { get; set; }
     public string? BoundUserId { get; set; }
     public string? BoundGroupId { get; set; }
+    public bool? IgnoreUserSystemPrompt { get; set; }
+    public bool? DisableGroupContext { get; set; }
 }
 
 public class CreateAppResponse
@@ -343,6 +351,7 @@ public class AppListItem
     public string? BoundGroupId { get; set; }
     public string? BoundGroupName { get; set; }
     public bool IgnoreUserSystemPrompt { get; set; }
+    public bool DisableGroupContext { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastUsedAt { get; set; }

@@ -33,7 +33,8 @@ public abstract class OpenPlatformService : IOpenPlatformService
         string? description,
         string boundUserId,
         string? boundGroupId,
-        bool ignoreUserSystemPrompt = true)
+        bool ignoreUserSystemPrompt = true,
+        bool disableGroupContext = true)
     {
         var apiKey = GenerateApiKey();
         var apiKeyHash = ComputeSha256(apiKey);
@@ -46,6 +47,7 @@ public abstract class OpenPlatformService : IOpenPlatformService
             BoundUserId = boundUserId,
             BoundGroupId = boundGroupId,
             IgnoreUserSystemPrompt = ignoreUserSystemPrompt,
+            DisableGroupContext = disableGroupContext,
             ApiKeyHash = apiKeyHash,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
@@ -81,13 +83,17 @@ public abstract class OpenPlatformService : IOpenPlatformService
         string? appName = null,
         string? description = null,
         string? boundUserId = null,
-        string? boundGroupId = null)
+        string? boundGroupId = null,
+        bool? ignoreUserSystemPrompt = null,
+        bool? disableGroupContext = null)
     {
         var updates = new Dictionary<string, object>();
         if (appName != null) updates["AppName"] = appName;
         if (description != null) updates["Description"] = description;
         if (boundUserId != null) updates["BoundUserId"] = boundUserId;
         if (boundGroupId != null) updates["BoundGroupId"] = boundGroupId;
+        if (ignoreUserSystemPrompt.HasValue) updates["IgnoreUserSystemPrompt"] = ignoreUserSystemPrompt.Value;
+        if (disableGroupContext.HasValue) updates["DisableGroupContext"] = disableGroupContext.Value;
 
         if (updates.Count == 0) return false;
         return await UpdateAppFieldsAsync(appId, updates);

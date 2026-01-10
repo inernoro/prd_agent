@@ -15,13 +15,15 @@ public interface IOpenPlatformService
     /// <param name="boundUserId">绑定用户 ID</param>
     /// <param name="boundGroupId">绑定群组 ID（可选）</param>
     /// <param name="ignoreUserSystemPrompt">是否忽略外部请求中的系统提示词（role=system），启用后将过滤外部 system 消息（默认 true）</param>
+    /// <param name="disableGroupContext">是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true）</param>
     /// <returns>应用实体和明文 API Key</returns>
     Task<(OpenPlatformApp app, string apiKey)> CreateAppAsync(
         string appName,
         string? description,
         string boundUserId,
         string? boundGroupId,
-        bool ignoreUserSystemPrompt = true);
+        bool ignoreUserSystemPrompt = true,
+        bool disableGroupContext = true);
 
     /// <summary>
     /// 通过 API Key 获取应用
@@ -51,7 +53,9 @@ public interface IOpenPlatformService
         string? appName = null,
         string? description = null,
         string? boundUserId = null,
-        string? boundGroupId = null);
+        string? boundGroupId = null,
+        bool? ignoreUserSystemPrompt = null,
+        bool? disableGroupContext = null);
 
     /// <summary>
     /// 删除应用

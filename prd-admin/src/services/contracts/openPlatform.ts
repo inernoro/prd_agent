@@ -9,6 +9,8 @@ export interface OpenPlatformApp {
   boundGroupId?: string;
   boundGroupName?: string;
   ignoreUserSystemPrompt?: boolean;
+  /** 是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true） */
+  disableGroupContext?: boolean;
   isActive: boolean;
   createdAt: string;
   lastUsedAt?: string;
@@ -40,6 +42,8 @@ export interface CreateAppRequest {
   boundUserId: string;
   boundGroupId?: string;
   ignoreUserSystemPrompt?: boolean;
+  /** 是否禁用群上下文，禁用后仅使用用户传递的上下文（默认 true） */
+  disableGroupContext?: boolean;
 }
 
 export interface UpdateAppRequest {
@@ -47,6 +51,8 @@ export interface UpdateAppRequest {
   description?: string;
   boundUserId?: string;
   boundGroupId?: string;
+  ignoreUserSystemPrompt?: boolean;
+  disableGroupContext?: boolean;
 }
 
 export interface CreateAppResponse {

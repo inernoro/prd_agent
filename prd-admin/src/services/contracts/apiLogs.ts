@@ -14,6 +14,8 @@ export type ApiLogsListParams = {
   clientId?: string;
   groupId?: string;
   sessionId?: string;
+  /** 过滤噪声日志（如 auth/refresh 等高频无意义请求） */
+  excludeNoise?: boolean;
 };
 
 export type ApiLogsListItem = {

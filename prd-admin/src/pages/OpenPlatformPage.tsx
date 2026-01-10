@@ -6,9 +6,9 @@ import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
-import type { OpenPlatformApp, CreateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
+import type { OpenPlatformApp, CreateAppRequest, UpdateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 function fmtDate(v?: string | null) {
@@ -25,6 +25,8 @@ export default function OpenPlatformPage() {
   const [search, setSearch] = useState('');
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingApp, setEditingApp] = useState<OpenPlatformApp | null>(null);
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
   const [newApiKey, setNewApiKey] = useState('');
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
@@ -64,6 +66,24 @@ export default function OpenPlatformPage() {
       loadApps();
     } catch (err) {
       await systemDialog.alert({ title: '创建失败', message: String(err) });
+    }
+  };
+
+  const handleEdit = (app: OpenPlatformApp) => {
+    setEditingApp(app);
+    setEditDialogOpen(true);
+  };
+
+  const handleUpdate = async (request: UpdateAppRequest) => {
+    if (!editingApp) return;
+    try {
+      await openPlatformService.updateApp(editingApp.id, request);
+      await systemDialog.alert('更新成功');
+      setEditDialogOpen(false);
+      setEditingApp(null);
+      loadApps();
+    } catch (err) {
+      await systemDialog.alert({ title: '更新失败', message: String(err) });
     }
   };
 
@@ -296,6 +316,14 @@ export default function OpenPlatformPage() {
                             <DropdownMenu.Item
                               className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
                               style={{ color: 'var(--text-primary)' }}
+                              onSelect={() => handleEdit(app)}
+                            >
+                              <Pencil size={14} />
+                              <span>编辑应用</span>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
+                              style={{ color: 'var(--text-primary)' }}
                               onSelect={() => showCurlCommand(app)}
                               disabled={generatingCurl}
                             >
@@ -367,6 +395,12 @@ export default function OpenPlatformPage() {
       </Card>
 
       <CreateAppDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} onCreate={handleCreate} />
+      <EditAppDialog 
+        open={editDialogOpen} 
+        onClose={() => { setEditDialogOpen(false); setEditingApp(null); }} 
+        onUpdate={handleUpdate} 
+        app={editingApp} 
+      />
       <ApiKeyDialog open={apiKeyDialogOpen} onClose={() => setApiKeyDialogOpen(false)} apiKey={newApiKey} />
       <LogsDialog 
         open={logsDialogOpen} 
@@ -403,6 +437,7 @@ function CreateAppDialog({
   const [boundUserId, setBoundUserId] = useState('');
   const [boundGroupId, setBoundGroupId] = useState('');
   const [ignoreUserSystemPrompt, setIgnoreUserSystemPrompt] = useState(true);
+  const [disableGroupContext, setDisableGroupContext] = useState(true);
   const [users, setUsers] = useState<Array<{ userId: string; username: string; displayName: string }>>([]);
   const [groups, setGroups] = useState<Array<{ groupId: string; groupName: string }>>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -471,6 +506,7 @@ function CreateAppDialog({
       boundUserId,
       boundGroupId,
       ignoreUserSystemPrompt,
+      disableGroupContext,
     });
 
     setAppName('');
@@ -478,6 +514,7 @@ function CreateAppDialog({
     setBoundUserId('');
     setBoundGroupId('');
     setIgnoreUserSystemPrompt(true);
+    setDisableGroupContext(true);
   };
 
   return (
@@ -561,11 +598,235 @@ function CreateAppDialog({
           </div>
         </div>
 
+        <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-md">
+          <input
+            type="checkbox"
+            id="disableGroupContext"
+            checked={disableGroupContext}
+            onChange={(e) => setDisableGroupContext(e.target.checked)}
+            className="mt-0.5 w-4 h-4 rounded border-border"
+          />
+          <div className="flex-1">
+            <label htmlFor="disableGroupContext" className="text-sm font-medium cursor-pointer">
+              禁用群上下文
+            </label>
+            <p className="text-xs text-muted-foreground mt-1">
+              启用后，API 调用时将不使用群组的历史对话上下文，仅使用用户传递的上下文。系统提示词和 PRD 内容仍会保留。推荐开启以防止历史上下文干扰。
+            </p>
+          </div>
+        </div>
+
         <div className="flex justify-end gap-2 pt-4">
           <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
           <Button onClick={handleSubmit}>创建</Button>
+        </div>
+      </div>
+      }
+    />
+  );
+}
+
+function EditAppDialog({
+  open,
+  onClose,
+  onUpdate,
+  app,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onUpdate: (req: UpdateAppRequest) => void;
+  app: OpenPlatformApp | null;
+}) {
+  const [appName, setAppName] = useState('');
+  const [description, setDescription] = useState('');
+  const [boundUserId, setBoundUserId] = useState('');
+  const [boundGroupId, setBoundGroupId] = useState('');
+  const [ignoreUserSystemPrompt, setIgnoreUserSystemPrompt] = useState(true);
+  const [disableGroupContext, setDisableGroupContext] = useState(true);
+  const [users, setUsers] = useState<Array<{ userId: string; username: string; displayName: string }>>([]);
+  const [groups, setGroups] = useState<Array<{ groupId: string; groupName: string }>>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+
+  useEffect(() => {
+    if (open && app) {
+      setAppName(app.appName);
+      setDescription(app.description || '');
+      setBoundUserId(app.boundUserId);
+      setBoundGroupId(app.boundGroupId || '');
+      setIgnoreUserSystemPrompt(app.ignoreUserSystemPrompt ?? true);
+      setDisableGroupContext(app.disableGroupContext ?? true);
+      loadUsers();
+      loadGroups();
+    }
+  }, [open, app]);
+
+  const loadUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await getUsers({ page: 1, pageSize: 100 });
+      if (!res.success) {
+        await systemDialog.alert({ title: '加载用户失败', message: res.error?.message || '未知错误' });
+        setUsers([]);
+        return;
+      }
+      setUsers(res.data?.items || []);
+    } catch (err) {
+      await systemDialog.alert({ title: '加载用户失败', message: String(err) });
+      setUsers([]);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const loadGroups = async () => {
+    setLoadingGroups(true);
+    try {
+      const res = await getAdminGroups({ page: 1, pageSize: 100 });
+      if (!res.success) {
+        await systemDialog.alert({ title: '加载群组失败', message: res.error?.message || '未知错误' });
+        setGroups([]);
+        return;
+      }
+      setGroups(res.data?.items || []);
+    } catch (err) {
+      await systemDialog.alert({ title: '加载群组失败', message: String(err) });
+      setGroups([]);
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!appName.trim()) {
+      await systemDialog.alert({ title: '验证失败', message: '应用名称不能为空' });
+      return;
+    }
+    if (!boundGroupId) {
+      await systemDialog.alert({ title: '验证失败', message: '必须绑定群组' });
+      return;
+    }
+    if (!boundUserId) {
+      await systemDialog.alert({ title: '验证失败', message: '必须绑定用户' });
+      return;
+    }
+
+    onUpdate({
+      appName: appName.trim(),
+      description: description.trim() || undefined,
+      boundUserId,
+      boundGroupId,
+      ignoreUserSystemPrompt,
+      disableGroupContext,
+    });
+  };
+
+  return (
+    <Dialog 
+      open={open} 
+      onOpenChange={(isOpen) => !isOpen && onClose()} 
+      title="编辑应用"
+      content={
+        <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">应用名称 *</label>
+          <input
+            type="text"
+            value={appName}
+            onChange={(e) => setAppName(e.target.value)}
+            className="w-full px-3 py-2 bg-background border border-border rounded-md"
+            placeholder="输入应用名称"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">绑定群组 *</label>
+          <select
+            value={boundGroupId}
+            onChange={(e) => setBoundGroupId(e.target.value)}
+            className="w-full px-3 py-2 bg-background border border-border rounded-md"
+            disabled={loadingGroups}
+          >
+            <option value="">{loadingGroups ? '加载中...' : '请选择群组'}</option>
+            {(groups || []).map((g) => (
+              <option key={g.groupId} value={g.groupId}>
+                {g.groupName} (ID: {g.groupId})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">绑定用户 *</label>
+          <select
+            value={boundUserId}
+            onChange={(e) => setBoundUserId(e.target.value)}
+            className="w-full px-3 py-2 bg-background border border-border rounded-md"
+            disabled={loadingUsers}
+          >
+            <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
+            {(users || []).map((u) => (
+              <option key={u.userId} value={u.userId}>
+                {u.displayName} (@{u.username})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">应用描述</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full px-3 py-2 bg-background border border-border rounded-md"
+            placeholder="输入应用描述（可选）"
+            rows={3}
+          />
+        </div>
+
+        <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-md">
+          <input
+            type="checkbox"
+            id="edit-ignoreUserSystemPrompt"
+            checked={ignoreUserSystemPrompt}
+            onChange={(e) => setIgnoreUserSystemPrompt(e.target.checked)}
+            className="mt-0.5 w-4 h-4 rounded border-border"
+          />
+          <div className="flex-1">
+            <label htmlFor="edit-ignoreUserSystemPrompt" className="text-sm font-medium cursor-pointer">
+              忽略外部系统提示词
+            </label>
+            <p className="text-xs text-muted-foreground mt-1">
+              启用后，API 调用时将过滤外部请求中的 system 消息（role=system），强制使用我们内部配置的专业提示词。
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-md">
+          <input
+            type="checkbox"
+            id="edit-disableGroupContext"
+            checked={disableGroupContext}
+            onChange={(e) => setDisableGroupContext(e.target.checked)}
+            className="mt-0.5 w-4 h-4 rounded border-border"
+          />
+          <div className="flex-1">
+            <label htmlFor="edit-disableGroupContext" className="text-sm font-medium cursor-pointer">
+              禁用群上下文
+            </label>
+            <p className="text-xs text-muted-foreground mt-1">
+              启用后，API 调用时将不使用群组的历史对话上下文，仅使用用户传递的上下文。系统提示词和 PRD 内容仍会保留。
+            </p>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-4">
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit}>保存</Button>
         </div>
       </div>
       }

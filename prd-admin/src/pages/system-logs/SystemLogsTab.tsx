@@ -67,6 +67,7 @@ export default function SystemLogsTab() {
   const [metaMethods, setMetaMethods] = useState<string[]>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
   const [qClientType, setQClientType] = useState('');
   const [qMethod, setQMethod] = useState('');
+  const [excludeNoise, setExcludeNoise] = useState(true);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -96,6 +97,7 @@ export default function SystemLogsTab() {
         requestId: qRequestId || undefined,
         clientType: qClientType || undefined,
         method: qMethod || undefined,
+        excludeNoise: excludeNoise || undefined,
       });
       if (res.success) {
         setItems(res.data.items);
@@ -210,8 +212,19 @@ export default function SystemLogsTab() {
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            共 {total} 条 · 第 {page}/{totalPages} 页
+          <div className="flex items-center gap-4">
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              共 {total} 条 · 第 {page}/{totalPages} 页
+            </div>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: 'var(--text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={excludeNoise}
+                onChange={(e) => setExcludeNoise(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[var(--color-primary)]"
+              />
+              过滤噪声日志
+            </label>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => load({ resetPage: true })} disabled={loading}>

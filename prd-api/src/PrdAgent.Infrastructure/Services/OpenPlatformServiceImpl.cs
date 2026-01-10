@@ -93,6 +93,12 @@ public class OpenPlatformServiceImpl : OpenPlatformService
                 case "IsActive":
                     updateList.Add(updateDef.Set(a => a.IsActive, (bool)kvp.Value));
                     break;
+                case "IgnoreUserSystemPrompt":
+                    updateList.Add(updateDef.Set(a => a.IgnoreUserSystemPrompt, (bool)kvp.Value));
+                    break;
+                case "DisableGroupContext":
+                    updateList.Add(updateDef.Set(a => a.DisableGroupContext, (bool)kvp.Value));
+                    break;
                 case "TotalRequests":
                     updateList.Add(updateDef.Inc(a => a.TotalRequests, (int)kvp.Value));
                     break;

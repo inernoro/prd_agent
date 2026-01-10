@@ -46,6 +46,18 @@ public class AdminApiLogsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { clientTypes, methods }));
     }
 
+    /// <summary>
+    /// 噪声路径列表（excludeNoise=true 时排除）
+    /// </summary>
+    private static readonly string[] NoisePaths = new[]
+    {
+        "/api/v1/auth/refresh",
+        "/api/v1/admin/llm-logs",
+        "/api/v1/admin/llm-logs/meta",
+        "/api/v1/admin/api-logs",
+        "/api/v1/admin/api-logs/meta",
+    };
+
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] int page = 1,
@@ -60,7 +72,8 @@ public class AdminApiLogsController : ControllerBase
         [FromQuery] string? clientType = null,
         [FromQuery] string? clientId = null,
         [FromQuery] string? groupId = null,
-        [FromQuery] string? sessionId = null)
+        [FromQuery] string? sessionId = null,
+        [FromQuery] bool excludeNoise = false)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 10, 200);
@@ -77,6 +90,7 @@ public class AdminApiLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(clientId)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.ClientId, clientId);
         if (!string.IsNullOrWhiteSpace(groupId)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.GroupId, groupId);
         if (!string.IsNullOrWhiteSpace(sessionId)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.SessionId, sessionId);
+        if (excludeNoise) filter &= Builders<ApiRequestLog>.Filter.Nin(x => x.Path, NoisePaths);
 
         var total = await _db.ApiRequestLogs.CountDocumentsAsync(filter);
         var rawItems = await _db.ApiRequestLogs.Find(filter)

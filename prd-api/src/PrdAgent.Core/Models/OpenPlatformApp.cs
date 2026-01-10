@@ -35,6 +35,9 @@ public class OpenPlatformApp
     /// <summary>是否忽略外部请求中的系统提示词（role=system）。启用后将过滤外部 system 消息，强制使用内部配置的提示词（默认 true）</summary>
     public bool IgnoreUserSystemPrompt { get; set; } = true;
     
+    /// <summary>是否禁用群上下文。禁用后不使用群历史对话上下文，仅使用用户传递的上下文，但保留系统提示词和 PRD（默认 true，即默认禁用群上下文）</summary>
+    public bool DisableGroupContext { get; set; } = true;
+    
     /// <summary>API Key 哈希值（SHA256）</summary>
     public string ApiKeyHash { get; set; } = string.Empty;
     
