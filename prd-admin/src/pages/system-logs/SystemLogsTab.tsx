@@ -275,7 +275,7 @@ export default function SystemLogsTab() {
                 </div>
               </div>
               <div className="mt-1 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                userId={it.userId}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}{it.apiSummary ? ` · ${it.apiSummary}` : ''}
+                userId={it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}{it.apiSummary ? ` · ${it.apiSummary}` : ''}
               </div>
               {(it.requestBodyPreview || it.curlPreview) && (
                 <div className="mt-2 text-[11px] grid gap-1">
@@ -309,7 +309,7 @@ export default function SystemLogsTab() {
                 {detail?.method || '-'} {detail?.path || '-'}
               </div>
               <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                id={selectedId || '-'} · requestId={detail?.requestId || '-'} · userId={detail?.userId || '-'}
+                id={selectedId || '-'} · requestId={detail?.requestId || '-'} · userId={detail?.userId || '-'}{detail?.clientIp ? ` · IP=${detail.clientIp}` : ''}
               </div>
             </div>
             {detail?.curl && (
@@ -350,6 +350,15 @@ export default function SystemLogsTab() {
                 </div>
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   client：{detail.clientType || '—'}{detail.clientId ? `(${detail.clientId})` : ''}
+                </div>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  IP：{detail.clientIp || '—'}
+                </div>
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  UserAgent：{detail.userAgent || '—'}
                 </div>
               </div>
 
