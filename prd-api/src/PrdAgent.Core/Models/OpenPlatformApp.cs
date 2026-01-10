@@ -32,7 +32,7 @@ public class OpenPlatformApp
     /// <summary>绑定的群组 ID（可选）</summary>
     public string? BoundGroupId { get; set; }
     
-    /// <summary>是否忽略用户系统提示词（默认 true）</summary>
+    /// <summary>是否忽略外部请求中的系统提示词（role=system）。启用后将过滤外部 system 消息，强制使用内部配置的提示词（默认 true）</summary>
     public bool IgnoreUserSystemPrompt { get; set; } = true;
     
     /// <summary>API Key 哈希值（SHA256）</summary>

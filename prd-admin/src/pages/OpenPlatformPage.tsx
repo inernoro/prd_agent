@@ -487,10 +487,10 @@ function CreateAppDialog({
           />
           <div className="flex-1">
             <label htmlFor="ignoreUserSystemPrompt" className="text-sm font-medium cursor-pointer">
-              忽略用户系统提示词
+              忽略外部系统提示词
             </label>
             <p className="text-xs text-muted-foreground mt-1">
-              启用后，API 调用时将忽略绑定用户的个人系统提示词设置，使用系统默认提示词。推荐开启以保证 API 行为的一致性。
+              启用后，API 调用时将过滤外部请求中的 system 消息（role=system），强制使用我们内部配置的专业提示词。推荐开启以防止外部不专业的提示词影响服务质量。
             </p>
           </div>
         </div>

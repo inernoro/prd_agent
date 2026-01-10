@@ -69,6 +69,15 @@ public class OpenPlatformChatController : ControllerBase
             return;
         }
 
+        // 获取应用配置
+        var app = await _openPlatformService.GetAppByIdAsync(appId);
+        if (app == null || !app.IsActive)
+        {
+            Response.StatusCode = 401;
+            await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "Invalid or inactive API Key", type = "invalid_request_error" } }));
+            return;
+        }
+
         // 验证请求
         if (request.Messages == null || request.Messages.Count == 0)
         {
@@ -79,6 +88,12 @@ public class OpenPlatformChatController : ControllerBase
 
         // 更新应用使用统计
         await _openPlatformService.UpdateAppUsageAsync(appId);
+
+        // 根据 IgnoreUserSystemPrompt 配置过滤外部 system 消息
+        if (app.IgnoreUserSystemPrompt && request.Messages != null)
+        {
+            request.Messages = request.Messages.Where(m => m.Role?.ToLowerInvariant() != "system").ToList();
+        }
 
         // 根据 model 名称判断模式
         var modelName = (request.Model ?? "prdagent").ToLowerInvariant();

@@ -14,7 +14,7 @@ public interface IOpenPlatformService
     /// <param name="description">应用描述</param>
     /// <param name="boundUserId">绑定用户 ID</param>
     /// <param name="boundGroupId">绑定群组 ID（可选）</param>
-    /// <param name="ignoreUserSystemPrompt">是否忽略用户系统提示词（默认 true）</param>
+    /// <param name="ignoreUserSystemPrompt">是否忽略外部请求中的系统提示词（role=system），启用后将过滤外部 system 消息（默认 true）</param>
     /// <returns>应用实体和明文 API Key</returns>
     Task<(OpenPlatformApp app, string apiKey)> CreateAppAsync(
         string appName,
