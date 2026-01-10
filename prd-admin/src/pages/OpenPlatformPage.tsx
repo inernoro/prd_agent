@@ -5,7 +5,7 @@ import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Power, PowerOff, Eye, EyeOff } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Power, PowerOff, Eye } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import type { OpenPlatformApp, CreateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
 
@@ -40,7 +40,7 @@ export default function OpenPlatformPage() {
       setApps(res.items);
       setTotal(res.total);
     } catch (err) {
-      systemDialog.error('加载失败', String(err));
+      await systemDialog.alert({ title: '加载失败', message: String(err) });
     } finally {
       setLoading(false);
     }
@@ -58,47 +58,52 @@ export default function OpenPlatformPage() {
       setCreateDialogOpen(false);
       loadApps();
     } catch (err) {
-      systemDialog.error('创建失败', String(err));
+      await systemDialog.alert({ title: '创建失败', message: String(err) });
     }
   };
 
   const handleDelete = async (id: string, name: string) => {
-    const confirmed = await systemDialog.confirm('确认删除', `确定要删除应用"${name}"吗？此操作不可恢复。`);
+    const confirmed = await systemDialog.confirm({
+      title: '确认删除',
+      message: `确定要删除应用"${name}"吗？此操作不可恢复。`,
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     try {
       await openPlatformService.deleteApp(id);
-      systemDialog.success('删除成功');
+      await systemDialog.alert('删除成功');
       loadApps();
     } catch (err) {
-      systemDialog.error('删除失败', String(err));
+      await systemDialog.alert({ title: '删除失败', message: String(err) });
     }
   };
 
   const handleRegenerateKey = async (id: string, name: string) => {
-    const confirmed = await systemDialog.confirm(
-      '重新生成密钥',
-      `确定要为应用"${name}"重新生成 API Key 吗？旧密钥将立即失效。`
-    );
+    const confirmed = await systemDialog.confirm({
+      title: '重新生成密钥',
+      message: `确定要为应用"${name}"重新生成 API Key 吗？旧密钥将立即失效。`,
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     try {
       const res = await openPlatformService.regenerateKey(id);
       setNewApiKey(res.apiKey);
       setApiKeyDialogOpen(true);
-      systemDialog.success('密钥已重新生成');
+      await systemDialog.alert('密钥已重新生成');
     } catch (err) {
-      systemDialog.error('操作失败', String(err));
+      await systemDialog.alert({ title: '操作失败', message: String(err) });
     }
   };
 
   const handleToggleStatus = async (id: string) => {
     try {
       await openPlatformService.toggleAppStatus(id);
-      systemDialog.success('状态已切换');
+      await systemDialog.alert('状态已切换');
       loadApps();
     } catch (err) {
-      systemDialog.error('操作失败', String(err));
+      await systemDialog.alert({ title: '操作失败', message: String(err) });
     }
   };
 
@@ -115,17 +120,11 @@ export default function OpenPlatformPage() {
       setLogsTotal(res.total);
       setLogsPage(p);
     } catch (err) {
-      systemDialog.error('加载日志失败', String(err));
+      await systemDialog.alert({ title: '加载日志失败', message: String(err) });
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    systemDialog.success('已复制到剪贴板');
-  };
-
   const buildCurlCommand = (app: OpenPlatformApp) => {
-    // 构建可直接执行的 curl 命令
     const apiUrl = window.location.origin;
     const endpoint = `${apiUrl}/api/v1/open-platform/v1/chat/completions`;
     
@@ -153,7 +152,6 @@ curl -X POST '${endpoint}' \\
   const showCurlCommand = async (app: OpenPlatformApp) => {
     setGeneratingCurl(true);
     try {
-      // 添加短暂延迟以显示加载状态
       await new Promise(resolve => setTimeout(resolve, 100));
       const curl = buildCurlCommand(app);
       setCurrentCurlCommand(curl);
@@ -170,7 +168,7 @@ curl -X POST '${endpoint}' \\
         description="管理 API 应用与调用日志"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => handleViewLogs()}>
+            <Button variant="secondary" size="sm" onClick={() => handleViewLogs()}>
               查看所有日志
             </Button>
             <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
@@ -217,7 +215,7 @@ curl -X POST '${endpoint}' \\
                   <td className="px-4 py-3 text-sm">{app.boundUserName}</td>
                   <td className="px-4 py-3 text-sm">{app.boundGroupName || '-'}</td>
                   <td className="px-4 py-3">
-                    <Badge variant={app.isActive ? 'success' : 'secondary'}>
+                    <Badge variant={app.isActive ? 'success' : 'subtle'}>
                       {app.isActive ? '启用' : '禁用'}
                     </Badge>
                   </td>
@@ -297,11 +295,11 @@ curl -X POST '${endpoint}' \\
               共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
+              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
                 上一页
               </Button>
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={page >= Math.ceil(total / pageSize)}
                 onClick={() => setPage(page + 1)}
@@ -334,7 +332,7 @@ function CreateAppDialog({
   const [description, setDescription] = useState('');
   const [boundUserId, setBoundUserId] = useState('');
   const [boundGroupId, setBoundGroupId] = useState('');
-  const [ignoreUserSystemPrompt, setIgnoreUserSystemPrompt] = useState(true); // 默认忽略
+  const [ignoreUserSystemPrompt, setIgnoreUserSystemPrompt] = useState(true);
   const [users, setUsers] = useState<Array<{ userId: string; username: string; displayName: string }>>([]);
   const [groups, setGroups] = useState<Array<{ groupId: string; groupName: string }>>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -351,15 +349,14 @@ function CreateAppDialog({
     setLoadingUsers(true);
     try {
       const res = await getUsers({ page: 1, pageSize: 100 });
-      console.log('[OpenPlatform] 加载用户结果:', res);
       if (!res.success) {
-        systemDialog.error('加载用户失败', res.error?.message || '未知错误');
+        await systemDialog.alert({ title: '加载用户失败', message: res.error?.message || '未知错误' });
         setUsers([]);
         return;
       }
       setUsers(res.data?.items || []);
     } catch (err) {
-      systemDialog.error('加载用户失败', String(err));
+      await systemDialog.alert({ title: '加载用户失败', message: String(err) });
       setUsers([]);
     } finally {
       setLoadingUsers(false);
@@ -370,32 +367,31 @@ function CreateAppDialog({
     setLoadingGroups(true);
     try {
       const res = await getAdminGroups({ page: 1, pageSize: 100 });
-      console.log('[OpenPlatform] 加载群组结果:', res);
       if (!res.success) {
-        systemDialog.error('加载群组失败', res.error?.message || '未知错误');
+        await systemDialog.alert({ title: '加载群组失败', message: res.error?.message || '未知错误' });
         setGroups([]);
         return;
       }
       setGroups(res.data?.items || []);
     } catch (err) {
-      systemDialog.error('加载群组失败', String(err));
+      await systemDialog.alert({ title: '加载群组失败', message: String(err) });
       setGroups([]);
     } finally {
       setLoadingGroups(false);
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!appName.trim()) {
-      systemDialog.error('验证失败', '应用名称不能为空');
+      await systemDialog.alert({ title: '验证失败', message: '应用名称不能为空' });
       return;
     }
     if (!boundGroupId) {
-      systemDialog.error('验证失败', '必须绑定群组');
+      await systemDialog.alert({ title: '验证失败', message: '必须绑定群组' });
       return;
     }
     if (!boundUserId) {
-      systemDialog.error('验证失败', '必须绑定用户');
+      await systemDialog.alert({ title: '验证失败', message: '必须绑定用户' });
       return;
     }
 
@@ -411,7 +407,7 @@ function CreateAppDialog({
     setDescription('');
     setBoundUserId('');
     setBoundGroupId('');
-    setIgnoreUserSystemPrompt(true); // 重置为默认值
+    setIgnoreUserSystemPrompt(true);
   };
 
   return (
@@ -496,7 +492,7 @@ function CreateAppDialog({
         </div>
 
         <div className="flex justify-end gap-2 pt-4">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
           <Button onClick={handleSubmit}>创建</Button>
@@ -508,9 +504,9 @@ function CreateAppDialog({
 }
 
 function ApiKeyDialog({ open, onClose, apiKey }: { open: boolean; onClose: () => void; apiKey: string }) {
-  const copyKey = () => {
+  const copyKey = async () => {
     navigator.clipboard.writeText(apiKey);
-    systemDialog.success('已复制到剪贴板');
+    await systemDialog.alert('已复制到剪贴板');
   };
 
   return (
@@ -531,7 +527,7 @@ function ApiKeyDialog({ open, onClose, apiKey }: { open: boolean; onClose: () =>
           <label className="block text-sm font-medium mb-2">API Key</label>
           <div className="flex gap-2">
             <code className="flex-1 px-3 py-2 bg-muted rounded-md text-sm break-all">{apiKey}</code>
-            <Button variant="outline" size="sm" onClick={copyKey}>
+            <Button variant="secondary" size="sm" onClick={copyKey}>
               <Copy size={14} />
             </Button>
           </div>
@@ -586,13 +582,13 @@ function LogsDialog({
             <tbody>
               {logs.map((log) => (
                 <tr key={log.id} className="border-t border-border">
-                  <td className="px-3 py-2">{fmtDate(log.requestedAt)}</td>
+                  <td className="px-3 py-2">{fmtDate(log.startedAt)}</td>
                   <td className="px-3 py-2">{log.appName}</td>
                   <td className="px-3 py-2">
                     <code className="text-xs">{log.path}</code>
                   </td>
                   <td className="px-3 py-2">
-                    <Badge variant={log.statusCode >= 200 && log.statusCode < 300 ? 'success' : 'error'}>
+                    <Badge variant={log.statusCode >= 200 && log.statusCode < 300 ? 'success' : 'subtle'}>
                       {log.statusCode}
                     </Badge>
                   </td>
@@ -618,11 +614,11 @@ function LogsDialog({
               共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
+              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
                 上一页
               </Button>
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={page >= Math.ceil(total / pageSize)}
                 onClick={() => onPageChange(page + 1)}
@@ -639,9 +635,17 @@ function LogsDialog({
 }
 
 function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onClose: () => void; curlCommand: string }) {
-  const copyCommand = () => {
-    navigator.clipboard.writeText(curlCommand);
-    systemDialog.success('已复制到剪贴板');
+  const [isCopyingCurl, setIsCopyingCurl] = useState(false);
+
+  const copyCommand = async () => {
+    setIsCopyingCurl(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      navigator.clipboard.writeText(curlCommand);
+      await systemDialog.alert('已复制到剪贴板');
+    } finally {
+      setIsCopyingCurl(false);
+    }
   };
 
   return (
@@ -662,8 +666,15 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-medium">curl 命令</label>
-              <Button variant="outline" size="sm" onClick={copyCommand}>
-                <Copy size={14} className="mr-1" />
+              <Button variant="secondary" size="sm" onClick={copyCommand} disabled={isCopyingCurl}>
+                {isCopyingCurl ? (
+                  <svg className="w-3.5 h-3.5 animate-spin mr-1" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                ) : (
+                  <Copy size={14} className="mr-1" />
+                )}
                 复制命令
               </Button>
             </div>
