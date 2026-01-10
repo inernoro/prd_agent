@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, Zap, ExternalLink, Clock, Filter, Search, X } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import type { OpenPlatformApp, CreateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -151,7 +151,7 @@ export default function OpenPlatformPage() {
     loadLogs(1);
   };
 
-  const buildCurlCommand = (app: OpenPlatformApp) => {
+  const buildCurlCommand = (_app: OpenPlatformApp) => {
     const apiUrl = window.location.origin;
     const endpoint = `${apiUrl}/api/v1/open-platform/v1/chat/completions`;
     
@@ -187,12 +187,7 @@ export default function OpenPlatformPage() {
   return (
     <div className="h-full w-full overflow-auto p-6">
       <PageHeader
-        title={
-          <div className="flex items-center gap-2">
-            <Zap size={20} style={{ color: 'var(--accent-gold)' }} />
-            <span>开放平台</span>
-          </div>
-        }
+        title="开放平台"
         description="管理 API 应用与调用日志"
         actions={
           <div className="flex gap-2">
@@ -651,7 +646,7 @@ function LogsDialog({
   const pageSize = 20;
   const [selectedLog, setSelectedLog] = useState<OpenPlatformRequestLog | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters] = useState(false);
 
   const handleViewDetail = (log: OpenPlatformRequestLog) => {
     setSelectedLog(log);
@@ -665,35 +660,7 @@ function LogsDialog({
       <Dialog 
         open={open} 
         onOpenChange={(isOpen) => !isOpen && onClose()} 
-        title={
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-2">
-              <Clock size={18} style={{ color: 'var(--accent-gold)' }} />
-              <span>调用日志</span>
-              {hasActiveFilters && (
-                <Badge variant="featured" size="sm">已筛选</Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setShowFilters(!showFilters)}
-                title={showFilters ? '隐藏筛选' : '显示筛选'}
-              >
-                <Filter size={14} />
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => window.open('/#/system-logs', '_blank')}
-                title="在系统日志中查看更多"
-              >
-                <ExternalLink size={14} />
-              </Button>
-            </div>
-          </div>
-        }
+        title="调用日志"
         maxWidth={1100}
         content={
           <div className="space-y-4">
@@ -889,12 +856,7 @@ function LogsDialog({
       <Dialog
         open={detailOpen}
         onOpenChange={setDetailOpen}
-        title={
-          <div className="flex items-center gap-2">
-            <ExternalLink size={18} style={{ color: 'var(--accent-gold)' }} />
-            <span>请求详情</span>
-          </div>
-        }
+        title="请求详情"
         maxWidth={800}
         content={
           selectedLog && (
@@ -1007,12 +969,7 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
     <Dialog 
       open={open} 
       onOpenChange={(isOpen) => !isOpen && onClose()} 
-      title={
-        <div className="flex items-center gap-2">
-          <Copy size={18} style={{ color: 'var(--accent-gold)' }} />
-          <span>curl 调用示例</span>
-        </div>
-      }
+      title="curl 调用示例"
       maxWidth={800}
       content={
         <div className="space-y-4">

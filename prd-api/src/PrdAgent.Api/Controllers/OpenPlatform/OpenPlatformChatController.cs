@@ -49,7 +49,7 @@ public class OpenPlatformChatController : ControllerBase
     /// </summary>
     [HttpGet("models")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetModels()
+    public IActionResult GetModels()
     {
         try
         {
