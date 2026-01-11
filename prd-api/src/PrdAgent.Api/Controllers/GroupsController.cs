@@ -232,7 +232,7 @@ public class GroupsController : ControllerBase
     [HttpPost("{groupId}/session")]
     [ProducesResponseType(typeof(ApiResponse<OpenGroupSessionResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> OpenGroupSession(string groupId, [FromBody] OpenGroupSessionRequest request)
+    public async Task<IActionResult> OpenGroupSession(string groupId, [FromBody] OpenGroupSessionRequest request, CancellationToken ct = default)
     {
         var (isValid, errorMessage) = request.Validate();
         if (!isValid)
@@ -276,38 +276,24 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
-        // 复用同一用户在该群组的 session，避免重复创建
-        var cacheKey = $"group:session:{groupId}:{userId}";
-        var cachedSessionId = await _cache.GetAsync<string>(cacheKey);
-        if (!string.IsNullOrEmpty(cachedSessionId))
+        // QQ 群形态：单群单会话（复用同一 groupId 的会话线程）。
+        // 会话不再按“用户+群”拆分，也不再把成员身份写进 session（避免互相覆盖）。
+        var member = await _db.GroupMembers.Find(x => x.GroupId == groupId && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (member == null)
         {
-            var cachedSession = await _sessionService.GetByIdAsync(cachedSessionId);
-            if (cachedSession != null)
-            {
-                await _cache.RefreshExpiryAsync(cacheKey, GroupSessionExpiry);
-
-                return Ok(ApiResponse<OpenGroupSessionResponse>.Ok(new OpenGroupSessionResponse
-                {
-                    SessionId = cachedSession.SessionId,
-                    GroupId = groupId,
-                    DocumentId = cachedSession.DocumentId,
-                    CurrentRole = cachedSession.CurrentRole
-                }));
-            }
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
-        // 创建新 session（绑定 groupId）
         var session = await _sessionService.CreateAsync(group.PrdDocumentId, groupId);
-        session = await _sessionService.SwitchRoleAsync(session.SessionId, request.UserRole);
-
-        await _cache.SetAsync(cacheKey, session.SessionId, GroupSessionExpiry);
 
         return Ok(ApiResponse<OpenGroupSessionResponse>.Ok(new OpenGroupSessionResponse
         {
             SessionId = session.SessionId,
             GroupId = groupId,
             DocumentId = session.DocumentId,
-            CurrentRole = session.CurrentRole
+            // currentRole 语义：当前用户的身份（用于提示词分组与默认回答 bot）
+            CurrentRole = member.MemberRole
         }));
     }
 

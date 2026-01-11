@@ -1,0 +1,13 @@
+### 测试初始化默认应用
+POST http://localhost:5000/api/v1/admin/init/default-apps
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+### 获取应用列表
+GET http://localhost:5000/api/v1/admin/app-callers
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### 初始化所有（分组+模型+配置+应用）
+POST http://localhost:5000/api/v1/admin/init/all
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json

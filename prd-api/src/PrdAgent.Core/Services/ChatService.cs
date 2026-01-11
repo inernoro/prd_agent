@@ -68,6 +68,7 @@ public class ChatService : IChatService
         string? fixedAssistantMessageId = null,
         bool disableGroupContext = false,
         string? systemPromptOverride = null,
+        UserRole? answerAsRole = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // 真实“用户输入时间”：以服务端收到请求并进入业务处理的时间为准（UTC）
@@ -89,6 +90,9 @@ public class ChatService : IChatService
             };
             yield break;
         }
+
+        // 回答机器人/提示词选择角色：优先使用调用方传入（例如按群成员身份决定），否则回退到 session 的 CurrentRole（兼容历史）。
+        var effectiveAnswerRole = answerAsRole ?? session.CurrentRole;
 
         // 获取文档
         var document = await _documentService.GetByIdAsync(session.DocumentId);
@@ -144,7 +148,7 @@ public class ChatService : IChatService
         // 如果提供了 systemPromptOverride，直接使用覆盖值；否则使用默认的角色系统提示词
         var baseSystemPrompt = !string.IsNullOrWhiteSpace(systemPromptOverride)
             ? systemPromptOverride
-            : await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
+            : await _systemPromptService.GetSystemPromptAsync(effectiveAnswerRole, cancellationToken);
         var systemPromptRedacted = baseSystemPrompt;
         var docHash = Sha256Hex(document.RawContent);
 
@@ -154,7 +158,7 @@ public class ChatService : IChatService
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(effectivePromptKey))
         {
-            var prompt = await _promptService.GetPromptByKeyAsync(session.CurrentRole, effectivePromptKey, cancellationToken);
+            var prompt = await _promptService.GetPromptByKeyAsync(effectiveAnswerRole, effectivePromptKey, cancellationToken);
             if (prompt != null &&
                 (!string.IsNullOrWhiteSpace(prompt.Title) || !string.IsNullOrWhiteSpace(prompt.PromptTemplate)))
             {
@@ -223,7 +227,7 @@ public class ChatService : IChatService
             GroupId: session.GroupId,
             SessionId: sessionId,
             UserId: userId,
-            ViewRole: session.CurrentRole.ToString(),
+            ViewRole: effectiveAnswerRole.ToString(),
             DocumentChars: document.RawContent?.Length ?? 0,
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
@@ -246,7 +250,7 @@ public class ChatService : IChatService
                 Role = MessageRole.User,
                 Content = content ?? string.Empty,
                 LlmRequestId = llmRequestId,
-                ViewRole = session.CurrentRole,
+                ViewRole = effectiveAnswerRole,
                 AttachmentIds = attachmentIds ?? new List<string>(),
                 ResendOfMessageId = string.IsNullOrWhiteSpace(resendOfMessageId) ? null : resendOfMessageId!.Trim(),
                 Timestamp = userInputAtUtc
@@ -279,7 +283,7 @@ public class ChatService : IChatService
         }
 
         // 提前获取对应角色的机器人用户ID（用于创建 AI 占位消息）
-        var botUsername = session.CurrentRole switch
+        var botUsername = effectiveAnswerRole switch
         {
             UserRole.PM => "bot_pm",
             UserRole.DEV => "bot_dev",
@@ -346,7 +350,7 @@ public class ChatService : IChatService
                                     SenderId = botUserId,
                                     Role = MessageRole.Assistant,
                                     Content = "",  // 空内容，表示占位
-                                    ViewRole = session.CurrentRole,
+                                    ViewRole = effectiveAnswerRole,
                                     Timestamp = firstTokenAtUtc.Value
                                 };
                                 await _messageRepository.InsertManyAsync(new[] { placeholderMessage });
@@ -489,7 +493,7 @@ public class ChatService : IChatService
                 : fullResponse.ToString(),
             LlmRequestId = llmRequestId,
             ReplyToMessageId = userMessage.Id,
-            ViewRole = session.CurrentRole,
+            ViewRole = effectiveAnswerRole,
             TokenUsage = new TokenUsage
             {
                 Input = inputTokens,

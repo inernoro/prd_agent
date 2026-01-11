@@ -33,6 +33,8 @@ public class MongoDbContext
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
     // PRD 文档长期存储（原文 + 解析结构）
     public IMongoCollection<ParsedPrd> Documents => _database.GetCollection<ParsedPrd>("documents");
+    // Sessions：对话会话元数据（IM 形态的“会话线程”）
+    public IMongoCollection<Session> Sessions => _database.GetCollection<Session>("sessions");
     public IMongoCollection<Message> Messages => _database.GetCollection<Message>("messages");
     public IMongoCollection<GroupMessageCounter> GroupMessageCounters => _database.GetCollection<GroupMessageCounter>("group_message_counters");
     public IMongoCollection<ContentGap> ContentGaps => _database.GetCollection<ContentGap>("contentgaps");
@@ -80,6 +82,11 @@ public class MongoDbContext
     public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
     public IMongoCollection<OpenPlatformApp> OpenPlatformApps => _database.GetCollection<OpenPlatformApp>("openplatformapps");
     public IMongoCollection<OpenPlatformRequestLog> OpenPlatformRequestLogs => _database.GetCollection<OpenPlatformRequestLog>("openplatformrequestlogs");
+    public IMongoCollection<ModelGroup> ModelGroups => _database.GetCollection<ModelGroup>("model_groups");
+    public IMongoCollection<LLMAppCaller> LLMAppCallers => _database.GetCollection<LLMAppCaller>("llm_app_callers");
+    public IMongoCollection<ModelSchedulerConfig> ModelSchedulerConfigs => _database.GetCollection<ModelSchedulerConfig>("model_scheduler_config");
+    public IMongoCollection<ModelTestStub> ModelTestStubs => _database.GetCollection<ModelTestStub>("model_test_stubs");
+    public IMongoCollection<SystemRole> SystemRoles => _database.GetCollection<SystemRole>("system_roles");
 
     private void CreateIndexes()
     {
@@ -96,6 +103,18 @@ public class MongoDbContext
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {
             // ignore：旧环境可能存在 unique 索引；按“业务控制”原则不再强制
+        }
+
+        // SystemRoles 索引（按 Key 查询）
+        try
+        {
+            SystemRoles.Indexes.CreateOne(new CreateIndexModel<SystemRole>(
+                Builders<SystemRole>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions()));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
         }
 
         // Groups索引
@@ -134,6 +153,34 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // Sessions：groupId 唯一（单群单会话）。注意：个人会话 groupId 为空，应通过 partial filter 排除。
+        try
+        {
+            Sessions.Indexes.CreateOne(new CreateIndexModel<Session>(
+                Builders<Session>.IndexKeys.Ascending(s => s.GroupId),
+                new CreateIndexOptions<Session>
+                {
+                    Name = "uniq_sessions_group",
+                    Unique = true,
+                    PartialFilterExpression = new BsonDocument("GroupId", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore：可能已存在 unique 版本
+        }
+
+        // Sessions：个人会话列表排序/查询（ownerUserId + lastActiveAt desc）
+        Sessions.Indexes.CreateOne(new CreateIndexModel<Session>(
+            Builders<Session>.IndexKeys
+                .Ascending(s => s.OwnerUserId)
+                .Descending(s => s.LastActiveAt),
+            new CreateIndexOptions<Session>
+            {
+                Name = "idx_sessions_owner_last_active",
+                PartialFilterExpression = new BsonDocument("OwnerUserId", new BsonDocument("$type", "string"))
+            }));
 
         // Messages索引
         Messages.Indexes.CreateOne(new CreateIndexModel<Message>(
@@ -536,5 +583,25 @@ public class MongoDbContext
         OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
             Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
             new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(30) }));
+
+        // ModelGroups：按 modelType + isDefaultForType 查询默认分组
+        ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(
+            Builders<ModelGroup>.IndexKeys.Ascending(x => x.ModelType).Descending(x => x.IsDefaultForType)));
+        ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(
+            Builders<ModelGroup>.IndexKeys.Descending(x => x.CreatedAt)));
+
+        // LLMAppCallers：按 appCode 唯一
+        try
+        {
+            LLMAppCallers.Indexes.CreateOne(new CreateIndexModel<LLMAppCaller>(
+                Builders<LLMAppCaller>.IndexKeys.Ascending(x => x.AppCode),
+                new CreateIndexOptions { Name = "uniq_llm_app_callers_app_code" }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        LLMAppCallers.Indexes.CreateOne(new CreateIndexModel<LLMAppCaller>(
+            Builders<LLMAppCaller>.IndexKeys.Descending(x => x.LastCalledAt)));
     }
 }

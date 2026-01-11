@@ -5,6 +5,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 
 // AuthController 中定义的类型别名
 using ValidatePasswordRequest = PrdAgent.Api.Controllers.ValidatePasswordRequest;
@@ -46,6 +47,11 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminBulkCreateUsersResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserAvatarUpdateResponse>))]
 [JsonSerializable(typeof(ApiResponse<UserAvatarUploadResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminAuthzMeResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminPermissionCatalogResponse>))]
+[JsonSerializable(typeof(ApiResponse<List<SystemRoleDto>>))]
+[JsonSerializable(typeof(ApiResponse<SystemRoleDto>))]
+[JsonSerializable(typeof(ApiResponse<AdminUserAuthzSnapshot>))]
 [JsonSerializable(typeof(ApiResponse<ForceExpireResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminGroupListItem>>))]
 [JsonSerializable(typeof(ApiResponse<AdminGroupListItem>))]
@@ -97,6 +103,8 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(AdminCreateUserRequest))]
 [JsonSerializable(typeof(AdminBulkCreateUsersRequest))]
 [JsonSerializable(typeof(AdminBulkCreateUserItem))]
+[JsonSerializable(typeof(UpsertSystemRoleRequest))]
+[JsonSerializable(typeof(UpdateUserAuthzRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
 [JsonSerializable(typeof(ForceExpireRequest))]
 // Desktop Assets 请求
@@ -125,6 +133,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(DocumentContentInfo))]
 [JsonSerializable(typeof(SectionInfo))]
 [JsonSerializable(typeof(UserInfo))]
+[JsonSerializable(typeof(AdminPermissionDef))]
 // 引用模型（SSE citations）
 [JsonSerializable(typeof(DocCitation))]
 // 列表类型（引用）

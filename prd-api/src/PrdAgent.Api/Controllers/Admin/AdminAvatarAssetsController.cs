@@ -11,7 +11,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/assets/avatars")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminAvatarAssetsController : ControllerBase
 {
     private readonly ILogger<AdminAvatarAssetsController> _logger;

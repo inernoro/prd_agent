@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Json;
@@ -15,6 +17,7 @@ namespace PrdAgent.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1/sessions/{sessionId}/messages")]
+[Authorize]
 public class MessagesController : ControllerBase
 {
     private readonly IChatService _chatService;
@@ -77,8 +80,69 @@ public class MessagesController : ControllerBase
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
 
-        // 获取用户ID（如果已认证）
-        var userId = User.FindFirst("sub")?.Value;
+        // 获取用户ID（已认证）
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            var errorEvent = new StreamErrorEvent
+            {
+                Type = "error",
+                ErrorCode = ErrorCodes.UNAUTHORIZED,
+                ErrorMessage = "未授权"
+            };
+            var errorData = JsonSerializer.Serialize(errorEvent, AppJsonContext.Default.StreamErrorEvent);
+            await Response.WriteAsync($"event: error\ndata: {errorData}\n\n", cancellationToken);
+            return;
+        }
+
+        // 计算本次回答机器人角色：
+        // - 群会话：按成员身份（GroupMember.MemberRole）
+        // - 个人会话：仅 ADMIN 可用 request.Role 覆盖（用于“选择回答机器人”）
+        UserRole? answerAsRole = null;
+        try
+        {
+            var sid = (sessionId ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(sid))
+            {
+                var session = await _sessionService.GetByIdAsync(sid);
+                if (session != null)
+                {
+                    var gid = (session.GroupId ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(gid))
+                    {
+                        var member = await _db.GroupMembers
+                            .Find(x => x.GroupId == gid && x.UserId == userId)
+                            .FirstOrDefaultAsync(cancellationToken);
+                        if (member == null)
+                        {
+                            var err = new StreamErrorEvent
+                            {
+                                Type = "error",
+                                ErrorCode = ErrorCodes.PERMISSION_DENIED,
+                                ErrorMessage = "您不是该群组成员"
+                            };
+                            var errData = JsonSerializer.Serialize(err, AppJsonContext.Default.StreamErrorEvent);
+                            await Response.WriteAsync($"event: error\ndata: {errData}\n\n", cancellationToken);
+                            return;
+                        }
+
+                        answerAsRole = member.MemberRole;
+                    }
+                    else if (request.Role.HasValue)
+                    {
+                        var u = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(cancellationToken);
+                        if (u?.Role == UserRole.ADMIN)
+                        {
+                            answerAsRole = request.Role.Value;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // ignore：不因为“角色计算失败”中断对话；交由 ChatService 使用 session.CurrentRole 兜底
+        }
 
         try
         {
@@ -86,9 +150,10 @@ public class MessagesController : ControllerBase
                 sessionId,
                 request.Content,
                 resendOfMessageId: null,
-                request.PromptKey,
-                userId,
-                request.AttachmentIds,
+                promptKey: request.PromptKey,
+                userId: userId,
+                attachmentIds: request.AttachmentIds,
+                answerAsRole: answerAsRole,
                 cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);
@@ -160,7 +225,7 @@ public class MessagesController : ControllerBase
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
 
-        var userId = User.FindFirst("sub")?.Value;
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrWhiteSpace(userId))
         {
             var errorEvent = new StreamErrorEvent
@@ -243,6 +308,31 @@ public class MessagesController : ControllerBase
             return;
         }
 
+        // 群会话重发：按成员身份决定回答机器人；仅 ADMIN 可用 request.Role 覆盖
+        UserRole? answerAsRole = null;
+        try
+        {
+            var member = await _db.GroupMembers
+                .Find(x => x.GroupId == gid && x.UserId == userId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (member != null)
+            {
+                answerAsRole = member.MemberRole;
+            }
+            if (request.Role.HasValue)
+            {
+                var u = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(cancellationToken);
+                if (u?.Role == UserRole.ADMIN)
+                {
+                    answerAsRole = request.Role.Value;
+                }
+            }
+        }
+        catch
+        {
+            // ignore：交由 ChatService 用 session.CurrentRole 兜底
+        }
+
         var deletedAtUtc = DateTime.UtcNow;
 
         // 1) 软删除旧轮次：旧 user + 其 assistant 回复
@@ -267,9 +357,10 @@ public class MessagesController : ControllerBase
                 sessionId,
                 request.Content,
                 resendOfMessageId: old.Id,
-                request.PromptKey,
-                userId,
-                request.AttachmentIds,
+                promptKey: request.PromptKey,
+                userId: userId,
+                attachmentIds: request.AttachmentIds,
+                answerAsRole: answerAsRole,
                 cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);

@@ -78,6 +78,7 @@ public class RunConcurrencyAndCompatibilityTests
             string? fixedAssistantMessageId = null,
             bool disableGroupContext = false,
             string? systemPromptOverride = null,
+            UserRole? answerAsRole = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var mid = fixedAssistantMessageId ?? "a1";

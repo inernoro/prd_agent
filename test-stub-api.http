@@ -1,0 +1,132 @@
+### 模型测试桩系统 - API测试脚本
+### 使用方法：在 VS Code 中安装 REST Client 扩展，然后点击 "Send Request"
+
+@baseUrl = http://localhost:5000/api/v1
+@token = YOUR_ADMIN_TOKEN_HERE
+
+### 1. 获取所有测试桩
+GET {{baseUrl}}/admin/model-test/stubs
+Authorization: Bearer {{token}}
+
+### 2. 创建测试桩 - 随机失败（30%）
+PUT {{baseUrl}}/admin/model-test/stubs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "modelId": "test-model-001",
+  "platformId": "test-platform-001",
+  "enabled": true,
+  "failureMode": 1,
+  "failureRate": 30,
+  "latencyMs": 0,
+  "errorMessage": "测试：随机失败",
+  "description": "用于测试降权系统的随机失败场景"
+}
+
+### 3. 创建测试桩 - 始终失败
+PUT {{baseUrl}}/admin/model-test/stubs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "modelId": "test-model-002",
+  "platformId": "test-platform-001",
+  "enabled": true,
+  "failureMode": 2,
+  "failureRate": 100,
+  "latencyMs": 0,
+  "errorMessage": "测试：始终失败",
+  "description": "用于测试立即降权场景"
+}
+
+### 4. 创建测试桩 - 慢响应（5秒延迟）
+PUT {{baseUrl}}/admin/model-test/stubs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "modelId": "test-model-003",
+  "platformId": "test-platform-001",
+  "enabled": true,
+  "failureMode": 5,
+  "failureRate": 0,
+  "latencyMs": 5000,
+  "errorMessage": "",
+  "description": "用于测试慢响应场景"
+}
+
+### 5. 模拟降权
+POST {{baseUrl}}/admin/model-test/simulate/downgrade
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "groupId": "your-group-id",
+  "modelId": "your-model-id",
+  "platformId": "your-platform-id",
+  "failureCount": 3
+}
+
+### 6. 模拟恢复
+POST {{baseUrl}}/admin/model-test/simulate/recover
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "groupId": "your-group-id",
+  "modelId": "your-model-id",
+  "platformId": "your-platform-id",
+  "successCount": 2
+}
+
+### 7. 手动触发健康检查
+POST {{baseUrl}}/admin/model-test/health-check
+Authorization: Bearer {{token}}
+
+### 8. 获取分组监控数据
+GET {{baseUrl}}/admin/model-test/groups/your-group-id/monitoring
+Authorization: Bearer {{token}}
+
+### 9. 删除测试桩
+DELETE {{baseUrl}}/admin/model-test/stubs/stub-id-here
+Authorization: Bearer {{token}}
+
+### 10. 清空所有测试桩
+POST {{baseUrl}}/admin/model-test/stubs/clear
+Authorization: Bearer {{token}}
+
+###############################################
+# 完整测试流程示例
+###############################################
+
+### 步骤1：初始化系统（创建默认分组）
+POST {{baseUrl}}/admin/init/all
+Authorization: Bearer {{token}}
+
+### 步骤2：创建测试桩（模拟故障）
+PUT {{baseUrl}}/admin/model-test/stubs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "modelId": "deepseek-v3",
+  "platformId": "openai-platform",
+  "enabled": true,
+  "failureMode": 1,
+  "failureRate": 50,
+  "latencyMs": 0,
+  "errorMessage": "测试降权",
+  "description": "50%失败率测试"
+}
+
+### 步骤3：观察降权（多次调用后查看监控）
+# 这里需要实际调用模型接口，触发测试桩
+
+### 步骤4：查看监控数据
+GET {{baseUrl}}/admin/model-test/groups/default-chat-group/monitoring
+Authorization: Bearer {{token}}
+
+### 步骤5：清理测试桩
+POST {{baseUrl}}/admin/model-test/stubs/clear
+Authorization: Bearer {{token}}

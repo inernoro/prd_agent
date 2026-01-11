@@ -12,6 +12,7 @@ public interface IPreviewAskService
         string headingId,
         string? headingTitle,
         string question,
+        UserRole? answerAsRole = null,
         CancellationToken cancellationToken = default);
 }
 

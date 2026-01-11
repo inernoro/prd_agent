@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/upload-artifacts")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminUploadArtifactsController : ControllerBase
 {
     private readonly MongoDbContext _db;

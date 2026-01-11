@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { login } from '@/services';
+import { getAdminAuthzMe, login } from '@/services';
 import { Button } from '@/components/design/Button';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
@@ -10,6 +10,9 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.login);
   const setTokens = useAuthStore((s) => s.setTokens);
+  const setPermissions = useAuthStore((s) => s.setPermissions);
+  const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
+  const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
@@ -38,6 +41,18 @@ export default function LoginPage() {
       }
       setAuth(res.data.user, res.data.accessToken);
       setTokens(res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
+      setPermissionsLoaded(false);
+
+      // 拉取后台权限（决定菜单/路由可见性与准入）
+      const authz = await getAdminAuthzMe();
+      if (!authz.success) {
+        // 若无 admin.access 权限，后端会 403，这里直接回到登录态
+        logout();
+        setError(authz.error?.message || '无权限进入管理后台');
+        return;
+      }
+      setPermissions(authz.data.effectivePermissions || []);
+      setPermissionsLoaded(true);
       // 让主页面承接登录页背景：动 2 秒后冻结
       try {
         sessionStorage.setItem('prd-postlogin-fx', '1');

@@ -111,6 +111,7 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
+builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
@@ -126,6 +127,9 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, Prd
 
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
+
+// 智能模型调度器（新架构：应用身份识别 + 分组化配置 + 智能降权）
+builder.Services.AddScoped<ISmartModelScheduler, SmartModelScheduler>();
 
 // OpenAI 兼容 Images API（用于“生图模型”）
 builder.Services.AddScoped<OpenAIImageClient>();
@@ -695,8 +699,9 @@ builder.Services.AddScoped<IDocumentService>(sp =>
 builder.Services.AddScoped<ISessionService>(sp =>
 {
     var cache = sp.GetRequiredService<ICacheManager>();
+    var db = sp.GetRequiredService<MongoDbContext>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new SessionService(cache, idGenerator, sessionTimeout);
+    return new PrdAgent.Infrastructure.Services.MongoSessionService(db, idGenerator, cache);
 });
 
 builder.Services.AddScoped<IGroupService>(sp =>
@@ -824,6 +829,8 @@ app.UseAuthentication();
 // 认证通过后做 3 天滑动续期（now+72h，按端独立）
 app.UseMiddleware<AuthSlidingExpirationMiddleware>();
 app.UseAuthorization();
+// 管理后台权限（菜单/页面/接口统一绑定 permission key）
+app.UseMiddleware<PrdAgent.Api.Middleware.AdminPermissionMiddleware>();
 app.MapControllers();
 
 // 健康检查端点

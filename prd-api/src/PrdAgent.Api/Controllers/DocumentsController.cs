@@ -77,6 +77,12 @@ public class DocumentsController : ControllerBase
 
         try
         {
+            var userId = GetUserId(User);
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+            }
+
             // 解析文档
             var parsed = await _documentService.ParseAsync(request.Content);
             
@@ -85,6 +91,11 @@ public class DocumentsController : ControllerBase
             
             // 创建会话
             var session = await _sessionService.CreateAsync(parsed.Id);
+            // 个人会话：绑定 ownerUserId，便于 IM 形态的会话列表展示
+            session.OwnerUserId = userId;
+            // 标题：默认使用 PRD 标题（更复杂的标题生成由客户端/后台策略决定）
+            session.Title = parsed.Title;
+            await _sessionService.UpdateAsync(session);
 
             var response = new UploadDocumentResponse
             {

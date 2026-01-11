@@ -19,8 +19,12 @@ type AuthState = {
   token: string | null;
   refreshToken: string | null;
   sessionKey: string | null;
+  permissions: string[];
+  permissionsLoaded: boolean;
   login: (user: AuthUser, token: string) => void;
   setTokens: (token: string, refreshToken: string, sessionKey: string) => void;
+  setPermissions: (permissions: string[]) => void;
+  setPermissionsLoaded: (loaded: boolean) => void;
   patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
 };
@@ -33,11 +37,15 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       refreshToken: null,
       sessionKey: null,
+      permissions: [],
+      permissionsLoaded: false,
       login: (user, token) => set({ isAuthenticated: true, user, token }),
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
+      setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
+      setPermissionsLoaded: (loaded) => set({ permissionsLoaded: !!loaded }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
-      logout: () => set({ isAuthenticated: false, user: null, token: null, refreshToken: null, sessionKey: null }),
+      logout: () => set({ isAuthenticated: false, user: null, token: null, refreshToken: null, sessionKey: null, permissions: [], permissionsLoaded: false }),
     }),
     { name: 'prd-admin-auth' }
   )

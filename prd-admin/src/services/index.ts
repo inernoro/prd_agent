@@ -2,6 +2,16 @@
 
 import type { LoginContract } from '@/services/contracts/auth';
 import type {
+  GetAdminAuthzMeContract,
+  GetAdminPermissionCatalogContract,
+  GetSystemRolesContract,
+  CreateSystemRoleContract,
+  UpdateSystemRoleContract,
+  DeleteSystemRoleContract,
+  GetUserAuthzContract,
+  UpdateUserAuthzContract,
+} from '@/services/contracts/authz';
+import type {
   GetUsersContract,
   GenerateInviteCodesContract,
   CreateAdminUserContract,
@@ -125,10 +135,23 @@ import type {
   DeleteLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
+import type { IModelGroupsService } from '@/services/contracts/modelGroups';
+import type { IAppCallersService } from '@/services/contracts/appCallers';
+import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import { loginReal } from '@/services/real/auth';
+import {
+  getAdminAuthzMeReal,
+  getAdminPermissionCatalogReal,
+  getSystemRolesReal,
+  createSystemRoleReal,
+  updateSystemRoleReal,
+  deleteSystemRoleReal,
+  getUserAuthzReal,
+  updateUserAuthzReal,
+} from '@/services/real/authz';
 import {
   getUsersReal,
   generateInviteCodesReal,
@@ -255,6 +278,9 @@ import {
   deleteLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
 import { OpenPlatformService } from '@/services/real/openPlatform';
+import { ModelGroupsService } from '@/services/real/modelGroups';
+import { AppCallersService } from '@/services/real/appCallers';
+import { SchedulerConfigService } from '@/services/real/schedulerConfig';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -267,6 +293,15 @@ function withAuth<TArgs extends unknown[], TResult>(
 }
 
 export const login: LoginContract = loginReal;
+
+export const getAdminAuthzMe: GetAdminAuthzMeContract = withAuth(getAdminAuthzMeReal);
+export const getAdminPermissionCatalog: GetAdminPermissionCatalogContract = withAuth(getAdminPermissionCatalogReal);
+export const getSystemRoles: GetSystemRolesContract = withAuth(getSystemRolesReal);
+export const createSystemRole: CreateSystemRoleContract = withAuth(createSystemRoleReal);
+export const updateSystemRole: UpdateSystemRoleContract = withAuth(updateSystemRoleReal);
+export const deleteSystemRole: DeleteSystemRoleContract = withAuth(deleteSystemRoleReal);
+export const getUserAuthz: GetUserAuthzContract = withAuth(getUserAuthzReal);
+export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthzReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
 export const createUser: CreateAdminUserContract = withAuth(createUserReal);
@@ -439,3 +474,47 @@ export const updateLiteraryPrompt: UpdateLiteraryPromptContract = withAuth(updat
 export const deleteLiteraryPrompt: DeleteLiteraryPromptContract = withAuth(deleteLiteraryPromptReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
+export const modelGroupsService: IModelGroupsService = new ModelGroupsService();
+export const appCallersService: IAppCallersService = new AppCallersService();
+export const schedulerConfigService: ISchedulerConfigService = new SchedulerConfigService();
+
+// 导出新服务的方法
+export const getModelGroups = async () => {
+  const response = await modelGroupsService.getModelGroups();
+  if (response.success && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || '获取模型分组失败');
+};
+export const createModelGroup = (data: Parameters<IModelGroupsService['createModelGroup']>[0]) => modelGroupsService.createModelGroup(data);
+export const updateModelGroup = (id: string, data: Parameters<IModelGroupsService['updateModelGroup']>[1]) => modelGroupsService.updateModelGroup(id, data);
+export const deleteModelGroup = (id: string) => modelGroupsService.deleteModelGroup(id);
+export const getGroupMonitoring = async (groupId: string) => {
+  const response = await modelGroupsService.getGroupMonitoring(groupId);
+  if (response.success && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || '获取监控数据失败');
+};
+export const simulateDowngrade = (groupId: string, modelId: string, platformId: string, failureCount: number) => modelGroupsService.simulateDowngrade(groupId, modelId, platformId, failureCount);
+export const simulateRecover = (groupId: string, modelId: string, platformId: string, successCount: number) => modelGroupsService.simulateRecover(groupId, modelId, platformId, successCount);
+
+export const getAppCallers = async () => {
+  const response = await appCallersService.getAppCallers();
+  if (response.success && response.data) {
+    return response.data.items;
+  }
+  throw new Error(response.error?.message || '获取应用列表失败');
+};
+export const updateAppCaller = (id: string, data: Parameters<IAppCallersService['updateAppCaller']>[1]) => appCallersService.updateAppCaller(id, data);
+export const deleteAppCaller = (id: string) => appCallersService.deleteAppCaller(id);
+export const scanAppCallers = () => appCallersService.scanAppCallers();
+
+export const getSchedulerConfig = async () => {
+  const response = await schedulerConfigService.getSchedulerConfig();
+  if (response.success && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || '获取系统配置失败');
+};
+export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService['updateSchedulerConfig']>[0]) => schedulerConfigService.updateSchedulerConfig(config);

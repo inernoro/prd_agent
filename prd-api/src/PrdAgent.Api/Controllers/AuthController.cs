@@ -19,6 +19,7 @@ public class AuthController : ControllerBase
     private readonly IJwtService _jwtService;
     private readonly ILoginAttemptService _loginAttemptService;
     private readonly IAuthSessionService _authSessionService;
+    private readonly IConfiguration _cfg;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
@@ -26,13 +27,31 @@ public class AuthController : ControllerBase
         IJwtService jwtService,
         ILoginAttemptService loginAttemptService,
         IAuthSessionService authSessionService,
+        IConfiguration cfg,
         ILogger<AuthController> logger)
     {
         _userService = userService;
         _jwtService = jwtService;
         _loginAttemptService = loginAttemptService;
         _authSessionService = authSessionService;
+        _cfg = cfg;
         _logger = logger;
+    }
+
+    private bool IsRootEnabled()
+    {
+        var u = (_cfg["RootAccess:Username"] ?? string.Empty).Trim();
+        var p = (_cfg["RootAccess:Password"] ?? string.Empty).Trim();
+        return !string.IsNullOrWhiteSpace(u) && !string.IsNullOrWhiteSpace(p);
+    }
+
+    private bool IsRootCredential(string username, string password)
+    {
+        if (!IsRootEnabled()) return false;
+        var u = (_cfg["RootAccess:Username"] ?? string.Empty).Trim();
+        var p = (_cfg["RootAccess:Password"] ?? string.Empty).Trim();
+        return string.Equals(u, (username ?? string.Empty).Trim(), StringComparison.Ordinal)
+               && string.Equals(p, (password ?? string.Empty).Trim(), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -124,6 +143,48 @@ public class AuthController : ControllerBase
                     $"账号已被锁定，请在 {remainingSeconds} 秒后重试"));
         }
 
+        var ct = (request.ClientType ?? string.Empty).Trim().ToLowerInvariant();
+
+        // root 破窗账户：不落库，固定“账号+密码”来自环境变量，重启生效
+        if (ct == "admin" && IsRootCredential(request.Username, request.Password))
+        {
+            var rootUser = new User
+            {
+                UserId = "root",
+                Username = "root",
+                DisplayName = "ROOT",
+                Role = UserRole.ADMIN,
+                Status = UserStatus.Active
+            };
+
+            var tokenVersionRoot = await _authSessionService.GetTokenVersionAsync(rootUser.UserId, ct);
+            var (sessionKeyRoot, refreshTokenRoot) = await _authSessionService.CreateRefreshSessionAsync(rootUser.UserId, ct);
+            var accessTokenRoot = _jwtService.GenerateAccessToken(rootUser, ct, sessionKeyRoot, tokenVersionRoot);
+
+            var responseRoot = new LoginResponse
+            {
+                AccessToken = accessTokenRoot,
+                RefreshToken = refreshTokenRoot,
+                SessionKey = sessionKeyRoot,
+                ClientType = ct,
+                ExpiresIn = 3600,
+                User = new UserInfo
+                {
+                    UserId = rootUser.UserId,
+                    Username = rootUser.Username,
+                    DisplayName = rootUser.DisplayName,
+                    Role = rootUser.Role,
+                    UserType = rootUser.UserType,
+                    BotKind = rootUser.BotKind,
+                    AvatarFileName = null,
+                    AvatarUrl = null
+                }
+            };
+
+            _logger.LogWarning("ROOT login used (clientType=admin)");
+            return Ok(ApiResponse<LoginResponse>.Ok(responseRoot));
+        }
+
         var user = await _userService.ValidateCredentialsAsync(request.Username, request.Password);
         
         if (user == null)
@@ -150,13 +211,11 @@ public class AuthController : ControllerBase
         // 更新最后登录时间
         await _userService.UpdateLastLoginAsync(user.UserId);
 
-        var ct = (request.ClientType ?? string.Empty).Trim().ToLowerInvariant();
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
         var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, ct);
         var accessToken = _jwtService.GenerateAccessToken(user, ct, sessionKey, tokenVersion);
 
-        var cfg = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-        var avatarUrl = AvatarUrlBuilder.Build(cfg, user);
+        var avatarUrl = AvatarUrlBuilder.Build(_cfg, user);
 
         var response = new LoginResponse
         {
@@ -238,6 +297,42 @@ public class AuthController : ControllerBase
         }
 
         // refresh 成功：签发新的 access token（tokenVersion 不变；踢下线通过 bump tokenVersion 实现）
+        if (ct == "admin" && string.Equals((request.UserId ?? string.Empty).Trim(), "root", StringComparison.Ordinal) && IsRootEnabled())
+        {
+            var rootUser = new User
+            {
+                UserId = "root",
+                Username = "root",
+                DisplayName = "ROOT",
+                Role = UserRole.ADMIN,
+                Status = UserStatus.Active
+            };
+            var tokenVersionRoot = await _authSessionService.GetTokenVersionAsync(rootUser.UserId, ct);
+            var accessTokenRoot = _jwtService.GenerateAccessToken(rootUser, ct, request.SessionKey, tokenVersionRoot);
+
+            var responseRoot = new LoginResponse
+            {
+                AccessToken = accessTokenRoot,
+                RefreshToken = request.RefreshToken,
+                SessionKey = request.SessionKey,
+                ClientType = ct,
+                ExpiresIn = 3600,
+                User = new UserInfo
+                {
+                    UserId = rootUser.UserId,
+                    Username = rootUser.Username,
+                    DisplayName = rootUser.DisplayName,
+                    Role = rootUser.Role,
+                    UserType = rootUser.UserType,
+                    BotKind = rootUser.BotKind,
+                    AvatarFileName = null,
+                    AvatarUrl = null
+                }
+            };
+
+            return Ok(ApiResponse<LoginResponse>.Ok(responseRoot));
+        }
+
         var user = await _userService.GetByIdAsync(request.UserId);
         if (user == null || user.Status == UserStatus.Disabled)
         {
@@ -247,8 +342,7 @@ public class AuthController : ControllerBase
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
         var accessToken = _jwtService.GenerateAccessToken(user, ct, request.SessionKey, tokenVersion);
 
-        var cfg2 = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-        var avatarUrl2 = AvatarUrlBuilder.Build(cfg2, user);
+        var avatarUrl2 = AvatarUrlBuilder.Build(_cfg, user);
 
         var response = new LoginResponse
         {

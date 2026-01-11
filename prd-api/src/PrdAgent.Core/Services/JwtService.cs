@@ -43,17 +43,23 @@ public class JwtService : IJwtService
             sk = Guid.NewGuid().ToString("N");
         }
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
-            new Claim(JwtRegisteredClaimNames.Sub, user.UserId),
-            new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
-            new Claim("displayName", user.DisplayName),
-            new Claim("role", user.Role.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
-            new Claim("clientType", ct),
-            new Claim("sessionKey", sk),
-            new Claim("tv", tokenVersion.ToString())
+            new(JwtRegisteredClaimNames.Sub, user.UserId),
+            new(JwtRegisteredClaimNames.UniqueName, user.Username),
+            new("displayName", user.DisplayName),
+            new("role", user.Role.ToString()),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
+            new("clientType", ct),
+            new("sessionKey", sk),
+            new("tv", tokenVersion.ToString())
         };
+
+        // root 破窗账户：标记在 token 中，供授权层兜底放行（不依赖 DB）
+        if (string.Equals(user.UserId, "root", StringComparison.Ordinal))
+        {
+            claims.Add(new Claim("isRoot", "1"));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _issuer,

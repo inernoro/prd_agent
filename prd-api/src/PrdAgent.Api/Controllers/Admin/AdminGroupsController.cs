@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/groups")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminGroupsController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -18,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/platforms")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminPlatformsController : ControllerBase
 {
     private readonly MongoDbContext _db;

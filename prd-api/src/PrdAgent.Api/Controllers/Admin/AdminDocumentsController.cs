@@ -11,7 +11,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/documents")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminDocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;

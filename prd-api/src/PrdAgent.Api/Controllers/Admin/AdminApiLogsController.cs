@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/api-logs")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminApiLogsController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -73,6 +73,30 @@ public class ChatRunsController : ControllerBase
         if (string.IsNullOrWhiteSpace(userId))
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "未授权"));
 
+        // 计算本次回答机器人角色：
+        // - 群会话：按成员身份（GroupMember.MemberRole）
+        // - 个人会话：仅 ADMIN 可用 request.Role 覆盖（用于“选择回答机器人”）
+        var effectiveAnswerRole = session.CurrentRole;
+        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        {
+            var gid2 = session.GroupId.Trim();
+            var member = await _db.GroupMembers.Find(x => x.GroupId == gid2 && x.UserId == userId).FirstOrDefaultAsync(ct);
+            if (member == null)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+            }
+            effectiveAnswerRole = member.MemberRole;
+        }
+        if (request.Role.HasValue)
+        {
+            var u = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+            if (u?.Role == UserRole.ADMIN)
+            {
+                effectiveAnswerRole = request.Role.Value;
+            }
+        }
+
         var runId = Guid.NewGuid().ToString("N");
         var assistantMessageId = Guid.NewGuid().ToString("N");
         var userMessageId = Guid.NewGuid().ToString("N");
@@ -97,7 +121,9 @@ public class ChatRunsController : ControllerBase
                 sessionId = sid,
                 content = request.Content,
                 promptKey = request.PromptKey,
+                // 兼容字段：role（历史）；新字段：answerAsRole（本次回答机器人角色）
                 role = request.Role?.ToString(),
+                answerAsRole = effectiveAnswerRole.ToString(),
                 attachmentIds = request.AttachmentIds ?? new List<string>(),
                 userId
             }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
@@ -121,7 +147,7 @@ public class ChatRunsController : ControllerBase
                 SenderId = userId,
                 Role = MessageRole.User,
                 Content = request.Content ?? "",
-                ViewRole = session.CurrentRole,
+                ViewRole = effectiveAnswerRole,
                 Timestamp = DateTime.UtcNow
             };
             await _messageRepository.InsertManyAsync(new[] { userMessage });
@@ -131,7 +157,7 @@ public class ChatRunsController : ControllerBase
                 runId, userMessageId, userGroupSeq);
             
             // 2. 创建 AI 占位消息（分配下一个 seq）
-            var botUsername = session.CurrentRole switch
+            var botUsername = effectiveAnswerRole switch
             {
                 UserRole.DEV => "bot_dev",
                 UserRole.QA => "bot_qa",
@@ -153,7 +179,7 @@ public class ChatRunsController : ControllerBase
                     SenderId = botUser.UserId,
                     Role = MessageRole.Assistant,
                     Content = "",  // 空内容，标识为占位消息
-                    ViewRole = session.CurrentRole,
+                    ViewRole = effectiveAnswerRole,
                     Timestamp = DateTime.UtcNow
                 };
                 

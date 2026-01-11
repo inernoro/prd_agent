@@ -1,0 +1,97 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// LLM应用调用者 - 标识每个使用LLM能力的应用
+/// </summary>
+public class LLMAppCaller
+{
+    /// <summary>应用ID</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    
+    /// <summary>应用标识码（如：chat.sendMessage, prd.analyze）</summary>
+    public string AppCode { get; set; } = string.Empty;
+    
+    /// <summary>显示名称</summary>
+    public string DisplayName { get; set; } = string.Empty;
+    
+    /// <summary>应用描述</summary>
+    public string? Description { get; set; }
+    
+    /// <summary>期望的模型类型需求列表</summary>
+    public List<AppModelRequirement> ModelRequirements { get; set; } = new();
+    
+    /// <summary>是否为自动注册（首次调用时自动创建）</summary>
+    public bool IsAutoRegistered { get; set; } = false;
+    
+    /// <summary>总调用次数</summary>
+    public long TotalCalls { get; set; } = 0;
+    
+    /// <summary>成功调用次数</summary>
+    public long SuccessCalls { get; set; } = 0;
+    
+    /// <summary>失败调用次数</summary>
+    public long FailedCalls { get; set; } = 0;
+    
+    /// <summary>最后调用时间</summary>
+    public DateTime? LastCalledAt { get; set; }
+    
+    /// <summary>创建时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    
+    /// <summary>更新时间</summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 应用的模型需求
+/// </summary>
+public class AppModelRequirement
+{
+    /// <summary>模型类型（chat/intent/vision/image-gen等）</summary>
+    public string ModelType { get; set; } = string.Empty;
+    
+    /// <summary>用途说明（如：理解用户意图、生成图片）</summary>
+    public string Purpose { get; set; } = string.Empty;
+    
+    /// <summary>绑定的模型分组ID（null表示使用该类型的默认分组）</summary>
+    public string? ModelGroupId { get; set; }
+    
+    /// <summary>是否必需（false表示可选）</summary>
+    public bool IsRequired { get; set; } = true;
+}
+
+/// <summary>
+/// 模型类型常量
+/// </summary>
+public static class ModelTypes
+{
+    /// <summary>通用对话</summary>
+    public const string Chat = "chat";
+    
+    /// <summary>快速意图识别</summary>
+    public const string Intent = "intent";
+    
+    /// <summary>图片识别</summary>
+    public const string Vision = "vision";
+    
+    /// <summary>图片生成</summary>
+    public const string ImageGen = "image-gen";
+    
+    /// <summary>代码生成（预留）</summary>
+    public const string Code = "code";
+    
+    /// <summary>长文本处理（预留）</summary>
+    public const string LongContext = "long-context";
+    
+    /// <summary>向量嵌入（预留）</summary>
+    public const string Embedding = "embedding";
+    
+    /// <summary>重排序（预留）</summary>
+    public const string Rerank = "rerank";
+    
+    /// <summary>获取所有基础类型</summary>
+    public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen };
+    
+    /// <summary>获取所有类型（包括扩展）</summary>
+    public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank };
+}

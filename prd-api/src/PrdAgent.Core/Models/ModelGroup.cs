@@ -1,0 +1,76 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 模型分组 - 按模型类型组织的模型列表
+/// </summary>
+public class ModelGroup
+{
+    /// <summary>分组ID</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    
+    /// <summary>分组名称（如：默认对话分组、快速意图分组）</summary>
+    public string Name { get; set; } = string.Empty;
+    
+    /// <summary>模型类型（chat/intent/vision/image-gen等）</summary>
+    public string ModelType { get; set; } = string.Empty;
+    
+    /// <summary>是否为该类型的默认分组</summary>
+    public bool IsDefaultForType { get; set; } = false;
+    
+    /// <summary>分组中的模型列表（按优先级排序）</summary>
+    public List<ModelGroupItem> Models { get; set; } = new();
+    
+    /// <summary>分组描述</summary>
+    public string? Description { get; set; }
+    
+    /// <summary>创建时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    
+    /// <summary>更新时间</summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 分组中的模型项
+/// </summary>
+public class ModelGroupItem
+{
+    /// <summary>模型ID</summary>
+    public string ModelId { get; set; } = string.Empty;
+    
+    /// <summary>平台ID</summary>
+    public string PlatformId { get; set; } = string.Empty;
+    
+    /// <summary>组内优先级（越小越优先，从1开始）</summary>
+    public int Priority { get; set; } = 1;
+    
+    /// <summary>健康状态</summary>
+    public ModelHealthStatus HealthStatus { get; set; } = ModelHealthStatus.Healthy;
+    
+    /// <summary>最后失败时间</summary>
+    public DateTime? LastFailedAt { get; set; }
+    
+    /// <summary>最后成功时间</summary>
+    public DateTime? LastSuccessAt { get; set; }
+    
+    /// <summary>连续失败次数</summary>
+    public int ConsecutiveFailures { get; set; } = 0;
+    
+    /// <summary>连续成功次数（用于恢复判断）</summary>
+    public int ConsecutiveSuccesses { get; set; } = 0;
+}
+
+/// <summary>
+/// 模型健康状态
+/// </summary>
+public enum ModelHealthStatus
+{
+    /// <summary>健康</summary>
+    Healthy = 0,
+    
+    /// <summary>降权（仍可用但优先级降低）</summary>
+    Degraded = 1,
+    
+    /// <summary>不可用（暂时跳过）</summary>
+    Unavailable = 2
+}

@@ -1,0 +1,64 @@
+import type { ApiResponse } from '@/types/api';
+import type {
+  ModelGroup,
+  CreateModelGroupRequest,
+  UpdateModelGroupRequest,
+  ModelGroupMonitoringData,
+} from '../../types/modelGroup';
+
+export interface IModelGroupsService {
+  /**
+   * 获取模型分组列表
+   */
+  getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>>;
+
+  /**
+   * 获取单个模型分组
+   */
+  getModelGroup(id: string): Promise<ApiResponse<ModelGroup>>;
+
+  /**
+   * 创建模型分组
+   */
+  createModelGroup(
+    request: CreateModelGroupRequest
+  ): Promise<ApiResponse<ModelGroup>>;
+
+  /**
+   * 更新模型分组
+   */
+  updateModelGroup(
+    id: string,
+    request: UpdateModelGroupRequest
+  ): Promise<ApiResponse<ModelGroup>>;
+
+  /**
+   * 删除模型分组
+   */
+  deleteModelGroup(id: string): Promise<ApiResponse<{ id: string }>>;
+
+  /**
+   * 获取分组监控数据
+   */
+  getGroupMonitoring(groupId: string): Promise<ApiResponse<ModelGroupMonitoringData>>;
+
+  /**
+   * 模拟降权
+   */
+  simulateDowngrade(
+    groupId: string,
+    modelId: string,
+    platformId: string,
+    failureCount: number
+  ): Promise<ApiResponse<void>>;
+
+  /**
+   * 模拟恢复
+   */
+  simulateRecover(
+    groupId: string,
+    modelId: string,
+    platformId: string,
+    successCount: number
+  ): Promise<ApiResponse<void>>;
+}

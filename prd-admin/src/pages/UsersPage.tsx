@@ -4,7 +4,7 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate } from '@/services';
+import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog } from '@/services';
 import { CheckCircle2, Circle, KeyRound, MoreVertical, Pencil, XCircle, UserCog } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
@@ -142,6 +142,18 @@ export default function UsersPage() {
 
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
   const { login: authLogin } = useAuthStore();
+  const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('admin.authz.manage'));
+
+  // 用户后台权限（systemRoleKey + allow/deny）
+  const [authzOpen, setAuthzOpen] = useState(false);
+  const [authzUser, setAuthzUser] = useState<UserRow | null>(null);
+  const [authzLoading, setAuthzLoading] = useState(false);
+  const [authzSaving, setAuthzSaving] = useState(false);
+  const [authzSystemRoles, setAuthzSystemRoles] = useState<Array<{ key: string; name: string }>>([]);
+  const [authzSystemRoleKey, setAuthzSystemRoleKey] = useState<string>('none');
+  const [authzCatalog, setAuthzCatalog] = useState<Array<{ key: string; name: string; description?: string | null }>>([]);
+  const [authzAllowSet, setAuthzAllowSet] = useState<Set<string>>(new Set());
+  const [authzDenySet, setAuthzDenySet] = useState<Set<string>>(new Set());
 
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
@@ -430,6 +442,83 @@ export default function UsersPage() {
       await systemDialog.alert(error instanceof Error ? error.message : '切换用户时发生错误');
     } finally {
       setSwitchingUserId(null);
+    }
+  };
+
+  const openUserAuthz = async (u: UserRow) => {
+    if (!canAuthzManage) {
+      await systemDialog.alert('无权限：需要 admin.authz.manage');
+      return;
+    }
+    setAuthzUser(u);
+    setAuthzOpen(true);
+    setAuthzLoading(true);
+    try {
+      const [rolesRes, snapRes, catalogRes] = await Promise.all([getSystemRoles(), getUserAuthz(u.userId), getAdminPermissionCatalog()]);
+      if (!rolesRes.success) {
+        await systemDialog.alert(rolesRes.error?.message || '加载系统角色失败');
+        setAuthzOpen(false);
+        return;
+      }
+      if (!snapRes.success) {
+        await systemDialog.alert(snapRes.error?.message || '加载用户权限失败');
+        setAuthzOpen(false);
+        return;
+      }
+      if (!catalogRes.success) {
+        await systemDialog.alert(catalogRes.error?.message || '加载权限清单失败');
+        setAuthzOpen(false);
+        return;
+      }
+      setAuthzSystemRoles((rolesRes.data || []).map((r) => ({ key: r.key, name: r.name })));
+      setAuthzSystemRoleKey(String(snapRes.data.systemRoleKey || snapRes.data.effectiveSystemRoleKey || 'none'));
+      setAuthzCatalog((catalogRes.data.items || []).map((x) => ({ key: String(x.key || ''), name: String(x.name || ''), description: x.description ?? null })));
+      setAuthzAllowSet(new Set((snapRes.data.permAllow || []).map((x) => String(x || '').trim()).filter(Boolean)));
+      setAuthzDenySet(new Set((snapRes.data.permDeny || []).map((x) => String(x || '').trim()).filter(Boolean)));
+    } finally {
+      setAuthzLoading(false);
+    }
+  };
+
+  const toggleAuthzSet = (which: 'allow' | 'deny', key: string) => {
+    const k = String(key || '').trim();
+    if (!k) return;
+    if (which === 'allow') {
+      setAuthzAllowSet((prev) => {
+        const n = new Set(prev);
+        if (n.has(k)) n.delete(k);
+        else n.add(k);
+        return n;
+      });
+    } else {
+      setAuthzDenySet((prev) => {
+        const n = new Set(prev);
+        if (n.has(k)) n.delete(k);
+        else n.add(k);
+        return n;
+      });
+    }
+  };
+
+  const saveUserAuthz = async () => {
+    if (!authzUser) return;
+    if (authzSaving) return;
+    setAuthzSaving(true);
+    try {
+      const res = await updateUserAuthz(authzUser.userId, {
+        systemRoleKey: String(authzSystemRoleKey || '').trim() || null,
+        permAllow: Array.from(authzAllowSet).sort(),
+        permDeny: Array.from(authzDenySet).sort(),
+      });
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '保存失败');
+        return;
+      }
+      await systemDialog.alert('已保存该用户的后台权限');
+      setAuthzOpen(false);
+      await load();
+    } finally {
+      setAuthzSaving(false);
     }
   };
 
@@ -954,6 +1043,19 @@ export default function UsersPage() {
                               >
                                 修改密码
                               </DropdownMenu.Item>
+
+                              {canAuthzManage ? (
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    void openUserAuthz(u);
+                                  }}
+                                >
+                                  后台菜单权限
+                                </DropdownMenu.Item>
+                              ) : null}
 
                               <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
 
@@ -1777,6 +1879,121 @@ export default function UsersPage() {
               </Button>
               <Button variant="primary" size="sm" disabled={forceExpireSubmitting} onClick={submitForceExpire}>
                 {forceExpireSubmitting ? '处理中...' : '确认踢下线'}
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={authzOpen}
+        onOpenChange={(v) => {
+          setAuthzOpen(v);
+          if (!v) {
+            setAuthzUser(null);
+            setAuthzLoading(false);
+            setAuthzSaving(false);
+            setAuthzSystemRoles([]);
+            setAuthzSystemRoleKey('none');
+            setAuthzCatalog([]);
+            setAuthzAllowSet(new Set());
+            setAuthzDenySet(new Set());
+          }
+        }}
+        title={authzUser ? `后台菜单权限：${authzUser.username}` : '后台菜单权限'}
+        description={authzUser ? `${authzUser.displayName} · ${authzUser.userId}` : undefined}
+        content={
+          <div className="space-y-4">
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              说明：菜单/路由由 permission 推导。这里设置该用户的 system role（主）以及 allow/deny（例外）。
+            </div>
+
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>系统角色（systemRoleKey）</div>
+              <select
+                value={authzSystemRoleKey}
+                onChange={(e) => setAuthzSystemRoleKey(e.target.value)}
+                disabled={authzLoading || authzSaving}
+                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              >
+                {authzSystemRoles.map((r) => (
+                  <option key={r.key} value={r.key}>{r.name}（{r.key}）</option>
+                ))}
+                {authzSystemRoles.length === 0 ? <option value="none">无权限（none）</option> : null}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>额外允许（勾选 permission）</div>
+                <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
+                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  {authzCatalog.map((p) => {
+                    const k = String(p.key || '').trim();
+                    const checked = authzAllowSet.has(k);
+                    return (
+                      <label key={`allow-${k}`} className="flex items-start gap-2 px-2 py-1 rounded-[10px] hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={authzLoading || authzSaving}
+                          onChange={() => toggleAuthzSet('allow', k)}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
+                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            <span className="opacity-80">{k}</span>
+                            {p.description ? ` · ${p.description}` : ''}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {authzCatalog.length === 0 && !authzLoading ? (
+                    <div className="text-xs px-2 py-1" style={{ color: 'var(--text-muted)' }}>权限清单为空</div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="min-w-0">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>禁止（勾选 permission）</div>
+                <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
+                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  {authzCatalog.map((p) => {
+                    const k = String(p.key || '').trim();
+                    const checked = authzDenySet.has(k);
+                    return (
+                      <label key={`deny-${k}`} className="flex items-start gap-2 px-2 py-1 rounded-[10px] hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={authzLoading || authzSaving}
+                          onChange={() => toggleAuthzSet('deny', k)}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
+                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            <span className="opacity-80">{k}</span>
+                            {p.description ? ` · ${p.description}` : ''}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {authzCatalog.length === 0 && !authzLoading ? (
+                    <div className="text-xs px-2 py-1" style={{ color: 'var(--text-muted)' }}>权限清单为空</div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" size="sm" disabled={authzLoading || authzSaving} onClick={() => setAuthzOpen(false)}>
+                取消
+              </Button>
+              <Button variant="primary" size="sm" disabled={authzLoading || authzSaving || !authzUser} onClick={saveUserAuthz}>
+                {authzSaving ? '保存中...' : '保存'}
               </Button>
             </div>
           </div>

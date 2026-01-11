@@ -2,10 +2,11 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { getAiChatHistory, suggestGroupName, uploadAiChatDocument } from '@/services';
+import { getAiChatHistory, uploadAiChatDocument } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
+import { apiRequest } from '@/services/real/apiClient';
 import { Paperclip, Plus, Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -23,6 +24,7 @@ type LocalSession = {
   title: string;
   createdAt: number;
   updatedAt: number;
+  archivedAtUtc?: string | null;
 };
 
 type UiMessage = {
@@ -98,18 +100,6 @@ function extractMarkdownTitle(content: string): string {
   const s = (content || '').replace(/\r\n/g, '\n');
   const m = s.match(/^#\s+(.+)\s*$/m);
   return (m?.[1] || '').trim();
-}
-
-function extractFirstNonEmptyLines(content: string, maxLines: number): string {
-  const s = (content || '').replace(/\r\n/g, '\n');
-  const lines = s.split('\n');
-  const picked: string[] = [];
-  for (const line of lines) {
-    if (picked.length >= maxLines) break;
-    if (!line.trim()) continue;
-    picked.push(line.trimEnd());
-  }
-  return picked.join('\n');
 }
 
 function isPlaceholderTitle(s: string | null | undefined): boolean {
@@ -265,6 +255,9 @@ export default function AiChatPage() {
 
   const [sessions, setSessions] = useState<LocalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
+  const [activeSessionExpired, setActiveSessionExpired] = useState(false);
+  const expiredNotifiedSessionIdRef = useRef<string>('');
+  const [includeArchivedSessions] = useState(false);
 
   const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeSessionId) ?? null, [sessions, activeSessionId]);
 
@@ -305,21 +298,143 @@ export default function AiChatPage() {
 
   const [prdText, setPrdText] = useState('');
   const [prdFileName, setPrdFileName] = useState('');
+  const [prdTitle, setPrdTitle] = useState(''); // 用户自定义标题
   const prdFileRef = useRef<HTMLInputElement | null>(null);
+  const [prdDragOver, setPrdDragOver] = useState(false);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
 
   // 附件（v1：本地读文本注入；todo4 会补齐长度控制/提示）
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingAttachmentText, setPendingAttachmentText] = useState<string>('');
   const [pendingAttachmentName, setPendingAttachmentName] = useState<string>('');
 
+  const refreshSessionsFromServer = useCallback(
+    async (args?: { includeArchived?: boolean; silent?: boolean }) => {
+      if (!userId) return;
+      const inc = args?.includeArchived ?? includeArchivedSessions;
+      const qs = new URLSearchParams();
+      if (inc) qs.set('includeArchived', 'true');
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+
+      try
+      {
+        const res = await apiRequest<{ items: any[] }>(`/api/v1/sessions${suffix}`, { method: 'GET' });
+        if (!res.success) {
+          if (!args?.silent) {
+            void systemDialog.alert(res.error?.message || '获取会话列表失败');
+          }
+          // fallback：兼容旧版本本地缓存
+          const loaded = loadSessions(userId);
+          loaded.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+          setSessions(loaded);
+          if (!activeSessionId && loaded.length > 0) setActiveSessionId(loaded[0].sessionId);
+          return;
+        }
+
+        const items = Array.isArray((res.data as any)?.items) ? (res.data as any).items : [];
+        const mapped: LocalSession[] = items
+          .map((x: any) => {
+            const sid = String(x?.sessionId ?? '').trim();
+            const did = String(x?.documentId ?? '').trim();
+            if (!sid || !did) return null;
+            const title = String(x?.title ?? '').trim() || `会话 ${sid.slice(0, 8)}`;
+            const createdAt = x?.createdAt ? new Date(String(x.createdAt)).getTime() : Date.now();
+            const lastActiveAt = x?.lastActiveAt ? new Date(String(x.lastActiveAt)).getTime() : createdAt;
+            return {
+              sessionId: sid,
+              documentId: did,
+              documentTitle: String(x?.documentTitle ?? '').trim(),
+              title,
+              createdAt,
+              updatedAt: lastActiveAt,
+              archivedAtUtc: x?.archivedAtUtc ? String(x.archivedAtUtc) : null,
+            } as LocalSession;
+          })
+          .filter(Boolean) as LocalSession[];
+
+        mapped.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        setSessions(mapped);
+
+        // activeSessionId 兜底：空/不存在则取最近活跃
+        if (mapped.length > 0) {
+          const exists = activeSessionId && mapped.some((s) => s.sessionId === activeSessionId);
+          if (!exists) setActiveSessionId(mapped[0].sessionId);
+        } else {
+          if (activeSessionId) setActiveSessionId('');
+        }
+      } catch {
+        if (!args?.silent) {
+          void systemDialog.alert('获取会话列表失败（网络错误）');
+        }
+      }
+    },
+    [userId, includeArchivedSessions, activeSessionId]
+  );
+
+  const ensureSessionAlive = useCallback(
+    async (args?: { silent?: boolean }) => {
+      const sid = String(activeSessionId || '').trim();
+      if (!sid) return;
+      if (!token) return;
+      try {
+        // SessionsController.GetSession 会刷新 LastActiveAt 与 TTL（滑动过期）
+        const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(sid)}`, { method: 'GET' });
+        if (res.success) {
+          if (activeSessionExpired) setActiveSessionExpired(false);
+          if (expiredNotifiedSessionIdRef.current === sid) expiredNotifiedSessionIdRef.current = '';
+          return;
+        }
+        const code = String(res.error?.code || '');
+        if (code === 'SESSION_NOT_FOUND' || code === 'SESSION_EXPIRED') {
+          setActiveSessionExpired(true);
+          if (expiredNotifiedSessionIdRef.current !== sid) {
+            expiredNotifiedSessionIdRef.current = sid;
+            if (!args?.silent) {
+              void systemDialog.alert('当前会话已过期，请重新上传 PRD 创建新会话');
+            }
+          }
+        }
+      } catch {
+        // ignore：断网/后端不可达时不把会话标记为过期
+      }
+    },
+    [activeSessionId, token, activeSessionExpired]
+  );
+
+  // keep-alive：避免用户长时间阅读后首次提问直接触发“会话不存在或已过期”
+  useEffect(() => {
+    if (!userId || !activeSessionId || !token) return;
+    setActiveSessionExpired(false);
+    void ensureSessionAlive({ silent: true });
+
+    const intervalMs = 5 * 60 * 1000;
+    const timer = window.setInterval(() => void ensureSessionAlive({ silent: true }), intervalMs);
+
+    const onFocus = () => void ensureSessionAlive({ silent: true });
+    window.addEventListener('focus', onFocus);
+
+    const onVis = () => {
+      if (!document.hidden) void ensureSessionAlive({ silent: true });
+    };
+    document.addEventListener('visibilitychange', onVis);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [userId, activeSessionId, token, ensureSessionAlive]);
+
+  // 下拉菜单打开时刷新会话列表
+  useEffect(() => {
+    if (!sessionMenuOpen) return;
+    void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+  }, [sessionMenuOpen, includeArchivedSessions, refreshSessionsFromServer]);
+
 
   useEffect(() => {
     if (!userId) return;
-    const loaded = loadSessions(userId);
-    // 最近更新优先
-    loaded.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    setSessions(loaded);
-    if (!activeSessionId && loaded.length > 0) setActiveSessionId(loaded[0].sessionId);
+    void refreshSessionsFromServer({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
@@ -486,6 +601,10 @@ export default function AiChatPage() {
 
     if (t === 'error') {
       const msg = String(evt.errorMessage || '请求失败');
+      const code = String(evt.errorCode || '');
+      if (code === 'SESSION_NOT_FOUND' || code === 'SESSION_EXPIRED') {
+        setActiveSessionExpired(true);
+      }
       setMessages((prev) =>
         prev.concat({
           id: `error-${Date.now()}`,
@@ -524,6 +643,10 @@ export default function AiChatPage() {
     const text = composer.trim();
     if (!text) return;
     if (!activeSessionId) {
+      setCreateOpen(true);
+      return;
+    }
+    if (activeSessionExpired) {
       setCreateOpen(true);
       return;
     }
@@ -668,39 +791,18 @@ export default function AiChatPage() {
       return;
     }
 
-    // 测试模式：跳过 LLM 标题生成，使用简单标题
-    let finalTitle: string;
-    if (isTestMode) {
-      finalTitle = `测试会话 ${new Date().toLocaleTimeString()}`;
-    } else {
-      // 生成一个更像人话的标题：
-      // 1) fileName + 前三行 -> 意图模型建议名
-      // 2) Markdown 一级标题
-      // 3) 后端解析出来的 document.title（若非"未命名"）
-      // 4) 文件名（去扩展名、归一化；若不"无意义"）
-      // 5) 会话短 id 兜底
-      const fileName = normalizeFileName(prdFileName);
-      const snippet = extractFirstNonEmptyLines(content, 3).slice(0, 800);
-      const mdTitle = extractMarkdownTitle(content);
-      const fileBase = normalizeCandidateName(stripFileExtension(fileName));
+    // 确定标题：优先用户输入 > Markdown 标题 > 文件名 > 短 id
+    const userTitle = prdTitle.trim();
+    const fileName = normalizeFileName(prdFileName);
+    const mdTitle = extractMarkdownTitle(content);
+    const fileBase = normalizeCandidateName(stripFileExtension(fileName));
 
-      let suggestedTitle = '';
-      if (snippet) {
-        try {
-          const sres = await suggestGroupName({ fileName: fileName || null, snippet });
-          if (sres.success) suggestedTitle = String(sres.data?.name ?? '').trim();
-        } catch {
-          // ignore: fallback below
-        }
-      }
-
-      finalTitle =
-        (!isPlaceholderTitle(suggestedTitle) ? suggestedTitle : '') ||
-        (!isPlaceholderTitle(mdTitle) ? mdTitle : '') ||
-        (!isPlaceholderTitle(docTitle) ? docTitle : '') ||
-        (!isMeaninglessName(fileBase) ? fileBase : '') ||
-        `会话 ${sid.slice(0, 8)}`;
-    }
+    const finalTitle =
+      (userTitle ? userTitle : '') ||
+      (!isPlaceholderTitle(mdTitle) ? mdTitle : '') ||
+      (!isPlaceholderTitle(docTitle) ? docTitle : '') ||
+      (!isMeaninglessName(fileBase) ? fileBase : '') ||
+      `会话 ${sid.slice(0, 8)}`;
 
     const now = Date.now();
     const next: LocalSession = {
@@ -718,11 +820,17 @@ export default function AiChatPage() {
       return merged;
     });
     setActiveSessionId(sid);
+    setActiveSessionExpired(false);
+    expiredNotifiedSessionIdRef.current = '';
     setMessages([]);
     saveMessages(userId, sid, []);
     setCreateOpen(false);
     setPrdText('');
     setPrdFileName('');
+    setPrdTitle('');
+
+    // 刷新服务端会话列表（IM 形态）
+    void refreshSessionsFromServer({ silent: true });
   };
 
   const pickAttachment = async (file: File | null) => {
@@ -758,16 +866,121 @@ export default function AiChatPage() {
       <div className="h-full min-h-0 flex flex-col">
         <div className="flex items-center justify-between gap-3 pb-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="min-w-0 flex items-center gap-3">
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-[10px] text-[13px] font-semibold hover:bg-white/5 transition-colors truncate"
-              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', maxWidth: '400px' }}
-              onClick={() => setCreateOpen(true)}
-              disabled={!userId}
-              title="点击上传新的 PRD 文档"
-            >
-              {activeSession?.title || activeSession?.documentTitle || '点击上传 PRD'}
-            </button>
+            {/* 标题按钮 + 下拉菜单 */}
+            <div className="relative">
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-[10px] text-[13px] font-semibold hover:bg-white/5 transition-colors truncate flex items-center gap-1.5"
+                style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', maxWidth: '400px' }}
+                onClick={() => {
+                  if (sessions.length === 0) {
+                    // 无会话时直接打开上传弹窗
+                    setCreateOpen(true);
+                  } else {
+                    setSessionMenuOpen((v) => !v);
+                  }
+                }}
+                disabled={!userId}
+                title={sessions.length > 0 ? '点击切换对话' : '上传 PRD'}
+              >
+                <span
+                  className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                  style={{
+                    border: '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))',
+                    color: 'var(--accent-gold)',
+                    background: 'color-mix(in srgb, var(--accent-gold) 10%, transparent)',
+                    flexShrink: 0,
+                  }}
+                >
+                  切换
+                </span>
+                <span className="truncate">
+                  {activeSession?.title || activeSession?.documentTitle || '上传 PRD'}
+                </span>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: sessions.length > 0 ? 0.75 : 0.35, flexShrink: 0 }}>
+                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+              </button>
+              {/* 下拉菜单 */}
+              {sessionMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-[100]" onClick={() => setSessionMenuOpen(false)} />
+                  <div
+                    className="absolute left-0 top-full mt-1 z-[110] w-[320px] max-h-[400px] overflow-auto rounded-[14px] p-2 shadow-lg"
+                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+                  >
+                    {sessions.map((s) => {
+                      const isActive = s.sessionId === activeSessionId;
+                      const isArchived = !!s.archivedAtUtc;
+                      return (
+                        <div
+                          key={s.sessionId}
+                          className="flex items-center gap-2 px-2 py-1 rounded-[10px] group"
+                          style={{
+                            background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="flex-1 min-w-0 text-left px-1 py-1 rounded-[8px] hover:bg-white/5 transition-colors"
+                            onClick={() => {
+                              pickSession(s.sessionId);
+                              setSessionMenuOpen(false);
+                            }}
+                            title={s.title}
+                          >
+                            <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                              {s.title || `${s.sessionId.slice(0, 8)}`}
+                            </div>
+                            {isArchived && (
+                              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>已归档</div>
+                            )}
+                          </button>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            <button
+                              type="button"
+                              className="p-1 rounded-[6px] hover:bg-white/10 text-[10px]"
+                              style={{ color: 'var(--text-muted)' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void archiveSession(s.sessionId, !isArchived);
+                              }}
+                              title={isArchived ? '取消归档' : '归档'}
+                            >
+                              {isArchived ? '恢复' : '归档'}
+                            </button>
+                            <button
+                              type="button"
+                              className="p-1 rounded-[6px] hover:bg-red-500/20 text-[10px]"
+                              style={{ color: 'var(--status-error)' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void deleteSession(s.sessionId);
+                              }}
+                              title="删除"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="border-t my-2" style={{ borderColor: 'var(--border-subtle)' }} />
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 rounded-[10px] hover:bg-white/5 transition-colors flex items-center gap-2"
+                      onClick={() => {
+                        setSessionMenuOpen(false);
+                        setCreateOpen(true);
+                      }}
+                    >
+                      <Plus size={14} style={{ opacity: 0.6 }} />
+                      <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>上传新 PRD</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <div className="flex gap-1.5">
               {(['PM', 'DEV', 'QA'] as const).map((role) => (
                 <button
@@ -787,6 +1000,16 @@ export default function AiChatPage() {
             </div>
           </div>
           <div className="flex gap-2 shrink-0">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setCreateOpen(true)}
+              disabled={!userId}
+              title="新建/上传 PRD（创建新的对话）"
+            >
+              <Plus size={16} />
+              新建
+            </Button>
             <button
               type="button"
               className="text-[11px] px-2.5 py-1.5 rounded-[8px] transition-colors"
@@ -797,7 +1020,13 @@ export default function AiChatPage() {
                 cursor: isTestMode ? 'default' : 'pointer',
               }}
               onClick={() => !isTestMode && setDebugMode((v) => !v)}
-              title={isTestMode && testData ? `测试提示词：${testData.promptTitle}` : ''}
+              title={
+                isTestMode && testData
+                  ? `测试提示词：${testData.promptTitle}`
+                  : debugMode
+                    ? '调试模式：显示消息 ID / replyTo / resendOf 等技术信息'
+                    : '正常对话：隐藏调试信息'
+              }
             >
               {isTestMode && testData?.promptTemplate 
                 ? '未保存的提示词测试' 
@@ -818,14 +1047,56 @@ export default function AiChatPage() {
 
         <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-3">
           {messages.length === 0 ? (
-            <div className="py-20 text-center">
-              <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {activeSessionId ? '开始提问吧' : '先上传 PRD'}
+            activeSessionId ? (
+              <div className="py-20 text-center">
+                <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  开始提问吧
+                </div>
+                <div className="mt-1.5 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                  {activeSessionExpired
+                    ? '当前会话已过期，请重新上传 PRD。'
+                    : '直接在下方输入问题，开始对话。'}
+                </div>
               </div>
-              <div className="mt-1.5 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-                {activeSessionId ? '这是一条临时会话，用于功能测试对话链路。' : '新建会话后会获得 sessionId，然后可进行 SSE 流式对话。'}
+            ) : (
+              /* 无会话时：直接显示拖拽上传区域 */
+              <div className="h-full flex flex-col items-center justify-center gap-4">
+                <div
+                  className="w-full max-w-[520px] rounded-[20px] p-6 flex flex-col items-center gap-4 transition-colors"
+                  style={{
+                    border: `2px dashed ${prdDragOver ? 'var(--accent-gold)' : 'var(--border-subtle)'}`,
+                    background: prdDragOver ? 'rgba(214,178,106,0.08)' : 'rgba(255,255,255,0.02)',
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); setPrdDragOver(true); }}
+                  onDragLeave={() => setPrdDragOver(false)}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setPrdDragOver(false);
+                    const f = e.dataTransfer.files?.[0] ?? null;
+                    if (f) {
+                      await onPickPrdFile(f);
+                      if (prdText || f) setCreateOpen(true);
+                    }
+                  }}
+                >
+                  <div className="text-center">
+                    <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      拖拽 PRD 文件到此处
+                    </div>
+                    <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+                      或点击下方按钮选择文件
+                    </div>
+                  </div>
+                  <Button
+                    variant="primary"
+                    onClick={() => prdFileRef.current?.click()}
+                    disabled={createBusy}
+                  >
+                    选择 .md 文件
+                  </Button>
+                </div>
               </div>
-            </div>
+            )
           ) : (
             messages.map((m) => {
               const isUser = m.role === 'User';
@@ -969,7 +1240,7 @@ export default function AiChatPage() {
                         composerRef.current?.focus();
                       });
                     }}
-                    disabled={!activeSessionId || isStreaming}
+                    disabled={!activeSessionId || activeSessionExpired || isStreaming}
                     title={`点击插入：${p.title}`}
                   >
                     {p.title}
@@ -986,7 +1257,7 @@ export default function AiChatPage() {
               style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
               onClick={() => attachInputRef.current?.click()}
               title="添加附件"
-              disabled={!activeSessionId || isStreaming}
+              disabled={!activeSessionId || activeSessionExpired || isStreaming}
             >
               <Plus size={17} />
             </button>
@@ -1005,7 +1276,13 @@ export default function AiChatPage() {
                     void sendMessage();
                   }
                 }}
-                placeholder={activeSessionId ? '输入你的问题…（Enter 发送，Shift+Enter 换行）' : '请先新建会话并上传 PRD'}
+                placeholder={
+                  activeSessionId
+                    ? activeSessionExpired
+                      ? '当前会话已过期，请先重新上传 PRD'
+                      : '输入你的问题…（Enter 发送，Shift+Enter 换行）'
+                    : '请先新建会话并上传 PRD'
+                }
                 className="w-full min-w-0 min-h-[40px] resize-none rounded-[12px] px-3.5 py-2.5 text-[13px] outline-none transition-colors"
                 style={{
                   background: 'rgba(0,0,0,0.15)',
@@ -1013,7 +1290,7 @@ export default function AiChatPage() {
                   color: 'var(--text-primary)',
                 }}
                 rows={1}
-                disabled={!activeSessionId || isStreaming}
+                disabled={!activeSessionId || activeSessionExpired || isStreaming}
               />
 
               {pendingAttachmentText ? (
@@ -1023,7 +1300,7 @@ export default function AiChatPage() {
                     className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1 text-[11px] hover:bg-white/5 transition-colors"
                     style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
                     onClick={() => attachInputRef.current?.click()}
-                    disabled={!activeSessionId || isStreaming}
+                    disabled={!activeSessionId || activeSessionExpired || isStreaming}
                   >
                     <Paperclip size={12} />
                     文件附件
@@ -1039,7 +1316,7 @@ export default function AiChatPage() {
               variant="primary"
               className="h-9 w-9 px-0! rounded-[10px]! shrink-0"
               onClick={() => void sendMessage()}
-              disabled={!activeSessionId || isStreaming || !composer.trim()}
+              disabled={!activeSessionId || activeSessionExpired || isStreaming || !composer.trim()}
               title="发送"
             >
               <Send size={17} />
@@ -1063,9 +1340,65 @@ export default function AiChatPage() {
 
   const rightPanel = chatPanel;
 
+  const pickSession = (sid: string) => {
+    const id = String(sid || '').trim();
+    if (!id) return;
+    setActiveSessionId(id);
+    setActiveSessionExpired(false);
+    expiredNotifiedSessionIdRef.current = '';
+  };
+
+  const archiveSession = async (sid: string, archive: boolean) => {
+    const id = String(sid || '').trim();
+    if (!id) return;
+    const path = archive
+      ? `/api/v1/sessions/${encodeURIComponent(id)}/archive`
+      : `/api/v1/sessions/${encodeURIComponent(id)}/unarchive`;
+    const res = await apiRequest(path, { method: 'POST' });
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '操作失败');
+      return;
+    }
+    void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+  };
+
+  const deleteSession = async (sid: string) => {
+    const id = String(sid || '').trim();
+    if (!id) return;
+    const ok = window.confirm('确认删除该会话？删除后将不可恢复。');
+    if (!ok) return;
+    const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', emptyResponseData: true as any });
+    if (!res.success) {
+      await systemDialog.alert(res.error?.message || '删除失败');
+      return;
+    }
+    if (activeSessionId === id) {
+      setActiveSessionId('');
+      setMessages([]);
+    }
+    void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+  };
+
 
   return (
     <>
+      {/* 全局 PRD 文件选择 input（始终存在于 DOM） */}
+      <input
+        ref={prdFileRef}
+        type="file"
+        accept=".md"
+        className="hidden"
+        onChange={async (e) => {
+          const f = e.currentTarget.files?.[0] ?? null;
+          e.currentTarget.value = '';
+          if (f) {
+            await onPickPrdFile(f);
+            // 选择文件后自动打开弹窗
+            if (!createOpen) setCreateOpen(true);
+          }
+        }}
+      />
+
       {rightPanel}
 
       <Dialog
@@ -1074,11 +1407,30 @@ export default function AiChatPage() {
           if (createBusy) return;
           setCreateOpen(o);
         }}
-        title="新建会话：上传 PRD（.md）"
-        description="上传 PRD 后将获得 sessionId，用于本页的 SSE 对话（临时会话，不走群组）。"
-        maxWidth={820}
+        title="上传 PRD"
+        description="上传 PRD 文档后即可开始对话。"
+        maxWidth={960}
         content={
           <div className="h-full min-h-0 flex flex-col gap-4">
+            {/* 标题输入 */}
+            <div className="flex items-center gap-3">
+              <label className="text-sm shrink-0" style={{ color: 'var(--text-secondary)' }}>标题</label>
+              <input
+                type="text"
+                value={prdTitle}
+                onChange={(e) => setPrdTitle(e.target.value)}
+                className="flex-1 h-10 rounded-[10px] px-3 text-sm outline-none"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+                placeholder="输入对话标题（可选，留空则使用文件名）"
+                disabled={createBusy}
+              />
+            </div>
+
+            {/* 文件选择 */}
             <div className="flex items-center gap-2">
               <Button
                 variant="secondary"
@@ -1091,25 +1443,21 @@ export default function AiChatPage() {
               <div className="text-sm truncate" style={{ color: 'var(--text-muted)' }} title={prdFileName}>
                 {prdFileName ? `已选择：${prdFileName}` : '未选择文件（可直接粘贴）'}
               </div>
-              <input
-                ref={prdFileRef}
-                type="file"
-                accept=".md"
-                className="hidden"
-                onChange={async (e) => {
-                  const f = e.currentTarget.files?.[0] ?? null;
-                  e.currentTarget.value = '';
-                  if (f) await onPickPrdFile(f);
-                }}
-              />
             </div>
 
+            {/* PRD 内容 */}
             <textarea
               value={prdText}
               onChange={(e) => setPrdText(e.target.value)}
-              className="w-full flex-1 min-h-[280px] rounded-[16px] px-4 py-3 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
-              placeholder="粘贴 Markdown PRD 内容（注意：后端会校验大小/格式，过大将返回错误）"
+              className="w-full flex-1 min-h-[420px] rounded-[16px] px-4 py-3 text-sm outline-none resize-y"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                lineHeight: 1.6,
+              }}
+              placeholder="粘贴 Markdown PRD 内容..."
               disabled={createBusy}
             />
 
@@ -1118,7 +1466,7 @@ export default function AiChatPage() {
                 取消
               </Button>
               <Button variant="primary" onClick={() => void createSession()} disabled={createBusy}>
-                {createBusy ? '创建中...' : '创建会话'}
+                {createBusy ? '处理中...' : '开始对话'}
               </Button>
             </div>
           </div>

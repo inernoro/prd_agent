@@ -15,7 +15,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/prompts")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;

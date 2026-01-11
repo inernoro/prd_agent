@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/literary-prompts")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminLiteraryPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;

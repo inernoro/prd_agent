@@ -15,7 +15,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/settings/desktop")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminDesktopBrandingController : ControllerBase
 {
     private readonly MongoDbContext _db;

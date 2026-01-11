@@ -220,6 +220,23 @@ export const systemDialog = {
       });
     });
   },
+
+  // 快捷方法
+  success: (title: string, message?: string): Promise<void> => {
+    return systemDialog.alert({
+      title,
+      message: message || '操作成功',
+      tone: 'neutral',
+    });
+  },
+
+  error: (title: string, message?: string): Promise<void> => {
+    return systemDialog.alert({
+      title,
+      message: message || '操作失败',
+      tone: 'danger',
+    });
+  },
 };
 
 

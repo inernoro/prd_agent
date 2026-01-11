@@ -116,7 +116,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
         <div className="flex items-center gap-4">
           {canPreview && (
             <>
-              {sessionId ? <RoleSelector /> : null}
+              {sessionId && isAdmin ? <RoleSelector /> : null}
             </>
           )}
 

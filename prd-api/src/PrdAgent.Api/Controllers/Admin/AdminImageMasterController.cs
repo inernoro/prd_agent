@@ -19,7 +19,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 
 [ApiController]
 [Route("api/v1/admin/image-master")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminImageMasterController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/prompts/optimize")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminPromptsOptimizeController : ControllerBase
 {
     private readonly ILLMClient _llmClient;

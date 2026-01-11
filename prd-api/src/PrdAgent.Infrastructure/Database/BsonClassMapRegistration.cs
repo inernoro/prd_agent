@@ -58,6 +58,7 @@ public static class BsonClassMapRegistration
             RegisterDesktopAssetKey();
             RegisterOpenPlatformApp();
             RegisterOpenPlatformRequestLog();
+            RegisterSystemRole();
 
             _registered = true;
         }
@@ -100,6 +101,20 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(g => g.GroupId)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterSystemRole()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(SystemRole))) return;
+
+        BsonClassMap.RegisterClassMap<SystemRole>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 
@@ -154,6 +169,8 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.SessionId)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            // 兼容逐步演进：避免新增字段导致反序列化失败
+            cm.SetIgnoreExtraElements(true);
         });
     }
 

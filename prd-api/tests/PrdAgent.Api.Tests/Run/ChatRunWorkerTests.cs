@@ -26,6 +26,7 @@ public class ChatRunWorkerTests
             string? fixedAssistantMessageId = null,
             bool disableGroupContext = false,
             string? systemPromptOverride = null,
+            UserRole? answerAsRole = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             yield return new ChatStreamEvent { Type = "start", MessageId = fixedAssistantMessageId ?? "a1" };

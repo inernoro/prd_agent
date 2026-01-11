@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
@@ -11,13 +11,14 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { updateUserAvatar } from '@/services';
 
-type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
+type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string; perm?: string };
 
 export default function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
+  const permissions = useAuthStore((s) => s.permissions);
   const patchUser = useAuthStore((s) => s.patchUser);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
@@ -77,21 +78,27 @@ export default function AppShell() {
   const items: NavItem[] = useMemo(
     () => [
       { key: '/', label: '仪表盘', icon: <LayoutDashboard size={18} />, description: 'LLM 可观测性与数据概览' },
-      { key: '/users', label: '用户管理', icon: <Users size={18} />, description: '账号、角色与权限管理' },
-      { key: '/groups', label: '群组管理', icon: <Users2 size={18} />, description: '协作群组与成员管理' },
-      { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} />, description: '平台、模型与配置管理' },
-      { key: '/prompts', label: '提示词管理', icon: <FileText size={18} />, description: 'PRD 问答提示词配置' },
+      { key: '/users', label: '用户管理', icon: <Users size={18} />, description: '账号、角色与权限管理', perm: 'admin.users.read' },
+      { key: '/groups', label: '群组管理', icon: <Users2 size={18} />, description: '协作群组与成员管理', perm: 'admin.groups.read' },
+      { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} />, description: '平台、模型与配置管理', perm: 'admin.models.read' },
+      { key: '/prompts', label: '提示词管理', icon: <FileText size={18} />, description: 'PRD 问答提示词配置', perm: 'admin.settings.read' },
       { key: '/ai-chat', label: 'PRD Agent', icon: <MessagesSquare size={18} />, description: 'PRD 智能解读与问答' },
       { key: '/visual-agent', label: '视觉创作 Agent', icon: <Wand2 size={18} />, description: '高级视觉创作工作区' },
       { key: '/literary-agent', label: '文学创作 Agent', icon: <PenLine size={18} />, description: '文章配图智能生成' },
-      { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置' },
-      { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} />, description: 'LLM 请求与系统日志' },
-      { key: '/data', label: '数据管理', icon: <Database size={18} />, description: '数据概览、清理与迁移' },
-      { key: '/open-platform', label: '开放平台', icon: <Plug size={18} />, description: 'API 应用与调用日志' },
-      { key: '/lab', label: '实验室', icon: <FlaskConical size={18} />, description: '模型测试与实验功能' },
+      { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置', perm: 'admin.assets.read' },
+      { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} />, description: 'LLM 请求与系统日志', perm: 'admin.logs.read' },
+      { key: '/data', label: '数据管理', icon: <Database size={18} />, description: '数据概览、清理与迁移', perm: 'admin.data.read' },
+      { key: '/open-platform', label: '开放平台', icon: <Plug size={18} />, description: 'API 应用与调用日志', perm: 'admin.openPlatform.manage' },
+      { key: '/authz', label: '权限管理', icon: <UserCog size={18} />, description: '系统角色与用户权限', perm: 'admin.authz.manage' },
+      { key: '/lab', label: '实验室', icon: <FlaskConical size={18} />, description: '模型测试与实验功能', perm: 'admin.models.read' },
     ],
     []
   );
+
+  const visibleItems = useMemo(() => {
+    const perms = Array.isArray(permissions) ? permissions : [];
+    return items.filter((it) => !it.perm || perms.includes(it.perm));
+  }, [items, permissions]);
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const asideWidth = collapsed ? 72 : 220;
@@ -243,7 +250,7 @@ export default function AppShell() {
 
           <nav className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', collapsed ? 'gap-0.5' : 'gap-0.5')}
                style={{ paddingTop: 2, paddingRight: 2 }}>
-            {items.map((it) => {
+            {visibleItems.map((it) => {
               const active = it.key === activeKey;
               return (
                 <button

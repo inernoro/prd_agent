@@ -78,6 +78,7 @@ public class ChatRunSuiteTests
             string? fixedAssistantMessageId = null,
             bool disableGroupContext = false,
             string? systemPromptOverride = null,
+            UserRole? answerAsRole = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var mid = fixedAssistantMessageId ?? "a1";
@@ -107,6 +108,7 @@ public class ChatRunSuiteTests
             string? fixedAssistantMessageId = null,
             bool disableGroupContext = false,
             string? systemPromptOverride = null,
+            UserRole? answerAsRole = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var mid = fixedAssistantMessageId ?? "a1";
@@ -133,6 +135,7 @@ public class ChatRunSuiteTests
             string? fixedAssistantMessageId = null,
             bool disableGroupContext = false,
             string? systemPromptOverride = null,
+            UserRole? answerAsRole = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var mid = fixedAssistantMessageId ?? "a1";

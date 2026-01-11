@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/llm-configs")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminLLMConfigController : ControllerBase
 {
     private readonly MongoDbContext _db;

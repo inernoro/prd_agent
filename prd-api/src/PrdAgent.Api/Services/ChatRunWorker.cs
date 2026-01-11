@@ -29,7 +29,8 @@ public sealed class ChatRunWorker : BackgroundService
         string Content,
         string? PromptKey,
         string? UserId,
-        List<string>? AttachmentIds);
+        List<string>? AttachmentIds,
+        UserRole? AnswerAsRole);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -108,6 +109,10 @@ public sealed class ChatRunWorker : BackgroundService
             var content = root.TryGetProperty("content", out var c) ? (c.GetString() ?? "") : "";
             var promptKey = root.TryGetProperty("promptKey", out var pk) ? pk.GetString() : null;
             var userId = root.TryGetProperty("userId", out var uid) ? uid.GetString() : null;
+            // 新字段：answerAsRole；兼容旧字段：role
+            var roleRaw = root.TryGetProperty("answerAsRole", out var ar) ? ar.GetString()
+                : (root.TryGetProperty("role", out var r) ? r.GetString() : null);
+            var answerRole = TryParseUserRole(roleRaw);
             List<string>? atts = null;
             if (root.TryGetProperty("attachmentIds", out var a) && a.ValueKind == JsonValueKind.Array)
             {
@@ -122,12 +127,31 @@ public sealed class ChatRunWorker : BackgroundService
             sessionId = sessionId.Trim();
             content = content.Trim();
             if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(content)) return null;
-            return new ChatRunInput(sessionId, content, string.IsNullOrWhiteSpace(promptKey) ? null : promptKey.Trim(), string.IsNullOrWhiteSpace(userId) ? null : userId.Trim(), atts);
+            return new ChatRunInput(
+                sessionId,
+                content,
+                string.IsNullOrWhiteSpace(promptKey) ? null : promptKey.Trim(),
+                string.IsNullOrWhiteSpace(userId) ? null : userId.Trim(),
+                atts,
+                answerRole);
         }
         catch
         {
             return null;
         }
+    }
+
+    private static UserRole? TryParseUserRole(string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        // 兼容：pm/dev/qa/admin 以及 PM/DEV/QA/ADMIN
+        s = s.ToUpperInvariant();
+        if (s == "PM") return UserRole.PM;
+        if (s == "DEV") return UserRole.DEV;
+        if (s == "QA") return UserRole.QA;
+        if (s == "ADMIN") return UserRole.ADMIN;
+        return null;
     }
 
     private async Task ProcessRunAsync(string runId, CancellationToken stoppingToken)
@@ -197,6 +221,7 @@ public sealed class ChatRunWorker : BackgroundService
                                runId: runId,
                                fixedUserMessageId: meta.UserMessageId,
                                fixedAssistantMessageId: meta.AssistantMessageId,
+                               answerAsRole: input.AnswerAsRole,
                                cancellationToken: cts.Token))
             {
                 lastType = ev.Type;

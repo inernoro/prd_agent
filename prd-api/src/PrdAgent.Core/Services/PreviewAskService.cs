@@ -44,6 +44,7 @@ public class PreviewAskService : IPreviewAskService
         string headingId,
         string? headingTitle,
         string question,
+        UserRole? answerAsRole = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var q = (question ?? string.Empty).Trim();
@@ -81,6 +82,8 @@ public class PreviewAskService : IPreviewAskService
             };
             yield break;
         }
+
+        var effectiveAnswerRole = answerAsRole ?? session.CurrentRole;
 
         // “本章提问”也视为会话活跃：刷新 LastActiveAt 与 TTL，避免用户在预览页连续使用但会话仍自然过期。
         await _sessionService.RefreshActivityAsync(sessionId);
@@ -134,7 +137,7 @@ public class PreviewAskService : IPreviewAskService
         }
 
         // 构建 system prompt（PRD 不再注入 system；改为 user/context message 传入）
-        var systemPrompt = await _systemPromptService.GetSystemPromptAsync(session.CurrentRole, cancellationToken);
+        var systemPrompt = await _systemPromptService.GetSystemPromptAsync(effectiveAnswerRole, cancellationToken);
         var systemPromptRedacted = systemPrompt;
         var docHash = Sha256Hex(raw);
 
@@ -144,7 +147,7 @@ public class PreviewAskService : IPreviewAskService
             GroupId: session.GroupId,
             SessionId: session.SessionId,
             UserId: null,
-            ViewRole: session.CurrentRole.ToString(),
+            ViewRole: effectiveAnswerRole.ToString(),
             DocumentChars: sectionMarkdown.Length,
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,

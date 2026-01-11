@@ -17,7 +17,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/prompt-overrides")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class AdminPromptOverridesController : ControllerBase
 {
     private readonly MongoDbContext _db;

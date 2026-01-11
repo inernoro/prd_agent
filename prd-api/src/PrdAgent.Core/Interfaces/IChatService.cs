@@ -28,6 +28,7 @@ public interface IChatService
         string? fixedAssistantMessageId = null,
         bool disableGroupContext = false,
         string? systemPromptOverride = null,
+        UserRole? answerAsRole = null,
         CancellationToken cancellationToken = default);
     
     /// <summary>获取对话历史</summary>
