@@ -222,7 +222,7 @@ public class ChatService : IChatService
         var isFirstDelta = true; // 标记是否为第一个 delta（用于隐藏加载动画）
 
         var llmRequestId = Guid.NewGuid().ToString();
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+        using var scope = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: llmRequestId,
             GroupId: session.GroupId,
             SessionId: sessionId,
@@ -261,6 +261,11 @@ public class ChatService : IChatService
                 userMessage.GroupSeq = await _groupMessageSeqService.NextAsync(gidForSeq, CancellationToken.None);
             }
             await _messageRepository.InsertManyAsync(new[] { userMessage });
+            // 用户发消息算一次操作：用消息时间 touch（不阻塞主链路）
+            if (!string.IsNullOrWhiteSpace(userId))
+            {
+                _ = _userService.UpdateLastActiveAsync(userId, userInputAtUtc);
+            }
             if (!string.IsNullOrEmpty(gidForSeq))
             {
                 _groupMessageStreamHub.Publish(userMessage);
@@ -280,6 +285,11 @@ public class ChatService : IChatService
             }
             await _messageRepository.ReplaceOneAsync(existingUserMessage);
             userMessage = existingUserMessage;
+            // 重发/更新用户消息也算操作：用消息时间 touch（不阻塞主链路）
+            if (!string.IsNullOrWhiteSpace(userId))
+            {
+                _ = _userService.UpdateLastActiveAsync(userId, userInputAtUtc);
+            }
         }
 
         // 提前获取对应角色的机器人用户ID（用于创建 AI 占位消息）
@@ -526,6 +536,12 @@ public class ChatService : IChatService
         else
         {
             await _messageRepository.InsertManyAsync(new[] { assistantMessage });
+        }
+
+        // 机器人发消息：用落库时间 touch（不阻塞主链路）
+        if (!string.IsNullOrWhiteSpace(botUserId))
+        {
+            _ = _userService.UpdateLastActiveAsync(botUserId!, assistantStoreAtUtc);
         }
 
         // 群广播：如果是更新（占位消息已存在），使用 PublishUpdated；否则使用 Publish

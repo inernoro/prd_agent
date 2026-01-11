@@ -21,6 +21,12 @@ public interface IUserService
     
     /// <summary>更新最后登录时间</summary>
     Task UpdateLastLoginAsync(string userId);
+
+    /// <summary>
+    /// 更新最后操作时间（最后活跃时间）。
+    /// 说明：atUtc 需为 UTC；为空时默认使用 DateTime.UtcNow。
+    /// </summary>
+    Task UpdateLastActiveAsync(string userId, DateTime? atUtc = null);
     
     /// <summary>验证邀请码</summary>
     Task<bool> ValidateInviteCodeAsync(string inviteCode);

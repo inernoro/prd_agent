@@ -16,6 +16,8 @@ export type AdminUser = {
   avatarFileName?: string | null;
   createdAt: string;
   lastLoginAt?: string;
+  /** 最后操作时间（用户写操作 / 机器人发消息） */
+  lastActiveAt?: string;
   /** 是否处于登录锁定期（后端动态计算） */
   isLocked?: boolean;
   /** 剩余锁定秒数（0/undefined 表示未锁定） */

@@ -164,6 +164,7 @@ public class AdminUsersController : ControllerBase
                 AvatarUrl = BuildAvatarUrl(u),
                 CreatedAt = u.CreatedAt,
                 LastLoginAt = u.LastLoginAt,
+                LastActiveAt = u.LastActiveAt,
                 IsLocked = remaining > 0,
                 LockoutRemainingSeconds = remaining
             };
@@ -207,6 +208,7 @@ public class AdminUsersController : ControllerBase
             AvatarUrl = BuildAvatarUrl(user),
             CreatedAt = user.CreatedAt,
             LastLoginAt = user.LastLoginAt,
+            LastActiveAt = user.LastActiveAt,
             IsLocked = remaining > 0,
             LockoutRemainingSeconds = remaining
         };

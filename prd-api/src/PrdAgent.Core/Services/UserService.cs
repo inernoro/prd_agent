@@ -96,6 +96,17 @@ public class UserService : IUserService
         await _userRepository.UpdateLastLoginAsync(userId);
     }
 
+    public async Task UpdateLastActiveAsync(string userId, DateTime? atUtc = null)
+    {
+        var uid = (userId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(uid)) return;
+
+        var now = atUtc ?? DateTime.UtcNow;
+        var utc = now.Kind == DateTimeKind.Utc ? now : now.ToUniversalTime();
+
+        await _userRepository.UpdateLastActiveAsync(uid, utc);
+    }
+
     public async Task<bool> ValidateInviteCodeAsync(string inviteCode)
     {
         var invite = await _inviteCodeRepository.GetValidCodeAsync(inviteCode);

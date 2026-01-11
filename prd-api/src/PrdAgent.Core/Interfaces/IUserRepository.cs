@@ -11,6 +11,7 @@ public interface IUserRepository
     Task<User?> GetByUsernameAsync(string username);
     Task InsertAsync(User user);
     Task UpdateLastLoginAsync(string userId);
+    Task UpdateLastActiveAsync(string userId, DateTime atUtc);
 }
 
 /// <summary>

@@ -210,6 +210,8 @@ public class AuthController : ControllerBase
 
         // 更新最后登录时间
         await _userService.UpdateLastLoginAsync(user.UserId);
+        // 同步 touch “最后操作时间”（登录也算一次操作）
+        await _userService.UpdateLastActiveAsync(user.UserId);
 
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, ct);
         var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, ct);

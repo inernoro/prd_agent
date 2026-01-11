@@ -449,7 +449,9 @@ export default function AppShell() {
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              fullBleedMain ? 'px-3 py-3' : 'mx-auto max-w-[1680px] px-5 py-5'
+              // 注意：这里不要用 mx-auto 居中。主区本身有 paddingLeft 给侧栏让位，
+              // 居中会导致在浏览器缩放/视口变化时内容左边界漂移，看起来“不居左”。
+              fullBleedMain ? 'px-3 py-3' : 'max-w-[1680px] px-5 py-5'
             )}
           >
             <div className="flex-1 min-h-0">

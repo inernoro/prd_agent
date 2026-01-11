@@ -25,6 +25,7 @@ type UserRow = {
   avatarUrl?: string | null;
   createdAt: string;
   lastLoginAt?: string;
+  lastActiveAt?: string;
   isLocked?: boolean;
   lockoutRemainingSeconds?: number;
 };
@@ -786,7 +787,7 @@ export default function UsersPage() {
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>用户</th>
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>角色</th>
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>状态</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>最后登录时间</th>
+                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>最后操作时间</th>
                 <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>操作</th>
               </tr>
             </thead>
@@ -939,15 +940,15 @@ export default function UsersPage() {
                       </Button>
                     </td>
                     <td className="px-4 py-3">
-                      {!u.lastLoginAt ? (
-                        <Badge variant="subtle">从未登录</Badge>
+                      {!(u.lastActiveAt ?? u.lastLoginAt) ? (
+                        <Badge variant="subtle">暂无操作</Badge>
                       ) : (
                         <div className="flex flex-col">
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                            {fmtDateTime(u.lastLoginAt)}
+                            {fmtDateTime(u.lastActiveAt ?? u.lastLoginAt)}
                           </div>
                           <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                            {fmtRelative(u.lastLoginAt)}
+                            {fmtRelative(u.lastActiveAt ?? u.lastLoginAt)}
                           </div>
                         </div>
                       )}

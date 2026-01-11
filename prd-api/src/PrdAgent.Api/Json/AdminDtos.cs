@@ -33,6 +33,7 @@ public class UserListItem
     public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    public DateTime? LastActiveAt { get; set; }
     /// <summary>是否处于登录锁定期（由 LoginAttemptService 动态计算）</summary>
     public bool IsLocked { get; set; }
     /// <summary>剩余锁定秒数（0 表示未锁定）</summary>
@@ -59,6 +60,7 @@ public class UserDetailResponse
     public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    public DateTime? LastActiveAt { get; set; }
     public bool IsLocked { get; set; }
     public int LockoutRemainingSeconds { get; set; }
 }

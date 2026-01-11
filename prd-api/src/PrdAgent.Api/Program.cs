@@ -828,6 +828,8 @@ app.UseCors();
 app.UseAuthentication();
 // 认证通过后做 3 天滑动续期（now+72h，按端独立）
 app.UseMiddleware<AuthSlidingExpirationMiddleware>();
+// 统一记录“最后操作时间”（仅写请求 + 成功响应）
+app.UseMiddleware<PrdAgent.Api.Middleware.UserLastActiveMiddleware>();
 app.UseAuthorization();
 // 管理后台权限（菜单/页面/接口统一绑定 permission key）
 app.UseMiddleware<PrdAgent.Api.Middleware.AdminPermissionMiddleware>();

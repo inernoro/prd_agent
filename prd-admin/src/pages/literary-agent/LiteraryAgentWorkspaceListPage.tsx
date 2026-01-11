@@ -228,7 +228,9 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const grid = (
-    <div className="w-full max-w-[1440px] mx-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+    // 注意：不要用 mx-auto 居中。外层 AppShell 已通过 paddingLeft 给侧栏让位；
+    // 列表再居中会在浏览器缩放/视口变化时产生“内容向内靠”的体感漂移。
+    <div className="w-full max-w-[1440px] grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {items.map((ws) => (
         <Card key={ws.id} className="p-0 overflow-hidden">
           <div

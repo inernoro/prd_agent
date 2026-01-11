@@ -37,6 +37,19 @@ public class UserRepository : IUserRepository
             u => u.UserId == userId,
             Builders<User>.Update.Set(u => u.LastLoginAt, DateTime.UtcNow));
     }
+
+    public async Task UpdateLastActiveAsync(string userId, DateTime atUtc)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return;
+        var utc = atUtc.Kind == DateTimeKind.Utc ? atUtc : atUtc.ToUniversalTime();
+
+        // 用 $max 避免“并发/乱序”把时间回写变小
+        var update = Builders<User>.Update.Max(u => u.LastActiveAt, utc);
+
+        await _users.UpdateOneAsync(
+            u => u.UserId == userId,
+            update);
+    }
 }
 
 /// <summary>

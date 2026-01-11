@@ -62,6 +62,14 @@ public class User
     public DateTime? LastLoginAt { get; set; }
 
     /// <summary>
+    /// 最后操作时间（最后活跃时间）：
+    /// - 人类用户：任意“写请求”（POST/PUT/PATCH/DELETE）会 touch
+    /// - 机器人用户：每次落库 AI 消息会 touch
+    /// 说明：该字段用于“用户列表/管理后台”展示，避免机器人永远没有登录时间。
+    /// </summary>
+    public DateTime? LastActiveAt { get; set; }
+
+    /// <summary>
     /// 头像文件名（仅文件名，不含路径/域名）。
     /// 客户端应使用“可配置的头像基础 URL”拼接展示（避免把域名写死在数据库/代码中）。
     /// </summary>
