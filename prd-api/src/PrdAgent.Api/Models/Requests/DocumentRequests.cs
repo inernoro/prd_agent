@@ -10,6 +10,9 @@ public class UploadDocumentRequest
     /// <summary>Markdown文档内容</summary>
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>会话标题（可选，个人调试会话用；不影响群组）</summary>
+    public string? Title { get; set; }
+
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
     {

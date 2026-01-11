@@ -4,7 +4,7 @@ import type { AiChatGetHistoryContract, AiChatUploadDocumentContract } from '@/s
 export const uploadAiChatDocumentReal: AiChatUploadDocumentContract = async (input) => {
   return await apiRequest('/api/v1/documents', {
     method: 'POST',
-    body: { content: input.content },
+    body: { content: input.content, title: input.title ?? null },
   });
 };
 

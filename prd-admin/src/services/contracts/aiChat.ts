@@ -12,7 +12,7 @@ export type AiChatUploadDocumentResponse = {
   document: AiChatDocumentInfo;
 };
 
-export type AiChatUploadDocumentContract = (input: { content: string }) => Promise<ApiResponse<AiChatUploadDocumentResponse>>;
+export type AiChatUploadDocumentContract = (input: { content: string; title?: string | null }) => Promise<ApiResponse<AiChatUploadDocumentResponse>>;
 
 export type AiChatTokenUsage = {
   input?: number | null;

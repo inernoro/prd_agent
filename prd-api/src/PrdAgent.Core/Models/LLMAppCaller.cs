@@ -23,6 +23,9 @@ public class LLMAppCaller
     /// <summary>是否为自动注册（首次调用时自动创建）</summary>
     public bool IsAutoRegistered { get; set; } = false;
     
+    /// <summary>是否为系统默认应用（true=可被初始化重载，false=用户自定义永久保留）</summary>
+    public bool IsSystemDefault { get; set; } = false;
+    
     /// <summary>总调用次数</summary>
     public long TotalCalls { get; set; } = 0;
     

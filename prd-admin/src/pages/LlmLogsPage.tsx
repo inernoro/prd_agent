@@ -9,6 +9,7 @@ import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { getFeatureDescriptionFromRequestPurpose } from '@/lib/appCallerUtils';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1286,9 +1287,9 @@ export default function LlmLogsPage() {
                       <div className="flex items-center gap-2 min-w-0">
                         {/* 平台标签 */}
                         <PlatformLabel name={it.platformName || pm.platform} />
-                        {/* 模型名 */}
+                        {/* 功能描述（中文标题） */}
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {pm.modelName}
+                          {getFeatureDescriptionFromRequestPurpose(it.requestPurpose)}
                         </div>
                         {statusBadge(it.status)}
                       </div>
@@ -1321,18 +1322,32 @@ export default function LlmLogsPage() {
                             HTTP
                           </label>
                         )}
-                        {/* 请求类型标签 */}
+                        {/* 请求类型标签（默认/专属 + 模型类型） */}
                         {(() => {
                           const b = requestTypeToBadge(it.requestType);
+                          
+                          // 判断是否使用默认分组（简化判断：如果 requestPurpose 包含 ::，解析后判断）
+                          // 这里我们暂时无法从日志中直接判断是否使用默认分组，所以统一显示"默认"
+                          // TODO: 后端需要在日志中记录 modelGroupId 才能准确判断
+                          const isDefault = true; // 暂时假设都是默认
+                          const prefix = isDefault ? '默认' : '专属';
+                          const label = `${prefix}${b.label}`;
+                          
                           return (
-                            <label
-                              className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
-                              title={b.title}
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                              title={`${label}（点击跳转到应用配置）`}
                               style={requestTypeChipStyle(b.tone)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // 跳转到应用与分组页面
+                                window.location.href = '/model-manage?tab=apps';
+                              }}
                             >
                               {b.icon}
-                              {b.label}
-                            </label>
+                              {label}
+                            </button>
                           );
                         })()}
                         {(() => {
@@ -1355,8 +1370,8 @@ export default function LlmLogsPage() {
                           const p = String(it.requestPurpose ?? '').trim();
                           if (!p) return null;
                           return (
-                            <div className="min-w-0 text-[11px] font-semibold truncate" style={{ color: 'var(--text-muted)' }} title={p}>
-                              {p}
+                            <div className="min-w-0 text-[11px] font-semibold truncate" style={{ color: 'var(--text-muted)' }} title={`模型：${p}`}>
+                              模型：{p}
                             </div>
                           );
                         })()}

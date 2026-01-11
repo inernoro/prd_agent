@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Admin;
@@ -145,6 +146,63 @@ public sealed class AdminSystemRolesController : ControllerBase
 
         await _db.SystemRoles.DeleteOneAsync(x => x.Id == existed.Id, cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 重置内置角色为默认定义（会覆盖内置角色的 name/permissions；不影响自定义角色）。
+    /// </summary>
+    [HttpPost("reset-builtins")]
+    public async Task<IActionResult> ResetBuiltIns(CancellationToken ct)
+    {
+        var operatorId = GetOperatorId();
+        var defs = BuiltInSystemRoles.Definitions;
+
+        foreach (var def in defs)
+        {
+            var existed = await _db.SystemRoles.Find(x => x.Key == def.Key).FirstOrDefaultAsync(ct);
+            if (existed == null)
+            {
+                var created = new SystemRole
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Key = def.Key,
+                    Name = def.Name,
+                    Permissions = def.Permissions.Distinct(StringComparer.Ordinal).ToList(),
+                    IsBuiltIn = true,
+                    UpdatedAt = DateTime.UtcNow,
+                    UpdatedBy = operatorId
+                };
+                await _db.SystemRoles.InsertOneAsync(created, cancellationToken: ct);
+                continue;
+            }
+
+            // 仅重置内置角色；自定义角色不做覆盖
+            if (!existed.IsBuiltIn) continue;
+
+            existed.Name = def.Name;
+            existed.Permissions = def.Permissions.Distinct(StringComparer.Ordinal).ToList();
+            existed.IsBuiltIn = true;
+            existed.UpdatedAt = DateTime.UtcNow;
+            existed.UpdatedBy = operatorId;
+            await _db.SystemRoles.ReplaceOneAsync(x => x.Id == existed.Id, existed, cancellationToken: ct);
+        }
+
+        var list = await _db.SystemRoles.Find(_ => true)
+            .SortBy(x => x.Key)
+            .ToListAsync(ct);
+
+        var items = list.Select(x => new SystemRoleDto
+        {
+            Id = x.Id,
+            Key = x.Key,
+            Name = x.Name,
+            Permissions = x.Permissions ?? new List<string>(),
+            IsBuiltIn = x.IsBuiltIn,
+            UpdatedAt = x.UpdatedAt,
+            UpdatedBy = x.UpdatedBy
+        }).ToList();
+
+        return Ok(ApiResponse<List<SystemRoleDto>>.Ok(items));
     }
 }
 

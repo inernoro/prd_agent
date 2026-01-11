@@ -8,15 +8,14 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import {
   getAppCallers,
   updateAppCaller,
-  deleteAppCaller,
-  scanAppCallers,
+  // deleteAppCaller, // 暂时未使用
   getModelGroups,
   createModelGroup,
   updateModelGroup,
   // deleteModelGroup, // 暂时未使用
   getGroupMonitoring,
-  simulateDowngrade,
-  simulateRecover,
+  // simulateDowngrade, // 暂时未使用
+  // simulateRecover, // 暂时未使用
   getSchedulerConfig,
   updateSchedulerConfig,
 } from '@/services';
@@ -34,15 +33,17 @@ import {
   ChevronRight,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Trash2,
-  TrendingDown,
-  TrendingUp,
   Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
+import { groupAppCallers, getFeatureDescription, getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
+import type { AppGroup } from '@/lib/appCallerUtils';
 
 const MODEL_TYPES = [
   { value: 'chat', label: '对话模型' },
@@ -67,13 +68,17 @@ export function ModelAppGroupPage() {
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // 树形结构状态
+  const [, setAppGroups] = useState<AppGroup[]>([]);
+  const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
 
   // 弹窗状态
   const [showConfigDialog, setShowConfigDialog] = useState(false);
   const [showGroupDialog, setShowGroupDialog] = useState(false);
   const [showRequirementDialog, setShowRequirementDialog] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ModelGroup | null>(null);
-  const [editingRequirement, setEditingRequirement] = useState<AppModelRequirement | null>(null);
+  const [editingRequirement] = useState<AppModelRequirement | null>(null); // 暂时未使用
 
   // 监控数据
   const [monitoringData, setMonitoringData] = useState<Record<string, ModelGroupMonitoringData>>({});
@@ -127,6 +132,15 @@ export function ModelAppGroupPage() {
       setAppCallers(apps);
       setModelGroups(groups);
       setSchedulerConfig(config);
+      
+      // 分组应用
+      const grouped = groupAppCallers(apps);
+      setAppGroups(grouped);
+      
+      // 默认展开第一个应用
+      if (grouped.length > 0 && expandedApps.size === 0) {
+        setExpandedApps(new Set([grouped[0].app]));
+      }
       setConfigForm({
         consecutiveFailuresToDegrade: config.consecutiveFailuresToDegrade,
         consecutiveFailuresToUnavailable: config.consecutiveFailuresToUnavailable,
@@ -167,20 +181,16 @@ export function ModelAppGroupPage() {
     setMonitoringData(data);
   };
 
-  const handleScanAppCallers = async () => {
-    try {
-      await scanAppCallers();
-      systemDialog.success('扫描完成', '已自动注册新应用');
-      await loadData();
-    } catch (error) {
-      systemDialog.error('扫描失败', String(error));
-    }
-  };
-
   const handleInitDefaultApps = async () => {
     const confirmed = await systemDialog.confirm({
-      title: '初始化/同步应用',
-      message: '此操作将创建/更新默认应用，已有配置不会被覆盖。确定继续？',
+      title: '确认初始化',
+      message: `此操作将：
+1. 删除所有系统默认应用和子功能
+2. 重新创建最新的系统默认应用
+3. 保留用户自定义的应用和分组
+4. 系统默认应用的配置会被重置
+
+确定继续？`,
     });
     if (!confirmed) return;
 
@@ -215,14 +225,13 @@ export function ModelAppGroupPage() {
       const result = await response.json();
       
       if (result.success && result.data) {
-        const { created, updated, skipped, message } = result.data;
+        const { deleted, created, message } = result.data;
+        const deletedCount = deleted?.length || 0;
         const createdCount = created?.length || 0;
-        const updatedCount = updated?.length || 0;
-        const skippedCount = skipped?.length || 0;
         
-        systemDialog.success(
+        toast.success(
           '初始化成功',
-          `${message || '操作完成'}\n\n创建：${createdCount} 个\n更新：${updatedCount} 个\n跳过：${skippedCount} 个`
+          `${message || '操作完成'}\n删除 ${deletedCount} 个旧应用，创建 ${createdCount} 个新应用`
         );
         await loadData();
       } else {
@@ -230,47 +239,47 @@ export function ModelAppGroupPage() {
       }
     } catch (error) {
       console.error('[InitDefaultApps] 异常:', error);
-      systemDialog.error('初始化失败', error instanceof Error ? error.message : String(error));
+      toast.error('初始化失败', error instanceof Error ? error.message : String(error));
     }
   };
 
-  const handleDeleteApp = async (appId: string) => {
-    const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除应用后无法恢复，确定继续？' });
-    if (!confirmed) return;
+  // const handleDeleteApp = async (appId: string) => {
+  //   const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除应用后无法恢复，确定继续？' });
+  //   if (!confirmed) return;
 
-    try {
-      await deleteAppCaller(appId);
-      systemDialog.success('删除成功');
-      await loadData();
-      if (selectedAppId === appId) {
-        setSelectedAppId(appCallers[0]?.id ?? null);
-      }
-    } catch (error) {
-      systemDialog.error('删除失败', String(error));
-    }
-  };
+  //   try {
+  //     await deleteAppCaller(appId);
+  //     systemDialog.success('删除成功');
+  //     await loadData();
+  //     if (selectedAppId === appId) {
+  //       setSelectedAppId(appCallers[0]?.id ?? null);
+  //     }
+  //   } catch (error) {
+  //     systemDialog.error('删除失败', String(error));
+  //   }
+  // };
 
-  const handleAddRequirement = () => {
-    setEditingRequirement(null);
-    setRequirementForm({
-      modelType: 'chat',
-      purpose: '',
-      modelGroupId: '',
-      isRequired: true,
-    });
-    setShowRequirementDialog(true);
-  };
+  // const handleAddRequirement = () => {
+  //   setEditingRequirement(null);
+  //   setRequirementForm({
+  //     modelType: 'chat',
+  //     purpose: '',
+  //     modelGroupId: '',
+  //     isRequired: true,
+  //   });
+  //   setShowRequirementDialog(true);
+  // };
 
-  const handleEditRequirement = (req: AppModelRequirement) => {
-    setEditingRequirement(req);
-    setRequirementForm({
-      modelType: req.modelType,
-      purpose: req.purpose,
-      modelGroupId: req.modelGroupId ?? '',
-      isRequired: req.isRequired,
-    });
-    setShowRequirementDialog(true);
-  };
+  // const handleEditRequirement = (req: AppModelRequirement) => {
+  //   setEditingRequirement(req);
+  //   setRequirementForm({
+  //     modelType: req.modelType,
+  //     purpose: req.purpose,
+  //     modelGroupId: req.modelGroupId ?? '',
+  //     isRequired: req.isRequired,
+  //   });
+  //   setShowRequirementDialog(true);
+  // };
 
   const handleSaveRequirement = async () => {
     if (!selectedApp) return;
@@ -305,28 +314,28 @@ export function ModelAppGroupPage() {
     }
   };
 
-  const handleDeleteRequirement = async (req: AppModelRequirement) => {
-    if (!selectedApp) return;
+  // const handleDeleteRequirement = async (req: AppModelRequirement) => {
+  //   if (!selectedApp) return;
 
-    const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除需求后将使用默认模型，确定继续？' });
-    if (!confirmed) return;
+  //   const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除需求后将使用默认模型，确定继续？' });
+  //   if (!confirmed) return;
 
-    const updatedReqs = selectedApp.modelRequirements.filter(
-      (r: AppModelRequirement) => !(r.modelType === req.modelType && r.purpose === req.purpose)
-    );
+  //   const updatedReqs = selectedApp.modelRequirements.filter(
+  //     (r: AppModelRequirement) => !(r.modelType === req.modelType && r.purpose === req.purpose)
+  //   );
 
-    try {
-      await updateAppCaller(selectedApp.id, {
-        displayName: selectedApp.displayName,
-        description: selectedApp.description,
-        modelRequirements: updatedReqs,
-      });
-      systemDialog.success('删除成功');
-      await loadData();
-    } catch (error) {
-      systemDialog.error('删除失败', String(error));
-    }
-  };
+  //   try {
+  //     await updateAppCaller(selectedApp.id, {
+  //       displayName: selectedApp.displayName,
+  //       description: selectedApp.description,
+  //       modelRequirements: updatedReqs,
+  //     });
+  //     systemDialog.success('删除成功');
+  //     await loadData();
+  //   } catch (error) {
+  //     systemDialog.error('删除失败', String(error));
+  //   }
+  // };
 
   const handleAddGroup = () => {
     setEditingGroup(null);
@@ -407,31 +416,46 @@ export function ModelAppGroupPage() {
     }
   };
 
-  const handleSimulateDowngrade = async (groupId: string, modelId: string, platformId: string) => {
-    try {
-      await simulateDowngrade(groupId, modelId, platformId, 5);
-      systemDialog.success('模拟降权成功');
-      await loadMonitoringForApp(selectedAppId!);
-    } catch (error) {
-      systemDialog.error('模拟失败', String(error));
-    }
-  };
+  // const handleSimulateDowngrade = async (groupId: string, modelId: string, platformId: string) => {
+  //   try {
+  //     await simulateDowngrade(groupId, modelId, platformId, 5);
+  //     systemDialog.success('模拟降权成功');
+  //     await loadMonitoringForApp(selectedAppId!);
+  //   } catch (error) {
+  //     systemDialog.error('模拟失败', String(error));
+  //   }
+  // };
 
-  const handleSimulateRecover = async (groupId: string, modelId: string, platformId: string) => {
-    try {
-      await simulateRecover(groupId, modelId, platformId, 3);
-      systemDialog.success('模拟恢复成功');
-      await loadMonitoringForApp(selectedAppId!);
-    } catch (error) {
-      systemDialog.error('模拟失败', String(error));
-    }
-  };
+  // const handleSimulateRecover = async (groupId: string, modelId: string, platformId: string) => {
+  //   try {
+  //     await simulateRecover(groupId, modelId, platformId, 3);
+  //     systemDialog.success('模拟恢复成功');
+  //     await loadMonitoringForApp(selectedAppId!);
+  //   } catch (error) {
+  //     systemDialog.error('模拟失败', String(error));
+  //   }
+  // };
 
-  const filteredApps = appCallers.filter(
-    (app) =>
-      app.appCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      app.displayName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // 按应用分组
+  const groupedApps = groupAppCallers(appCallers);
+  
+  // 过滤应用组
+  const filteredAppGroups = searchTerm
+    ? groupedApps.filter(g => 
+        g.appName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        g.app.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : groupedApps;
+  
+  // 当前选中的应用组
+  const selectedAppGroup = selectedAppId 
+    ? groupedApps.find(g => g.features.some(f => f.items.some(i => i.id === selectedAppId)))
+    : null;
+  
+  // 获取选中应用的所有功能项（扁平化）
+  const selectedAppFeatures = selectedAppGroup 
+    ? selectedAppGroup.features.flatMap(f => f.items)
+    : [];
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
@@ -440,15 +464,9 @@ export function ModelAppGroupPage() {
         subtitle="应用身份识别、模型分组配置与智能降权监控"
         actions={
           <>
-            {appCallers.length === 0 && (
-              <Button variant="secondary" size="xs" onClick={handleInitDefaultApps}>
-                <Plus size={14} />
-                初始化默认应用
-              </Button>
-            )}
-            <Button variant="secondary" size="xs" onClick={handleScanAppCallers}>
-              <Search size={14} />
-              全局扫描
+            <Button variant="secondary" size="xs" onClick={handleInitDefaultApps}>
+              <RefreshCw size={14} />
+              初始化应用
             </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowConfigDialog(true)}>
               <Settings size={14} />
@@ -484,20 +502,37 @@ export function ModelAppGroupPage() {
           </div>
 
           <div className="flex-1 overflow-auto">
-            {filteredApps.length === 0 ? (
+            {filteredAppGroups.length === 0 ? (
               <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={32} className="mx-auto mb-2 opacity-40" />
                 <div className="text-sm">暂无应用</div>
               </div>
             ) : (
               <div className="divide-y divide-white/10">
-                {filteredApps.map((app) => {
-                  const isSelected = app.id === selectedAppId;
-                  const successRate = app.totalCalls > 0 ? ((app.successCalls / app.totalCalls) * 100).toFixed(1) : '0';
+                {filteredAppGroups.map((appGroup) => {
+                  // 检查这个应用组中是否有被选中的项
+                  const isSelected = appGroup.features.some(f => f.items.some(i => i.id === selectedAppId));
+                  const totalItems = appGroup.features.reduce((sum, f) => sum + f.items.length, 0);
+                  
+                  // 计算应用组的统计数据
+                  const totalCalls = appGroup.features.reduce((sum, f) => 
+                    sum + f.items.reduce((s, i) => s + i.stats.totalCalls, 0), 0
+                  );
+                  const successCalls = appGroup.features.reduce((sum, f) => 
+                    sum + f.items.reduce((s, i) => s + i.stats.successCalls, 0), 0
+                  );
+                  const successRate = totalCalls > 0 ? ((successCalls / totalCalls) * 100).toFixed(1) : '0';
+                  
                   return (
                     <div
-                      key={app.id}
-                      onClick={() => setSelectedAppId(app.id)}
+                      key={appGroup.app}
+                      onClick={() => {
+                        // 选中这个应用组的第一个功能项
+                        const firstItem = appGroup.features[0]?.items[0];
+                        if (firstItem) {
+                          setSelectedAppId(firstItem.id);
+                        }
+                      }}
                       className="px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
                       style={isSelected ? { background: 'rgba(255,255,255,0.06)' } : undefined}
                     >
@@ -505,25 +540,25 @@ export function ModelAppGroupPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                              {app.displayName}
+                              {appGroup.appName}
                             </div>
-                            {app.isAutoRegistered && (
-                              <Badge variant="subtle" size="sm">
-                                自动
-                              </Badge>
-                            )}
+                            <Badge variant="subtle" size="sm">
+                              {totalItems}
+                            </Badge>
                           </div>
                           <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                            {app.appCode}
+                            {appGroup.app}
                           </div>
-                          <div className="mt-2 flex items-center gap-3 text-[11px]">
-                            <span style={{ color: 'var(--text-secondary)' }}>
-                              调用 {app.totalCalls.toLocaleString()}
-                            </span>
-                            <span style={{ color: parseFloat(successRate) >= 95 ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }}>
-                              成功率 {successRate}%
-                            </span>
-                          </div>
+                          {totalCalls > 0 && (
+                            <div className="mt-2 flex items-center gap-3 text-[11px]">
+                              <span style={{ color: 'var(--text-secondary)' }}>
+                                调用 {totalCalls.toLocaleString()}
+                              </span>
+                              <span style={{ color: parseFloat(successRate) >= 95 ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }}>
+                                成功率 {successRate}%
+                              </span>
+                            </div>
+                          )}
                         </div>
                         {isSelected && <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
                       </div>
@@ -535,9 +570,9 @@ export function ModelAppGroupPage() {
           </div>
         </Card>
 
-        {/* 右侧：模型需求配置与监控 */}
+        {/* 右侧：功能分组与模型配置 */}
         <div className="flex flex-col gap-4 min-h-0">
-          {!selectedApp ? (
+          {!selectedAppGroup ? (
             <Card className="flex-1 flex items-center justify-center">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={48} className="mx-auto mb-4 opacity-40" />
@@ -552,111 +587,129 @@ export function ModelAppGroupPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {selectedApp.displayName}
+                        {selectedAppGroup.appName}
                       </h3>
-                      {selectedApp.isAutoRegistered && (
-                        <Badge variant="subtle" size="sm">
-                          自动注册
-                        </Badge>
-                      )}
+                      <Badge variant="subtle" size="sm">
+                        {selectedAppFeatures.length} 个功能
+                      </Badge>
                     </div>
                     <div className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      {selectedApp.description || '暂无描述'}
+                      {selectedAppGroup.app}
                     </div>
                     <div className="mt-3 flex items-center gap-4 text-[12px]">
                       <span style={{ color: 'var(--text-muted)' }}>
-                        代码: <span style={{ color: 'var(--text-secondary)' }}>{selectedApp.appCode}</span>
+                        总调用: <span style={{ color: 'var(--text-secondary)' }}>
+                          {selectedAppFeatures.reduce((sum, f) => sum + f.stats.totalCalls, 0).toLocaleString()}
+                        </span>
                       </span>
                       <span style={{ color: 'var(--text-muted)' }}>
-                        总调用: <span style={{ color: 'var(--text-secondary)' }}>{selectedApp.totalCalls.toLocaleString()}</span>
+                        成功: <span style={{ color: 'rgba(34,197,94,0.95)' }}>
+                          {selectedAppFeatures.reduce((sum, f) => sum + f.stats.successCalls, 0).toLocaleString()}
+                        </span>
                       </span>
                       <span style={{ color: 'var(--text-muted)' }}>
-                        成功: <span style={{ color: 'rgba(34,197,94,0.95)' }}>{selectedApp.successCalls.toLocaleString()}</span>
-                      </span>
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        失败: <span style={{ color: 'rgba(239,68,68,0.95)' }}>{selectedApp.failedCalls.toLocaleString()}</span>
+                        失败: <span style={{ color: 'rgba(239,68,68,0.95)' }}>
+                          {selectedAppFeatures.reduce((sum, f) => sum + f.stats.failedCalls, 0).toLocaleString()}
+                        </span>
                       </span>
                     </div>
                   </div>
-                  <Button variant="secondary" size="xs" onClick={() => handleDeleteApp(selectedApp.id)}>
-                    <Trash2 size={14} />
-                  </Button>
                 </div>
               </Card>
 
-              {/* 模型需求列表 */}
+              {/* 功能分组列表 */}
               <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-auto">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    模型需求与分组配置
-                  </h4>
-                  <Button variant="secondary" size="xs" onClick={handleAddRequirement}>
-                    <Plus size={14} />
-                    添加需求
-                  </Button>
-                </div>
+                <h4 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  功能与模型配置
+                </h4>
 
-                {selectedApp.modelRequirements.length === 0 ? (
+                {selectedAppFeatures.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                       <Zap size={48} className="mx-auto mb-4 opacity-40" />
-                      <div className="text-sm">暂无模型需求配置</div>
-                      <div className="mt-1 text-[12px]">将使用系统默认模型</div>
+                      <div className="text-sm">暂无功能配置</div>
                     </div>
                   </Card>
                 ) : (
                   <div className="space-y-4">
-                    {selectedApp.modelRequirements.map((req: AppModelRequirement, idx: number) => {
-                      const group = modelGroups.find((g) => g.id === req.modelGroupId);
-                      const monitoring = req.modelGroupId ? monitoringData[req.modelGroupId] : undefined;
-                      const modelTypeLabel = MODEL_TYPES.find((t) => t.value === req.modelType)?.label ?? req.modelType;
+                    {selectedAppFeatures.map((featureItem, idx: number) => {
+                      const app = appCallers.find(a => a.id === featureItem.id);
+                      if (!app) return null;
+                      
+                      const req = app.modelRequirements[0]; // 每个功能项只有一个需求
+                      const group = req?.modelGroupId ? modelGroups.find((g) => g.id === req.modelGroupId) : undefined;
+                      const monitoring = req?.modelGroupId ? monitoringData[req.modelGroupId] : undefined;
+                      const modelTypeIcon = getModelTypeIcon(featureItem.parsed.modelType);
+                      const modelTypeLabel = getModelTypeDisplayName(featureItem.parsed.modelType);
+                      const featureDescription = getFeatureDescription(featureItem.parsed);
+                      const successRate = featureItem.stats.totalCalls > 0 
+                        ? ((featureItem.stats.successCalls / featureItem.stats.totalCalls) * 100).toFixed(1) 
+                        : '0';
+                      
+                      // 判断是否使用默认分组
+                      const isDefaultGroup = !group;
+                      const groupLabel = isDefaultGroup 
+                        ? `默认${modelTypeLabel}` 
+                        : `专属${modelTypeLabel}`;
 
                       return (
                         <Card key={idx} className="p-0 overflow-hidden">
-                          {/* 需求头部 */}
+                          {/* 功能头部 */}
                           <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <Badge variant="subtle">{modelTypeLabel}</Badge>
-                              {req.isRequired && <Badge variant="success">必需</Badge>}
-                              <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                                {req.purpose || '未设置用途'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleEditRequirement(req)}
-                                className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                              >
-                                <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteRequirement(req)}
-                                className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                              >
-                                <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
-                              </button>
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <span className="text-[14px]">{modelTypeIcon}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  {featureDescription}
+                                </div>
+                                <div className="mt-0.5 flex items-center gap-2">
+                                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    模型：{featureItem.appCallerKey}
+                                  </span>
+                                  <button
+                                    className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                                    style={{
+                                      background: isDefaultGroup ? 'rgba(34, 197, 94, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+                                      border: isDefaultGroup ? '1px solid rgba(34, 197, 94, 0.28)' : '1px solid rgba(59, 130, 246, 0.28)',
+                                      color: isDefaultGroup ? 'rgba(34, 197, 94, 0.95)' : 'rgba(59, 130, 246, 0.95)',
+                                    }}
+                                    title={isDefaultGroup ? '使用默认分组' : `使用专属分组：${group?.name}`}
+                                  >
+                                    {groupLabel}
+                                  </button>
+                                </div>
+                              </div>
+                              {featureItem.stats.totalCalls > 0 && (
+                                <div className="ml-auto flex items-center gap-3 text-[11px]">
+                                  <span style={{ color: 'var(--text-secondary)' }}>
+                                    {featureItem.stats.totalCalls}次
+                                  </span>
+                                  <span style={{ color: parseFloat(successRate) >= 95 ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }}>
+                                    {successRate}%
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          {/* 分组信息 */}
+                          {/* 模型配置 */}
                           <div className="p-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                                已配置模型
+                              </div>
+                              <Button variant="secondary" size="xs">
+                                <Plus size={12} />
+                                添加模型
+                              </Button>
+                            </div>
+
                             {!group ? (
                               <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
-                                <div className="text-[13px]">未绑定分组，将使用默认分组</div>
+                                <div className="text-[12px]">未绑定分组，将使用默认分组</div>
                               </div>
                             ) : (
                               <div>
-                                <div className="mb-3 flex items-center gap-2">
-                                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                                    分组：{group.name}
-                                  </div>
-                                  {group.description && (
-                                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                      {group.description}
-                                    </div>
-                                  )}
-                                </div>
-
                                 {/* 模型负载列表 */}
                                 {monitoring && monitoring.models.length > 0 ? (
                                   <div className="space-y-2">
@@ -692,20 +745,18 @@ export function ModelAppGroupPage() {
                                               </div>
                                             </div>
                                             <div className="flex items-center gap-1">
-                                              <Tooltip content="模拟降权">
+                                              <Tooltip content="编辑">
                                                 <button
-                                                  onClick={() => handleSimulateDowngrade(group.id, model.modelId, model.platformId)}
                                                   className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
                                                 >
-                                                  <TrendingDown size={14} style={{ color: 'var(--text-muted)' }} />
+                                                  <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
                                                 </button>
                                               </Tooltip>
-                                              <Tooltip content="模拟恢复">
+                                              <Tooltip content="删除">
                                                 <button
-                                                  onClick={() => handleSimulateRecover(group.id, model.modelId, model.platformId)}
                                                   className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
                                                 >
-                                                  <TrendingUp size={14} style={{ color: 'var(--text-muted)' }} />
+                                                  <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
                                                 </button>
                                               </Tooltip>
                                             </div>

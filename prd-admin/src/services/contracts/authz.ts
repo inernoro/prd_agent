@@ -42,6 +42,7 @@ export type GetSystemRolesContract = () => Promise<ApiResponse<SystemRoleDto[]>>
 export type CreateSystemRoleContract = (req: UpsertSystemRoleRequest) => Promise<ApiResponse<SystemRoleDto>>;
 export type UpdateSystemRoleContract = (key: string, req: UpsertSystemRoleRequest) => Promise<ApiResponse<SystemRoleDto>>;
 export type DeleteSystemRoleContract = (key: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type ResetBuiltInSystemRolesContract = () => Promise<ApiResponse<SystemRoleDto[]>>;
 export type GetUserAuthzContract = (userId: string) => Promise<ApiResponse<AdminUserAuthzSnapshot>>;
 export type UpdateUserAuthzContract = (userId: string, req: UpdateUserAuthzRequest) => Promise<ApiResponse<AdminUserAuthzSnapshot>>;
 

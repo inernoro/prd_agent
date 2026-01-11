@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Cpu, Database, Image, Plug, ScrollText, Settings2, Shield, ShieldCheck, Users, Users2 } from 'lucide-react';
+import { Cpu, Database, Image, Plug, ScrollText, Settings2, Shield, ShieldCheck, Users, Users2, Wand2 } from 'lucide-react';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
-import { createSystemRole, deleteSystemRole, getAdminPermissionCatalog, getSystemRoles, updateSystemRole } from '@/services';
+import { createSystemRole, deleteSystemRole, getAdminAuthzMe, getAdminPermissionCatalog, getSystemRoles, resetBuiltInSystemRoles, updateSystemRole } from '@/services';
 import type { AdminPermissionDef, SystemRoleDto } from '@/services/contracts/authz';
+import { useAuthStore } from '@/stores/authStore';
 
 function normKey(x: string): string {
   return String(x || '').trim();
@@ -15,6 +16,7 @@ function normKey(x: string): string {
 
 export default function AuthzPage() {
   const navigate = useNavigate();
+  const setPermissions = useAuthStore((s) => s.setPermissions);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [catalog, setCatalog] = useState<AdminPermissionDef[]>([]);
@@ -27,6 +29,8 @@ export default function AuthzPage() {
   const [createName, setCreateName] = useState('');
   const [createClonePerms, setCreateClonePerms] = useState(true);
   const [createSubmitting, setCreateSubmitting] = useState(false);
+
+  const [resetSubmitting, setResetSubmitting] = useState(false);
 
   const activeRole = useMemo(() => roles.find((r) => r.key === activeKey) || null, [roles, activeKey]);
   const catalogByKey = useMemo(() => {
@@ -100,6 +104,7 @@ export default function AuthzPage() {
       { id: 'assets', title: '资源管理', hint: '桌面资源/头像等', readKey: 'admin.assets.read', writeKey: 'admin.assets.write', icon: <Image size={16} /> },
       { id: 'settings', title: '系统设置/提示词', hint: 'settings/prompts', readKey: 'admin.settings.read', writeKey: 'admin.settings.write', icon: <Settings2 size={16} /> },
       { id: 'authz', title: '权限管理', hint: 'system roles / user authz', writeKey: 'admin.authz.manage', writeLabel: '管', icon: <Shield size={16} /> },
+      { id: 'agent', title: 'Agent 体验', hint: 'PRD/视觉/文学 Agent', writeKey: 'admin.agent.use', writeLabel: '用', icon: <Wand2 size={16} /> },
     ],
     []
   );
@@ -160,6 +165,43 @@ export default function AuthzPage() {
     setCreateSubmitting(false);
   };
 
+  const resetBuiltIns = async () => {
+    if (resetSubmitting) return;
+    const ok1 = await systemDialog.confirm({
+      title: '重置内置角色',
+      message: '将把所有“内置角色”的名称与权限恢复为默认定义（不会删除自定义角色）。是否继续？',
+      tone: 'neutral',
+      confirmText: '继续',
+      cancelText: '取消',
+    });
+    if (!ok1) return;
+    const ok2 = await systemDialog.confirm({
+      title: '再次确认',
+      message: '此操作会覆盖内置角色权限配置。建议仅在误操作后使用。',
+      tone: 'danger',
+      confirmText: '确认重置',
+      cancelText: '取消',
+    });
+    if (!ok2) return;
+
+    setResetSubmitting(true);
+    const res = await resetBuiltInSystemRoles();
+    if (!res.success) {
+      systemDialog.error(res.error?.message || '重置失败');
+      setResetSubmitting(false);
+      return;
+    }
+    setRoles(Array.isArray(res.data) ? res.data : []);
+    setActiveKey('admin');
+    // 同步刷新当前登录用户的 effectivePermissions，避免“重置了但菜单没变化”的错觉
+    const me = await getAdminAuthzMe();
+    if (me.success) {
+      setPermissions(me.data.effectivePermissions || []);
+    }
+    systemDialog.success('已重置内置角色');
+    setResetSubmitting(false);
+  };
+
   const removeActiveRole = async () => {
     if (!activeRole) return;
     if (activeRole.isBuiltIn) {
@@ -194,9 +236,20 @@ export default function AuthzPage() {
           <Card className="p-4 h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>系统角色</div>
-              <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={loading}>
-                新增角色
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={loading}>
+                  新增角色
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void resetBuiltIns()}
+                  disabled={loading || resetSubmitting}
+                  title="恢复内置角色到默认权限（不删除自定义角色）"
+                >
+                  {resetSubmitting ? '重置中...' : '重置内置'}
+                </Button>
+              </div>
             </div>
             {/* 用 flex 列表避免 grid 默认的 stretch 把每个 role 拉成“大卡片” */}
             <div className="mt-3 flex flex-col gap-1.5 flex-1 min-h-0 overflow-auto pr-1">
@@ -342,22 +395,30 @@ export default function AuthzPage() {
 
                         <div className="flex items-center gap-8">
                           <div className="w-[40px] flex items-center justify-center">
-                            <input
-                              type="checkbox"
-                              aria-label={`${r.title}-读`}
-                              disabled={loading || !dirtyPerms || !readKey}
-                              checked={readChecked}
-                              onChange={(e) => setChecked(readKey, e.target.checked)}
-                            />
+                            {readKey ? (
+                              <input
+                                type="checkbox"
+                                aria-label={`${r.title}-读`}
+                                disabled={loading || !dirtyPerms}
+                                checked={readChecked}
+                                onChange={(e) => setChecked(readKey, e.target.checked)}
+                              />
+                            ) : (
+                              <span className="text-xs opacity-35 select-none" style={{ color: 'var(--text-muted)' }}>—</span>
+                            )}
                           </div>
                           <div className="w-[40px] flex items-center justify-center">
-                            <input
-                              type="checkbox"
-                              aria-label={`${r.title}-${writeLabel}`}
-                              disabled={loading || !dirtyPerms || !writeKey}
-                              checked={writeChecked}
-                              onChange={(e) => setChecked(writeKey, e.target.checked)}
-                            />
+                            {writeKey ? (
+                              <input
+                                type="checkbox"
+                                aria-label={`${r.title}-${writeLabel}`}
+                                disabled={loading || !dirtyPerms}
+                                checked={writeChecked}
+                                onChange={(e) => setChecked(writeKey, e.target.checked)}
+                              />
+                            ) : (
+                              <span className="text-xs opacity-35 select-none" style={{ color: 'var(--text-muted)' }}>—</span>
+                            )}
                           </div>
                         </div>
                       </div>

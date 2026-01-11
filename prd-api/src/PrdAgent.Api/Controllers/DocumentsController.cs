@@ -93,8 +93,8 @@ public class DocumentsController : ControllerBase
             var session = await _sessionService.CreateAsync(parsed.Id);
             // 个人会话：绑定 ownerUserId，便于 IM 形态的会话列表展示
             session.OwnerUserId = userId;
-            // 标题：默认使用 PRD 标题（更复杂的标题生成由客户端/后台策略决定）
-            session.Title = parsed.Title;
+            // 标题：调试页允许客户端传入自定义标题；留空则使用 PRD 标题
+            session.Title = string.IsNullOrWhiteSpace(request.Title) ? parsed.Title : request.Title.Trim();
             await _sessionService.UpdateAsync(session);
 
             var response = new UploadDocumentResponse

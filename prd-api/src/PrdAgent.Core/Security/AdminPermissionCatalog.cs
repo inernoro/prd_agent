@@ -34,6 +34,11 @@ public static class AdminPermissionCatalog
     public const string SettingsWrite = "admin.settings.write";
 
     /// <summary>
+    /// Agent 体验权限：用于开放 PRD Agent / 视觉创作 Agent / 文学创作 Agent 等“体验型功能”菜单与相关后台接口。
+    /// </summary>
+    public const string AgentUse = "admin.agent.use";
+
+    /// <summary>
     /// 超级权限（当 admin 路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "admin.super";
@@ -42,6 +47,7 @@ public static class AdminPermissionCatalog
     {
         new(AdminAccess, "后台访问", "允许进入管理后台"),
         new(AuthzManage, "权限管理", "管理系统角色/用户权限"),
+        new(AgentUse, "Agent 体验", "允许访问 PRD/视觉/文学 Agent 等体验功能"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),

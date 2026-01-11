@@ -99,6 +99,14 @@ public sealed class AdminPermissionMiddleware
             return IsReadMethod(method) ? AdminPermissionCatalog.SettingsRead : AdminPermissionCatalog.SettingsWrite;
         }
 
+        // Agent 体验相关（视觉/文学/生图等）：单独权限点，避免被 admin.super 兜底误伤
+        if (path.StartsWith("/api/v1/admin/image-master", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/api/v1/admin/image-gen", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/api/v1/admin/literary-prompts", StringComparison.OrdinalIgnoreCase))
+        {
+            return AdminPermissionCatalog.AgentUse;
+        }
+
         // 文档（后台查看/导出）
         if (path.StartsWith("/api/v1/admin/documents", StringComparison.OrdinalIgnoreCase))
         {

@@ -10,157 +10,221 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public static class AppCallerRegistry
 {
-    /// <summary>
-    /// PRD Desktop 应用
-    /// </summary>
-    public static class PrdDesktop
+/// <summary>
+/// Desktop 桌面客户端
+/// </summary>
+public static class Desktop
+{
+    public const string AppName = "Desktop";
+    
+    public static class Chat
     {
-        public const string AppName = "PrdDesktop";
+        [AppCallerMetadata(
+            "聊天发送消息-对话",
+            "用户在桌面端发送聊天消息时使用对话模型",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string SendMessageChat = "desktop.chat.sendmessage::chat";
         
-        public static class Chat
-        {
-            [AppCallerMetadata(
-                "桌面端-聊天消息",
-                "用户在桌面端发送聊天消息",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Chat"
-            )]
-            public const string SendMessage = "PrdDesktop.Chat.SendMessage";
-            
-            [AppCallerMetadata(
-                "桌面端-意图识别",
-                "快速识别用户消息意图",
-                ModelTypes = new[] { ModelTypes.Intent },
-                Category = "Chat"
-            )]
-            public const string IntentRecognition = "PrdDesktop.Chat.IntentRecognition";
-        }
+        [AppCallerMetadata(
+            "聊天发送消息-意图识别",
+            "快速识别用户消息意图",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Chat"
+        )]
+        public const string SendMessageIntent = "desktop.chat.sendmessage::intent";
         
-        public static class PRD
-        {
-            [AppCallerMetadata(
-                "桌面端-PRD分析",
-                "分析PRD文档内容，提取关键信息",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Document"
-            )]
-            public const string Analyze = "PrdDesktop.PRD.Analyze";
-            
-            [AppCallerMetadata(
-                "桌面端-PRD预览问答",
-                "PRD文档预览时的问答功能",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Document"
-            )]
-            public const string Preview = "PrdDesktop.PRD.Preview";
-        }
-        
-        public static class Gap
-        {
-            [AppCallerMetadata(
-                "桌面端-Gap检测",
-                "检测对话中的信息缺口",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Analysis"
-            )]
-            public const string Detect = "PrdDesktop.Gap.Detect";
-            
-            [AppCallerMetadata(
-                "桌面端-Gap总结",
-                "总结Gap内容",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Analysis"
-            )]
-            public const string Summarize = "PrdDesktop.Gap.Summarize";
-        }
-        
-        public static class VisualAgent
-        {
-            [AppCallerMetadata(
-                "桌面端-视觉Agent分析",
-                "视觉创作Agent的图片分析",
-                ModelTypes = new[] { ModelTypes.Vision, ModelTypes.Chat },
-                Category = "Agent"
-            )]
-            public const string Analyze = "PrdDesktop.VisualAgent.Analyze";
-            
-            [AppCallerMetadata(
-                "桌面端-视觉Agent生图",
-                "视觉创作Agent的图片生成",
-                ModelTypes = new[] { ModelTypes.ImageGen },
-                Category = "Agent"
-            )]
-            public const string GenerateImage = "PrdDesktop.VisualAgent.GenerateImage";
-        }
-        
-        public static class LiteraryAgent
-        {
-            [AppCallerMetadata(
-                "桌面端-文学Agent生成",
-                "文学创作Agent的内容生成",
-                ModelTypes = new[] { ModelTypes.Chat, ModelTypes.ImageGen },
-                Category = "Agent"
-            )]
-            public const string Generate = "PrdDesktop.LiteraryAgent.Generate";
-        }
+        [AppCallerMetadata(
+            "聊天-视觉理解",
+            "整个聊天功能的视觉理解能力",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Chat"
+        )]
+        public const string ChatVision = "desktop.chat::vision";
     }
     
-    /// <summary>
-    /// PRD Admin 应用
-    /// </summary>
-    public static class PrdAdmin
+    public static class PRD
     {
-        public const string AppName = "PrdAdmin";
+        [AppCallerMetadata(
+            "PRD分析-对话",
+            "分析PRD文档内容，提取关键信息",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string AnalysisChat = "desktop.prd.analysis::chat";
         
-        public static class Chat
-        {
-            [AppCallerMetadata(
-                "管理后台-聊天消息",
-                "管理员在后台测试聊天功能",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Chat"
-            )]
-            public const string SendMessage = "PrdAdmin.Chat.SendMessage";
-        }
-        
-        public static class Lab
-        {
-            [AppCallerMetadata(
-                "管理后台-实验室测试",
-                "实验室功能的模型测试",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Testing"
-            )]
-            public const string Experiment = "PrdAdmin.Lab.Experiment";
-        }
+        [AppCallerMetadata(
+            "PRD预览问答-对话",
+            "PRD文档预览时的问答功能",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string PreviewChat = "desktop.prd.preview::chat";
     }
     
-    /// <summary>
-    /// 开放平台应用
-    /// </summary>
-    public static class OpenPlatform
+    public static class Gap
     {
-        public const string AppName = "OpenPlatform";
+        [AppCallerMetadata(
+            "Gap检测-对话",
+            "检测对话中的信息缺口",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string DetectionChat = "desktop.gap.detection::chat";
         
-        public static class Proxy
-        {
-            [AppCallerMetadata(
-                "开放平台-聊天代理",
-                "开放平台的LLM聊天代理",
-                ModelTypes = new[] { ModelTypes.Chat },
-                Category = "Proxy"
-            )]
-            public const string Chat = "OpenPlatform.Proxy.Chat";
-            
-            [AppCallerMetadata(
-                "开放平台-向量嵌入",
-                "开放平台的向量嵌入服务",
-                ModelTypes = new[] { ModelTypes.Embedding },
-                Category = "Proxy"
-            )]
-            public const string Embedding = "OpenPlatform.Proxy.Embedding";
-        }
+        [AppCallerMetadata(
+            "Gap总结-对话",
+            "总结Gap内容",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string SummarizationChat = "desktop.gap.summarization::chat";
     }
+}
+    
+/// <summary>
+/// Visual Agent 视觉创作
+/// </summary>
+public static class VisualAgent
+{
+    public const string AppName = "VisualAgent";
+    
+    public static class Image
+    {
+        [AppCallerMetadata(
+            "图片生成",
+            "根据描述生成图片",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Generation = "visual-agent.image::generation";
+        
+        [AppCallerMetadata(
+            "图片分析",
+            "分析图片内容",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Image"
+        )]
+        public const string Vision = "visual-agent.image::vision";
+        
+        [AppCallerMetadata(
+            "创意对话",
+            "与AI讨论创意想法",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Image"
+        )]
+        public const string Chat = "visual-agent.image::chat";
+    }
+}
+
+/// <summary>
+/// Literary Agent 文学创作
+/// </summary>
+public static class LiteraryAgent
+{
+    public const string AppName = "LiteraryAgent";
+    
+    public static class Content
+    {
+        [AppCallerMetadata(
+            "内容生成",
+            "生成文学内容",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Content"
+        )]
+        public const string Chat = "literary-agent.content::chat";
+        
+        [AppCallerMetadata(
+            "内容润色",
+            "润色文学风格",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Content"
+        )]
+        public const string PolishingChat = "literary-agent.content.polishing::chat";
+    }
+    
+    public static class Illustration
+    {
+        [AppCallerMetadata(
+            "配图生成",
+            "为内容生成配图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Illustration"
+        )]
+        public const string Generation = "literary-agent.illustration::generation";
+    }
+}
+
+/// <summary>
+/// Open Platform 开放平台
+/// </summary>
+public static class OpenPlatform
+{
+    public const string AppName = "OpenPlatform";
+    
+    public static class Proxy
+    {
+        [AppCallerMetadata(
+            "聊天代理",
+            "开放平台的LLM聊天代理",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Proxy"
+        )]
+        public const string Chat = "open-platform.proxy::chat";
+        
+        [AppCallerMetadata(
+            "向量嵌入代理",
+            "开放平台的向量嵌入服务",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Proxy"
+        )]
+        public const string Embedding = "open-platform.proxy::embedding";
+        
+        [AppCallerMetadata(
+            "重排序代理",
+            "开放平台的重排序服务",
+            ModelTypes = new[] { ModelTypes.Rerank },
+            Category = "Proxy"
+        )]
+        public const string Rerank = "open-platform.proxy::rerank";
+    }
+}
+
+/// <summary>
+/// Admin 管理后台
+/// </summary>
+public static class Admin
+{
+    public const string AppName = "Admin";
+    
+    public static class Lab
+    {
+        [AppCallerMetadata(
+            "实验室-对话测试",
+            "实验室功能的对话模型测试",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Testing"
+        )]
+        public const string Chat = "admin.lab::chat";
+        
+        [AppCallerMetadata(
+            "实验室-视觉测试",
+            "实验室功能的视觉模型测试",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Testing"
+        )]
+        public const string Vision = "admin.lab::vision";
+        
+        [AppCallerMetadata(
+            "实验室-生成测试",
+            "实验室功能的生成模型测试",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Testing"
+        )]
+        public const string Generation = "admin.lab::generation";
+    }
+}
 }
 
 /// <summary>

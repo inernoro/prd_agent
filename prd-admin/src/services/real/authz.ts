@@ -6,6 +6,7 @@ import type {
   CreateSystemRoleContract,
   UpdateSystemRoleContract,
   DeleteSystemRoleContract,
+  ResetBuiltInSystemRolesContract,
   GetUserAuthzContract,
   UpdateUserAuthzContract,
   AdminAuthzMe,
@@ -38,6 +39,10 @@ export const updateSystemRoleReal: UpdateSystemRoleContract = async (key, req) =
 export const deleteSystemRoleReal: DeleteSystemRoleContract = async (key) => {
   const k = String(key || '').trim();
   return await apiRequest<{ deleted: boolean }>(`/api/v1/admin/system-roles/${encodeURIComponent(k)}`, { method: 'DELETE' });
+};
+
+export const resetBuiltInSystemRolesReal: ResetBuiltInSystemRolesContract = async () => {
+  return await apiRequest<SystemRoleDto[]>('/api/v1/admin/system-roles/reset-builtins', { method: 'POST' });
 };
 
 export const getUserAuthzReal: GetUserAuthzContract = async (userId) => {

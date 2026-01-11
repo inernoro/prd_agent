@@ -80,83 +80,47 @@ public class DatabaseInitializer
 
     private async Task EnsureSystemRolesAsync()
     {
-        // 若已经存在任意 system role，则认为已初始化（避免覆盖用户自定义）
-        var any = await _db.SystemRoles.Find(_ => true).Limit(1).FirstOrDefaultAsync();
-        if (any != null) return;
-
-        // 内置角色：尽量“默认不误伤”
-        // - admin：全权限（含 admin.super，兜底避免版本升级时遗漏映射导致管理员突然 403）
-        // - operator：常用运维（读全 + 部分写）
-        // - viewer：只读（含 logs）
-        // - none：无权限（默认给非 ADMIN 用户）
-        var allPerms = PrdAgent.Core.Security.AdminPermissionCatalog.All.Select(x => x.Key).ToList();
-
-        var admin = new SystemRole
+        // 启动时仅“补齐缺失的内置角色”，不覆盖用户对已有角色的编辑（覆盖应由显式“重置内置角色”触发）
+        var defs = PrdAgent.Core.Security.BuiltInSystemRoles.Definitions;
+        foreach (var def in defs)
         {
-            Id = await _idGenerator.GenerateIdAsync("config"),
-            Key = "admin",
-            Name = "管理员",
-            Permissions = allPerms,
-            IsBuiltIn = true,
-            UpdatedAt = DateTime.UtcNow,
-            UpdatedBy = "system"
-        };
-
-        var operatorRole = new SystemRole
-        {
-            Id = await _idGenerator.GenerateIdAsync("config"),
-            Key = "operator",
-            Name = "运营/运维",
-            Permissions = new List<string>
+            var existed = await _db.SystemRoles.Find(x => x.Key == def.Key).FirstOrDefaultAsync();
+            if (existed != null)
             {
-                PrdAgent.Core.Security.AdminPermissionCatalog.AdminAccess,
-                PrdAgent.Core.Security.AdminPermissionCatalog.ModelsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.ModelsWrite,
-                PrdAgent.Core.Security.AdminPermissionCatalog.GroupsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.GroupsWrite,
-                PrdAgent.Core.Security.AdminPermissionCatalog.LogsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.DataRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.DataWrite,
-                PrdAgent.Core.Security.AdminPermissionCatalog.AssetsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.AssetsWrite,
-                PrdAgent.Core.Security.AdminPermissionCatalog.OpenPlatformManage,
-            },
-            IsBuiltIn = true,
-            UpdatedAt = DateTime.UtcNow,
-            UpdatedBy = "system"
-        };
+                // 仅对 admin 做“增量补齐”，避免升级后管理员丢功能（只加不减，不覆盖）
+                if (string.Equals(existed.Key, "admin", StringComparison.Ordinal) && existed.IsBuiltIn)
+                {
+                    var current = existed.Permissions ?? new List<string>();
+                    var merged = current
+                        .Concat(def.Permissions ?? new List<string>())
+                        .Select(x => (x ?? string.Empty).Trim())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+                    if (merged.Count != current.Count)
+                    {
+                        var update = Builders<SystemRole>.Update
+                            .Set(x => x.Permissions, merged)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                            .Set(x => x.UpdatedBy, "system");
+                        await _db.SystemRoles.UpdateOneAsync(x => x.Id == existed.Id, update);
+                    }
+                }
+                continue;
+            }
 
-        var viewer = new SystemRole
-        {
-            Id = await _idGenerator.GenerateIdAsync("config"),
-            Key = "viewer",
-            Name = "只读",
-            Permissions = new List<string>
+            var role = new SystemRole
             {
-                PrdAgent.Core.Security.AdminPermissionCatalog.AdminAccess,
-                PrdAgent.Core.Security.AdminPermissionCatalog.UsersRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.GroupsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.ModelsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.LogsRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.DataRead,
-                PrdAgent.Core.Security.AdminPermissionCatalog.AssetsRead,
-            },
-            IsBuiltIn = true,
-            UpdatedAt = DateTime.UtcNow,
-            UpdatedBy = "system"
-        };
+                Id = await _idGenerator.GenerateIdAsync("config"),
+                Key = def.Key,
+                Name = def.Name,
+                Permissions = def.Permissions.Distinct(StringComparer.Ordinal).ToList(),
+                IsBuiltIn = true,
+                UpdatedAt = DateTime.UtcNow,
+                UpdatedBy = "system"
+            };
 
-        var none = new SystemRole
-        {
-            Id = await _idGenerator.GenerateIdAsync("config"),
-            Key = "none",
-            Name = "无权限",
-            Permissions = new List<string>(),
-            IsBuiltIn = true,
-            UpdatedAt = DateTime.UtcNow,
-            UpdatedBy = "system"
-        };
-
-        await _db.SystemRoles.InsertManyAsync(new[] { admin, operatorRole, viewer, none });
+            await _db.SystemRoles.InsertOneAsync(role);
+        }
     }
 }

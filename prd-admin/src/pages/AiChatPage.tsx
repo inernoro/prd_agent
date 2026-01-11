@@ -14,7 +14,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { systemDialog } from '@/lib/systemDialog';
-import { getAdminPrompts } from '@/services';
+import { getAdminPrompts, getAdminSystemPrompts } from '@/services';
 import { useLocation } from 'react-router-dom';
 
 type LocalSession = {
@@ -36,12 +36,19 @@ type UiMessage = {
   resendOfMessageId?: string;
   timestamp: number;
   citations?: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>;
+  // 元数据（调试页：用于展示“本轮系统提示词”）
+  viewRole?: 'PM' | 'DEV' | 'QA';
+  promptKey?: string;
+  promptTitle?: string;
+  promptTemplate?: string;
 };
 
 type PromptItem = {
   promptKey: string;
   title: string;
   order?: number;
+  promptTemplate?: string;
+  role?: 'PM' | 'DEV' | 'QA';
 };
 
 function StreamingDot() {
@@ -273,6 +280,7 @@ export default function AiChatPage() {
   // 提示词快捷标签
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
   const [currentRole, setCurrentRole] = useState<'PM' | 'DEV' | 'QA'>('PM');
+  const [selectedPromptKey, setSelectedPromptKey] = useState<string>(''); // 本轮使用的 promptKey（可选）
   const [debugMode, setDebugMode] = useState(false);
 
   // 新建会话（上传 PRD）
@@ -307,6 +315,17 @@ export default function AiChatPage() {
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingAttachmentText, setPendingAttachmentText] = useState<string>('');
   const [pendingAttachmentName, setPendingAttachmentName] = useState<string>('');
+
+  // 角色系统提示词（用于查看“系统提示词内容”）
+  const [systemPromptByRole, setSystemPromptByRole] = useState<Record<string, string>>({});
+  const [promptViewerOpen, setPromptViewerOpen] = useState(false);
+  const [promptViewer, setPromptViewer] = useState<{
+    role: 'PM' | 'DEV' | 'QA';
+    promptKey?: string;
+    promptTitle?: string;
+    systemPrompt?: string;
+    promptTemplate?: string;
+  } | null>(null);
 
   const refreshSessionsFromServer = useCallback(
     async (args?: { includeArchived?: boolean; silent?: boolean }) => {
@@ -446,22 +465,49 @@ export default function AiChatPage() {
         if (!res.success) return;
         const items = Array.isArray(res.data?.settings?.prompts) ? res.data.settings.prompts : [];
         const mapped: PromptItem[] = items
-          .map((x: any) => ({
-            promptKey: String(x.promptKey ?? '').trim(),
-            title: String(x.title ?? '').trim(),
-            order: typeof x.order === 'number' ? x.order : 999,
-            role: String(x.role ?? '').trim().toUpperCase(),
-          }))
+          .map((x: any) => {
+            const roleRaw = String(x.role ?? '').trim().toUpperCase();
+            const role = roleRaw === 'PM' || roleRaw === 'DEV' || roleRaw === 'QA' ? (roleRaw as 'PM' | 'DEV' | 'QA') : undefined;
+            return {
+              promptKey: String(x.promptKey ?? '').trim(),
+              title: String(x.title ?? '').trim(),
+              promptTemplate: String(x.promptTemplate ?? '').trim(),
+              order: typeof x.order === 'number' ? x.order : 999,
+              role,
+            };
+          })
           .filter((x) => x.promptKey && x.title && x.role === currentRole);
         // 按 order 排序
         mapped.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         setPrompts(mapped);
+        // 如果当前已选择的 promptKey 不在该角色列表里，则清空
+        if (selectedPromptKey && !mapped.some((p) => p.promptKey === selectedPromptKey)) {
+          setSelectedPromptKey('');
+        }
       })
       .catch(() => {
         // 静默失败
       });
      
-  }, [token, currentRole]);
+  }, [token, currentRole, selectedPromptKey]);
+
+  // 加载角色系统提示词（用于查看“系统提示词内容”）
+  useEffect(() => {
+    if (!token) return;
+    getAdminSystemPrompts()
+      .then((res) => {
+        if (!res.success) return;
+        const entries = Array.isArray(res.data?.settings?.entries) ? res.data.settings.entries : [];
+        const map: Record<string, string> = {};
+        for (const e of entries) {
+          const r = String((e as any).role ?? '').trim().toUpperCase();
+          const sp = String((e as any).systemPrompt ?? '');
+          if (r) map[r] = sp;
+        }
+        setSystemPromptByRole(map);
+      })
+      .catch(() => {});
+  }, [token]);
 
   // 测试模式：自动切换角色、填充输入框
   useEffect(() => {
@@ -506,6 +552,7 @@ export default function AiChatPage() {
           groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
           replyToMessageId: (m as any).replyToMessageId ? String((m as any).replyToMessageId) : undefined,
           resendOfMessageId: (m as any).resendOfMessageId ? String((m as any).resendOfMessageId) : undefined,
+          viewRole: ((m as any).viewRole ? String((m as any).viewRole).trim().toUpperCase() : undefined) as any,
           timestamp: new Date(m.timestamp).getTime(),
         }));
         setMessages(mapped);
@@ -532,6 +579,7 @@ export default function AiChatPage() {
         groupSeq: typeof m.groupSeq === 'number' ? m.groupSeq : undefined,
         replyToMessageId: (m as any).replyToMessageId ? String((m as any).replyToMessageId) : undefined,
         resendOfMessageId: (m as any).resendOfMessageId ? String((m as any).resendOfMessageId) : undefined,
+        viewRole: ((m as any).viewRole ? String((m as any).viewRole).trim().toUpperCase() : undefined) as any,
         timestamp: new Date(m.timestamp).getTime(),
       }));
       setMessages(mapped);
@@ -672,6 +720,8 @@ export default function AiChatPage() {
     }
     const finalText = limited.finalText;
     const resendId = resendTargetMessageId ? String(resendTargetMessageId) : '';
+    const effectivePromptKey = (selectedPromptKey || '').trim();
+    const promptMeta = prompts.find((p) => p.promptKey === effectivePromptKey) ?? null;
 
     setPendingAttachmentText('');
     setPendingAttachmentName('');
@@ -681,6 +731,10 @@ export default function AiChatPage() {
         id: `user-${Date.now()}`,
         role: 'User',
         content: finalText,
+        viewRole: currentRole,
+        promptKey: effectivePromptKey || undefined,
+        promptTitle: promptMeta?.title,
+        promptTemplate: promptMeta?.promptTemplate,
         timestamp: Date.now(),
       })
     );
@@ -707,6 +761,7 @@ export default function AiChatPage() {
         body: JSON.stringify({ 
           content: finalText,
           role: currentRole,
+          promptKey: effectivePromptKey || null,
         }),
         signal: ac.signal,
       });
@@ -773,7 +828,7 @@ export default function AiChatPage() {
     setCreateBusy(true);
     let res: ApiResponse<any>;
     try {
-      res = await uploadAiChatDocument({ content });
+      res = await uploadAiChatDocument({ content, title: prdTitle.trim() || null });
     } finally {
       setCreateBusy(false);
     }
@@ -1112,8 +1167,48 @@ export default function AiChatPage() {
                       wordBreak: 'break-word',
                     }}
                   >
+                    {/* 系统提示词 Tag：展示“本轮将使用的系统提示词/提示词模板”，点击可查看内容 */}
+                    {isUser ? (
+                      <div className="mb-2 flex items-center gap-2">
+                        <span
+                          className="text-[10px] px-2 py-0.5 rounded-full select-none"
+                          style={{
+                            border: '1px solid var(--border-subtle)',
+                            color: 'var(--text-secondary)',
+                            background: 'rgba(255,255,255,0.02)',
+                          }}
+                          title="本轮回答角色"
+                        >
+                          角色：{m.viewRole || currentRole}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-[10px] px-2 py-0.5 rounded-full hover:bg-white/5 transition-colors"
+                          style={{
+                            border: '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))',
+                            color: 'var(--accent-gold)',
+                            background: 'color-mix(in srgb, var(--accent-gold) 10%, transparent)',
+                          }}
+                          onClick={() => {
+                            const role = (m.viewRole || currentRole) as 'PM' | 'DEV' | 'QA';
+                            setPromptViewer({
+                              role,
+                              promptKey: m.promptKey || undefined,
+                              promptTitle: m.promptTitle || undefined,
+                              systemPrompt: systemPromptByRole[role] ?? '',
+                              promptTemplate: m.promptTemplate || undefined,
+                            });
+                            setPromptViewerOpen(true);
+                          }}
+                          title="点击查看本轮使用的系统提示词/提示词模板"
+                        >
+                          系统提示词{m.promptTitle ? `：${m.promptTitle}` : m.promptKey ? `：${m.promptKey}` : '：默认'}
+                        </button>
+                      </div>
+                    ) : null}
                     {isUser && !isStreaming ? (
-                      <div className="pointer-events-none absolute -top-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      // 放到右下角，避免遮住“角色/系统提示词”等头部信息（尤其在内容以标题开头时更明显）
+                      <div className="pointer-events-none absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <div className="pointer-events-auto flex gap-1">
                           <button
                             type="button"
@@ -1223,25 +1318,35 @@ export default function AiChatPage() {
             <div className="mb-3 flex flex-wrap gap-2">
               {prompts.map((p) => {
                 const isHighlighted = highlightPromptKey && p.promptKey === highlightPromptKey;
+                const isSelected = !!p.promptKey && p.promptKey === selectedPromptKey;
                 return (
                   <button
                     key={p.promptKey}
                     type="button"
                     className="px-3 py-1.5 rounded-[10px] text-[12px] hover:bg-white/5 transition-all duration-200"
                     style={{
-                      border: isHighlighted ? '1px solid color-mix(in srgb, var(--accent-gold) 50%, var(--border-subtle))' : '1px solid var(--border-subtle)',
-                      background: isHighlighted ? 'color-mix(in srgb, var(--accent-gold) 12%, transparent)' : 'transparent',
-                      color: isHighlighted ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                      border: isSelected
+                        ? '1px solid color-mix(in srgb, var(--accent-gold) 60%, var(--border-subtle))'
+                        : isHighlighted
+                          ? '1px solid color-mix(in srgb, var(--accent-gold) 50%, var(--border-subtle))'
+                          : '1px solid var(--border-subtle)',
+                      background: isSelected
+                        ? 'color-mix(in srgb, var(--accent-gold) 16%, transparent)'
+                        : isHighlighted
+                          ? 'color-mix(in srgb, var(--accent-gold) 12%, transparent)'
+                          : 'transparent',
+                      color: isSelected || isHighlighted ? 'var(--accent-gold)' : 'var(--text-secondary)',
                     }}
                     onClick={() => {
                       setComposer(p.title);
+                      setSelectedPromptKey(p.promptKey);
                       requestAnimationFrame(() => {
                         adjustComposerHeight();
                         composerRef.current?.focus();
                       });
                     }}
                     disabled={!activeSessionId || activeSessionExpired || isStreaming}
-                    title={`点击插入：${p.title}`}
+                    title={`点击使用提示词：${p.promptKey}`}
                   >
                     {p.title}
                   </button>
@@ -1400,6 +1505,68 @@ export default function AiChatPage() {
       />
 
       {rightPanel}
+
+      {/* 系统提示词查看弹窗 */}
+      <Dialog
+        open={promptViewerOpen}
+        onOpenChange={(o) => {
+          setPromptViewerOpen(o);
+          if (!o) setPromptViewer(null);
+        }}
+        title="系统提示词"
+        description={
+          promptViewer
+            ? `角色：${promptViewer.role}${promptViewer.promptKey ? ` · promptKey=${promptViewer.promptKey}` : ''}`
+            : '查看本轮使用的系统提示词/提示词模板'
+        }
+        maxWidth={980}
+        content={
+          <div className="h-full min-h-0 flex flex-col gap-3">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              角色系统提示词
+            </div>
+            <pre
+              className="w-full rounded-[14px] p-3 text-[12px] overflow-auto"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                minHeight: 120,
+              }}
+            >
+              {(promptViewer?.systemPrompt || '').trim() || '（未获取到系统提示词，可能无权限或配置为空）'}
+            </pre>
+
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              提示词模板（promptTemplate）
+            </div>
+            <pre
+              className="w-full rounded-[14px] p-3 text-[12px] overflow-auto"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                minHeight: 160,
+              }}
+            >
+              {(promptViewer?.promptTemplate || '').trim() ||
+                (promptViewer?.promptKey ? '（该 promptKey 未配置 promptTemplate 或为空）' : '（本轮未选择 promptKey，使用默认系统提示词）')}
+            </pre>
+
+            {promptViewer?.promptTitle ? (
+              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                标题：{promptViewer.promptTitle}
+              </div>
+            ) : null}
+          </div>
+        }
+      />
 
       <Dialog
         open={createOpen}

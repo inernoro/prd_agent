@@ -8,6 +8,7 @@ import type {
   CreateSystemRoleContract,
   UpdateSystemRoleContract,
   DeleteSystemRoleContract,
+  ResetBuiltInSystemRolesContract,
   GetUserAuthzContract,
   UpdateUserAuthzContract,
 } from '@/services/contracts/authz';
@@ -149,6 +150,7 @@ import {
   createSystemRoleReal,
   updateSystemRoleReal,
   deleteSystemRoleReal,
+  resetBuiltInSystemRolesReal,
   getUserAuthzReal,
   updateUserAuthzReal,
 } from '@/services/real/authz';
@@ -300,6 +302,7 @@ export const getSystemRoles: GetSystemRolesContract = withAuth(getSystemRolesRea
 export const createSystemRole: CreateSystemRoleContract = withAuth(createSystemRoleReal);
 export const updateSystemRole: UpdateSystemRoleContract = withAuth(updateSystemRoleReal);
 export const deleteSystemRole: DeleteSystemRoleContract = withAuth(deleteSystemRoleReal);
+export const resetBuiltInSystemRoles: ResetBuiltInSystemRolesContract = withAuth(resetBuiltInSystemRolesReal);
 export const getUserAuthz: GetUserAuthzContract = withAuth(getUserAuthzReal);
 export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthzReal);
 

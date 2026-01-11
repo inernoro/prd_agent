@@ -19,6 +19,7 @@ import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
 import AuthzPage from '@/pages/AuthzPage';
 import { getAdminAuthzMe } from '@/services';
+import { ToastContainer } from '@/components/ui/Toast';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -85,8 +86,10 @@ export default function App() {
   }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, logout]);
 
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
+    <>
+      <ToastContainer />
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
 
       <Route
         path="/"
@@ -102,22 +105,23 @@ export default function App() {
         <Route path="users" element={<RequirePermission perm="admin.users.read"><UsersPage /></RequirePermission>} />
         <Route path="groups" element={<RequirePermission perm="admin.groups.read"><GroupsPage /></RequirePermission>} />
         <Route path="model-manage" element={<RequirePermission perm="admin.models.read"><ModelManageTabsPage /></RequirePermission>} />
-        <Route path="ai-chat" element={<AiChatPage />} />
-        <Route path="visual-agent" element={<VisualAgentWorkspaceListPage />} />
-        <Route path="visual-agent/:workspaceId" element={<VisualAgentWorkspaceEditorPage />} />
-        <Route path="literary-agent" element={<LiteraryAgentWorkspaceListPage />} />
-        <Route path="literary-agent/:workspaceId" element={<LiteraryAgentEditorPageWrapper />} />
+        <Route path="ai-chat" element={<RequirePermission perm="admin.agent.use"><AiChatPage /></RequirePermission>} />
+        <Route path="visual-agent" element={<RequirePermission perm="admin.agent.use"><VisualAgentWorkspaceListPage /></RequirePermission>} />
+        <Route path="visual-agent/:workspaceId" element={<RequirePermission perm="admin.agent.use"><VisualAgentWorkspaceEditorPage /></RequirePermission>} />
+        <Route path="literary-agent" element={<RequirePermission perm="admin.agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
+        <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="admin.agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="llm-logs" element={<RequirePermission perm="admin.logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="admin.data.read"><DataManagePage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="admin.openPlatform.manage"><OpenPlatformPage /></RequirePermission>} />
-        <Route path="prompts" element={<PromptStagesPage />} />
+        <Route path="prompts" element={<RequirePermission perm="admin.settings.write"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="admin.assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="admin.models.read"><LabPage /></RequirePermission>} />
         <Route path="authz" element={<RequirePermission perm="admin.authz.manage"><AuthzPage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
