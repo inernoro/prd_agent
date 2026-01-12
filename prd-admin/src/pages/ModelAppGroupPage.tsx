@@ -5,11 +5,14 @@ import { Select } from '@/components/design/Select';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
+import type { AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import {
   getAppCallers,
   updateAppCaller,
   // deleteAppCaller, // 暂时未使用
   getModelGroups,
+  getPlatforms,
   createModelGroup,
   updateModelGroup,
   // deleteModelGroup, // 暂时未使用
@@ -28,6 +31,7 @@ import type {
   ModelGroupMonitoringData,
   ModelSchedulerConfig,
 } from '@/types';
+import type { Platform } from '@/types/admin';
 import {
   Activity,
   ChevronRight,
@@ -66,6 +70,7 @@ export function ModelAppGroupPage() {
   const token = useAuthStore((s) => s.token);
   const [appCallers, setAppCallers] = useState<LLMAppCaller[]>([]);
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -75,19 +80,29 @@ export function ModelAppGroupPage() {
 
   // 弹窗状态
   const [showConfigDialog, setShowConfigDialog] = useState(false);
-  const [showGroupDialog, setShowGroupDialog] = useState(false);
+  // 模型池编辑弹窗（暂未使用 - 新建分组已跳转到独立页签）
+  const [showGroupDialog, _setShowGroupDialog] = useState(false);
   const [showRequirementDialog, setShowRequirementDialog] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<ModelGroup | null>(null);
-  const [editingRequirement] = useState<AppModelRequirement | null>(null); // 暂时未使用
+  const [editingGroup, _setEditingGroup] = useState<ModelGroup | null>(null);
+  const [editingRequirement, setEditingRequirement] = useState<AppModelRequirement | null>(null);
 
   // 监控数据
   const [monitoringData, setMonitoringData] = useState<Record<string, ModelGroupMonitoringData>>({});
   const [schedulerConfig, setSchedulerConfig] = useState<ModelSchedulerConfig | null>(null);
 
+  // 模型池模型编辑弹窗（用于"添加模型"）
+  const [groupModelsOpen, setGroupModelsOpen] = useState(false);
+  const [groupModelsTarget, setGroupModelsTarget] = useState<ModelGroup | null>(null);
+  const [groupModelsDraft, setGroupModelsDraft] = useState<ModelGroupItem[]>([]);
+  const [availableOpen, setAvailableOpen] = useState(false);
+  const [availablePlatformId, setAvailablePlatformId] = useState('');
+
   // 表单状态
   const [groupForm, setGroupForm] = useState({
     name: '',
     code: '',
+    modelType: 'chat' as string,
+    isDefaultForType: false,
     description: '',
     models: [] as ModelGroupItem[],
   });
@@ -132,8 +147,17 @@ export function ModelAppGroupPage() {
       setAppCallers(apps);
       setModelGroups(groups);
       setSchedulerConfig(config);
+
+      // 平台列表（用于“添加模型”选择可用模型）
+      try {
+        const ps = await getPlatforms();
+        if (ps.success) setPlatforms(ps.data || []);
+        else setPlatforms([]);
+      } catch {
+        setPlatforms([]);
+      }
       
-      // 分组应用
+      // 模型池应用
       const grouped = groupAppCallers(apps);
       setAppGroups(grouped);
       
@@ -181,13 +205,90 @@ export function ModelAppGroupPage() {
     setMonitoringData(data);
   };
 
+  const keyOfGroupModel = (m: Pick<ModelGroupItem, 'platformId' | 'modelId'>) =>
+    `${String(m.platformId ?? '').trim()}:${String(m.modelId ?? '').trim()}`.toLowerCase();
+
+  const openGroupModelsEditor = (group: ModelGroup) => {
+    setGroupModelsTarget(group);
+    // 复制一份作为草稿编辑（并按唯一键去重）
+    const map = new Map<string, ModelGroupItem>();
+    for (const m of group.models ?? []) {
+      const k = keyOfGroupModel(m);
+      if (!k || map.has(k)) continue;
+      map.set(k, { ...m });
+    }
+    setGroupModelsDraft(Array.from(map.values()));
+    setAvailablePlatformId((platforms[0]?.id ?? '').toString());
+    setGroupModelsOpen(true);
+  };
+
+  const toggleDraftModel = (platformId: string, modelId: string) => {
+    const pid = String(platformId ?? '').trim();
+    const mid = String(modelId ?? '').trim();
+    if (!pid || !mid) return;
+    const k = `${pid}:${mid}`.toLowerCase();
+    setGroupModelsDraft((prev) => {
+      const exists = prev.some((x) => keyOfGroupModel(x) === k);
+      if (exists) return prev.filter((x) => keyOfGroupModel(x) !== k);
+      const maxP = prev.reduce((mx, x) => Math.max(mx, Number(x.priority ?? 0)), 0);
+      return [
+        ...prev,
+        {
+          platformId: pid,
+          modelId: mid,
+          priority: maxP + 1,
+          healthStatus: 'Healthy' as any,
+          consecutiveFailures: 0,
+          consecutiveSuccesses: 0,
+        } as ModelGroupItem,
+      ];
+    });
+  };
+
+  const saveGroupModels = async () => {
+    const g = groupModelsTarget;
+    if (!g?.id) return;
+    try {
+      const models = [...groupModelsDraft]
+        .filter((m) => String(m.platformId ?? '').trim() && String(m.modelId ?? '').trim())
+        .map((m) => ({
+          ...m,
+          platformId: String(m.platformId ?? '').trim(),
+          modelId: String(m.modelId ?? '').trim(),
+          priority: Number.isFinite(Number(m.priority)) ? Number(m.priority) : 0,
+          // 兜底字段（避免后端对必填字段的强校验）
+          healthStatus: (m as any).healthStatus || 'Healthy',
+          consecutiveFailures: Number.isFinite(Number((m as any).consecutiveFailures)) ? Number((m as any).consecutiveFailures) : 0,
+          consecutiveSuccesses: Number.isFinite(Number((m as any).consecutiveSuccesses)) ? Number((m as any).consecutiveSuccesses) : 0,
+        })) as ModelGroupItem[];
+
+      const r = await updateModelGroup(g.id, { models });
+      if (!r.success) throw new Error(r.error?.message || '保存失败');
+
+      systemDialog.success('保存成功');
+      // 刷新模型池列表
+      const groups = await getModelGroups();
+      setModelGroups(groups);
+      // 刷新当前模型池监控
+      try {
+        const monitoring = await getGroupMonitoring(g.id);
+        setMonitoringData((prev) => ({ ...prev, [g.id]: monitoring }));
+      } catch (e) {
+        console.error('[GroupModels] 刷新监控失败:', e);
+      }
+      setGroupModelsOpen(false);
+    } catch (error) {
+      systemDialog.error('保存失败', error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const handleInitDefaultApps = async () => {
     const confirmed = await systemDialog.confirm({
       title: '确认初始化',
       message: `此操作将：
 1. 删除所有系统默认应用和子功能
 2. 重新创建最新的系统默认应用
-3. 保留用户自定义的应用和分组
+3. 保留用户自定义的应用和模型池
 4. 系统默认应用的配置会被重置
 
 确定继续？`,
@@ -309,6 +410,7 @@ export function ModelAppGroupPage() {
       systemDialog.success('保存成功');
       await loadData();
       setShowRequirementDialog(false);
+      setEditingRequirement(null);
     } catch (error) {
       systemDialog.error('保存失败', String(error));
     }
@@ -337,33 +439,30 @@ export function ModelAppGroupPage() {
   //   }
   // };
 
-  const handleAddGroup = () => {
-    setEditingGroup(null);
-    setGroupForm({
-      name: '',
-      code: '',
-      description: '',
-      models: [],
-    });
-    setShowGroupDialog(true);
-  };
-
   /* 暂时未使用，保留用于未来功能
   const handleEditGroup = (group: ModelGroup) => {
-    setEditingGroup(group);
+    _setEditingGroup(group);
     setGroupForm({
       name: group.name,
       code: group.code,
       description: group.description ?? '',
       models: group.models,
     });
-    setShowGroupDialog(true);
+    _setShowGroupDialog(true);
   };
   */
 
   const handleSaveGroup = async () => {
-    if (!groupForm.name.trim() || !groupForm.code.trim()) {
-      systemDialog.error('验证失败', '名称和代码不能为空');
+    if (!groupForm.name.trim()) {
+      systemDialog.error('验证失败', '模型池名称不能为空');
+      return;
+    }
+    if (!editingGroup && !groupForm.code.trim()) {
+      systemDialog.error('验证失败', '模型池代码不能为空');
+      return;
+    }
+    if (!groupForm.modelType.trim()) {
+      systemDialog.error('验证失败', '模型类型不能为空');
       return;
     }
 
@@ -378,13 +477,15 @@ export function ModelAppGroupPage() {
         await createModelGroup({
           name: groupForm.name,
           code: groupForm.code,
+          modelType: groupForm.modelType,
+          isDefaultForType: groupForm.isDefaultForType,
           description: groupForm.description,
           models: groupForm.models,
         });
       }
       systemDialog.success('保存成功');
       await loadData();
-      setShowGroupDialog(false);
+      _setShowGroupDialog(false);
     } catch (error) {
       systemDialog.error('保存失败', String(error));
     }
@@ -392,7 +493,7 @@ export function ModelAppGroupPage() {
 
   /* 暂时未使用，保留用于未来功能
   const handleDeleteGroup = async (groupId: string) => {
-    const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除分组后无法恢复，确定继续？' });
+    const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除模型池后无法恢复，确定继续？' });
     if (!confirmed) return;
 
     try {
@@ -436,7 +537,7 @@ export function ModelAppGroupPage() {
   //   }
   // };
 
-  // 按应用分组
+  // 按应用聚合
   const groupedApps = groupAppCallers(appCallers);
   
   // 过滤应用组
@@ -460,8 +561,8 @@ export function ModelAppGroupPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
-        title="应用与分组管理"
-        subtitle="应用身份识别、模型分组配置与智能降权监控"
+        title="应用模型池管理"
+        subtitle="为应用绑定模型池，实现负载均衡与智能调度"
         actions={
           <>
             <Button variant="secondary" size="xs" onClick={handleInitDefaultApps}>
@@ -472,9 +573,9 @@ export function ModelAppGroupPage() {
               <Settings size={14} />
               系统配置
             </Button>
-            <Button variant="primary" size="xs" onClick={handleAddGroup}>
+            <Button variant="primary" size="xs" onClick={() => window.location.href = '/model-manage?tab=pools'}>
               <Plus size={14} />
-              新建分组
+              新建模型池
             </Button>
           </>
         }
@@ -570,7 +671,7 @@ export function ModelAppGroupPage() {
           </div>
         </Card>
 
-        {/* 右侧：功能分组与模型配置 */}
+        {/* 右侧：功能与模型池配置 */}
         <div className="flex flex-col gap-4 min-h-0">
           {!selectedAppGroup ? (
             <Card className="flex-1 flex items-center justify-center">
@@ -617,19 +718,19 @@ export function ModelAppGroupPage() {
                 </div>
               </Card>
 
-              {/* 功能分组列表 */}
-              <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-auto">
-                <h4 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {/* 功能列表 */}
+              <Card className="flex-1 min-h-0 p-4 overflow-auto">
+                <h4 className="text-[14px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                   功能与模型配置
                 </h4>
 
                 {selectedAppFeatures.length === 0 ? (
-                  <Card className="flex-1 flex items-center justify-center">
+                  <div className="flex-1 flex items-center justify-center py-12">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                       <Zap size={48} className="mx-auto mb-4 opacity-40" />
                       <div className="text-sm">暂无功能配置</div>
                     </div>
-                  </Card>
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     {selectedAppFeatures.map((featureItem, idx: number) => {
@@ -639,14 +740,14 @@ export function ModelAppGroupPage() {
                       const req = app.modelRequirements[0]; // 每个功能项只有一个需求
                       const group = req?.modelGroupId ? modelGroups.find((g) => g.id === req.modelGroupId) : undefined;
                       const monitoring = req?.modelGroupId ? monitoringData[req.modelGroupId] : undefined;
-                      const modelTypeIcon = getModelTypeIcon(featureItem.parsed.modelType);
+                      const ModelTypeIcon = getModelTypeIcon(featureItem.parsed.modelType);
                       const modelTypeLabel = getModelTypeDisplayName(featureItem.parsed.modelType);
                       const featureDescription = getFeatureDescription(featureItem.parsed);
                       const successRate = featureItem.stats.totalCalls > 0 
                         ? ((featureItem.stats.successCalls / featureItem.stats.totalCalls) * 100).toFixed(1) 
                         : '0';
                       
-                      // 判断是否使用默认分组
+                      // 判断是否使用默认模型池
                       const isDefaultGroup = !group;
                       const groupLabel = isDefaultGroup 
                         ? `默认${modelTypeLabel}` 
@@ -657,7 +758,9 @@ export function ModelAppGroupPage() {
                           {/* 功能头部 */}
                           <div className="p-4 border-b border-white/10 flex items-center justify-between">
                             <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <span className="text-[14px]">{modelTypeIcon}</span>
+                              <span className="shrink-0" style={{ color: 'var(--text-secondary)' }} title={modelTypeLabel}>
+                                <ModelTypeIcon size={16} />
+                              </span>
                               <div className="flex-1 min-w-0">
                                 <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {featureDescription}
@@ -673,14 +776,14 @@ export function ModelAppGroupPage() {
                                       border: isDefaultGroup ? '1px solid rgba(34, 197, 94, 0.28)' : '1px solid rgba(59, 130, 246, 0.28)',
                                       color: isDefaultGroup ? 'rgba(34, 197, 94, 0.95)' : 'rgba(59, 130, 246, 0.95)',
                                     }}
-                                    title={isDefaultGroup ? '使用默认分组' : `使用专属分组：${group?.name}`}
+                                    title={isDefaultGroup ? '使用默认模型池' : `使用专属模型池：${group?.name}`}
                                   >
                                     {groupLabel}
                                   </button>
                                 </div>
                               </div>
                               {featureItem.stats.totalCalls > 0 && (
-                                <div className="ml-auto flex items-center gap-3 text-[11px]">
+                                <div className="flex items-center gap-3 text-[11px]">
                                   <span style={{ color: 'var(--text-secondary)' }}>
                                     {featureItem.stats.totalCalls}次
                                   </span>
@@ -689,106 +792,246 @@ export function ModelAppGroupPage() {
                                   </span>
                                 </div>
                               )}
-                            </div>
-                          </div>
-
-                          {/* 模型配置 */}
-                          <div className="p-4">
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                                已配置模型
-                              </div>
-                              <Button variant="secondary" size="xs">
+                              {/* 添加模型按钮 - 始终显示 */}
+                              <Button
+                                variant="secondary"
+                                size="xs"
+                                className="ml-2 shrink-0"
+                                onClick={() => {
+                                  if (group) {
+                                    // 已绑定专属模型池：直接打开模型编辑器
+                                    openGroupModelsEditor(group);
+                                  } else {
+                                    // 未绑定模型池：跳转到模型池管理页签创建
+                                    window.location.href = '/model-manage?tab=pools';
+                                  }
+                                }}
+                              >
                                 <Plus size={12} />
-                                添加模型
+                                {group ? '添加模型' : '绑定模型池'}
                               </Button>
                             </div>
+                          </div>
 
-                            {!group ? (
-                              <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
-                                <div className="text-[12px]">未绑定分组，将使用默认分组</div>
+                          {/* 模型配置 - 仅绑定专属模型池时显示 */}
+                          {group && (
+                            <div className="p-4">
+                              <div className="mb-3">
+                                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                                  已配置模型
+                                </div>
                               </div>
-                            ) : (
-                              <div>
-                                {/* 模型负载列表 */}
-                                {monitoring && monitoring.models.length > 0 ? (
-                                  <div className="space-y-2">
-                                    {monitoring.models.map((model: any, modelIdx: number) => {
-                                      const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP];
-                                      return (
-                                        <div
-                                          key={`${model.platformId}-${model.modelId}`}
-                                          className="rounded-[12px] p-3 border border-white/10"
-                                          style={{ background: 'rgba(255,255,255,0.03)' }}
-                                        >
-                                          <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0 flex-1">
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-                                                  #{modelIdx + 1}
-                                                </span>
-                                                <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                                  {model.modelId}
-                                                </div>
-                                                <span
-                                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                                                  style={{ background: status.bg, border: `1px solid ${status.border}`, color: status.color }}
-                                                >
-                                                  {status.label}
-                                                </span>
+
+                              {/* 模型负载列表 */}
+                              {monitoring && monitoring.models.length > 0 ? (
+                                <div className="space-y-2">
+                                  {monitoring.models.map((model: any, modelIdx: number) => {
+                                    const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP];
+                                    return (
+                                      <div
+                                        key={`${model.platformId}-${model.modelId}`}
+                                        className="rounded-[12px] p-3 border border-white/10"
+                                        style={{ background: 'rgba(255,255,255,0.03)' }}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                                                #{modelIdx + 1}
+                                              </span>
+                                              <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                                {model.modelId}
                                               </div>
-                                              <div className="mt-2 flex items-center gap-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                                <span>平台: <span style={{ color: 'var(--text-secondary)' }}>{model.platformId}</span></span>
-                                                <span>优先级: <span style={{ color: 'var(--text-secondary)' }}>{model.priority}</span></span>
-                                                <span>连续失败: <span style={{ color: model.consecutiveFailures > 0 ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)' }}>{model.consecutiveFailures}</span></span>
-                                                <span>健康分: <span style={{ color: 'var(--text-secondary)' }}>{model.healthScore.toFixed(0)}</span></span>
-                                              </div>
+                                              <span
+                                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                                style={{ background: status.bg, border: `1px solid ${status.border}`, color: status.color }}
+                                              >
+                                                {status.label}
+                                              </span>
                                             </div>
-                                            <div className="flex items-center gap-1">
-                                              <Tooltip content="编辑">
-                                                <button
-                                                  className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                                                >
-                                                  <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
-                                                </button>
-                                              </Tooltip>
-                                              <Tooltip content="删除">
-                                                <button
-                                                  className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                                                >
-                                                  <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
-                                                </button>
-                                              </Tooltip>
+                                            <div className="mt-2 flex items-center gap-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                              <span>平台: <span style={{ color: 'var(--text-secondary)' }}>{model.platformId}</span></span>
+                                              <span>优先级: <span style={{ color: 'var(--text-secondary)' }}>{model.priority}</span></span>
+                                              <span>连续失败: <span style={{ color: model.consecutiveFailures > 0 ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)' }}>{model.consecutiveFailures}</span></span>
+                                              <span>健康分: <span style={{ color: 'var(--text-secondary)' }}>{model.healthScore.toFixed(0)}</span></span>
                                             </div>
                                           </div>
+                                          <div className="flex items-center gap-1">
+                                            <Tooltip content="编辑">
+                                              <button
+                                                className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
+                                              >
+                                                <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
+                                              </button>
+                                            </Tooltip>
+                                            <Tooltip content="删除">
+                                              <button
+                                                className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
+                                              >
+                                                <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                                              </button>
+                                            </Tooltip>
+                                          </div>
                                         </div>
-                                      );
-                                    })}
-                                  </div>
-                                ) : (
-                                  <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
-                                    <div className="text-[12px]">分组中暂无模型</div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
+                                  <div className="text-[12px]">模型池中暂无模型</div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </Card>
                       );
                     })}
                   </div>
                 )}
-              </div>
+              </Card>
             </>
           )}
         </div>
       </div>
 
+      {/* 模型池模型编辑弹窗（"添加模型"） */}
+      {groupModelsOpen && groupModelsTarget && (
+        <Dialog
+          open={groupModelsOpen}
+          onOpenChange={(open) => {
+            setGroupModelsOpen(open);
+            if (!open) {
+              setGroupModelsTarget(null);
+              setGroupModelsDraft([]);
+              setAvailableOpen(false);
+            }
+          }}
+          title={`编辑模型池：${groupModelsTarget.name}`}
+          description={groupModelsTarget.isSystemGroup ? '系统模型池（谨慎修改）' : groupModelsTarget.code}
+          maxWidth={860}
+          content={
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                  当前模型（{groupModelsDraft.length}）
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={availablePlatformId} onChange={(e) => setAvailablePlatformId(e.target.value)}>
+                    {platforms.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      if (!availablePlatformId) {
+                        void systemDialog.alert('请先选择平台');
+                        return;
+                      }
+                      setAvailableOpen(true);
+                    }}
+                  >
+                    从平台选择
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {groupModelsDraft.length === 0 ? (
+                  <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
+                    暂无模型，请点击“从平台选择”添加
+                  </div>
+                ) : (
+                  [...groupModelsDraft]
+                    .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0))
+                    .map((m) => (
+                      <div
+                        key={keyOfGroupModel(m)}
+                        className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2"
+                        style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {m.modelId}
+                          </div>
+                          <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                            platformId: {m.platformId}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={Number(m.priority ?? 0)}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value) || 0;
+                              setGroupModelsDraft((prev) =>
+                                prev.map((x) => (keyOfGroupModel(x) === keyOfGroupModel(m) ? { ...x, priority: v } : x))
+                              );
+                            }}
+                            className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
+                            style={{
+                              background: 'var(--bg-input)',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              color: 'var(--text-primary)',
+                            }}
+                            title="优先级（越小越靠前）"
+                          />
+                          <Button variant="ghost" size="sm" onClick={() => toggleDraftModel(m.platformId, m.modelId)} title="移除">
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setGroupModelsOpen(false)}>
+                  取消
+                </Button>
+                <Button variant="primary" size="sm" onClick={saveGroupModels}>
+                  保存
+                </Button>
+              </div>
+
+              <PlatformAvailableModelsDialog
+                open={availableOpen}
+                onOpenChange={setAvailableOpen}
+                platform={platforms.find((p) => p.id === availablePlatformId) ?? null}
+                description="从平台可用模型中勾选添加/移除（写入到该模型池）"
+                selectedCount={groupModelsDraft.filter((x) => x.platformId === availablePlatformId).length}
+                selectedCountLabel="已加入"
+                selectedBadgeText="已加入"
+                isSelected={(m: AvailableModel) => {
+                  const pid = String(availablePlatformId ?? '').trim();
+                  const mid = String(m.modelName ?? '').trim();
+                  if (!pid || !mid) return false;
+                  return groupModelsDraft.some((x) => keyOfGroupModel(x) === `${pid}:${mid}`.toLowerCase());
+                }}
+                onToggle={(m: AvailableModel) => toggleDraftModel(availablePlatformId, m.modelName)}
+                onBulkAddGroup={(_groupName: string, ms: AvailableModel[]) => {
+                  const pid = String(availablePlatformId ?? '').trim();
+                  if (!pid) return;
+                  for (const m of ms) toggleDraftModel(pid, m.modelName);
+                }}
+              />
+            </div>
+          }
+        />
+      )}
+
       {/* 需求编辑弹窗 */}
       {showRequirementDialog && (
         <Dialog
           open={showRequirementDialog}
-          onOpenChange={setShowRequirementDialog}
+          onOpenChange={(open) => {
+            setShowRequirementDialog(open);
+            if (!open) setEditingRequirement(null);
+          }}
           title={editingRequirement ? '编辑模型需求' : '添加模型需求'}
           maxWidth={520}
           content={
@@ -829,13 +1072,13 @@ export function ModelAppGroupPage() {
 
               <div>
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  绑定分组（可选）
+                  绑定模型池（可选）
                 </label>
                 <Select
                   value={requirementForm.modelGroupId}
                   onChange={(e) => setRequirementForm({ ...requirementForm, modelGroupId: e.target.value })}
                 >
-                  <option value="">使用默认分组</option>
+                  <option value="">使用默认模型池</option>
                   {modelGroups.map((group) => (
                     <option key={group.id} value={group.id}>
                       {group.name}
@@ -870,24 +1113,24 @@ export function ModelAppGroupPage() {
         />
       )}
 
-      {/* 分组编辑弹窗 */}
+      {/* 模型池编辑弹窗 */}
       {showGroupDialog && (
         <Dialog
           open={showGroupDialog}
-          onOpenChange={setShowGroupDialog}
-          title={editingGroup ? '编辑模型分组' : '新建模型分组'}
+          onOpenChange={_setShowGroupDialog}
+          title={editingGroup ? '编辑模型池' : '新建模型池'}
           maxWidth={640}
           content={
             <div className="space-y-4">
               <div>
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  分组名称
+                  模型池名称
                 </label>
                 <input
                   type="text"
                   value={groupForm.name}
                   onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
-                  placeholder="例如：主对话分组、快速意图分组"
+                  placeholder="例如：主对话模型池、快速意图模型池"
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
@@ -899,7 +1142,7 @@ export function ModelAppGroupPage() {
 
               <div>
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  分组代码
+                  模型池代码
                 </label>
                 <input
                   type="text"
@@ -919,12 +1162,30 @@ export function ModelAppGroupPage() {
 
               <div>
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  模型类型
+                </label>
+                <Select
+                  value={groupForm.modelType}
+                  onChange={(e) => setGroupForm({ ...groupForm, modelType: e.target.value })}
+                  disabled={!!editingGroup}
+                  style={{ opacity: editingGroup ? 0.6 : 1 }}
+                >
+                  {MODEL_TYPES.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
                   描述
                 </label>
                 <textarea
                   value={groupForm.description}
                   onChange={(e) => setGroupForm({ ...groupForm, description: e.target.value })}
-                  placeholder="分组用途说明..."
+                  placeholder="模型池用途说明..."
                   rows={3}
                   className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none"
                   style={{
@@ -935,8 +1196,22 @@ export function ModelAppGroupPage() {
                 />
               </div>
 
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="isDefaultForType"
+                  checked={groupForm.isDefaultForType}
+                  onChange={(e) => setGroupForm({ ...groupForm, isDefaultForType: e.target.checked })}
+                  disabled={!!editingGroup}
+                  className="h-4 w-4 rounded"
+                />
+                <label htmlFor="isDefaultForType" className="text-[13px]" style={{ color: 'var(--text-secondary)', opacity: editingGroup ? 0.6 : 1 }}>
+                  设为该类型的默认模型池
+                </label>
+              </div>
+
               <div className="flex justify-end gap-2 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => setShowGroupDialog(false)}>
+                <Button variant="secondary" size="sm" onClick={() => _setShowGroupDialog(false)}>
                   取消
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleSaveGroup}>

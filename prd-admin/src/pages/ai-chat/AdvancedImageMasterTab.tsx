@@ -836,42 +836,27 @@ function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | u
     return tier === '1k' ? exactMatch.size1k : tier === '2k' ? exactMatch.size2k : exactMatch.size4k;
   }
 
-  // 未匹配到预定义比例：回退到旧版逻辑（自动计算）
-  const minSide = tier === '1k' ? 1024 : tier === '2k' ? 2048 : 4096;
-  const maxSide = tier === '1k' ? 1792 : tier === '2k' ? 3584 : 7168;
-
-  const round8 = (n: number) => Math.max(8, Math.round(n / 8) * 8);
-  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
-
-  let tw: number;
-  let th: number;
-
-  if (r >= 1) {
-    // 宽图/方图：h 为短边，w 为长边
-    const maxShort = maxSide / r;
-    const targetShort = Math.min(h0, maxShort);
-    th = clamp(round8(targetShort), minSide, maxSide);
-    tw = th * r;
-    if (tw > maxSide) {
-      tw = maxSide;
-      th = tw / r;
-    }
-  } else {
-    // 竖图：w 为短边，h 为长边
-    const inv = 1 / r;
-    const maxShort = maxSide / inv;
-    const targetShort = Math.min(w0, maxShort);
-    tw = clamp(round8(targetShort), minSide, maxSide);
-    th = tw * inv;
-    if (th > maxSide) {
-      th = maxSide;
-      tw = th / inv;
+  // 未匹配到预定义比例：从白名单中选择比例最接近的尺寸
+  // 禁止自由计算任意尺寸，因为下游（如 nanobanana）只接受白名单内的尺寸
+  let closestOpt: typeof ASPECT_OPTIONS[0] | null = null;
+  let closestDiff = Infinity;
+  for (const opt of ASPECT_OPTIONS) {
+    const [rw, rh] = opt.id.split(':').map(Number);
+    if (!rw || !rh) continue;
+    const optRatio = rw / rh;
+    const diff = Math.abs(r - optRatio);
+    if (diff < closestDiff) {
+      closestDiff = diff;
+      closestOpt = opt;
     }
   }
 
-  const w = clamp(round8(tw), minSide, maxSide);
-  const h = clamp(round8(th), minSide, maxSide);
-  return `${w}x${h}`;
+  if (closestOpt) {
+    return tier === '1k' ? closestOpt.size1k : tier === '2k' ? closestOpt.size2k : closestOpt.size4k;
+  }
+
+  // 兜底：返回默认的 1:1 尺寸
+  return tier === '1k' ? '1024x1024' : tier === '2k' ? '2048x2048' : '4096x4096';
 }
 
 async function readImageSizeFromFile(file: File): Promise<{ w: number; h: number } | null> {

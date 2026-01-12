@@ -1,0 +1,614 @@
+import { Button } from '@/components/design/Button';
+import { Card } from '@/components/design/Card';
+import { PageHeader } from '@/components/design/PageHeader';
+import { Select } from '@/components/design/Select';
+import { Dialog } from '@/components/ui/Dialog';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import {
+  getModelGroups,
+  getPlatforms,
+  createModelGroup,
+  updateModelGroup,
+  deleteModelGroup,
+} from '@/services';
+import type { ModelGroup, ModelGroupItem, Platform } from '@/types';
+import { ModelHealthStatus } from '@/types/modelGroup';
+import {
+  Database,
+  Edit,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
+import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
+
+const MODEL_TYPES = [
+  { value: 'chat', label: '对话模型' },
+  { value: 'intent', label: '意图识别' },
+  { value: 'vision', label: '视觉理解' },
+  { value: 'image-gen', label: '图像生成' },
+  { value: 'code', label: '代码生成' },
+  { value: 'long-context', label: '长上下文' },
+  { value: 'embedding', label: '向量嵌入' },
+  { value: 'rerank', label: '重排序' },
+];
+
+const HEALTH_STATUS_MAP = {
+  Healthy: { label: '健康', color: 'rgba(34,197,94,0.95)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
+  Degraded: { label: '降权', color: 'rgba(251,191,36,0.95)', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.28)' },
+  Unavailable: { label: '不可用', color: 'rgba(239,68,68,0.95)', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.28)' },
+};
+
+function keyOfModel(m: Pick<ModelGroupItem, 'platformId' | 'modelId'>) {
+  return `${m.platformId}:${m.modelId}`.toLowerCase();
+}
+
+export function ModelPoolManagePage() {
+  const [pools, setPools] = useState<ModelGroup[]>([]);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // 弹窗状态
+  const [showPoolDialog, setShowPoolDialog] = useState(false);
+  const [editingPool, setEditingPool] = useState<ModelGroup | null>(null);
+
+  // 模型池表单
+  const [poolForm, setPoolForm] = useState({
+    name: '',
+    code: '',
+    modelType: 'chat',
+    isDefaultForType: false,
+    description: '',
+    models: [] as ModelGroupItem[],
+  });
+
+  // 平台选择弹窗（中间层）
+  const [platformPickerOpen, setPlatformPickerOpen] = useState(false);
+
+  // 模型选择弹窗（按平台）
+  const [availableOpen, setAvailableOpen] = useState(false);
+  const [availablePlatformId, setAvailablePlatformId] = useState('');
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [poolsData, platformsData] = await Promise.all([
+        getModelGroups(),
+        getPlatforms(),
+      ]);
+      setPools(poolsData);
+      if (platformsData.success) {
+        setPlatforms(platformsData.data);
+      }
+    } catch (error) {
+      systemDialog.error('加载失败', String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddPool = () => {
+    setEditingPool(null);
+    setPoolForm({
+      name: '',
+      code: '',
+      modelType: 'chat',
+      isDefaultForType: false,
+      description: '',
+      models: [],
+    });
+    setShowPoolDialog(true);
+  };
+
+  const handleEditPool = (pool: ModelGroup) => {
+    setEditingPool(pool);
+    setPoolForm({
+      name: pool.name,
+      code: pool.code || '',
+      modelType: pool.modelType || 'chat',
+      isDefaultForType: pool.isDefaultForType || false,
+      description: pool.description || '',
+      models: pool.models || [],
+    });
+    setShowPoolDialog(true);
+  };
+
+  const handleDeletePool = async (pool: ModelGroup) => {
+    const confirmed = await systemDialog.confirm({
+      title: '确认删除',
+      message: `删除模型池"${pool.name}"后无法恢复，确定继续？`,
+    });
+    if (!confirmed) return;
+
+    try {
+      await deleteModelGroup(pool.id);
+      toast.success('删除成功');
+      await loadData();
+    } catch (error) {
+      systemDialog.error('删除失败', String(error));
+    }
+  };
+
+  const handleSavePool = async () => {
+    if (!poolForm.name.trim()) {
+      systemDialog.error('验证失败', '模型池名称不能为空');
+      return;
+    }
+    if (!editingPool && !poolForm.code.trim()) {
+      systemDialog.error('验证失败', '模型池代码不能为空');
+      return;
+    }
+    if (!poolForm.modelType.trim()) {
+      systemDialog.error('验证失败', '模型类型不能为空');
+      return;
+    }
+
+    try {
+      if (editingPool) {
+        await updateModelGroup(editingPool.id, {
+          name: poolForm.name,
+          description: poolForm.description,
+          models: poolForm.models,
+        });
+      } else {
+        await createModelGroup({
+          name: poolForm.name,
+          code: poolForm.code,
+          modelType: poolForm.modelType,
+          isDefaultForType: poolForm.isDefaultForType,
+          description: poolForm.description,
+          models: poolForm.models,
+        });
+      }
+      toast.success('保存成功');
+      await loadData();
+      setShowPoolDialog(false);
+    } catch (error) {
+      systemDialog.error('保存失败', String(error));
+    }
+  };
+
+  const toggleModel = (platformId: string, modelId: string) => {
+    const key = `${platformId}:${modelId}`.toLowerCase();
+    const exists = poolForm.models.some((m) => keyOfModel(m) === key);
+    if (exists) {
+      setPoolForm((prev) => ({
+        ...prev,
+        models: prev.models.filter((m) => keyOfModel(m) !== key),
+      }));
+    } else {
+      const newModel: ModelGroupItem = {
+        platformId,
+        modelId,
+        priority: poolForm.models.length + 1,
+        healthStatus: ModelHealthStatus.Healthy,
+        consecutiveFailures: 0,
+        consecutiveSuccesses: 0,
+      };
+      setPoolForm((prev) => ({
+        ...prev,
+        models: [...prev.models, newModel],
+      }));
+    }
+  };
+
+  const filteredPools = searchTerm
+    ? pools.filter(
+        (p) =>
+          p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (p.code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (p.modelType || '').toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : pools;
+
+  return (
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <PageHeader
+        title="模型池管理"
+        subtitle="创建和管理模型池，将不同平台的模型组合用于负载均衡"
+        actions={
+          <>
+            <Button variant="secondary" size="xs" onClick={loadData} disabled={loading}>
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              刷新
+            </Button>
+            <Button variant="primary" size="xs" onClick={handleAddPool}>
+              <Plus size={14} />
+              新建模型池
+            </Button>
+          </>
+        }
+      />
+
+      {/* 搜索 */}
+      <Card className="p-4">
+        <div className="relative max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+          <input
+            type="text"
+            placeholder="搜索模型池..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+      </Card>
+
+      {/* 模型池列表 */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {loading ? (
+          <Card className="p-12 text-center">
+            <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
+          </Card>
+        ) : filteredPools.length === 0 ? (
+          <Card className="p-12 text-center">
+            <div style={{ color: 'var(--text-muted)' }}>
+              <Database size={48} className="mx-auto mb-4 opacity-40" />
+              <div className="text-sm">暂无模型池</div>
+              <div className="mt-2 text-xs">点击"新建模型池"创建你的第一个模型池</div>
+            </div>
+          </Card>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {filteredPools.map((pool) => {
+              const ModelTypeIcon = getModelTypeIcon(pool.modelType || 'chat');
+              const modelTypeLabel = getModelTypeDisplayName(pool.modelType || 'chat');
+
+              return (
+                <Card key={pool.id} className="p-0 overflow-hidden">
+                  <div className="p-4 border-b border-white/10">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <span className="shrink-0" style={{ color: 'var(--text-secondary)' }} title={modelTypeLabel}>
+                          <ModelTypeIcon size={20} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {pool.name}
+                          </div>
+                          <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                            {pool.code || pool.id} | {modelTypeLabel}
+                            {pool.isDefaultForType && (
+                              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
+                                默认
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Tooltip content="编辑模型池">
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                            onClick={() => handleEditPool(pool)}
+                          >
+                            <Edit size={14} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="删除模型池">
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                            onClick={() => handleDeletePool(pool)}
+                          >
+                            <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4">
+                    <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                      模型列表 ({pool.models?.length || 0})
+                    </div>
+                    {!pool.models || pool.models.length === 0 ? (
+                      <div className="text-[12px] py-3 text-center" style={{ color: 'var(--text-muted)' }}>
+                        暂无模型，点击编辑添加
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[140px] overflow-auto">
+                        {pool.models.map((model, idx) => {
+                          const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                          return (
+                            <div
+                              key={keyOfModel(model)}
+                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg"
+                              style={{ background: 'rgba(255,255,255,0.03)' }}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                  #{idx + 1}
+                                </span>
+                                <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                                  {model.modelId}
+                                </span>
+                              </div>
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                                style={{ background: status.bg, color: status.color }}
+                              >
+                                {status.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 新建/编辑模型池弹窗 */}
+      {showPoolDialog && (
+        <Dialog
+          open={showPoolDialog}
+          onOpenChange={setShowPoolDialog}
+          title={editingPool ? '编辑模型池' : '新建模型池'}
+          maxWidth={720}
+          content={
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                    模型池名称
+                  </label>
+                  <input
+                    type="text"
+                    value={poolForm.name}
+                    onChange={(e) => setPoolForm({ ...poolForm, name: e.target.value })}
+                    placeholder="例如：主对话模型池"
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                    模型池代码
+                  </label>
+                  <input
+                    type="text"
+                    value={poolForm.code}
+                    onChange={(e) => setPoolForm({ ...poolForm, code: e.target.value })}
+                    placeholder="例如：main-chat-pool"
+                    disabled={!!editingPool}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'var(--text-primary)',
+                      opacity: editingPool ? 0.6 : 1,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                    模型类型
+                  </label>
+                  <Select
+                    value={poolForm.modelType}
+                    onChange={(e) => setPoolForm({ ...poolForm, modelType: e.target.value })}
+                    disabled={!!editingPool}
+                    style={{ opacity: editingPool ? 0.6 : 1 }}
+                  >
+                    {MODEL_TYPES.map((type) => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div className="flex items-end">
+                  <div className="flex items-center gap-2 h-10">
+                    <input
+                      type="checkbox"
+                      id="isDefaultForType"
+                      checked={poolForm.isDefaultForType}
+                      onChange={(e) => setPoolForm({ ...poolForm, isDefaultForType: e.target.checked })}
+                      disabled={!!editingPool}
+                      className="h-4 w-4 rounded"
+                    />
+                    <label htmlFor="isDefaultForType" className="text-[13px]" style={{ color: 'var(--text-secondary)', opacity: editingPool ? 0.6 : 1 }}>
+                      设为该类型的默认模型池
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  描述
+                </label>
+                <textarea
+                  value={poolForm.description}
+                  onChange={(e) => setPoolForm({ ...poolForm, description: e.target.value })}
+                  placeholder="模型池用途说明..."
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none"
+                  style={{
+                    background: 'var(--bg-input)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </div>
+
+              {/* 模型列表 */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    模型列表 ({poolForm.models.length})
+                  </label>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => setPlatformPickerOpen(true)}
+                  >
+                    <Plus size={12} />
+                    添加模型
+                  </Button>
+                </div>
+
+                <div
+                  className="rounded-[12px] p-3 min-h-[100px] max-h-[200px] overflow-auto"
+                  style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
+                >
+                  {poolForm.models.length === 0 ? (
+                    <div className="py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                      暂无模型，点击"添加模型"按钮选择平台添加
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {poolForm.models.map((m, idx) => (
+                        <div
+                          key={keyOfModel(m)}
+                          className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg"
+                          style={{ background: 'rgba(255,255,255,0.04)' }}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
+                              #{idx + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                {m.modelId}
+                              </div>
+                              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                {m.platformId}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <input
+                              type="number"
+                              value={Number(m.priority ?? 0)}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value) || 0;
+                                setPoolForm((prev) => ({
+                                  ...prev,
+                                  models: prev.models.map((x) =>
+                                    keyOfModel(x) === keyOfModel(m) ? { ...x, priority: v } : x
+                                  ),
+                                }));
+                              }}
+                              className="h-8 w-16 px-2 rounded-lg outline-none text-[12px] text-center"
+                              style={{
+                                background: 'var(--bg-input)',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                color: 'var(--text-primary)',
+                              }}
+                              title="优先级"
+                            />
+                            <Button variant="ghost" size="sm" onClick={() => toggleModel(m.platformId, m.modelId)} title="移除">
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setShowPoolDialog(false)}>
+                  取消
+                </Button>
+                <Button variant="primary" size="sm" onClick={handleSavePool}>
+                  保存
+                </Button>
+              </div>
+
+              <PlatformAvailableModelsDialog
+                open={availableOpen}
+                onOpenChange={setAvailableOpen}
+                platform={platforms.find((p) => p.id === availablePlatformId) ?? null}
+                description="从平台可用模型中勾选添加/移除"
+                selectedCount={poolForm.models.filter((x) => x.platformId === availablePlatformId).length}
+                selectedCountLabel="已加入"
+                selectedBadgeText="已加入"
+                isSelected={(m: AvailableModel) => {
+                  const pid = String(availablePlatformId ?? '').trim();
+                  const mid = String(m.modelName ?? '').trim();
+                  if (!pid || !mid) return false;
+                  return poolForm.models.some((x) => keyOfModel(x) === `${pid}:${mid}`.toLowerCase());
+                }}
+                onToggle={(m: AvailableModel) => toggleModel(availablePlatformId, m.modelName)}
+                onBulkAddGroup={(_: string, ms: AvailableModel[]) => {
+                  const pid = String(availablePlatformId ?? '').trim();
+                  if (!pid) return;
+                  for (const m of ms) toggleModel(pid, m.modelName);
+                }}
+              />
+
+              {/* 平台选择弹窗 */}
+              <Dialog
+                open={platformPickerOpen}
+                onOpenChange={setPlatformPickerOpen}
+                title="选择平台"
+                description="选择一个平台，然后从该平台的可用模型中批量添加"
+                maxWidth={640}
+                content={
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {platforms.filter((p) => p.enabled).map((p) => {
+                      const count = poolForm.models.filter((m) => m.platformId === p.id).length;
+                      return (
+                        <button
+                          key={p.id}
+                          className="p-4 rounded-[14px] text-left transition-all hover:scale-[1.02]"
+                          style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                          }}
+                          onClick={() => {
+                            setAvailablePlatformId(p.id);
+                            setPlatformPickerOpen(false);
+                            setAvailableOpen(true);
+                          }}
+                        >
+                          <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {p.name}
+                          </div>
+                          <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            {count > 0 ? `已添加 ${count} 个模型` : '点击添加模型'}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                }
+              />
+            </div>
+          }
+        />
+      )}
+    </div>
+  );
+}

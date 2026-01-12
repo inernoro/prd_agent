@@ -25,8 +25,13 @@ export function PageHeader(props: PageHeaderProps) {
             : 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
         borderWidth: 1,
         borderStyle: 'solid',
-        borderColor: 'var(--border-default)',
-        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
+        // 与 Card 的层级语义保持一致：更克制的阴影/内高光，避免 PageHeader 显得“浮起来”
+        borderColor: variant === 'gold'
+          ? 'color-mix(in srgb, var(--border-default) 80%, transparent)'
+          : 'color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+        boxShadow: variant === 'gold'
+          ? '0 8px 32px -8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 2px 8px rgba(214, 178, 106, 0.08)'
+          : '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
       }}
     >
       <div className="flex items-start gap-6">

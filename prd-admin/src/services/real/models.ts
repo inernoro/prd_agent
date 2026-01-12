@@ -15,6 +15,10 @@ import type {
   UpdateModelPrioritiesContract,
   UpdateModelContract,
   UpdateModelInput,
+  GetModelAdapterInfoContract,
+  GetModelsAdapterInfoBatchContract,
+  ModelAdapterInfo,
+  ModelAdapterInfoBrief,
 } from '@/services/contracts/models';
 import { apiRequest } from '@/services/real/apiClient';
 import { fail, ok, type ApiResponse } from '@/types/api';
@@ -165,4 +169,14 @@ export const clearImageGenModelReal: ClearImageGenModelContract = async () => {
   return ok(true);
 };
 
+export const getModelAdapterInfoReal: GetModelAdapterInfoContract = async (modelId: string) => {
+  return await apiRequest<ModelAdapterInfo>(`/api/v1/admin/models/${modelId}/adapter-info`);
+};
+
+export const getModelsAdapterInfoBatchReal: GetModelsAdapterInfoBatchContract = async (modelIds: string[]) => {
+  return await apiRequest<Record<string, ModelAdapterInfoBrief>>('/api/v1/admin/models/adapter-info/batch', {
+    method: 'POST',
+    body: modelIds,
+  });
+};
 

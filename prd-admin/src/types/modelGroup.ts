@@ -27,12 +27,21 @@ export interface ModelGroupItem {
 export interface ModelGroup {
   id: string;
   name: string;
-  code: string;
-  isSystemGroup: boolean;
+  /** 后端：模型类型（chat/intent/vision/image-gen/...） */
+  modelType: string;
+  /** 后端：是否为该类型默认分组 */
+  isDefaultForType: boolean;
   models: ModelGroupItem[];
   description?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * 兼容字段（历史前端使用）：
+   * - 后端当前不直接存 code / isSystemGroup
+   * - 前端会用 description 编码/解码生成 code，并用 isDefaultForType 近似映射 isSystemGroup
+   */
+  code?: string;
+  isSystemGroup?: boolean;
 }
 
 /**
@@ -40,9 +49,13 @@ export interface ModelGroup {
  */
 export interface CreateModelGroupRequest {
   name: string;
-  code: string;
+  modelType: string;
+  isDefaultForType?: boolean;
   description?: string;
+  /** 后端创建会初始化为空；保留兼容但不会被后端使用 */
   models?: ModelGroupItem[];
+  /** 兼容字段：仅前端用，用于写入 description 的编码 */
+  code?: string;
 }
 
 /**
@@ -52,6 +65,9 @@ export interface UpdateModelGroupRequest {
   name?: string;
   description?: string;
   models?: ModelGroupItem[];
+  isDefaultForType?: boolean;
+  /** 兼容字段：仅前端用，用于写入 description 的编码 */
+  code?: string;
 }
 
 /**

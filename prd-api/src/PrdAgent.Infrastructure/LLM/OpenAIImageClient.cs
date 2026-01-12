@@ -176,9 +176,29 @@ public class OpenAIImageClient
         var requestedSizeNorm = NormalizeSizeString(requestedSizeRaw);
         List<string>? allowedSizesForLog = null;
 
-        // 非 Volces：尝试命中“允许尺寸白名单”缓存，避免先 400 再重试
+        // vveai 平台适配器：优先使用平台级尺寸适配
+        VveaiModelAdapterConfig? vveaiConfig = null;
+        SizeAdaptationResult? vveaiSizeResult = null;
+        var isVveaiPlatform = VveaiModelConfigs.IsVveaiPlatform(apiUrl);
+        if (isVveaiPlatform)
+        {
+            vveaiConfig = VveaiModelAdapterRegistry.TryMatch(apiUrl, effectiveModelName);
+            if (vveaiConfig != null)
+            {
+                vveaiSizeResult = VveaiModelAdapterRegistry.NormalizeSize(vveaiConfig, requestedSizeNorm);
+                if (vveaiSizeResult != null)
+                {
+                    size = vveaiSizeResult.Size;
+                    allowedSizesForLog = vveaiConfig.AllowedSizes.Count > 0
+                        ? vveaiConfig.AllowedSizes.Take(64).ToList()
+                        : null;
+                }
+            }
+        }
+
+        // 非 Volces 且非 vveai 适配：尝试命中"允许尺寸白名单"缓存，避免先 400 再重试
         var capsKey = BuildCapsKey(requestedModelId, requestedPlatformId, requestedModelName, effectiveModelName);
-        if (!isVolces)
+        if (!isVolces && vveaiConfig == null)
         {
             var caps = await TryGetSizeCapsAsync(capsKey, ct);
             if (caps != null && (caps.AllowedSizes?.Count ?? 0) > 0)

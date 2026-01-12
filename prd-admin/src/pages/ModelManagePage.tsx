@@ -30,7 +30,9 @@ import {
   testModel,
   updateModel,
   updatePlatform,
+  getModelsAdapterInfoBatch,
 } from '@/services';
+import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
 import { Activity, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -276,6 +278,7 @@ export default function ModelManagePage() {
   const [modelStatsByModel, setModelStatsByModel] = useState<Record<string, AggregatedModelStats>>({});
   const [modelStatsLoading, setModelStatsLoading] = useState(false);
   const [imageGenSizeCapsByModelId, setImageGenSizeCapsByModelId] = useState<Record<string, { allowedCount: number; updatedAt: string }>>({});
+  const [adapterInfoByModelId, setAdapterInfoByModelId] = useState<Record<string, ModelAdapterInfoBrief>>({});
   const [densityMode, setDensityMode] = useState<'compact' | 'detailed'>('compact');
   const [expandedStatsModelIds, setExpandedStatsModelIds] = useState<Set<string>>(new Set());
   const [allStatsExpanded, setAllStatsExpanded] = useState(false);
@@ -303,7 +306,17 @@ export default function ModelManagePage() {
         setPlatforms(p.data);
         setSelectedPlatformId((cur) => (cur ? cur : '__all__'));
       }
-      if (m.success) setModels(m.data);
+      if (m.success) {
+        setModels(m.data);
+        // 加载适配器信息（生图模型）
+        const imageGenModelIds = m.data.filter((x) => x.isImageGen).map((x) => x.id);
+        if (imageGenModelIds.length > 0) {
+          const adapterRes = await getModelsAdapterInfoBatch(imageGenModelIds);
+          if (adapterRes.success) {
+            setAdapterInfoByModelId(adapterRes.data);
+          }
+        }
+      }
       if (caps.success) {
         const map: Record<string, { allowedCount: number; updatedAt: string }> = {};
         for (const it of caps.data?.items ?? []) {
@@ -1472,6 +1485,33 @@ export default function ModelManagePage() {
                                         {m.name}
                                       </div>
                                     </div>
+                                        {/* 适配器标签：放在模型名称下方 */}
+                                        {(() => {
+                                          const info = adapterInfoByModelId[m.id];
+                                          if (!info?.matched) return null;
+                                          const tooltipLines = [
+                                            `适配器: ${info.displayName ?? info.adapterName}`,
+                                            info.provider ? `提供商: ${info.provider}` : null,
+                                            info.sizeConstraintType ? `约束类型: ${info.sizeConstraintType}` : null,
+                                            info.allowedSizesCount ? `支持尺寸: ${info.allowedSizesCount} 种` : null,
+                                            info.allowedRatios?.length ? `比例: ${info.allowedRatios.join(', ')}` : null,
+                                            ...(info.notes ?? []),
+                                          ].filter(Boolean);
+                                          return (
+                                            <Tooltip content={tooltipLines.join('\n')}>
+                                              <span
+                                                className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded"
+                                                style={{
+                                                  background: 'rgba(59, 130, 246, 0.10)',
+                                                  color: 'rgba(59, 130, 246, 0.95)',
+                                                }}
+                                              >
+                                                <Sparkles size={10} />
+                                                {info.adapterName ?? 'adapter'}
+                                              </span>
+                                            </Tooltip>
+                                          );
+                                        })()}
                                       </div>
 
                                       {/* KPI Rail：3个核心指标（TTFB、成功率、成本/量级） */}

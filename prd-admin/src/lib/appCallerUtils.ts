@@ -3,11 +3,83 @@
  * 用于解析和分组 App Caller Key
  */
 
+import type { ComponentType } from 'react';
+import { 
+  ArrowUpDown,    // 重排序
+  Brain,          // 意图识别
+  Code2,          // 代码生成
+  Eye,            // 视觉理解
+  HelpCircle,     // 未知
+  Layers,         // 向量嵌入
+  MessageSquare,  // 对话模型
+  Palette,        // 图像生成
+  ScrollText,     // 长上下文
+} from 'lucide-react';
+
 export interface ParsedAppCallerKey {
   app: string;              // 应用名称，如 desktop, visual-agent
   features: string[];       // 功能路径，如 ['chat', 'sendmessage']
   modelType: string;        // 模型类型，如 chat, vision, generation
   fullPath: string;         // 完整功能路径，如 chat.sendmessage
+}
+
+/**
+ * 将后端/历史/别名的 modelType 归一到“期望值枚举”（固定值，前端 UI 按此设定图标与展示名）
+ *
+ * 期望值来自 ModelAppGroupPage 的固定枚举：
+ * - chat / intent / vision / image-gen / code / long-context / embedding / rerank
+ */
+export type ExpectedModelType =
+  | 'chat'
+  | 'intent'
+  | 'vision'
+  | 'image-gen'
+  | 'code'
+  | 'long-context'
+  | 'embedding'
+  | 'rerank'
+  | 'unknown';
+
+export function normalizeModelType(rawModelType: string | null | undefined): ExpectedModelType {
+  const raw = String(rawModelType ?? '').trim();
+  if (!raw) return 'unknown';
+
+  const v = raw.toLowerCase().replace(/[\s_]/g, '-');
+
+  // 对话
+  if (v === 'chat' || v === 'conversation' || v === 'llm') return 'chat';
+
+  // 意图
+  if (v === 'intent' || v === 'intent-detect' || v === 'intent-detection') return 'intent';
+
+  // 视觉
+  if (v === 'vision' || v === 'image-vision' || v === 'imagevision' || v === 'vl') return 'vision';
+
+  // 生图：历史/后端常见别名 generation/imageGen/image_generation
+  if (
+    v === 'image-gen' ||
+    v === 'imagegen' ||
+    v === 'image-generate' ||
+    v === 'image-generation' ||
+    v === 'generation' ||
+    v === 'img-gen'
+  ) {
+    return 'image-gen';
+  }
+
+  // 代码
+  if (v === 'code' || v === 'coding' || v === 'code-gen' || v === 'codegen') return 'code';
+
+  // 长上下文
+  if (v === 'long-context' || v === 'longcontext' || v === 'long-ctx' || v === 'context') return 'long-context';
+
+  // 向量
+  if (v === 'embedding' || v === 'embeddings' || v === 'embed') return 'embedding';
+
+  // 重排
+  if (v === 'rerank' || v === 're-rank' || v === 'ranking' || v === 'rank') return 'rerank';
+
+  return 'unknown';
 }
 
 /**
@@ -148,32 +220,42 @@ function getFeatureDisplayName(feature: string): string {
  * 获取模型类型的显示名称
  */
 export function getModelTypeDisplayName(modelType: string): string {
+  const mt = normalizeModelType(modelType);
   const names: Record<string, string> = {
     'chat': '对话模型',
     'intent': '意图识别',
     'vision': '视觉理解',
-    'generation': '图片生成',
+    'image-gen': '图像生成',
     'code': '代码生成',
+    'long-context': '长上下文',
     'embedding': '向量嵌入',
     'rerank': '重排序',
+    'unknown': '未知类型',
   };
-  return names[modelType] || modelType;
+  return names[mt] || '未知类型';
 }
 
 /**
- * 获取模型类型的图标
+ * 获取模型类型的图标组件（禁止使用 emoji / 字符替代）
  */
-export function getModelTypeIcon(modelType: string): string {
-  const icons: Record<string, string> = {
-    'chat': '💬',
-    'intent': '🎯',
-    'vision': '👁️',
-    'generation': '🎨',
-    'code': '💻',
-    'embedding': '🔢',
-    'rerank': '🔄',
+export function getModelTypeIcon(modelType: string): ComponentType<any> {
+  const mt = normalizeModelType(modelType);
+
+  // 固定期望值 -> 固定图标
+  // 使用符合 AI 模型类型语义的图标
+  const icons: Record<ExpectedModelType, ComponentType<any>> = {
+    'chat': MessageSquare,    // 对话气泡 - 对话/推理模型
+    'intent': Brain,          // 大脑 - 意图识别/理解
+    'vision': Eye,            // 眼睛 - 视觉理解
+    'image-gen': Palette,     // 调色板 - 图像生成/创作
+    'code': Code2,            // 代码符号 - 代码生成
+    'long-context': ScrollText, // 长文档 - 长上下文
+    'embedding': Layers,      // 层叠 - 向量嵌入
+    'rerank': ArrowUpDown,    // 上下箭头 - 重排序
+    'unknown': HelpCircle,
   };
-  return icons[modelType] || '📦';
+
+  return icons[mt] || HelpCircle;
 }
 
 /**

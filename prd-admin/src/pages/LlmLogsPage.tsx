@@ -1367,11 +1367,18 @@ export default function LlmLogsPage() {
                           );
                         })()}
                         {(() => {
-                          const p = String(it.requestPurpose ?? '').trim();
-                          if (!p) return null;
+                          // 注意：requestPurpose 是“用途/功能点”（如 chat.sendMessage），不是模型标识。
+                          // 这里应展示 modelId（按全局契约：仅展示 modelId；不要默认展示 name/displayName）。
+                          // 兼容：部分历史/接口可能仍使用 model 字段承载 modelId。
+                          const modelId = String((it as any).modelId ?? it.model ?? '').trim();
+                          if (!modelId) return null;
                           return (
-                            <div className="min-w-0 text-[11px] font-semibold truncate" style={{ color: 'var(--text-muted)' }} title={`模型：${p}`}>
-                              模型：{p}
+                            <div
+                              className="min-w-0 text-[11px] font-semibold truncate"
+                              style={{ color: 'var(--text-muted)' }}
+                              title={`模型：${modelId}`}
+                            >
+                              模型：{modelId}
                             </div>
                           );
                         })()}

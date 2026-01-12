@@ -1,13 +1,14 @@
 import { Tabs } from '@/components/ui/Tabs';
-import { LayoutGrid, Users } from 'lucide-react';
+import { Database, LayoutGrid, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ModelManagePage from './ModelManagePage';
 import { ModelAppGroupPage } from './ModelAppGroupPage';
+import { ModelPoolManagePage } from './ModelPoolManagePage';
 
 export function ModelManageTabsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabFromUrl = searchParams.get('tab') || 'apps'; // 默认显示应用与分组
+  const tabFromUrl = searchParams.get('tab') || 'apps'; // 默认显示应用模型池管理
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   // 同步 URL 参数
@@ -28,7 +29,8 @@ export function ModelManageTabsPage() {
       <div className="px-5 pt-5 pb-3">
         <Tabs
           items={[
-            { key: 'apps', label: '应用与分组', icon: <Users size={14} /> },
+            { key: 'apps', label: '应用模型池管理', icon: <Users size={14} /> },
+            { key: 'pools', label: '模型池管理', icon: <Database size={14} /> },
             { key: 'platforms', label: '平台管理', icon: <LayoutGrid size={14} /> },
           ]}
           activeKey={activeTab}
@@ -38,6 +40,7 @@ export function ModelManageTabsPage() {
 
       <div className="flex-1 min-h-0 px-5 pb-5">
         {activeTab === 'apps' && <ModelAppGroupPage />}
+        {activeTab === 'pools' && <ModelPoolManagePage />}
         {activeTab === 'platforms' && <ModelManagePage />}
       </div>
     </div>

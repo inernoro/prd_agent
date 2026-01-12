@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { PageHeader } from '@/components/design/PageHeader';
+import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog } from '@/services';
-import { CheckCircle2, Circle, KeyRound, MoreVertical, Pencil, XCircle, UserCog } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, MoreVertical, Pencil, Search, XCircle, UserCog } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -705,7 +705,7 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-6">
+    <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <PageHeader
         title="用户管理"
         subtitle={`共 ${total} 个用户`}
@@ -714,50 +714,53 @@ export default function UsersPage() {
 
       <Card className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex-1 min-w-[220px]">
-            <input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              placeholder="搜索用户名或昵称"
-            />
+          <div className="flex-1 min-w-[240px]">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                className="h-9 w-full rounded-[12px] pl-9 pr-4 text-sm outline-none transition-colors hover:border-white/20 focus-visible:ring-2 focus-visible:ring-white/20"
+                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="搜索用户名或昵称"
+              />
+            </div>
           </div>
 
-          <select
+          <Select
             value={role}
             onChange={(e) => {
               setRole((e.target.value as UserRow['role'] | '') ?? '');
               setPage(1);
             }}
-            className="h-10 rounded-[14px] px-3 text-sm"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            uiSize="sm"
+            className="min-w-[96px] font-medium"
           >
             <option value="">角色</option>
             <option value="PM">PM</option>
             <option value="DEV">DEV</option>
             <option value="QA">QA</option>
             <option value="ADMIN">ADMIN</option>
-          </select>
+          </Select>
 
-          <select
+          <Select
             value={status}
             onChange={(e) => {
               setStatus((e.target.value as UserRow['status'] | '') ?? '');
               setPage(1);
             }}
-            className="h-10 rounded-[14px] px-3 text-sm"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            uiSize="sm"
+            className="min-w-[96px] font-medium"
           >
             <option value="">状态</option>
             <option value="Active">正常</option>
             <option value="Disabled">禁用</option>
-          </select>
+          </Select>
 
-          <div className="ml-auto flex items-center gap-2 shrink-0">
+          <div className="ml-auto flex items-center gap-2 shrink-0 flex-wrap justify-end">
             <Button variant="secondary" size="sm" onClick={openCreateUser}>
               创建用户
             </Button>
@@ -774,203 +777,175 @@ export default function UsersPage() {
             >
               生成邀请码
             </Button>
+            <div className="mx-1 h-8 w-px bg-white/10" aria-hidden />
             <Button variant="danger" size="sm" onClick={handleInitializeUsers}>
               初始化用户
             </Button>
           </div>
         </div>
 
-        <div className="mt-5 flex-1 min-h-0 overflow-auto rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
-          <table className="w-full text-sm">
-            <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
-              <tr>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>用户</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>角色</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>状态</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>最后操作时间</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无数据</td>
-                </tr>
-              ) : (
-                items.map((u) => (
-                  <tr key={u.userId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0 cursor-pointer"
-                          title="点击修改头像"
-                          onClick={() => openChangeAvatar(u)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => {
-                            if (e.key !== 'Enter' && e.key !== ' ') return;
-                            e.preventDefault();
-                            openChangeAvatar(u);
-                          }}
-                        >
-                          {(() => {
-    const url = resolveAvatarUrl({
-      username: u.username,
-      userType: u.userType,
-      botKind: u.botKind,
-      avatarFileName: u.avatarFileName ?? null,
-      avatarUrl: u.avatarUrl,
-    });
-                            const fallback = resolveNoHeadAvatarUrl();
-                            return (
-                              <img
-                                src={url}
-                                alt="avatar"
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  const el = e.currentTarget;
-                                  if (el.getAttribute('data-fallback-applied') === '1') return;
-                                  if (!fallback) return;
-                                  el.setAttribute('data-fallback-applied', '1');
-                                  el.src = fallback;
+        <div
+          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[16px] p-4"
+          style={{
+            // 这里刻意保留“占高”：让分页稳定贴底、列表可滚动；
+            // 当数据较少时，用 panel 底色承托留白，避免出现“底层一大片空”的突兀感
+            background: 'var(--panel)',
+            border: '1px solid var(--border-subtle)',
+          }}
+        >
+          {loading ? (
+            <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              加载中...
+            </div>
+          ) : items.length === 0 ? (
+            <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              暂无数据
+            </div>
+          ) : (
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-stretch">
+              {items.map((u) => {
+                const last = u.lastActiveAt ?? u.lastLoginAt;
+                const displayName = (u.displayName || u.username).trim();
+                return (
+                  <div
+                    key={u.userId}
+                    className="group h-full rounded-[18px] p-4 transition-all duration-200 hover:-translate-y-[1px] hover:bg-[color:var(--bg-card-hover)] hover:border-[color:var(--border-hover)] hover:[box-shadow:var(--shadow-card-hover)]"
+                    style={{
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-subtle)',
+                      boxShadow: 'var(--shadow-card)',
+                    }}
+                  >
+                    <div
+                      className="h-full flex flex-col"
+                      style={{ gap: 14 }}
+                    >
+                      {/* Header（强约束：左侧信息 + 右侧操作，避免窄卡片挤压导致“重叠”） */}
+                      <div className="grid grid-cols-[1fr_auto] gap-3 items-start">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className="h-11 w-11 rounded-[14px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/10 hover:ring-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]"
+                            title="点击修改头像"
+                            onClick={() => openChangeAvatar(u)}
+                            role="button"
+                            tabIndex={0}
+                            aria-label="点击修改头像"
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter' && e.key !== ' ') return;
+                              e.preventDefault();
+                              openChangeAvatar(u);
+                            }}
+                          >
+                            {(() => {
+                              const url = resolveAvatarUrl({
+                                username: u.username,
+                                userType: u.userType,
+                                botKind: u.botKind,
+                                avatarFileName: u.avatarFileName ?? null,
+                                avatarUrl: u.avatarUrl,
+                              });
+                              const fallback = resolveNoHeadAvatarUrl();
+                              return (
+                                <img
+                                  src={url}
+                                  alt="avatar"
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    const el = e.currentTarget;
+                                    if (el.getAttribute('data-fallback-applied') === '1') return;
+                                    if (!fallback) return;
+                                    el.setAttribute('data-fallback-applied', '1');
+                                    el.src = fallback;
+                                  }}
+                                />
+                              );
+                            })()}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className="inline-block h-2 w-2 rounded-full shrink-0"
+                                style={{
+                                  background: u.status === 'Active' ? 'rgba(34,197,94,0.95)' : 'rgba(247,247,251,0.28)',
+                                  boxShadow: u.status === 'Active' ? '0 0 0 3px rgba(34,197,94,0.12)' : 'none',
                                 }}
+                                title={u.status === 'Active' ? '正常' : '已禁用'}
+                                aria-label={u.status === 'Active' ? '正常' : '已禁用'}
                               />
-                            );
-                          })()}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                              {(u.displayName || u.username).trim()}
+                              <div
+                                className="font-semibold truncate leading-5"
+                                style={{ color: 'var(--text-primary)' }}
+                                title={displayName}
+                              >
+                                {displayName}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {/* Robot tag icon（对齐 desktop：机器人头） */}
+                                {String(u.userType ?? '').toLowerCase() === 'bot' ? (
+                                  <span
+                                    className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
+                                    style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
+                                    title="机器人"
+                                  >
+                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
+                                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
+                                    </svg>
+                                  </span>
+                                ) : null}
+                                {/* Admin tag icon（对齐 desktop：盾牌） */}
+                                {String(u.role ?? '').toUpperCase() === 'ADMIN' ? (
+                                  <span
+                                    className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
+                                    style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.28)', color: 'rgba(250,204,21,0.95)' }}
+                                    title="系统管理员"
+                                  >
+                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
+                                    </svg>
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
-                            <div
-                              className="text-xs truncate max-w-[220px] shrink"
-                              style={{ color: 'var(--text-muted)' }}
-                              title={`用户名：${u.username}`}
-                            >
-                              @{u.username}
+
+                            <div className="mt-1 flex flex-col gap-1 min-w-0">
+                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }} title={`用户名：${u.username}`}>
+                                @{u.username}
+                              </div>
+                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }} title={u.userId}>
+                                ID: {u.userId}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {/* Robot tag icon（对齐 desktop：机器人头） */}
-                              {String(u.userType ?? '').toLowerCase() === 'bot' ? (
-                                <span
-                                  className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
-                                  style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
-                                  title="机器人"
-                                >
-                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
-                                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
-                                  </svg>
-                                </span>
-                              ) : null}
-                              {/* Admin tag icon（对齐 desktop：盾牌） */}
-                              {String(u.role ?? '').toUpperCase() === 'ADMIN' ? (
-                                <span
-                                  className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
-                                  style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.28)', color: 'rgba(250,204,21,0.95)' }}
-                                  title="系统管理员"
-                                >
-                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
-                                  </svg>
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                          <div className="mt-1">
-                            <span
-                              className="inline-flex items-center gap-1.5 rounded-full px-2.5 h-6 text-[11px] font-semibold tracking-wide"
-                              style={{
-                                background: 'rgba(255,255,255,0.03)',
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'var(--text-muted)',
-                              }}
-                              title={u.userId}
-                            >
-                              <KeyRound size={12} />
-                              <span className="truncate max-w-[320px]">{u.userId}</span>
-                            </span>
                           </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div
-                        className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
-                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-                      >
-                        {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => {
-                          const active = u.role === r;
-                          const disabled = roleUpdatingUserId === u.userId || statusUpdatingUserId === u.userId;
-                          return (
-                            <button
-                              key={r}
-                              type="button"
-                              className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap disabled:opacity-60"
-                              style={{
-                                color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                                background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                                border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                              }}
-                              aria-pressed={active}
-                              disabled={disabled}
-                              onClick={() => onSetRole(u, r)}
-                            >
-                              {r}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Button
-                        variant={u.status === 'Active' ? 'secondary' : 'primary'}
-                        size="sm"
-                        disabled={statusUpdatingUserId === u.userId || roleUpdatingUserId === u.userId}
-                        onClick={() => onToggleStatus(u)}
-                        title={u.status === 'Active' ? '点击停用' : '点击启用'}
-                        className="min-w-[92px]"
-                      >
-                        {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用' : '启用'}
-                      </Button>
-                    </td>
-                    <td className="px-4 py-3">
-                      {!(u.lastActiveAt ?? u.lastLoginAt) ? (
-                        <Badge variant="subtle">暂无操作</Badge>
-                      ) : (
-                        <div className="flex flex-col">
-                          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                            {fmtDateTime(u.lastActiveAt ?? u.lastLoginAt)}
-                          </div>
-                          <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                            {fmtRelative(u.lastActiveAt ?? u.lastLoginAt)}
-                          </div>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <DropdownMenu.Root>
-                          <DropdownMenu.Trigger asChild>
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'var(--text-secondary)',
-                              }}
-                              aria-label="更多操作"
-                              title="更多操作"
-                            >
-                              <MoreVertical size={16} />
-                            </button>
-                          </DropdownMenu.Trigger>
-                          <DropdownMenu.Portal>
+
+                        <div className="flex items-center justify-end gap-2 shrink-0">
+                          <Button
+                            variant={u.status === 'Active' ? 'secondary' : 'primary'}
+                            size="xs"
+                            disabled={statusUpdatingUserId === u.userId || roleUpdatingUserId === u.userId}
+                            onClick={() => onToggleStatus(u)}
+                            title={u.status === 'Active' ? '点击停用' : '点击启用'}
+                            aria-label={u.status === 'Active' ? '停用' : '启用'}
+                            className="min-w-[72px]"
+                          >
+                            {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用' : '启用'}
+                          </Button>
+
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger asChild>
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[11px] transition-colors hover:bg-white/6 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]"
+                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
+                                aria-label="更多操作"
+                                title="更多操作"
+                              >
+                                <MoreVertical size={16} />
+                              </button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
                             <DropdownMenu.Content
                               side="bottom"
                               align="end"
@@ -1101,17 +1076,91 @@ export default function UsersPage() {
                               />
                             </DropdownMenu.Content>
                           </DropdownMenu.Portal>
-                        </DropdownMenu.Root>
+                          </DropdownMenu.Root>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+
+                      {/* Role */}
+                      <div
+                        className="rounded-[14px] p-2"
+                        style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        <div className="grid grid-cols-4 gap-1">
+                          {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => {
+                            const active = u.role === r;
+                            const disabled = roleUpdatingUserId === u.userId || statusUpdatingUserId === u.userId;
+                            return (
+                              <button
+                                key={r}
+                                type="button"
+                                className="h-[30px] rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center justify-center disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]"
+                                style={{
+                                  color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
+                                  background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
+                                  border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                                }}
+                                aria-pressed={active}
+                                disabled={disabled}
+                                onClick={() => onSetRole(u, r)}
+                              >
+                                {r}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Footer */}
+                      <div className="flex items-end justify-between gap-3">
+                        <div className="min-w-0" />
+                        {!last ? (
+                          <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                            暂无操作记录
+                          </div>
+                        ) : (
+                          <div className="text-right min-w-0">
+                            {(() => {
+                              const abs = fmtDateTime(last);
+                              const rel = fmtRelative(last);
+                              const primary = rel || abs;
+                              const secondary = rel ? abs : '';
+                              return (
+                                <div className="flex flex-col items-end">
+                                  <div
+                                    className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold"
+                                    style={{
+                                      background: 'rgba(255,255,255,0.03)',
+                                      border: '1px solid rgba(255,255,255,0.10)',
+                                      color: 'var(--text-secondary)',
+                                    }}
+                                    title={abs}
+                                  >
+                                    <Clock size={12} style={{ color: 'var(--text-muted)' }} />
+                                    <span className="truncate">{primary}</span>
+                                  </div>
+                                  {secondary ? (
+                                    <div
+                                      className="mt-1 text-[11px] truncate opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                                      style={{ color: 'var(--text-muted)' }}
+                                    >
+                                      {secondary}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
+        <div className="mt-4 pt-4 flex items-center justify-between border-t border-white/10">
           <div className="text-sm" style={{ color: 'var(--text-muted)' }}>第 {page} 页 / 共 {Math.max(1, Math.ceil(total / 20))} 页</div>
           <div className="flex items-center gap-2">
             <Button

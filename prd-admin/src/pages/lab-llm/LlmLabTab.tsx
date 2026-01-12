@@ -2564,7 +2564,7 @@ export default function LlmLabTab() {
       <div className="h-full min-h-0 grid grid-cols-1 gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
         {/* 左上：试验区 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
-          <Card className="p-4">
+          <Card className="p-4 lg:h-full">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>

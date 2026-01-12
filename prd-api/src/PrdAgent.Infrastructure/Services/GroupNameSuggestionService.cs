@@ -54,9 +54,7 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
             }
 
             // 如果群组已经有自定义名称（不是默认名称），则不覆盖
-            if (!string.IsNullOrWhiteSpace(group.GroupName) && 
-                group.GroupName != "新建群组" && 
-                group.GroupName != "未命名群组")
+            if (!IsDefaultOrPlaceholderName(group.GroupName))
             {
                 _logger.LogInformation("Group {GroupId} already has custom name: {GroupName}, skipping suggestion", 
                     groupId, group.GroupName);
@@ -109,15 +107,74 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
 
     private static string ExtractSnippet(string content, int maxLength = 2000)
     {
-        if (string.IsNullOrWhiteSpace(content))
-            return string.Empty;
+        if (string.IsNullOrWhiteSpace(content)) return string.Empty;
 
-        var trimmed = content.Trim();
-        if (trimmed.Length <= maxLength)
-            return trimmed;
+        // 目标：尽量提取“有信息密度”的头部若干行（而不是生硬截断前 N 字），
+        // 避免 PRD 开头是模板/目录/版本历史时把模型带偏。
+        var s = content.Replace("\r\n", "\n").Replace("\r", "\n");
+        var lines = s.Split('\n');
+        var picked = new List<string>(capacity: 32);
+        var total = 0;
 
-        // 取前面的内容作为片段
-        return trimmed[..maxLength];
+        foreach (var rawLine in lines)
+        {
+            if (picked.Count >= 40) break;
+            var line = (rawLine ?? string.Empty).TrimEnd();
+            if (picked.Count == 0 && string.IsNullOrWhiteSpace(line)) continue;
+
+            var trimmed = line.Trim();
+            if (IsNoiseLine(trimmed)) continue;
+
+            // 截断到 maxLength
+            var remaining = maxLength - total;
+            if (remaining <= 0) break;
+            if (trimmed.Length > remaining) trimmed = trimmed[..remaining];
+
+            picked.Add(trimmed);
+            total += trimmed.Length;
+            if (total >= maxLength) break;
+        }
+
+        var snippet = string.Join('\n', picked).Trim();
+        return snippet;
+    }
+
+    private static bool IsDefaultOrPlaceholderName(string? name)
+    {
+        var s = (name ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return true;
+
+        // 明确的默认值
+        if (string.Equals(s, "新建群组", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(s, "未命名群组", StringComparison.OrdinalIgnoreCase)) return true;
+
+        // 常见占位/模板/泛词：这些不应被视为“用户自定义群名”，应允许被后台建议覆盖
+        if (string.Equals(s, "未命名文档", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(s, "产品需求文档", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(s, "需求文档", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(s, "产品文档", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(s, "文档", StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (s.Contains("未命名", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static bool IsNoiseLine(string line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return true;
+
+        // 模板/目录类噪声（单行）
+        var badExact = new[]
+        {
+            "目录", "版本历史", "更新记录"
+        };
+        if (badExact.Any(x => string.Equals(s, x, StringComparison.OrdinalIgnoreCase))) return true;
+
+        // Markdown fence 分隔符（会显著降低意图模型判断质量）
+        if (string.Equals(s, "```", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(s, "---", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 }
 

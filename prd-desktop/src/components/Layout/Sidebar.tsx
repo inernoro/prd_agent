@@ -265,6 +265,16 @@ export default function Sidebar() {
           }
         }
 
+        // 关键：如果算出来的是“占位/模板名”，不要当作用户自定义群名传给后端；
+        // 否则后端会认为已经有群名，从而不会触发异步意图模型命名。
+        if (!explicitGroupName) {
+          const t = String(groupNameFinal || '').trim();
+          const placeholder = new Set(['未命名文档', '产品需求文档', '需求文档', '产品文档', '文档', '未命名群组', '新建群组']);
+          if (placeholder.has(t)) {
+            groupNameFinal = '';
+          }
+        }
+
         const resp = await invoke<ApiResponse<{ groupId: string; inviteCode: string }>>('create_group', {
           prdDocumentId: uploadResp.data.document.id,
           groupName: groupNameFinal ? groupNameFinal : undefined,

@@ -746,6 +746,130 @@ public class AdminModelsController : ControllerBase
         
         return apiKey[..4] + "****" + apiKey[^4..];
     }
+
+    /// <summary>
+    /// 获取模型的平台适配信息
+    /// </summary>
+    [HttpGet("{id}/adapter-info")]
+    public async Task<IActionResult> GetModelAdapterInfo(string id)
+    {
+        var model = await _db.LLMModels.Find(m => m.Id == id).FirstOrDefaultAsync();
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
+        }
+
+        // 获取平台信息
+        string? platformApiUrl = null;
+        if (!string.IsNullOrWhiteSpace(model.PlatformId))
+        {
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync();
+            platformApiUrl = platform?.ApiUrl ?? model.ApiUrl;
+        }
+        else
+        {
+            platformApiUrl = model.ApiUrl;
+        }
+
+        // 尝试匹配 vveai 适配器
+        var adapterInfo = Infrastructure.LLM.VveaiModelAdapterRegistry.GetAdapterInfo(platformApiUrl, model.ModelName);
+
+        if (adapterInfo == null)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                matched = false,
+                modelId = id,
+                modelName = model.ModelName,
+            }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            matched = adapterInfo.Matched,
+            modelId = id,
+            modelName = model.ModelName,
+            adapterName = adapterInfo.AdapterName,
+            displayName = adapterInfo.DisplayName,
+            provider = adapterInfo.Provider,
+            sizeConstraint = new
+            {
+                type = adapterInfo.SizeConstraintType,
+                description = adapterInfo.SizeConstraintDescription,
+            },
+            allowedSizes = adapterInfo.AllowedSizes,
+            allowedRatios = adapterInfo.AllowedRatios,
+            sizeParamFormat = adapterInfo.SizeParamFormat,
+            limitations = new
+            {
+                mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
+                maxWidth = adapterInfo.MaxWidth,
+                maxHeight = adapterInfo.MaxHeight,
+                minWidth = adapterInfo.MinWidth,
+                minHeight = adapterInfo.MinHeight,
+                maxPixels = adapterInfo.MaxPixels,
+                notes = adapterInfo.Notes,
+            },
+            supportsImageToImage = adapterInfo.SupportsImageToImage,
+            supportsInpainting = adapterInfo.SupportsInpainting,
+        }));
+    }
+
+    /// <summary>
+    /// 批量获取多个模型的适配信息
+    /// </summary>
+    [HttpPost("adapter-info/batch")]
+    public async Task<IActionResult> GetModelsAdapterInfoBatch([FromBody] List<string> modelIds)
+    {
+        if (modelIds == null || modelIds.Count == 0)
+        {
+            return Ok(ApiResponse<object>.Ok(new Dictionary<string, object>()));
+        }
+
+        var ids = modelIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().Take(100).ToList();
+        var models = await _db.LLMModels.Find(m => ids.Contains(m.Id)).ToListAsync();
+
+        // 获取所有相关平台
+        var platformIds = models.Where(m => !string.IsNullOrWhiteSpace(m.PlatformId)).Select(m => m.PlatformId!).Distinct().ToList();
+        var platforms = await _db.LLMPlatforms.Find(p => platformIds.Contains(p.Id)).ToListAsync();
+        var platformMap = platforms.ToDictionary(p => p.Id, p => p);
+
+        var result = new Dictionary<string, object>();
+        foreach (var model in models)
+        {
+            string? platformApiUrl = null;
+            if (!string.IsNullOrWhiteSpace(model.PlatformId) && platformMap.TryGetValue(model.PlatformId, out var plat))
+            {
+                platformApiUrl = plat.ApiUrl ?? model.ApiUrl;
+            }
+            else
+            {
+                platformApiUrl = model.ApiUrl;
+            }
+
+            var adapterInfo = Infrastructure.LLM.VveaiModelAdapterRegistry.GetAdapterInfo(platformApiUrl, model.ModelName);
+            if (adapterInfo != null && adapterInfo.Matched)
+            {
+                result[model.Id] = new
+                {
+                    matched = true,
+                    adapterName = adapterInfo.AdapterName,
+                    displayName = adapterInfo.DisplayName,
+                    provider = adapterInfo.Provider,
+                    sizeConstraintType = adapterInfo.SizeConstraintType,
+                    allowedSizesCount = adapterInfo.AllowedSizes.Count,
+                    allowedRatios = adapterInfo.AllowedRatios,
+                    notes = adapterInfo.Notes,
+                };
+            }
+            else
+            {
+                result[model.Id] = new { matched = false };
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(result));
+    }
 }
 
 public class CreateModelRequest

@@ -220,6 +220,15 @@ public class ModelDomainService : IModelDomainService
         var s = (name ?? string.Empty).Trim();
         if (s.Length < 2 || s.Length > 50) return false;
 
+        // 常见“非群名”泛词/占位词：即使模型输出了，也应判为无效并回退启发式
+        var badExact = new[]
+        {
+            "新建群组", "未命名群组", "未命名文档",
+            "产品需求文档", "需求文档", "产品文档", "文档",
+            "目录", "版本历史", "更新记录", "概述", "背景"
+        };
+        if (badExact.Any(x => string.Equals(s, x, StringComparison.OrdinalIgnoreCase))) return false;
+
         // 追问/说明式内容直接判为无效
         var bad = new[]
         {

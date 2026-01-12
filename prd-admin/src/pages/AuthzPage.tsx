@@ -227,15 +227,14 @@ export default function AuthzPage() {
   };
 
   return (
-    <div className="h-full w-full p-6 flex flex-col min-h-0">
+    <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <PageHeader title="权限管理" subtitle="系统角色（RBAC-lite）+ 权限点（permission strings）" />
 
       {/* 固定为当前视口高度：左右两栏内部滚动，避免卡片撑出屏幕 */}
-      <div className="mt-4 grid grid-cols-12 gap-4 flex-1 min-h-0">
-        <div className="col-span-4">
-          <Card className="p-4 h-full min-h-0 flex flex-col">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>系统角色</div>
+      <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>
+        <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between gap-3 min-w-0">
+            <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统角色</div>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={loading}>
                   新增角色
@@ -251,44 +250,68 @@ export default function AuthzPage() {
                 </Button>
               </div>
             </div>
-            {/* 用 flex 列表避免 grid 默认的 stretch 把每个 role 拉成“大卡片” */}
-            <div className="mt-3 flex flex-col gap-1.5 flex-1 min-h-0 overflow-auto pr-1">
+          {/* 列表项的字号/间距对齐“提示词管理”左栏，避免内容过小看不清 */}
+          <div className="mt-3 flex-1 min-h-0 overflow-auto overflow-x-hidden grid gap-2 min-w-0 content-start items-start auto-rows-min pr-1">
               {roles.map((r) => {
                 const isActive = r.key === activeKey;
+                const isBuiltIn = !!r.isBuiltIn;
                 return (
                   <button
                     key={r.key}
                     type="button"
-                    // 关键：父容器不变，但 role node 本身更“紧凑”，并限制最大宽度居中，避免整列看起来像大块卡片
-                    className="w-full max-w-[320px] mx-auto text-left rounded-[12px] px-2 py-1.5 transition-colors hover:bg-white/3"
+                    className="w-full text-left rounded-[16px] transition-all duration-200 min-w-0 overflow-hidden hover:scale-[1.01]"
                     style={{
-                      background: isActive ? 'color-mix(in srgb, var(--accent-gold) 12%, transparent)' : 'transparent',
-                      border: `1px solid ${isActive ? 'color-mix(in srgb, var(--accent-gold) 35%, var(--border-subtle))' : 'var(--border-subtle)'}`,
-                      color: 'var(--text-primary)',
+                      background: isActive
+                        ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-gold) 12%, var(--bg-input)) 0%, color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input)) 100%)'
+                        : isBuiltIn
+                          ? 'linear-gradient(180deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.03) 100%)'
+                          : 'var(--bg-input)',
+                      border: isActive
+                        ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)'
+                        : isBuiltIn
+                          ? '1px solid color-mix(in srgb, var(--accent-gold) 18%, var(--border-subtle))'
+                          : '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+                      boxShadow: isActive
+                        ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                        : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                     }}
                     onClick={() => setActiveKey(r.key)}
                     disabled={loading}
+                    title={`${r.name}（${r.key}）`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex items-center gap-2">
-                        <div className="text-[13px] font-medium truncate leading-tight">{r.name}</div>
-                        {r.isBuiltIn ? (
+                    <div className="w-full text-left px-3 py-3 outline-none">
+                      <div className="flex items-start justify-between gap-3 min-w-0">
+                        <div className="min-w-0 flex items-center gap-3 flex-1">
                           <span
-                            className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 leading-none"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.03)' }}
+                            className="shrink-0 inline-flex items-center justify-center rounded-[10px]"
+                            style={{
+                              width: 28,
+                              height: 28,
+                              background: isBuiltIn ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
+                              border: isBuiltIn ? '1px solid rgba(0,0,0,0.10)' : '1px solid rgba(255,255,255,0.10)',
+                              boxShadow: isBuiltIn ? '0 8px 18px rgba(214, 178, 106, 0.14)' : 'none',
+                              color: isBuiltIn ? '#1a1206' : 'var(--text-secondary)',
+                            }}
+                            aria-hidden="true"
                           >
-                            内置
+                            {isBuiltIn ? <ShieldCheck size={16} /> : <Users size={16} />}
                           </span>
-                        ) : null}
+                          <div className="text-sm font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
+                            {r.name}
+                          </div>
                         <span
-                          className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 leading-none"
-                          style={{ border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)' }}
+                          className="text-xs px-2 py-0.5 rounded-full shrink-0 leading-none"
+                          style={{
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            color: 'var(--text-muted)',
+                            background: 'rgba(255,255,255,0.02)',
+                          }}
                           title="权限点数量"
                         >
                           {Array.isArray(r.permissions) ? r.permissions.length : 0}
                         </span>
                       </div>
-                      <div className="text-[11px] opacity-70 shrink-0 leading-tight">{r.key}</div>
+                      </div>
                     </div>
                   </button>
                 );
@@ -297,11 +320,9 @@ export default function AuthzPage() {
                 <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无角色</div>
               ) : null}
             </div>
-          </Card>
-        </div>
+        </Card>
 
-        <div className="col-span-8">
-          <Card className="p-4 h-full min-h-0 flex flex-col">
+        <Card className="p-4 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             {/* Header：按钮固定右上角，说明单独一行，避免挤压按钮文字 */}
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -361,8 +382,8 @@ export default function AuthzPage() {
                 <div className="px-3 py-2 text-xs flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.015)', color: 'var(--text-muted)' }}>
                   <div>模块权限</div>
                   <div className="flex items-center gap-8">
-                    <div className="w-[40px] text-center">读</div>
-                    <div className="w-[40px] text-center">写/管</div>
+                    <div className="w-10 text-center">读</div>
+                    <div className="w-10 text-center">写/管</div>
                   </div>
                 </div>
                 {/* 取消横向分割线：用间距 + hover 层次区分，避免白线晃眼 */}
@@ -380,7 +401,7 @@ export default function AuthzPage() {
                         style={{ background: 'rgba(255,255,255,0.006)' }}
                       >
                         <div className="min-w-0 flex items-start gap-2">
-                          <span className="mt-[2px] opacity-70" style={{ color: 'var(--text-secondary)' }}>{r.icon}</span>
+                          <span className="mt-0.5 opacity-70" style={{ color: 'var(--text-secondary)' }}>{r.icon}</span>
                           <div className="min-w-0">
                             <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{r.title}</div>
                             <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -394,7 +415,7 @@ export default function AuthzPage() {
                           </div>
 
                         <div className="flex items-center gap-8">
-                          <div className="w-[40px] flex items-center justify-center">
+                          <div className="w-10 flex items-center justify-center">
                             {readKey ? (
                               <input
                                 type="checkbox"
@@ -407,7 +428,7 @@ export default function AuthzPage() {
                               <span className="text-xs opacity-35 select-none" style={{ color: 'var(--text-muted)' }}>—</span>
                             )}
                           </div>
-                          <div className="w-[40px] flex items-center justify-center">
+                          <div className="w-10 flex items-center justify-center">
                             {writeKey ? (
                               <input
                                 type="checkbox"
@@ -453,7 +474,6 @@ export default function AuthzPage() {
               </div>
             </div>
           </Card>
-        </div>
       </div>
 
       <Dialog

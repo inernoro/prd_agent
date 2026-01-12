@@ -7,7 +7,9 @@ import type { Platform } from '@/types/admin';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
-import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap } from 'lucide-react';
+import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
+import { matchAdapterConfig } from '@/lib/vveaiAdapterConfigs';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { systemDialog } from '@/lib/systemDialog';
 
 export type AvailableModel = {
@@ -465,6 +467,32 @@ export function PlatformAvailableModelsDialog({
                                     </div>
                                     {exist ? <Badge variant="success">{selectedBadgeText}</Badge> : null}
                                   </div>
+                                  {/* 适配器匹配标签 */}
+                                  {(() => {
+                                    const adapterConfig = matchAdapterConfig(m.modelName);
+                                    if (!adapterConfig) return null;
+                                    const tooltipLines = [
+                                      `适配器: ${adapterConfig.displayName}`,
+                                      `提供商: ${adapterConfig.provider}`,
+                                      `约束类型: ${adapterConfig.sizeConstraintType}`,
+                                      adapterConfig.allowedRatios.length > 0 ? `比例: ${adapterConfig.allowedRatios.join(', ')}` : null,
+                                      ...adapterConfig.notes,
+                                    ].filter(Boolean);
+                                    return (
+                                      <Tooltip content={tooltipLines.join('\n')}>
+                                        <span
+                                          className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded mt-1"
+                                          style={{
+                                            background: 'rgba(59, 130, 246, 0.10)',
+                                            color: 'rgba(59, 130, 246, 0.95)',
+                                          }}
+                                        >
+                                          <Settings size={10} />
+                                          {adapterConfig.modelIdPattern.replace('*', '')}
+                                        </span>
+                                      </Tooltip>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
