@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/design/PageHeader';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
-import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import {
   getModelGroups,
   getPlatforms,
@@ -68,12 +68,8 @@ export function ModelPoolManagePage() {
     models: [] as ModelGroupItem[],
   });
 
-  // 平台选择弹窗（中间层）
-  const [platformPickerOpen, setPlatformPickerOpen] = useState(false);
-
-  // 模型选择弹窗（按平台）
-  const [availableOpen, setAvailableOpen] = useState(false);
-  const [availablePlatformId, setAvailablePlatformId] = useState('');
+  // 模型选择弹窗（使用公共组件）
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -469,7 +465,7 @@ export function ModelPoolManagePage() {
                   <Button
                     variant="secondary"
                     size="xs"
-                    onClick={() => setPlatformPickerOpen(true)}
+                    onClick={() => setModelPickerOpen(true)}
                   >
                     <Plus size={12} />
                     添加模型
@@ -546,64 +542,38 @@ export function ModelPoolManagePage() {
                 </Button>
               </div>
 
-              <PlatformAvailableModelsDialog
-                open={availableOpen}
-                onOpenChange={setAvailableOpen}
-                platform={platforms.find((p) => p.id === availablePlatformId) ?? null}
-                description="从平台可用模型中勾选添加/移除"
-                selectedCount={poolForm.models.filter((x) => x.platformId === availablePlatformId).length}
-                selectedCountLabel="已加入"
-                selectedBadgeText="已加入"
-                isSelected={(m: AvailableModel) => {
-                  const pid = String(availablePlatformId ?? '').trim();
-                  const mid = String(m.modelName ?? '').trim();
-                  if (!pid || !mid) return false;
-                  return poolForm.models.some((x) => keyOfModel(x) === `${pid}:${mid}`.toLowerCase());
+              {/* 模型选择弹窗（公共组件） */}
+              <ModelPoolPickerDialog
+                open={modelPickerOpen}
+                onOpenChange={setModelPickerOpen}
+                platforms={platforms}
+                selectedModels={poolForm.models.map((m) => ({
+                  platformId: m.platformId,
+                  modelId: m.modelId,
+                  modelName: m.modelId,
+                  name: m.modelId,
+                }))}
+                confirmText="加入模型池"
+                title="添加模型"
+                description="通过平台把模型加入下方选择池，确认后一次性加入模型池"
+                onConfirm={(models: SelectedModelItem[]) => {
+                  // 将选中的模型合并到 poolForm.models
+                  const newModels: ModelGroupItem[] = models.map((m, idx) => ({
+                    platformId: m.platformId,
+                    modelId: m.modelId,
+                    priority: poolForm.models.length + idx + 1,
+                    healthStatus: ModelHealthStatus.Healthy,
+                    consecutiveFailures: 0,
+                    consecutiveSuccesses: 0,
+                  }));
+                  // 去重合并
+                  const existingKeys = new Set(poolForm.models.map((x) => keyOfModel(x)));
+                  const toAdd = newModels.filter((x) => !existingKeys.has(keyOfModel(x)));
+                  setPoolForm((prev) => ({
+                    ...prev,
+                    models: [...prev.models, ...toAdd],
+                  }));
                 }}
-                onToggle={(m: AvailableModel) => toggleModel(availablePlatformId, m.modelName)}
-                onBulkAddGroup={(_: string, ms: AvailableModel[]) => {
-                  const pid = String(availablePlatformId ?? '').trim();
-                  if (!pid) return;
-                  for (const m of ms) toggleModel(pid, m.modelName);
-                }}
-              />
-
-              {/* 平台选择弹窗 */}
-              <Dialog
-                open={platformPickerOpen}
-                onOpenChange={setPlatformPickerOpen}
-                title="选择平台"
-                description="选择一个平台，然后从该平台的可用模型中批量添加"
-                maxWidth={640}
-                content={
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {platforms.filter((p) => p.enabled).map((p) => {
-                      const count = poolForm.models.filter((m) => m.platformId === p.id).length;
-                      return (
-                        <button
-                          key={p.id}
-                          className="p-4 rounded-[14px] text-left transition-all hover:scale-[1.02]"
-                          style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                          }}
-                          onClick={() => {
-                            setAvailablePlatformId(p.id);
-                            setPlatformPickerOpen(false);
-                            setAvailableOpen(true);
-                          }}
-                        >
-                          <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                            {p.name}
-                          </div>
-                          <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            {count > 0 ? `已添加 ${count} 个模型` : '点击添加模型'}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                }
               />
             </div>
           }
