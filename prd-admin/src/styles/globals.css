@@ -6,6 +6,13 @@
   outline-offset: 2px;
 }
 
+/* 禁用 focus 样式的元素（用于自定义聚焦容器的内部元素） */
+.no-focus-ring:focus,
+.no-focus-ring:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* Admin 通用输入控件：柔和边框 + 暗底微混色 + 统一交互态 */
 .prd-field {
   background: rgba(7, 7, 8, 1);

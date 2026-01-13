@@ -231,11 +231,11 @@ function NightSkyBackground() {
     shootingStars.push(new ShootingStar());
     shootingStars.push(new ShootingStar());
 
-    // 创建地形层 - 使用更暗的色调与页面融合
+    // 创建地形层 - 使用偏暖的深褐/深紫色调，与金色主题呼应
     terrains.push(
       new Terrain({
         mHeight: height / 2 - 100,
-        fillStyle: 'rgba(20, 22, 45, 0.5)',
+        fillStyle: 'rgba(25, 20, 30, 0.4)',  // 最远层：偏紫褐
         displacement: 160,
         scrollDelay: 120,
       })
@@ -244,7 +244,7 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 130,
         scrollDelay: 70,
-        fillStyle: 'rgba(14, 15, 28, 0.65)',
+        fillStyle: 'rgba(18, 15, 22, 0.55)',  // 中间层：更深
         mHeight: height / 2 - 40,
       })
     );
@@ -252,18 +252,18 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 100,
         scrollDelay: 35,
-        fillStyle: 'rgba(10, 10, 14, 0.85)',
+        fillStyle: 'rgba(12, 10, 14, 0.75)',  // 最近层：接近纯黑
         mHeight: height / 2 + 20,
       })
     );
 
     function animate() {
-      // 背景渐变 - 顶部深邃，中部带微微紫调
+      // 背景渐变 - 顶部深邃，整体偏暖褐调
       const gradient = ctx!.createLinearGradient(0, 0, 0, height);
-      gradient.addColorStop(0, '#08080a');
-      gradient.addColorStop(0.3, '#0d0b14');
-      gradient.addColorStop(0.6, '#0a090e');
-      gradient.addColorStop(1, '#0a0a0c');
+      gradient.addColorStop(0, '#0a0908');      // 顶部：微暖黑
+      gradient.addColorStop(0.35, '#0c0a0f');   // 中上：深褐紫
+      gradient.addColorStop(0.65, '#0a090b');   // 中下：暖灰黑
+      gradient.addColorStop(1, '#0a0a0a');      // 底部：纯暗
       ctx!.fillStyle = gradient;
       ctx!.fillRect(0, 0, width, height);
 
@@ -501,11 +501,11 @@ function HeroSection() {
       >
         视觉创作 Agent
       </h1>
-      {/* 副标题 - 调整透明度和字号 */}
+      {/* 副标题 - 偏暖白色调 */}
       <p
         className="text-[15px]"
         style={{
-          color: 'rgba(255,255,255,0.6)',
+          color: 'rgba(255,248,235,0.58)',  // 暖白
           letterSpacing: '0.01em',
         }}
       >
@@ -571,6 +571,7 @@ function QuickInputBox(props: {
   const { value, onChange, onSubmit, loading } = props;
   const typingPlaceholder = useTypingPlaceholder();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -595,9 +596,13 @@ function QuickInputBox(props: {
           background: 'rgba(20, 20, 25, 0.75)',
           backdropFilter: 'blur(24px) saturate(1.4)',
           WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
-          // 统一边框
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset',
+          // 聚焦时边框变亮 - 使用更柔和的琥珀金
+          border: isFocused
+            ? '1px solid rgba(212, 170, 85, 0.45)'
+            : '1px solid rgba(255, 255, 255, 0.12)',
+          boxShadow: isFocused
+            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(212, 170, 85, 0.12), 0 1px 0 rgba(255,255,255,0.06) inset'
+            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset',
         }}
         onClick={handleContainerClick}
       >
@@ -608,19 +613,22 @@ function QuickInputBox(props: {
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
             rows={2}
-            className="w-full bg-transparent text-[15px] resize-none outline-none leading-relaxed"
+            className="w-full bg-transparent text-[15px] resize-none leading-relaxed no-focus-ring"
             style={{ 
               color: '#fff',
               minHeight: '52px',
+              border: 'none',
             }}
             disabled={loading}
           />
-          {/* 自定义打字动效占位符 */}
+          {/* 自定义打字动效占位符 - 偏暖白 */}
           {!value && (
             <div
               className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
-              style={{ color: 'rgba(255,255,255,0.45)' }}
+              style={{ color: 'rgba(255,248,235,0.42)' }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
@@ -653,11 +661,11 @@ function QuickInputBox(props: {
             className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
             style={{
               background: canSubmit
-                ? 'linear-gradient(135deg, rgba(250,176,5,0.95) 0%, rgba(245,158,11,0.95) 100%)'
+                ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
                 : 'rgba(255,255,255,0.08)',
-              color: canSubmit ? '#000' : 'rgba(255,255,255,0.35)',
+              color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
               cursor: canSubmit ? 'pointer' : 'not-allowed',
-              boxShadow: canSubmit ? '0 4px 16px rgba(250,176,5,0.25)' : 'none',
+              boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
             }}
           >
             {loading ? (
@@ -694,10 +702,10 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
               type="button"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02]"
               style={{
-                background: 'linear-gradient(135deg, rgba(250,176,5,0.15) 0%, rgba(245,158,11,0.08) 100%)',
-                border: '1px solid rgba(250,176,5,0.4)',
-                color: 'rgba(250,176,5,1)',
-                boxShadow: '0 0 20px rgba(250,176,5,0.1)',
+                background: 'linear-gradient(135deg, rgba(212,170,85,0.12) 0%, rgba(195,155,65,0.06) 100%)',
+                border: '1px solid rgba(212,170,85,0.35)',
+                color: 'rgba(218,180,95,0.95)',
+                boxShadow: '0 0 24px rgba(195,155,65,0.08)',
               }}
               onClick={() => {}}
             >
@@ -707,20 +715,20 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
           );
         }
 
-        // 普通标签 - 更柔和的样式
+        // 普通标签 - 更柔和的样式，偏暖白
         return (
           <button
             key={tag.key}
             type="button"
             onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/10"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
             style={{
-              background: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
-              border: isActive ? '1px solid rgba(255,255,255,0.25)' : '1px solid rgba(255,255,255,0.12)',
-              color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
+              background: isActive ? 'rgba(255,250,240,0.1)' : 'transparent',
+              border: isActive ? '1px solid rgba(255,250,240,0.22)' : '1px solid rgba(255,255,255,0.1)',
+              color: isActive ? 'rgba(255,252,245,0.95)' : 'rgba(255,248,235,0.55)',
             }}
           >
-            <Icon size={14} style={{ opacity: isActive ? 1 : 0.7 }} />
+            <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
             {tag.label}
           </button>
         );
@@ -896,7 +904,7 @@ function ProjectCarousel(props: {
           <button
             type="button"
             className="flex items-center gap-1 text-[13px] font-medium transition-all duration-200 hover:gap-2"
-            style={{ color: 'rgba(250,176,5,0.8)' }}
+            style={{ color: 'rgba(212,170,85,0.75)' }}
           >
             查看全部
             <ChevronRight size={14} />
