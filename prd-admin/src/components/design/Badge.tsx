@@ -13,11 +13,12 @@ export function Badge({
   icon?: React.ReactNode;
   size?: 'default' | 'sm';
 }) {
+  // 避免使用 color-mix()，直接用 rgba 值
   const style: React.CSSProperties =
     variant === 'discount'
       ? {
-          background: 'color-mix(in srgb, var(--accent-green) 18%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--accent-green) 35%, transparent)',
+          background: 'rgba(124, 252, 0, 0.18)',
+          border: '1px solid rgba(124, 252, 0, 0.35)',
           color: 'var(--accent-green)',
         }
       : variant === 'new'
@@ -28,8 +29,8 @@ export function Badge({
           }
         : variant === 'featured'
           ? {
-              background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)',
-              border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)',
+              background: 'rgba(214, 178, 106, 0.18)',
+              border: '1px solid rgba(214, 178, 106, 0.35)',
               color: 'var(--accent-gold-2)',
             }
           : variant === 'success'

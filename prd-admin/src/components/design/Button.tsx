@@ -21,9 +21,9 @@ export const Button = React.forwardRef<
   // 更精致的控件高度和圆角
   const sizeCls =
     size === 'xs'
-      ? 'h-[32px] px-3.5 rounded-[11px] text-[12px]'
+      ? 'h-[28px] px-3 rounded-[9px] text-[12px]'
       : size === 'sm'
-        ? 'h-[36px] px-4 rounded-[12px] text-[13px]'
+        ? 'h-[28px] px-3 rounded-[9px] text-[12px]'
         : 'h-11 px-5 rounded-[14px] text-[14px]';
 
   const variantCls =

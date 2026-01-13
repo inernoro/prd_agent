@@ -1,5 +1,7 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
+import { PageHeader } from '@/components/design/PageHeader';
+import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   createImageMasterWorkspace,
@@ -8,8 +10,8 @@ import {
   updateImageMasterWorkspace,
 } from '@/services';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
-import { Plus, Pencil, Trash2, FileText, SquarePen } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,19 +25,13 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
-
 function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
   const raw = ws.articleContent ?? ws.articleContentWithMarkers ?? '';
   let s = String(raw ?? '').trim();
   if (!s) return '';
-
-  // 文学创作 Agent 的文章配图标记：`[插图] : xxx`；列表预览应去掉标记与占位文案
   s = s.replace(/^\s*\[插图\]\s*:\s*.*$/gm, '');
   s = s.replace(/^\s*>\s*配图.*$/gm, '');
   s = s.trim();
-
-  // 列表预览不按固定字数提前截断：交给 CSS 做“按容器边界裁剪 + 省略号”
-  // 这里仅做轻量的长度保护，避免极端长文本影响渲染性能
   const softLimit = Math.max(800, maxChars);
   if (s.length <= softLimit) return s;
   return s.slice(0, softLimit);
@@ -44,135 +40,126 @@ function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
 function ArticlePreview({ markdown }: { markdown: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [overflowed, setOverflowed] = useState(false);
-
   const md = useMemo(() => String(markdown || '').trim(), [markdown]);
-  const maxHeightPx = 200; // 摘要预览固定高度：避免整篇文章把卡片撑高
+  const maxHeightPx = 100;
 
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-
-    const measure = () => {
-      // 轻量：判断是否溢出，决定是否显示 “...”
-      setOverflowed(el.scrollHeight - el.clientHeight > 1);
-    };
-
+    const measure = () => setOverflowed(el.scrollHeight - el.clientHeight > 1);
     measure();
-
-    // 内容/容器变化时重测（响应式列宽、字体缩放等）
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
     ro?.observe(el);
-
-    return () => {
-      ro?.disconnect();
-    };
+    return () => ro?.disconnect();
   }, [md]);
 
-  if (!md) return <div style={{ color: 'var(--text-muted)' }}>（暂无内容）</div>;
+  if (!md) return <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>(暂无内容)</div>;
 
   return (
     <div className="relative overflow-hidden" style={{ maxHeight: maxHeightPx }}>
       <div ref={rootRef} className="overflow-hidden" style={{ maxHeight: maxHeightPx }}>
         <style>{`
-          .literary-preview-md { font-size: 12px; line-height: 1.65; color: var(--text-secondary); white-space: normal; word-break: break-word; }
-          .literary-preview-md h1,.literary-preview-md h2,.literary-preview-md h3 { color: var(--text-primary); font-weight: 700; margin: 10px 0 6px; }
-          .literary-preview-md h1 { font-size: 14px; }
-          .literary-preview-md h2 { font-size: 13px; }
-          .literary-preview-md h3 { font-size: 12px; }
-          .literary-preview-md p { margin: 6px 0; }
-          .literary-preview-md ul,.literary-preview-md ol { margin: 6px 0; padding-left: 18px; }
-          .literary-preview-md li { margin: 3px 0; }
-          .literary-preview-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 10px 0; }
-          .literary-preview-md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
-          .literary-preview-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
-          .literary-preview-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
-          .literary-preview-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 10px; overflow: hidden; }
-          .literary-preview-md pre code { background: transparent; border: 0; padding: 0; }
+          .literary-preview-md { font-size: 10px; line-height: 1.4; color: var(--text-secondary); white-space: normal; word-break: break-word; }
+          .literary-preview-md h1,.literary-preview-md h2,.literary-preview-md h3 { color: var(--text-primary); font-weight: 700; margin: 4px 0 2px; font-size: 11px; }
+          .literary-preview-md p { margin: 2px 0; }
+          .literary-preview-md ul,.literary-preview-md ol { margin: 2px 0; padding-left: 12px; }
+          .literary-preview-md li { margin: 1px 0; }
+          .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); border-radius: 4px; }
+          .literary-preview-md code { font-size: 9px; background: rgba(255,255,255,0.06); padding: 0 3px; border-radius: 3px; }
         `}</style>
         <div className="literary-preview-md">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeRaw]}
             skipHtml
-            // 列表预览：禁用图片/视频等，避免额外带宽开销
-            allowedElements={[
-              'p',
-              'strong',
-              'em',
-              'code',
-              'pre',
-              'blockquote',
-              'ul',
-              'ol',
-              'li',
-              'a',
-              'br',
-              'hr',
-              'h1',
-              'h2',
-              'h3',
-            ]}
+            allowedElements={['p', 'strong', 'em', 'code', 'blockquote', 'ul', 'ol', 'li', 'br', 'h1', 'h2', 'h3']}
             unwrapDisallowed
-            components={{
-              // 预览中链接不跳转，避免误点离开列表
-              a: ({ children }) => <span>{children}</span>,
-            }}
+            components={{ a: ({ children }) => <span>{children}</span> }}
           >
             {md}
           </ReactMarkdown>
         </div>
       </div>
-
-      {overflowed ? (
+      {overflowed && (
         <div
           className="pointer-events-none absolute inset-x-0 bottom-0"
-          style={{
-            height: 44,
-            background: 'linear-gradient(to bottom, rgba(18,18,18,0), rgba(18,18,18,0.92))',
-          }}
-        >
-          <div className="absolute right-2 bottom-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.75)' }}>
-            …
-          </div>
-        </div>
-      ) : null}
+          style={{ height: 24, background: 'linear-gradient(to bottom, rgba(18,18,18,0), rgba(18,18,18,0.95))' }}
+        />
+      )}
     </div>
   );
 }
+
+type FolderGroup = {
+  folderName: string | null;
+  items: ImageMasterWorkspace[];
+};
 
 export default function LiteraryAgentWorkspaceListPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const contextMenu = useContextMenu();
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await listImageMasterWorkspaces({ limit: 50 });
+      const res = await listImageMasterWorkspaces({ limit: 100 });
       if (!res.success) {
         setError(res.error?.message || '加载失败');
         return;
       }
       const list = Array.isArray(res.data?.items) ? res.data.items : [];
-      // 只显示文章配图类型
       const filtered = list.filter((item) => item.scenarioType === 'article-illustration');
       setItems(filtered);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void reload();
-  }, []);
+  }, [reload]);
 
-  const onCreate = async () => {
+  // 按 folderName 分组
+  const groups = useMemo<FolderGroup[]>(() => {
+    const map = new Map<string | null, ImageMasterWorkspace[]>();
+    for (const ws of items) {
+      const key = ws.folderName ?? null;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(ws);
+    }
+    const result: FolderGroup[] = [];
+    // 有文件夹的先显示，按名称排序
+    const folderNames = [...map.keys()].filter((k) => k !== null).sort() as string[];
+    for (const fn of folderNames) {
+      result.push({ folderName: fn, items: map.get(fn)! });
+    }
+    // 未分类的最后显示
+    if (map.has(null)) {
+      result.push({ folderName: null, items: map.get(null)! });
+    }
+    return result;
+  }, [items]);
+
+  // 获取所有文件夹名称
+  const allFolderNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const ws of items) {
+      if (ws.folderName) set.add(ws.folderName);
+    }
+    return [...set].sort();
+  }, [items]);
+
+  const onCreate = async (folderName?: string | null) => {
     const title = await systemDialog.prompt({
       title: '新建文章',
       message: '请输入文章标题',
-      placeholder: '未命名文章',
+      placeholder: '未命名',
       confirmText: '创建',
       cancelText: '取消',
     });
@@ -186,10 +173,86 @@ export default function LiteraryAgentWorkspaceListPage() {
       await systemDialog.alert({ title: '创建失败', message: res.error?.message || '未知错误', confirmText: '确定' });
       return;
     }
+    // 如果指定了文件夹，设置 folderName
+    if (folderName && res.data?.workspace?.id) {
+      await updateImageMasterWorkspace({
+        id: res.data.workspace.id,
+        folderName,
+        idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
+      });
+    }
     await reload();
     if (res.data?.workspace?.id) {
       navigate(`/literary-agent/${res.data.workspace.id}`);
     }
+  };
+
+  const onCreateFolder = async () => {
+    const name = await systemDialog.prompt({
+      title: '新建文件夹',
+      message: '请输入文件夹名称',
+      placeholder: '我的文件夹',
+      confirmText: '创建',
+      cancelText: '取消',
+    });
+    if (!name) return;
+    // 创建一个新文章并设置 folderName
+    const res = await createImageMasterWorkspace({
+      title: '未命名',
+      scenarioType: 'article-illustration',
+      idempotencyKey: `create-literary-folder-${Date.now()}`,
+    });
+    if (res.success && res.data?.workspace?.id) {
+      await updateImageMasterWorkspace({
+        id: res.data.workspace.id,
+        folderName: name,
+        idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
+      });
+      await reload();
+    }
+  };
+
+  const onRenameFolder = async (oldName: string) => {
+    const newName = await systemDialog.prompt({
+      title: '重命名文件夹',
+      message: '请输入新的文件夹名称',
+      placeholder: oldName,
+      defaultValue: oldName,
+      confirmText: '重命名',
+      cancelText: '取消',
+    });
+    if (!newName || newName === oldName) return;
+    // 批量更新所有同名文章的 folderName
+    const toUpdate = items.filter((ws) => ws.folderName === oldName);
+    for (const ws of toUpdate) {
+      await updateImageMasterWorkspace({
+        id: ws.id,
+        folderName: newName,
+        idempotencyKey: `rename-folder-${ws.id}-${Date.now()}`,
+      });
+    }
+    await reload();
+  };
+
+  const onDeleteFolder = async (folderName: string) => {
+    const count = items.filter((ws) => ws.folderName === folderName).length;
+    const ok = await systemDialog.confirm({
+      title: '删除文件夹',
+      message: `确定删除文件夹 "${folderName}" 吗? 其中的 ${count} 篇文章将移至"未分类"。`,
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    const toUpdate = items.filter((ws) => ws.folderName === folderName);
+    for (const ws of toUpdate) {
+      await updateImageMasterWorkspace({
+        id: ws.id,
+        folderName: null,
+        idempotencyKey: `delete-folder-${ws.id}-${Date.now()}`,
+      });
+    }
+    await reload();
   };
 
   const onRename = async (ws: ImageMasterWorkspace) => {
@@ -212,8 +275,8 @@ export default function LiteraryAgentWorkspaceListPage() {
 
   const onDelete = async (ws: ImageMasterWorkspace) => {
     const ok = await systemDialog.confirm({
-      title: '确认删除',
-      message: `确定要删除「${ws.title}」吗？此操作不可恢复。`,
+      title: '删除',
+      message: `确定删除 "${ws.title}" 吗? 此操作无法撤销。`,
       tone: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -227,190 +290,280 @@ export default function LiteraryAgentWorkspaceListPage() {
     await reload();
   };
 
-  const grid = (
-    // 注意：不要用 mx-auto 居中。外层 AppShell 已通过 paddingLeft 给侧栏让位；
-    // 列表再居中会在浏览器缩放/视口变化时产生“内容向内靠”的体感漂移。
-    <div className="w-full max-w-[1440px] grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {items.map((ws) => (
-        <Card key={ws.id} className="p-0 overflow-hidden">
-          <div
-            role="button"
-            tabIndex={0}
-            title={ws.title || ws.id}
-            className={[
-              'group relative cursor-pointer select-none',
-              'transition-colors',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
-              'flex flex-col h-full',
-            ].join(' ')}
-            onClick={() => navigate(`/literary-agent/${ws.id}`)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigate(`/literary-agent/${ws.id}`);
-              }
-            }}
-          >
-            {/* 上栏：标题区 */}
-            <div className="p-3 pb-1 flex-shrink-0">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1 flex items-center gap-2">
-                  <FileText size={18} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-                  <div className="font-semibold text-[15px] group-hover:truncate" style={{ color: 'var(--text-primary)' }}>
-                    {ws.title}
-                  </div>
-                </div>
-              </div>
+  const onMoveToFolder = async (ws: ImageMasterWorkspace, targetFolder: string | null) => {
+    await updateImageMasterWorkspace({
+      id: ws.id,
+      folderName: targetFolder,
+      idempotencyKey: `move-${ws.id}-${Date.now()}`,
+    });
+    await reload();
+  };
+
+  const toggleFolder = (folderName: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderName)) next.delete(folderName);
+      else next.add(folderName);
+      return next;
+    });
+  };
+
+  // 右键菜单：空白区
+  const handleContainerContextMenu = (e: React.MouseEvent) => {
+    contextMenu.show(e, [
+      { key: 'new-article', label: '新建文章', icon: <Plus size={12} />, onClick: () => void onCreate() },
+      { key: 'new-folder', label: '新建文件夹', icon: <FolderPlus size={12} />, onClick: () => void onCreateFolder() },
+    ]);
+  };
+
+  // 右键菜单：文件夹
+  const handleFolderContextMenu = (e: React.MouseEvent, folderName: string) => {
+    e.stopPropagation();
+    contextMenu.show(e, [
+      { key: 'new-in-folder', label: '在此新建文章', icon: <Plus size={12} />, onClick: () => void onCreate(folderName) },
+      { key: 'divider1', label: '', divider: true },
+      { key: 'rename-folder', label: '重命名文件夹', icon: <Pencil size={12} />, onClick: () => void onRenameFolder(folderName) },
+      { key: 'delete-folder', label: '删除文件夹', icon: <Trash2 size={12} />, danger: true, onClick: () => void onDeleteFolder(folderName) },
+    ]);
+  };
+
+  // 右键菜单：文章卡片
+  const handleCardContextMenu = (e: React.MouseEvent, ws: ImageMasterWorkspace) => {
+    e.stopPropagation();
+    const moveItems: ContextMenuItem[] = allFolderNames
+      .filter((fn) => fn !== ws.folderName)
+      .map((fn) => ({
+        key: `move-to-${fn}`,
+        label: fn,
+        icon: <FolderOpen size={12} />,
+        onClick: () => void onMoveToFolder(ws, fn),
+      }));
+    if (ws.folderName) {
+      moveItems.push({
+        key: 'move-to-uncategorized',
+        label: '未分类',
+        onClick: () => void onMoveToFolder(ws, null),
+      });
+    }
+
+    const items: ContextMenuItem[] = [
+      { key: 'edit', label: '编辑', icon: <SquarePen size={12} />, onClick: () => navigate(`/literary-agent/${ws.id}`) },
+      { key: 'rename', label: '重命名', icon: <Pencil size={12} />, onClick: () => void onRename(ws) },
+    ];
+    if (moveItems.length > 0) {
+      items.push({ key: 'divider1', label: '', divider: true });
+      items.push({ key: 'move-header', label: '移动到...', icon: <MoveRight size={12} />, disabled: true });
+      items.push(...moveItems);
+    }
+    items.push({ key: 'divider2', label: '', divider: true });
+    items.push({ key: 'delete', label: '删除', icon: <Trash2 size={12} />, danger: true, onClick: () => void onDelete(ws) });
+
+    contextMenu.show(e, items);
+  };
+
+  // 拖拽处理
+  const handleDragStart = (e: React.DragEvent, ws: ImageMasterWorkspace) => {
+    e.dataTransfer.setData('text/plain', ws.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, folderName: string | null) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverFolder(folderName);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverFolder(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetFolder: string | null) => {
+    e.preventDefault();
+    setDragOverFolder(null);
+    const wsId = e.dataTransfer.getData('text/plain');
+    if (!wsId) return;
+    const ws = items.find((w) => w.id === wsId);
+    if (!ws || ws.folderName === targetFolder) return;
+    await onMoveToFolder(ws, targetFolder);
+  };
+
+  const renderCard = (ws: ImageMasterWorkspace) => (
+    <Card key={ws.id} className="p-0 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        title={ws.title || ws.id}
+        draggable
+        onDragStart={(e) => handleDragStart(e, ws)}
+        onContextMenu={(e) => handleCardContextMenu(e, ws)}
+        className={[
+          'group relative cursor-pointer select-none',
+          'transition-colors',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
+          'flex flex-col h-full',
+        ].join(' ')}
+        onClick={() => navigate(`/literary-agent/${ws.id}`)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            navigate(`/literary-agent/${ws.id}`);
+          }
+        }}
+      >
+        <div className="p-2 pb-1 flex-shrink-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <FileText size={12} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+            <div className="font-medium text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+              {ws.title}
             </div>
-
-            {/* 中栏：摘要区 */}
-            <div className="px-3 pb-1 flex-1 min-h-0 overflow-hidden">
-              <div
-                className="h-full overflow-hidden border rounded-[8px] text-[12px] leading-5 flex flex-col"
-                style={{
-                  borderColor: 'var(--border-subtle)',
-                  background: 'rgba(255,255,255,0.02)',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                <div className="p-3 flex-1">
-                  <ArticlePreview markdown={getArticlePreviewText(ws)} />
-                </div>
-                <div
-                  className="px-3 py-2 text-[11px] border-t flex items-center gap-2"
-                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-                >
-                  {/* 操作按钮：放到“更新于 …”左侧；hover/focus-within 显示；不参与高度变化，避免撑开 */}
-                  <div
-                    className={[
-                      'w-[104px] flex items-center gap-1.5',
-                      'opacity-0 pointer-events-none',
-                      'transition-opacity duration-150',
-                      'group-hover:opacity-100 group-hover:pointer-events-auto',
-                      'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
-                    ].join(' ')}
-                  >
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/literary-agent/${ws.id}`);
-                      }}
-                      title="编辑"
-                    >
-                      <SquarePen size={14} />
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onRename(ws);
-                      }}
-                      title="重命名"
-                    >
-                      <Pencil size={14} />
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="danger"
-                      className="h-7 w-7 p-0 rounded-[10px] gap-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onDelete(ws);
-                      }}
-                      title="删除"
-                    >
-                      <Trash2 size={14} />
-                    </Button>
-                  </div>
-
-                  <div className="flex-1 text-right">
-                    {formatDate(ws.updatedAt) ? `更新于 ${formatDate(ws.updatedAt)}` : ''}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 下栏：图片区，仅在有图片时显示 */}
-            {ws.coverAssets && ws.coverAssets.length > 0 && (
-              <div className="px-3 pb-3 pt-1 flex-shrink-0">
-                <div className="grid grid-cols-3 gap-2">
-                  {ws.coverAssets.slice(0, 3).map((a, idx) => (
-                    <div
-                      key={a.id}
-                      className="relative overflow-hidden rounded-[8px] border"
-                      style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}
-                    >
-                      <div className="aspect-[4/3]">
-                        <img
-                          src={a.url}
-                          alt={ws.title ? `${ws.title}-cover-${idx + 1}` : `cover-${idx + 1}`}
-                          className="w-full h-full object-cover"
-                          loading="lazy"
-                          draggable={false}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
-        </Card>
-      ))}
-    </div>
+        </div>
+        <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
+          <div
+            className="h-full overflow-hidden border rounded-[5px] text-[10px] flex flex-col"
+            style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+          >
+            <div className="p-1.5 flex-1 overflow-hidden">
+              <ArticlePreview markdown={getArticlePreviewText(ws)} />
+            </div>
+            <div
+              className="px-1.5 py-1 text-[9px] border-t flex items-center"
+              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+            >
+              <div
+                className={[
+                  'flex items-center gap-0.5',
+                  'opacity-0 pointer-events-none transition-opacity duration-100',
+                  'group-hover:opacity-100 group-hover:pointer-events-auto',
+                ].join(' ')}
+              >
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="h-5 w-5 p-0 rounded-[6px] gap-0"
+                  onClick={(e) => { e.stopPropagation(); navigate(`/literary-agent/${ws.id}`); }}
+                  title="编辑"
+                >
+                  <SquarePen size={10} />
+                </Button>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="h-5 w-5 p-0 rounded-[6px] gap-0"
+                  onClick={(e) => { e.stopPropagation(); void onRename(ws); }}
+                  title="重命名"
+                >
+                  <Pencil size={10} />
+                </Button>
+                <Button
+                  size="xs"
+                  variant="danger"
+                  className="h-5 w-5 p-0 rounded-[6px] gap-0"
+                  onClick={(e) => { e.stopPropagation(); void onDelete(ws); }}
+                  title="删除"
+                >
+                  <Trash2 size={10} />
+                </Button>
+              </div>
+              <div className="flex-1 text-right truncate">{formatDate(ws.updatedAt)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 
-  return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[16px] font-extrabold" style={{ color: 'var(--text-primary)' }}>
-              文学创作 Agent
-            </div>
-            <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              为文章智能生成配图：编辑文章 → AI 插入配图标记 → 一键生成图片 → 导出
-            </div>
-          </div>
-          <Button variant="primary" onClick={() => void onCreate()} disabled={loading}>
-            <Plus size={16} />
-            新建文章
-          </Button>
+  const renderFolderGroup = (group: FolderGroup) => {
+    const { folderName, items: groupItems } = group;
+    const isCollapsed = folderName ? collapsedFolders.has(folderName) : false;
+    const isDragOver = dragOverFolder === (folderName ?? '__uncategorized__');
+    const displayName = folderName || '未分类';
+
+    return (
+      <div key={folderName ?? '__uncategorized__'} className="mb-4">
+        {/* 文件夹标题栏 */}
+        <div
+          className={[
+            'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none mb-2 transition-colors',
+            isDragOver ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
+          ].join(' ')}
+          onClick={() => folderName && toggleFolder(folderName)}
+          onContextMenu={(e) => folderName && handleFolderContextMenu(e, folderName)}
+          onDragOver={(e) => handleDragOver(e, folderName ?? '__uncategorized__')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => void handleDrop(e, folderName)}
+        >
+          {folderName ? (
+            isCollapsed ? <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+          ) : (
+            <div className="w-[14px]" />
+          )}
+          <FolderOpen size={14} style={{ color: folderName ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
+          <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+            {displayName}
+          </span>
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            ({groupItems.length})
+          </span>
         </div>
-      </Card>
+        {/* 文章网格 */}
+        {!isCollapsed && (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pl-6">
+            {groupItems.map(renderCard)}
+          </div>
+        )}
+      </div>
+    );
+  };
 
-      {error ? (
-        <Card>
-          <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
-            {error}
-          </div>
-        </Card>
-      ) : null}
+  return (
+    <div
+      className="h-full min-h-0 flex flex-col gap-5"
+      onContextMenu={handleContainerContextMenu}
+    >
+      {contextMenu.Menu}
 
-      {loading ? (
-        <Card>
-          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            加载中...
+      <PageHeader
+        title="文学创作"
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
+              <FolderPlus size={14} />
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
+              <Plus size={14} />
+              新建
+            </Button>
           </div>
+        }
+      />
+
+      {error && (
+        <Card className="py-2 px-3">
+          <div className="text-[12px]" style={{ color: 'rgba(255,120,120,0.95)' }}>{error}</div>
         </Card>
-      ) : items.length === 0 ? (
-        <Card>
-          <div className="text-center py-8">
-            <FileText size={48} className="mx-auto mb-3" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              还没有文章，点击右上角「新建文章」开始创作
-            </div>
-          </div>
-        </Card>
-      ) : (
-        grid
       )}
+
+      <div className="flex-1 min-h-0 overflow-auto">
+        {loading ? (
+          <Card className="py-2 px-3">
+            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+          </Card>
+        ) : items.length === 0 ? (
+          <Card className="py-6 px-3">
+            <div className="text-center">
+              <FileText size={36} className="mx-auto mb-2" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                暂无文章，右键可创建文件夹或文章。
+              </div>
+            </div>
+          </Card>
+        ) : (
+          <div className="max-w-[1680px]">
+            {groups.map(renderFolderGroup)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-

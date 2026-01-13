@@ -73,7 +73,7 @@ export function SystemDialogHost() {
               placeholder={current.placeholder}
               className="w-full rounded-[14px] px-3 py-2 text-sm outline-none"
               style={{
-                background: 'color-mix(in srgb, var(--bg-base) 55%, black)',
+                background: 'rgba(6, 6, 7, 1)',
                 border: '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
               }}

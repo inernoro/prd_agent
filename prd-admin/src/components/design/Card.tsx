@@ -1,5 +1,13 @@
 import { cn } from '@/lib/cn';
 
+/**
+ * Card 组件
+ * 
+ * 注意：完全避免使用 color-mix() 函数，因为：
+ * 1. 部分浏览器/WebView 不支持（如 Tauri WebView、旧版 Chrome）
+ * 2. 不支持时整个 CSS 属性会失效，导致背景/边框"消失"
+ * 3. 已观察到此问题出现多次，故改用纯 rgba 值
+ */
 export function Card({
   className,
   children,
@@ -12,26 +20,21 @@ export function Card({
   return (
     <div
       className={cn(
-        // 更精致的圆角和内边距，增加呼吸感
         'rounded-[20px] p-6 transition-all duration-200',
         className
       )}
       style={{
-        /**
-         * 兼容兜底：部分环境（旧 WebView / 某些浏览器版本）不支持 color-mix()，
-         * 会导致整个 background 声明无效 -> 卡片变"透明"从而看不清字。
-         * 这里用 backgroundColor 作为可靠兜底；渐变用 backgroundImage（失败也不影响底色）。
-         */
-        backgroundColor: 'var(--bg-elevated)',
+        // 纯色背景兜底 + 渐变叠加（不使用 color-mix）
+        backgroundColor: '#121216',
         backgroundImage:
           variant === 'gold'
-            ? 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 94%, black) 0%, color-mix(in srgb, var(--bg-elevated) 88%, black) 100%), radial-gradient(600px 400px at 50% 0%, rgba(214,178,106,0.15) 0%, transparent 65%)'
-            : 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
-        borderWidth: 1,
-        borderStyle: 'solid',
-        borderColor: variant === 'gold' 
-          ? 'color-mix(in srgb, var(--border-default) 80%, transparent)' 
-          : 'color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+            // gold: 深色渐变 + 顶部金色光晕
+            ? 'linear-gradient(135deg, rgba(16,16,19,1) 0%, rgba(10,10,12,1) 100%), radial-gradient(600px 400px at 50% 0%, rgba(214,178,106,0.12) 0%, transparent 65%)'
+            // default: 微亮到微暗的渐变
+            : 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
+        border: variant === 'gold' 
+          ? '1px solid rgba(255, 255, 255, 0.1)' 
+          : '1px solid rgba(255, 255, 255, 0.06)',
         boxShadow: variant === 'gold'
           ? '0 8px 32px -8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 2px 8px rgba(214, 178, 106, 0.08)'
           : '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',

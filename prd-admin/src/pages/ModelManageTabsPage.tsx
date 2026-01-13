@@ -1,4 +1,4 @@
-import { Tabs } from '@/components/ui/Tabs';
+import { TabBar } from '@/components/design/TabBar';
 import { Database, LayoutGrid, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -10,6 +10,7 @@ export function ModelManageTabsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab') || 'apps'; // 默认显示应用模型池管理
   const [activeTab, setActiveTab] = useState(tabFromUrl);
+  const [appsActions, setAppsActions] = useState<React.ReactNode>(null);
 
   // 同步 URL 参数
   useEffect(() => {
@@ -25,21 +26,20 @@ export function ModelManageTabsPage() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <div className="px-5 pt-5 pb-3">
-        <Tabs
-          items={[
-            { key: 'apps', label: '应用模型池管理', icon: <Users size={14} /> },
-            { key: 'pools', label: '模型池管理', icon: <Database size={14} /> },
-            { key: 'platforms', label: '平台管理', icon: <LayoutGrid size={14} /> },
-          ]}
-          activeKey={activeTab}
-          onChange={handleTabChange}
-        />
-      </div>
+    <div className="h-full min-h-0 flex flex-col gap-5">
+      <TabBar
+        items={[
+          { key: 'apps', label: '应用模型池管理', icon: <Users size={14} /> },
+          { key: 'pools', label: '模型池管理', icon: <Database size={14} /> },
+          { key: 'platforms', label: '平台管理', icon: <LayoutGrid size={14} /> },
+        ]}
+        activeKey={activeTab}
+        onChange={handleTabChange}
+        actions={activeTab === 'apps' ? appsActions : undefined}
+      />
 
-      <div className="flex-1 min-h-0 px-5 pb-5">
-        {activeTab === 'apps' && <ModelAppGroupPage />}
+      <div className="flex-1 min-h-0">
+        {activeTab === 'apps' && <ModelAppGroupPage onActionsReady={setAppsActions} />}
         {activeTab === 'pools' && <ModelPoolManagePage />}
         {activeTab === 'platforms' && <ModelManagePage />}
       </div>

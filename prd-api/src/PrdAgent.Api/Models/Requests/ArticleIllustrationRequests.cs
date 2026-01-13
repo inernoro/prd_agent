@@ -33,4 +33,16 @@ public class UpdateMarkerRequest
     public string? Status { get; set; }
     public string? RunId { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? Url { get; set; }  // 图片 URL（用于刷新后恢复显示）
+    public UpdateMarkerPlanItem? PlanItem { get; set; }  // 意图解析结果
+}
+
+/// <summary>
+/// 意图解析结果（用于 UpdateMarkerRequest）
+/// </summary>
+public class UpdateMarkerPlanItem
+{
+    public string Prompt { get; set; } = string.Empty;
+    public int Count { get; set; } = 1;
+    public string? Size { get; set; }
 }

@@ -113,7 +113,7 @@ export function SearchableSelect({
         <SelectPrimitive.Content
           className="z-50 rounded-[14px] overflow-hidden"
           style={{
-            background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+            background: 'rgba(15, 15, 18, 1)',
             border: '1px solid var(--border-default)',
             boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
             minWidth: 'var(--radix-select-trigger-width)',

@@ -236,10 +236,9 @@ export default function OpenPlatformPage() {
   };
 
   return (
-    <div className="h-full w-full overflow-auto p-6">
+    <div className="h-full min-h-0 flex flex-col gap-5">
       <PageHeader
         title="开放平台"
-        description="管理 API 应用与调用日志"
         actions={
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={() => handleViewLogs()}>

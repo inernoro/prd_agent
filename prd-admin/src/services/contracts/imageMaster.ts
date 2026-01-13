@@ -82,6 +82,8 @@ export type ImageMasterWorkspace = {
   articleContentWithMarkers?: string | null;
   /** 文章配图 workflow（服务端状态机，前端用于恢复进度/禁止跳未来） */
   articleWorkflow?: ArticleIllustrationWorkflow | null;
+  /** 文件夹名称（用于分组显示） */
+  folderName?: string | null;
 };
 
 export type ImageMasterViewport = {
@@ -110,6 +112,7 @@ export type UpdateImageMasterWorkspaceContract = (input: {
   coverAssetId?: string | null;
   articleContent?: string;
   scenarioType?: string;
+  folderName?: string | null;
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ workspace: ImageMasterWorkspace }>>;
 export type DeleteImageMasterWorkspaceContract = (input: { id: string; idempotencyKey?: string }) => Promise<ApiResponse<{ deleted: boolean }>>;

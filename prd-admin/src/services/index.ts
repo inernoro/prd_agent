@@ -139,6 +139,7 @@ import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
+import type { GetUserPreferencesContract, UpdateNavOrderContract } from '@/services/contracts/userPreferences';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
@@ -283,6 +284,7 @@ import { OpenPlatformService } from '@/services/real/openPlatform';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
+import { getUserPreferencesReal, updateNavOrderReal } from '@/services/real/userPreferences';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -523,3 +525,6 @@ export const getSchedulerConfig = async () => {
   throw new Error(response.error?.message || '获取系统配置失败');
 };
 export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService['updateSchedulerConfig']>[0]) => schedulerConfigService.updateSchedulerConfig(config);
+
+export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
+export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);

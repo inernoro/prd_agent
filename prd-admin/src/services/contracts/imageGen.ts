@@ -102,6 +102,8 @@ export type CreateImageGenRunInput = {
   size?: string;
   responseFormat?: 'b64_json' | 'url';
   maxConcurrency?: number;
+  /** 可选：绑定的 WorkspaceId。若提供，生成的图片会自动保存到 COS 并关联到该 Workspace */
+  workspaceId?: string;
 };
 
 export type CreateImageGenRunResponse = {

@@ -79,6 +79,9 @@ public class ImageMasterWorkspace
     /// </summary>
     [JsonIgnore]
     public List<ArticleIllustrationWorkflow> ArticleWorkflowHistory { get; set; } = new();
+
+    /// <summary>文件夹名称（用于分组显示，相同名称的 workspace 归为一组）</summary>
+    public string? FolderName { get; set; }
 }
 
 

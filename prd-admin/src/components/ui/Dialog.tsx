@@ -37,7 +37,7 @@ export function Dialog({
             contentClassName ?? '',
           ].join(' ')}
           style={{
-            background: 'color-mix(in srgb, var(--bg-elevated) 90%, black)',
+            background: 'rgba(14, 14, 17, 1)',
             border: '1px solid var(--border-default)',
             boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
             maxWidth: typeof maxWidth === 'number' ? `${maxWidth}px` : (maxWidth ?? '520px'),

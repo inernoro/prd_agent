@@ -17,7 +17,8 @@
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-default: rgba(255, 255, 255, 0.12);
   --border-hover: rgba(255, 255, 255, 0.18);
-  --border-focus: color-mix(in srgb, var(--accent-gold) 55%, transparent);
+  /* 避免使用 color-mix()，直接用 rgba 计算值 (gold #d6b26a at 55% opacity) */
+  --border-focus: rgba(214, 178, 106, 0.55);
 
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.72);

@@ -104,16 +104,7 @@ public class OpenAIClient : ILLMClient
         systemPromptFinal ??= string.Empty;
         messages ??= new List<LLMMessage>();
         var ctx = _contextAccessor?.Current;
-        
-        // Debug: Log context retrieval
-        if (ctx != null)
-        {
-            Console.WriteLine($"[OpenAIClient] Context retrieved: RequestType={ctx.RequestType}, RequestPurpose={ctx.RequestPurpose}");
-        }
-        else
-        {
-            Console.WriteLine("[OpenAIClient] Context is NULL!");
-        }
+        // Context 可能为 null（后台任务/Worker 场景），这是正常的
 
         var allMessages = new List<OpenAIRequestMessage>
         {

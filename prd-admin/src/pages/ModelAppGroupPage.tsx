@@ -2,7 +2,6 @@ import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Select } from '@/components/design/Select';
-import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
@@ -43,7 +42,7 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { groupAppCallers, getFeatureDescription, getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
@@ -66,7 +65,7 @@ const HEALTH_STATUS_MAP = {
   Unavailable: { label: '不可用', color: 'rgba(239,68,68,0.95)', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.28)' },
 };
 
-export function ModelAppGroupPage() {
+export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (actions: React.ReactNode) => void }) {
   const token = useAuthStore((s) => s.token);
   const [appCallers, setAppCallers] = useState<LLMAppCaller[]>([]);
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
@@ -137,7 +136,9 @@ export function ModelAppGroupPage() {
     }
   }, [selectedAppId]);
 
-  const loadData = async () => {
+  // 使用 ref 稳定 loadData，避免每次渲染都创建新引用
+  const loadDataRef = useRef<() => Promise<void>>();
+  loadDataRef.current = async () => {
     try {
       const [apps, groups, config] = await Promise.all([
         getAppCallers(),
@@ -148,7 +149,7 @@ export function ModelAppGroupPage() {
       setModelGroups(groups);
       setSchedulerConfig(config);
 
-      // 平台列表（用于“添加模型”选择可用模型）
+      // 平台列表（用于"添加模型"选择可用模型）
       try {
         const ps = await getPlatforms();
         if (ps.success) setPlatforms(ps.data || []);
@@ -182,6 +183,8 @@ export function ModelAppGroupPage() {
       systemDialog.error('加载失败', String(error));
     }
   };
+
+  const loadData = useCallback(() => loadDataRef.current?.(), []);
 
   const loadMonitoringForApp = async (appId: string) => {
     const app = appCallers.find((a) => a.id === appId);
@@ -282,7 +285,7 @@ export function ModelAppGroupPage() {
     }
   };
 
-  const handleInitDefaultApps = async () => {
+  const handleInitDefaultApps = useCallback(async () => {
     const confirmed = await systemDialog.confirm({
       title: '确认初始化',
       message: `此操作将：
@@ -342,7 +345,7 @@ export function ModelAppGroupPage() {
       console.error('[InitDefaultApps] 异常:', error);
       toast.error('初始化失败', error instanceof Error ? error.message : String(error));
     }
-  };
+  }, [token, loadData]);
 
   // const handleDeleteApp = async (appId: string) => {
   //   const confirmed = await systemDialog.confirm({ title: '确认删除', message: '删除应用后无法恢复，确定继续？' });
@@ -558,28 +561,34 @@ export function ModelAppGroupPage() {
     ? selectedAppGroup.features.flatMap(f => f.items)
     : [];
 
+  // 将actions传递给父组件 - 只在首次挂载时设置
+  const actionsSetRef = useRef(false);
+  const actions = useMemo(() => (
+    <>
+      <Button variant="secondary" size="sm" onClick={handleInitDefaultApps}>
+        <RefreshCw size={14} />
+        初始化应用
+      </Button>
+      <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)}>
+        <Settings size={14} />
+        系统配置
+      </Button>
+      <Button variant="primary" size="sm" onClick={() => window.location.href = '/model-manage?tab=pools'}>
+        <Plus size={14} />
+        新建模型池
+      </Button>
+    </>
+  ), [handleInitDefaultApps]);
+
+  useEffect(() => {
+    if (!actionsSetRef.current && onActionsReady) {
+      actionsSetRef.current = true;
+      onActionsReady(actions);
+    }
+  }, [onActionsReady, actions]);
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <PageHeader
-        title="应用模型池管理"
-        subtitle="为应用绑定模型池，实现负载均衡与智能调度"
-        actions={
-          <>
-            <Button variant="secondary" size="xs" onClick={handleInitDefaultApps}>
-              <RefreshCw size={14} />
-              初始化应用
-            </Button>
-            <Button variant="secondary" size="xs" onClick={() => setShowConfigDialog(true)}>
-              <Settings size={14} />
-              系统配置
-            </Button>
-            <Button variant="primary" size="xs" onClick={() => window.location.href = '/model-manage?tab=pools'}>
-              <Plus size={14} />
-              新建模型池
-            </Button>
-          </>
-        }
-      />
 
       <div className="grid gap-4 flex-1 min-h-0 transition-all lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}

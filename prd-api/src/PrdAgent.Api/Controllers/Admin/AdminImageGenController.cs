@@ -822,6 +822,10 @@ public class AdminImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.RATE_LIMITED, $"单次最多生成 20 张（当前 {total} 张）"));
         }
 
+        // 可选：绑定 WorkspaceId（若提供，生成的图片会自动保存到 COS）
+        var workspaceId = (request?.WorkspaceId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(workspaceId)) workspaceId = null;
+
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
@@ -839,6 +843,7 @@ public class AdminImageGenController : ControllerBase
             CancelRequested = false,
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
+            WorkspaceId = workspaceId,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1226,6 +1231,11 @@ public class CreateImageGenRunRequest
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url
     public int? MaxConcurrency { get; set; }
+
+    /// <summary>
+    /// 可选：绑定的 WorkspaceId。若提供，生成的图片会自动保存到 COS 并关联到该 Workspace。
+    /// </summary>
+    public string? WorkspaceId { get; set; }
 }
 
 public class ImageGenRunPlanItemInput

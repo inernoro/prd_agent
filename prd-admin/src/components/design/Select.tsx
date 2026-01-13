@@ -11,7 +11,7 @@ export const Select = React.forwardRef<
     leftIcon?: React.ReactNode;
   }
 >(function Select({ className, style, uiSize = 'md', disabled, leftIcon, ...props }, ref) {
-  const sizeCls = uiSize === 'sm' ? 'h-9 rounded-[12px] text-sm' : 'h-10 rounded-[14px] text-[13px]';
+  const sizeCls = uiSize === 'sm' ? 'h-[28px] rounded-[9px] text-[12px]' : 'h-10 rounded-[14px] text-[13px]';
   const paddingLeft = leftIcon ? 'pl-9' : 'px-3';
 
   return (

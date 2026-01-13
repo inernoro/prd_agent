@@ -27,13 +27,7 @@ export function Tabs({
   };
 
   return (
-    <div
-      className={cn('flex items-center gap-2 p-1 rounded-[14px]', className)}
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}
-    >
+    <div className={cn('flex items-center gap-2', className)}>
       {items.map((item) => {
         const isActive = item.key === currentKey;
         return (
@@ -41,19 +35,24 @@ export function Tabs({
             key={item.key}
             type="button"
             onClick={() => handleChange(item.key)}
-            className={cn(
-              'flex items-center gap-2 px-4 h-9 rounded-[11px] text-[13px] font-semibold transition-all',
-              isActive ? 'text-[color:var(--text-primary)]' : 'text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]'
-            )}
-            style={
-              isActive
-                ? {
-                    background: 'rgba(255,255,255,0.08)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    boxShadow: '0 2px 8px -2px rgba(0,0,0,0.2)',
-                  }
-                : undefined
-            }
+            className="flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold rounded-[9px]"
+            style={{
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+              background: isActive ? 'rgba(255,255,255,0.08)' : 'transparent',
+              border: isActive ? '1px solid rgba(255,255,255,0.12)' : '1px solid transparent',
+              boxShadow: isActive ? '0 2px 8px -2px rgba(0,0,0,0.2)' : 'none',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.color = 'var(--text-secondary)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }
+            }}
           >
             {item.icon}
             {item.label}

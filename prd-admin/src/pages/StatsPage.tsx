@@ -141,7 +141,6 @@ export default function StatsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Token统计"
-        description="API 使用量与内容缺失分析"
         actions={
           <Select
             value={days}

@@ -519,7 +519,6 @@ export default function AssetsManagePage() {
 
       <PageHeader
         title="资源管理"
-        description="Desktop 客户端皮肤资源与品牌配置"
         variant="gold"
         tabs={[
           { key: 'desktop', label: 'Desktop 皮肤资源' },
@@ -531,14 +530,14 @@ export default function AssetsManagePage() {
 
       {err && (
         <div
-          className="rounded-xl px-4 py-3 text-sm flex items-center gap-2"
+          className="rounded-[12px] px-4 py-3 text-[13px] flex items-center gap-2.5"
           style={{
-            background: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
-            color: '#fca5a5',
+            background: 'linear-gradient(135deg, rgba(239,68,68,0.1) 0%, rgba(239,68,68,0.05) 100%)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            color: 'rgba(239,68,68,0.9)',
           }}
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'rgba(239,68,68,0.8)' }} />
           {err}
         </div>
       )}
@@ -546,32 +545,28 @@ export default function AssetsManagePage() {
       {/* ==================== 单文件资源 Tab ==================== */}
       {activeTab === 'single' && (
         <Card className="overflow-hidden">
-          <div
-            className="p-5"
-            style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
-            }}
-          >
+          <div className="flex items-center justify-between gap-3 mb-5">
             <SectionTitle icon={<User size={16} />} title="无头像兜底" badge="required" />
-            <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-              固定路径 <code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-white/5">/icon/backups/head/nohead.png</code>，用于用户未设置头像时的默认显示
-            </p>
+          </div>
+          <p className="text-[12px] mb-5" style={{ color: 'var(--text-muted)' }}>
+            固定路径 <code className="font-mono text-[11px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'rgba(255,255,255,0.04)' }}>/icon/backups/head/nohead.png</code>
+          </p>
 
-            <div className="mt-5 flex items-start gap-5">
-              {/* 预览 */}
-              <div
-                className={cn(
-                  'relative rounded-2xl overflow-hidden transition-all duration-200',
-                  isNoHeadBroken ? 'ring-2 ring-red-500/40' : 'ring-1 ring-white/10'
-                )}
-                style={{
-                  width: '140px',
-                  height: '140px',
-                  background: isNoHeadBroken
-                    ? 'linear-gradient(135deg, rgba(239,68,68,0.1) 0%, rgba(239,68,68,0.05) 100%)'
-                    : 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%)',
-                }}
-              >
+          <div className="flex items-start gap-5">
+            {/* 预览 */}
+            <div
+              className={cn(
+                'relative rounded-[14px] overflow-hidden transition-all duration-200',
+                isNoHeadBroken ? 'ring-2 ring-red-500/30' : 'ring-1 ring-white/8'
+              )}
+              style={{
+                width: '120px',
+                height: '120px',
+                background: isNoHeadBroken
+                  ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.03) 100%)'
+                  : 'rgba(255,255,255,0.02)',
+              }}
+            >
                 {noHeadPreviewUrl ? (
                   <img
                     src={noHeadPreviewUrl}
@@ -592,49 +587,48 @@ export default function AssetsManagePage() {
                 )}
               </div>
 
-              {/* 信息与操作 */}
-              <div className="flex-1 min-w-0">
-                <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>当前地址</div>
-                <div
-                  className="font-mono text-sm break-all p-2.5 rounded-lg"
-                  style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)' }}
-                >
-                  {noHeadPreviewUrl || '-'}
-                </div>
-
-                <div className="mt-4 flex items-center gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={chooseNoHeadUpload}
-                    disabled={isUploadingNoHead}
-                    className="gap-1.5"
-                  >
-                    <Upload size={14} />
-                    {isUploadingNoHead ? '上传中...' : '上传替换'}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void copyText(noHeadPreviewUrl)}
-                    disabled={!noHeadPreviewUrl}
-                  >
-                    复制地址
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => window.open(noHeadPreviewUrl, '_blank', 'noopener,noreferrer')}
-                    disabled={!noHeadPreviewUrl}
-                  >
-                    查看原图
-                  </Button>
-                </div>
-
-                <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  建议尺寸：128x128 或更大，支持 PNG（推荐带透明通道）
-                </p>
+            {/* 信息与操作 */}
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>当前地址</div>
+              <div
+                className="font-mono text-[12px] break-all p-2.5 rounded-[10px]"
+                style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}
+              >
+                {noHeadPreviewUrl || '-'}
               </div>
+
+              <div className="mt-4 flex items-center gap-2">
+                <Button
+                  variant="primary"
+                  size="xs"
+                  onClick={chooseNoHeadUpload}
+                  disabled={isUploadingNoHead}
+                  className="gap-1.5"
+                >
+                  <Upload size={13} />
+                  {isUploadingNoHead ? '上传中...' : '上传替换'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => void copyText(noHeadPreviewUrl)}
+                  disabled={!noHeadPreviewUrl}
+                >
+                  复制地址
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => window.open(noHeadPreviewUrl, '_blank', 'noopener,noreferrer')}
+                  disabled={!noHeadPreviewUrl}
+                >
+                  查看原图
+                </Button>
+              </div>
+
+              <p className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                建议尺寸 128x128+, PNG 透明通道
+              </p>
             </div>
           </div>
         </Card>
@@ -642,91 +636,78 @@ export default function AssetsManagePage() {
 
       {/* ==================== Desktop 资源 Tab ==================== */}
       {activeTab === 'desktop' && (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4">
           {/* 品牌配置 */}
           <Card className="overflow-hidden">
-            <div
-              className="p-5"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
-              }}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <SectionTitle icon={<Monitor size={16} />} title="品牌配置" badge="Desktop" />
-                  <p className="mt-2 text-xs max-w-xl" style={{ color: 'var(--text-muted)' }}>
-                    配置 Desktop 客户端登录页的品牌信息，包括标题、副标题和窗口标题
-                  </p>
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void saveBranding()}
-                  disabled={brandingSaving}
-                  className="gap-1.5 shrink-0"
-                >
-                  <Save size={14} />
-                  {brandingSaving ? '保存中...' : '保存配置'}
-                </Button>
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <SectionTitle icon={<Monitor size={16} />} title="品牌配置" badge="Desktop" />
+                <p className="mt-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  Desktop 客户端登录页品牌信息
+                </p>
               </div>
+              <Button
+                variant="primary"
+                size="xs"
+                onClick={() => void saveBranding()}
+                disabled={brandingSaving}
+                className="gap-1.5 shrink-0"
+              >
+                <Save size={13} />
+                {brandingSaving ? '保存中...' : '保存配置'}
+              </Button>
+            </div>
 
-              <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
-                <InputField
-                  label="大标题"
-                  value={brandingName}
-                  onChange={setBrandingName}
-                  placeholder="PRD Agent"
-                />
-                <InputField
-                  label="副标题"
-                  value={brandingSubtitle}
-                  onChange={setBrandingSubtitle}
-                  placeholder="智能PRD解读助手"
-                />
-                <InputField
-                  label="窗口标题"
-                  value={brandingWindowTitle}
-                  onChange={setBrandingWindowTitle}
-                  placeholder="PRD Agent"
-                />
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <InputField
+                label="大标题"
+                value={brandingName}
+                onChange={setBrandingName}
+                placeholder="PRD Agent"
+              />
+              <InputField
+                label="副标题"
+                value={brandingSubtitle}
+                onChange={setBrandingSubtitle}
+                placeholder="智能PRD解读助手"
+              />
+              <InputField
+                label="窗口标题"
+                value={brandingWindowTitle}
+                onChange={setBrandingWindowTitle}
+                placeholder="PRD Agent"
+              />
             </div>
           </Card>
 
           {/* 快速创建 */}
           <Card className="overflow-hidden">
-            <div
-              className="p-5"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
-              }}
-            >
-              <SectionTitle icon={<Plus size={16} />} title="快速创建" />
-              <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                资源根目录：<code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-white/5">{desktopRoot || '-'}</code>
-              </p>
+            <SectionTitle icon={<Plus size={16} />} title="快速创建" />
+            <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              资源根目录：<code className="font-mono text-[10px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'rgba(255,255,255,0.04)' }}>{desktopRoot || '-'}</code>
+            </p>
 
-              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* 新建皮肤 */}
-                <div
-                  className="p-4 rounded-xl"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <Palette size={14} style={{ color: 'var(--accent-gold)' }} />
-                    <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>新建皮肤</span>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <InputField
-                      value={newSkin}
-                      onChange={setNewSkin}
-                      placeholder="white / dark / blue"
-                      className="flex-1"
-                      mono
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* 新建皮肤 */}
+              <div
+                className="p-3.5 rounded-[12px]"
+                style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}
+              >
+                <div className="flex items-center gap-2 mb-2.5">
+                  <Palette size={13} style={{ color: 'var(--accent-gold)' }} />
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>新建皮肤</span>
+                </div>
+                <div className="flex items-end gap-2">
+                  <InputField
+                    value={newSkin}
+                    onChange={setNewSkin}
+                    placeholder="white / dark / blue"
+                    className="flex-1"
+                    mono
+                  />
+                  <Button
+                    variant="secondary"
+                    size="xs"
                       onClick={() => void onCreateSkin()}
                       disabled={loading}
                       className="shrink-0 h-10"
@@ -737,49 +718,48 @@ export default function AssetsManagePage() {
                 </div>
 
                 {/* 新建 Key */}
-                <div
-                  className="p-4 rounded-xl"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <FolderOpen size={14} style={{ color: 'var(--accent-gold)' }} />
-                    <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>新建资源 Key</span>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <InputField
-                      value={newKey}
-                      onChange={setNewKey}
-                      placeholder="例如 load"
-                      className="flex-1"
-                      mono
-                    />
-                    <SelectField
-                      value={newKeyKind}
-                      onChange={(v) => setNewKeyKind(v as AssetKind)}
-                      options={[
-                        { value: 'image', label: 'image' },
-                        { value: 'audio', label: 'audio' },
-                        { value: 'video', label: 'video' },
-                        { value: 'other', label: 'other' },
-                      ]}
-                      className="w-24 shrink-0"
-                    />
-                    <InputField
-                      value={newKeyDesc}
-                      onChange={setNewKeyDesc}
-                      placeholder="描述（可选）"
-                      className="flex-1"
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void onCreateKey()}
-                      disabled={loading}
-                      className="shrink-0 h-10"
-                    >
-                      创建
-                    </Button>
-                  </div>
+              <div
+                className="p-3.5 rounded-[12px]"
+                style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}
+              >
+                <div className="flex items-center gap-2 mb-2.5">
+                  <FolderOpen size={13} style={{ color: 'var(--accent-gold)' }} />
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>新建资源 Key</span>
+                </div>
+                <div className="flex items-end gap-2">
+                  <InputField
+                    value={newKey}
+                    onChange={setNewKey}
+                    placeholder="例如 load"
+                    className="flex-1"
+                    mono
+                  />
+                  <SelectField
+                    value={newKeyKind}
+                    onChange={(v) => setNewKeyKind(v as AssetKind)}
+                    options={[
+                      { value: 'image', label: 'image' },
+                      { value: 'audio', label: 'audio' },
+                      { value: 'video', label: 'video' },
+                      { value: 'other', label: 'other' },
+                    ]}
+                    className="w-24 shrink-0"
+                  />
+                  <InputField
+                    value={newKeyDesc}
+                    onChange={setNewKeyDesc}
+                    placeholder="描述（可选）"
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => void onCreateKey()}
+                    disabled={loading}
+                    className="shrink-0"
+                  >
+                    创建
+                  </Button>
                 </div>
               </div>
             </div>
@@ -787,76 +767,70 @@ export default function AssetsManagePage() {
 
           {/* 资源矩阵 */}
           <Card className="overflow-hidden">
+            <SectionTitle icon={<Layers size={16} />} title="资源矩阵" />
+            <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              点击缩略图上传/替换资源，红色边框表示缺失，黄色虚线表示回落到默认
+            </p>
+
+            {/* 矩阵表格 */}
             <div
-              className="p-5"
+              className="rounded-[12px] overflow-hidden"
               style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
+                background: 'rgba(255,255,255,0.015)',
+                border: '1px solid rgba(255,255,255,0.05)',
               }}
             >
-              <SectionTitle icon={<Layers size={16} />} title="资源矩阵" />
-              <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                点击缩略图上传或替换资源文件，红色边框表示资源缺失，黄色虚线表示回落到默认
-              </p>
-
-              {/* 矩阵表格 */}
-              <div
-                className="mt-5 rounded-xl overflow-hidden"
-                style={{
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                }}
-              >
-                <div className="overflow-x-auto">
-                  {/* 表头 */}
+              <div className="overflow-x-auto">
+                {/* 表头 */}
+                <div
+                  className="grid"
+                  style={{
+                    gridTemplateColumns: `minmax(160px, 1fr) repeat(${columns.length}, minmax(90px, 1fr))`,
+                    borderBottom: '1px solid rgba(255,255,255,0.05)',
+                    background: 'rgba(255,255,255,0.01)',
+                  }}
+                >
                   <div
-                    className="grid"
-                    style={{
-                      gridTemplateColumns: `minmax(180px, 1fr) repeat(${columns.length}, minmax(100px, 1fr))`,
-                      borderBottom: '1px solid rgba(255,255,255,0.06)',
-                    }}
+                    className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--text-muted)' }}
                   >
-                    <div
-                      className="px-4 py-3 text-xs font-medium"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      资源项
-                    </div>
-                    {columns.map((c) => (
-                      <div
-                        key={c}
-                        className="px-3 py-3 text-xs font-semibold text-center"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        {c === '__base__' ? '默认' : labelForSkin(c)}
-                      </div>
-                    ))}
+                    资源项
                   </div>
-
-                  {/* 数据行 */}
-                  {rows.map((row) => (
-                    <AssetRowBlock
-                      key={row.key}
-                      row={row}
-                      columns={columns}
-                      broken={broken}
-                      uploadingId={uploadingId}
-                      matrixData={matrixData}
-                      onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
-                      onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
-                      onUpload={(skin, key) => chooseUpload(skin, key)}
-                      onDelete={() => void handleDeleteKey(row)}
-                    />
-                  ))}
-
-                  {rows.length === 0 && (
+                  {columns.map((c) => (
                     <div
-                      className="px-4 py-8 text-center text-sm"
-                      style={{ color: 'var(--text-muted)' }}
+                      key={c}
+                      className="px-2 py-2.5 text-[11px] font-semibold text-center"
+                      style={{ color: 'var(--text-secondary)' }}
                     >
-                      暂无资源项
+                      {c === '__base__' ? '默认' : labelForSkin(c)}
                     </div>
-                  )}
+                  ))}
                 </div>
+
+                {/* 数据行 */}
+                {rows.map((row) => (
+                  <AssetRowBlock
+                    key={row.key}
+                    row={row}
+                    columns={columns}
+                    broken={broken}
+                    uploadingId={uploadingId}
+                    matrixData={matrixData}
+                    onBroken={(id) => setBroken((m) => ({ ...(m || {}), [id]: true }))}
+                    onRecovered={(id) => setBroken((m) => ({ ...(m || {}), [id]: false }))}
+                    onUpload={(skin, key) => chooseUpload(skin, key)}
+                    onDelete={() => void handleDeleteKey(row)}
+                  />
+                ))}
+
+                {rows.length === 0 && (
+                  <div
+                    className="px-4 py-8 text-center text-sm"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    暂无资源项
+                  </div>
+                )}
               </div>
             </div>
           </Card>

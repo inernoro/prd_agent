@@ -300,28 +300,27 @@ export default function VisualAgentWorkspaceListPage() {
 
   const grid = (
     <div
-      className="grid gap-4"
+      className="grid gap-3"
       style={{
-        // 屏幕越大列越多会导致单卡片更窄，按钮文字被压缩后发生“字内换行/折叠”
-        // 用更合理的最小卡片宽度，并用 min(,100%) 避免小屏溢出
-        gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
+        // 4栏布局：最小宽度240px，按比例缩小
+        gridTemplateColumns: 'repeat(auto-fill, minmax(min(240px, 100%), 1fr))',
       }}
     >
       <Card className="p-0 overflow-hidden">
         <button
           type="button"
-          className="w-full h-full min-h-[180px] flex flex-col items-center justify-center gap-2"
+          className="w-full h-full min-h-[140px] flex flex-col items-center justify-center gap-1.5"
           onClick={() => void onCreate()}
           style={{ color: 'var(--text-secondary)' }}
         >
           <div
-            className="h-12 w-12 rounded-[16px] flex items-center justify-center"
+            className="h-10 w-10 rounded-[12px] flex items-center justify-center"
             style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
           >
-            <Plus size={22} />
+            <Plus size={18} />
           </div>
-          <div className="text-sm font-semibold">新建项目</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-[12px] font-semibold">新建项目</div>
+          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
             Workspace
           </div>
         </button>
@@ -329,14 +328,21 @@ export default function VisualAgentWorkspaceListPage() {
 
       {items.map((ws) => (
         <Card key={ws.id} className="p-0 overflow-hidden">
-          <button
-            type="button"
-            className="w-full text-left"
+          <div
+            role="button"
+            tabIndex={0}
+            className="group w-full text-left cursor-pointer"
             onClick={() => navigate(`/visual-agent/${encodeURIComponent(ws.id)}`)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate(`/visual-agent/${encodeURIComponent(ws.id)}`);
+              }
+            }}
             title={ws.title || ws.id}
           >
             <div
-              className="h-[150px] w-full relative overflow-hidden"
+              className="h-[110px] w-full relative overflow-hidden"
               data-ws-card="1"
               data-ws-id={ws.id}
               style={{
@@ -354,35 +360,49 @@ export default function VisualAgentWorkspaceListPage() {
                 }}
               />
             </div>
-            <div className="p-3">
-              <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            <div className="p-2">
+              <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {ws.title || '未命名'}
               </div>
-              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                更新于 {formatDate(ws.updatedAt)}
+              <div className="mt-0.5 text-[10px] flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
+                <span>更新于 {formatDate(ws.updatedAt)}</span>
+                <div
+                  className={[
+                    'flex items-center gap-0.5',
+                    'opacity-0 pointer-events-none transition-opacity duration-100',
+                    'group-hover:opacity-100 group-hover:pointer-events-auto',
+                  ].join(' ')}
+                >
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    className="h-5 w-5 p-0 rounded-[6px] gap-0"
+                    onClick={(e) => { e.stopPropagation(); void onRename(ws); }}
+                    title="重命名"
+                  >
+                    <Pencil size={10} />
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    className="h-5 w-5 p-0 rounded-[6px] gap-0"
+                    onClick={(e) => { e.stopPropagation(); void openShare(ws); }}
+                    title="共享"
+                  >
+                    <Users2 size={10} />
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="danger"
+                    className="h-5 w-5 p-0 rounded-[6px] gap-0"
+                    onClick={(e) => { e.stopPropagation(); void onDelete(ws); }}
+                    title="删除"
+                  >
+                    <Trash2 size={10} />
+                  </Button>
+                </div>
               </div>
             </div>
-          </button>
-
-          <div className="px-3 pb-3 flex flex-wrap items-center gap-2">
-            <Button size="xs" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => void onRename(ws)}>
-              <Pencil size={14} />
-              重命名
-            </Button>
-            <Button
-              size="xs"
-              variant="secondary"
-              className="shrink-0 whitespace-nowrap"
-              onClick={() => void openShare(ws)}
-              title="共享（添加/移除成员）"
-            >
-              <Users2 size={14} />
-              共享
-            </Button>
-            <Button size="xs" variant="danger" className="ml-auto shrink-0 whitespace-nowrap" onClick={() => void onDelete(ws)}>
-              <Trash2 size={14} />
-              删除
-            </Button>
           </div>
         </Card>
       ))}
@@ -393,9 +413,8 @@ export default function VisualAgentWorkspaceListPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       <PageHeader
         title="视觉创作 Agent"
-        description="Workspace 列表：创建、共享与继续编辑（自动保存）"
         actions={
-          <Button variant="primary" onClick={() => void onCreate()} disabled={loading}>
+          <Button variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
             <Plus size={16} />
             新建 Workspace
           </Button>

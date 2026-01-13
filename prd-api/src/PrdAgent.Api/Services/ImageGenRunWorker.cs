@@ -568,7 +568,8 @@ public class ImageGenRunWorker : BackgroundService
             {
                 var o = n as JsonObject;
                 if (o == null) continue;
-                var k = (o["key"]?.GetValue<string>() ?? string.Empty).Trim();
+                // 前端保存时使用 "id" 字段，这里也用 "id" 查找（兼容 "key" 字段以防旧数据）
+                var k = (o["id"]?.GetValue<string>() ?? o["key"]?.GetValue<string>() ?? string.Empty).Trim();
                 if (string.Equals(k, key, StringComparison.Ordinal))
                 {
                     target = o;
@@ -580,7 +581,7 @@ public class ImageGenRunWorker : BackgroundService
             {
                 var o = new JsonObject
                 {
-                    ["key"] = key,
+                    ["id"] = key, // 使用 id 字段，与前端保持一致
                     ["kind"] = "image",
                     ["status"] = "done",
                     ["syncStatus"] = "synced",

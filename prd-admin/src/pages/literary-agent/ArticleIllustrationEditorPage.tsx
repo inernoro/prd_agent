@@ -874,7 +874,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     );
     await updateMarkerStatus(markerIndex, { status: 'parsed', draftText: plannedPrompt }); // 保存
 
-    // 2) 创建 run（实验室同款 createRun + SSE）
+    // 2) 创建 run（传入 workspaceId，后端会自动保存到 COS）
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'running' } : x)));
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const created = await createImageGenRun({
@@ -882,8 +882,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         configModelId: imageGenModel.id,
         items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
         size: plannedSize,
-        responseFormat: 'b64_json',
+        responseFormat: 'url',  // 使用 URL 格式，后端会自动保存到 COS
         maxConcurrency: 1,
+        workspaceId,  // 传入 workspaceId，后端会自动保存图片到 COS
       },
       idempotencyKey: idem,
     });
@@ -995,11 +996,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
     setMarkerRunItems((prev) =>
-      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl } : x))
+      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl } : x))
     );
     // 图片已经通过 uploadImageMasterWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
-    // 不需要保存 base64，减少存储压力
+    // 保存 URL 到后端（刷新后可恢复）
     await updateMarkerStatus(markerIndex, { status: 'done' });
+    try {
+      await updateArticleMarker({
+        workspaceId,
+        markerIndex,
+        url: assetUrl,
+      });
+    } catch (error) {
+      console.error('Failed to save asset url:', error);
+    }
   };
 
   // 新增辅助函数：保存 marker 状态到后端
@@ -1988,14 +1998,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     className="mt-2 w-full rounded-[12px] px-3 py-2 text-[12px] outline-none resize-none prd-field"
                     style={{ minHeight: 84 }}
                     placeholder="可编辑后右下角生成图片 / 重新生成"
-                    disabled={generating}
+                    disabled={it.status === 'running' || it.status === 'parsing'}
                   />
 
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <Button
                       size="sm"
                       variant="secondary"
-                      disabled={generating}
+                      disabled={it.status === 'running' || it.status === 'parsing'}
                       onClick={() => void handleDeleteMarker(it.markerIndex)}
                       title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
                     >
@@ -2005,7 +2015,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <Button
                       size="sm"
                       variant="secondary"
-                      disabled={generating || !imageGenModel}
+                      disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
                       onClick={() => void handleRegenerateOne(it.markerIndex)}
                       title={genTitle}
                     >

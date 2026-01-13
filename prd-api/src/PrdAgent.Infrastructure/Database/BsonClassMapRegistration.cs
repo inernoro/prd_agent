@@ -59,6 +59,7 @@ public static class BsonClassMapRegistration
             RegisterOpenPlatformApp();
             RegisterOpenPlatformRequestLog();
             RegisterSystemRole();
+            RegisterUserPreferences();
 
             _registered = true;
         }
@@ -238,6 +239,26 @@ public static class BsonClassMapRegistration
                 cm.AutoMap();
                 cm.MapMember(x => x.Index).SetElementName("index");
                 cm.MapMember(x => x.Text).SetElementName("text");
+                cm.MapMember(x => x.DraftText).SetElementName("draftText");
+                cm.MapMember(x => x.Status).SetElementName("status");
+                cm.MapMember(x => x.RunId).SetElementName("runId");
+                cm.MapMember(x => x.AssetId).SetElementName("assetId");
+                cm.MapMember(x => x.Url).SetElementName("url");
+                cm.MapMember(x => x.PlanItem).SetElementName("planItem");
+                cm.MapMember(x => x.ErrorMessage).SetElementName("errorMessage");
+                cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ArticleIllustrationPlanItem)))
+        {
+            BsonClassMap.RegisterClassMap<ArticleIllustrationPlanItem>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapMember(x => x.Prompt).SetElementName("prompt");
+                cm.MapMember(x => x.Count).SetElementName("count");
+                cm.MapMember(x => x.Size).SetElementName("size");
                 cm.SetIgnoreExtraElements(true);
             });
         }
@@ -660,6 +681,19 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(x => x.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterUserPreferences()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(UserPreferences))) return;
+        BsonClassMap.RegisterClassMap<UserPreferences>(cm =>
+        {
+            cm.AutoMap();
+            // UserId 作为主键（_id），每个用户一条记录
+            cm.MapIdMember(x => x.UserId)
+                .SetSerializer(new StringOrObjectIdSerializer());
             cm.SetIgnoreExtraElements(true);
         });
     }

@@ -236,7 +236,8 @@ public class AdminImageMasterController : ControllerBase
                 lastOpenedAt = ws.LastOpenedAt,
                 articleContent = ws.ArticleContent,
                 articleContentWithMarkers = ws.ArticleContentWithMarkers,
-                articleWorkflow = ws.ArticleWorkflow
+                articleWorkflow = ws.ArticleWorkflow,
+                folderName = ws.FolderName
             };
         }).ToList();
 
@@ -327,6 +328,7 @@ public class AdminImageMasterController : ControllerBase
         if (!string.IsNullOrWhiteSpace(title)) update = update.Set(x => x.Title, title);
         if (request?.CoverAssetId != null) update = update.Set(x => x.CoverAssetId, string.IsNullOrWhiteSpace(coverAssetId) ? null : coverAssetId);
         if (!string.IsNullOrWhiteSpace(request?.ScenarioType)) update = update.Set(x => x.ScenarioType, request.ScenarioType);
+        if (request?.FolderName != null) update = update.Set(x => x.FolderName, string.IsNullOrWhiteSpace(request.FolderName) ? null : request.FolderName.Trim());
 
         // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、清后续、清旧配图）
         var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent) 
@@ -1996,6 +1998,17 @@ public class AdminImageMasterController : ControllerBase
         if (request.Status != null) marker.Status = request.Status;
         if (request.RunId != null) marker.RunId = request.RunId;
         if (request.ErrorMessage != null) marker.ErrorMessage = request.ErrorMessage;
+        if (request.Url != null) marker.Url = request.Url;  // 保存图片 URL
+        if (request.PlanItem != null)
+        {
+            // 保存意图解析结果
+            marker.PlanItem = new ArticleIllustrationPlanItem
+            {
+                Prompt = request.PlanItem.Prompt,
+                Count = request.PlanItem.Count,
+                Size = request.PlanItem.Size
+            };
+        }
         marker.UpdatedAt = DateTime.UtcNow;
 
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
@@ -2058,6 +2071,7 @@ public class UpdateWorkspaceRequest
     public string? CoverAssetId { get; set; }
     public string? ArticleContent { get; set; }
     public string? ScenarioType { get; set; }
+    public string? FolderName { get; set; }
 }
 
 public class UploadAssetRequest

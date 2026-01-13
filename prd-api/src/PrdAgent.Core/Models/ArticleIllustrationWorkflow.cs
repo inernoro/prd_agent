@@ -43,7 +43,18 @@ public class ArticleIllustrationMarker
     public string? Status { get; set; }  // idle/parsing/parsed/running/done/error
     public string? RunId { get; set; }  // 生图任务 ID
     public string? AssetId { get; set; }  // 已生成的图片资产 ID
+    public string? Url { get; set; }  // 图片 URL（用于刷新后恢复显示）
+    public ArticleIllustrationPlanItem? PlanItem { get; set; }  // 意图解析结果
     public string? ErrorMessage { get; set; }  // 错误信息
     public DateTime? UpdatedAt { get; set; }  // 最后更新时间
 }
 
+/// <summary>
+/// 意图解析结果（生图 prompt/count/size）
+/// </summary>
+public class ArticleIllustrationPlanItem
+{
+    public string Prompt { get; set; } = string.Empty;
+    public int Count { get; set; } = 1;
+    public string? Size { get; set; }
+}

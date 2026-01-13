@@ -947,7 +947,7 @@ export default function ModelManagePage() {
   const isAll = selectedPlatformId === '__all__';
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
+    <div className="h-full min-h-0 flex flex-col gap-5">
       <PageHeader
         title="模型管理"
         subtitle={
@@ -956,10 +956,9 @@ export default function ModelManagePage() {
             ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
             : '')
         }
-        description="LLM 平台、模型配置与性能监控"
       />
 
-      <div className={`grid gap-4 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
+      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格） */}
         <Card className="p-0 overflow-hidden flex flex-col">
           {/* 折叠/展开按钮 */}

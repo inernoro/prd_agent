@@ -705,26 +705,25 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
+    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
       <PageHeader
         title="用户管理"
-        subtitle={`共 ${total} 个用户`}
-        description="账号、角色与权限管理"
+        subtitle={`${total} 用户`}
       />
 
       <Card className="flex-1 min-h-0 flex flex-col">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex-1 min-w-[240px]">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex-1 min-w-[200px] max-w-[320px]">
             <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
                   setPage(1);
                 }}
-                className="h-9 w-full rounded-[12px] pl-9 pr-4 text-sm outline-none transition-colors hover:border-white/20 focus-visible:ring-2 focus-visible:ring-white/20"
-                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
                 placeholder="搜索用户名或昵称"
               />
             </div>
@@ -737,7 +736,7 @@ export default function UsersPage() {
               setPage(1);
             }}
             uiSize="sm"
-            className="min-w-[96px] font-medium"
+            className="min-w-[88px] font-medium"
           >
             <option value="">角色</option>
             <option value="PM">PM</option>
@@ -753,7 +752,7 @@ export default function UsersPage() {
               setPage(1);
             }}
             uiSize="sm"
-            className="min-w-[96px] font-medium"
+            className="min-w-[88px] font-medium"
           >
             <option value="">状态</option>
             <option value="Active">正常</option>
@@ -761,15 +760,15 @@ export default function UsersPage() {
           </Select>
 
           <div className="ml-auto flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            <Button variant="secondary" size="sm" onClick={openCreateUser}>
+            <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
             </Button>
-            <Button variant="secondary" size="sm" onClick={openBulkCreate}>
+            <Button variant="secondary" size="xs" onClick={openBulkCreate}>
               批量创建
             </Button>
             <Button
               variant="primary"
-              size="sm"
+              size="xs"
               onClick={() => {
                 setInviteOpen(true);
                 setInviteCodes([]);
@@ -777,20 +776,18 @@ export default function UsersPage() {
             >
               生成邀请码
             </Button>
-            <div className="mx-1 h-8 w-px bg-white/10" aria-hidden />
-            <Button variant="danger" size="sm" onClick={handleInitializeUsers}>
-              初始化用户
+            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
+            <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
+              初始化
             </Button>
           </div>
         </div>
 
         <div
-          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[16px] p-4"
+          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4"
           style={{
-            // 这里刻意保留“占高”：让分页稳定贴底、列表可滚动；
-            // 当数据较少时，用 panel 底色承托留白，避免出现“底层一大片空”的突兀感
-            background: 'var(--panel)',
-            border: '1px solid var(--border-subtle)',
+            background: 'rgba(255,255,255,0.015)',
+            border: '1px solid rgba(255,255,255,0.05)',
           }}
         >
           {loading ? (
@@ -802,18 +799,28 @@ export default function UsersPage() {
               暂无数据
             </div>
           ) : (
-            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-stretch">
+            <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-stretch">
               {items.map((u) => {
                 const last = u.lastActiveAt ?? u.lastLoginAt;
                 const displayName = (u.displayName || u.username).trim();
                 return (
                   <div
                     key={u.userId}
-                    className="group h-full rounded-[18px] p-4 transition-all duration-200 hover:-translate-y-[1px] hover:bg-[color:var(--bg-card-hover)] hover:border-[color:var(--border-hover)] hover:[box-shadow:var(--shadow-card-hover)]"
+                    className="group h-full rounded-[14px] p-3.5 transition-all duration-200 hover:-translate-y-px"
                     style={{
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border-subtle)',
-                      boxShadow: 'var(--shadow-card)',
+                      background: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      boxShadow: '0 2px 8px -2px rgba(0,0,0,0.2)',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.035)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.boxShadow = '0 4px 16px -4px rgba(0,0,0,0.3)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0,0,0,0.2)';
                     }}
                   >
                     <div
@@ -822,9 +829,9 @@ export default function UsersPage() {
                     >
                       {/* Header（强约束：左侧信息 + 右侧操作，避免窄卡片挤压导致“重叠”） */}
                       <div className="grid grid-cols-[1fr_auto] gap-3 items-start">
-                        <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0">
                           <div
-                            className="h-11 w-11 rounded-[14px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/10 hover:ring-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]"
+                            className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-gold)]/50"
                             title="点击修改头像"
                             onClick={() => openChangeAvatar(u)}
                             role="button"
@@ -881,27 +888,27 @@ export default function UsersPage() {
                                 {displayName}
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
-                                {/* Robot tag icon（对齐 desktop：机器人头） */}
+                                {/* Robot tag icon */}
                                 {String(u.userType ?? '').toLowerCase() === 'bot' ? (
                                   <span
-                                    className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
-                                    style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
+                                    className="inline-flex items-center justify-center h-5 w-5 rounded-[8px]"
+                                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}
                                     title="机器人"
                                   >
-                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
                                       <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
                                       <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
                                     </svg>
                                   </span>
                                 ) : null}
-                                {/* Admin tag icon（对齐 desktop：盾牌） */}
+                                {/* Admin tag icon */}
                                 {String(u.role ?? '').toUpperCase() === 'ADMIN' ? (
                                   <span
-                                    className="inline-flex items-center justify-center h-6 w-6 rounded-[10px]"
-                                    style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.28)', color: 'rgba(250,204,21,0.95)' }}
+                                    className="inline-flex items-center justify-center h-5 w-5 rounded-[8px]"
+                                    style={{ background: 'rgba(214,178,106,0.1)', border: '1px solid rgba(214,178,106,0.2)', color: 'var(--accent-gold)' }}
                                     title="系统管理员"
                                   >
-                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
                                       <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
                                     </svg>
                                   </span>
@@ -920,7 +927,7 @@ export default function UsersPage() {
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-end gap-2 shrink-0">
+                        <div className="flex items-center justify-end gap-1.5 shrink-0">
                           <Button
                             variant={u.status === 'Active' ? 'secondary' : 'primary'}
                             size="xs"
@@ -928,17 +935,17 @@ export default function UsersPage() {
                             onClick={() => onToggleStatus(u)}
                             title={u.status === 'Active' ? '点击停用' : '点击启用'}
                             aria-label={u.status === 'Active' ? '停用' : '启用'}
-                            className="min-w-[72px]"
+                            className="min-w-[56px] text-[11px]"
                           >
-                            {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用' : '启用'}
+                            {statusUpdatingUserId === u.userId ? '...' : u.status === 'Active' ? '停用' : '启用'}
                           </Button>
 
                           <DropdownMenu.Root>
                             <DropdownMenu.Trigger asChild>
                               <button
                                 type="button"
-                                className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[11px] transition-colors hover:bg-white/6 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]"
-                                style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }}
+                                className="inline-flex items-center justify-center h-[28px] w-[28px] rounded-[8px] transition-colors hover:bg-white/6 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-gold)]/30"
+                                style={{ border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
                                 aria-label="更多操作"
                                 title="更多操作"
                               >

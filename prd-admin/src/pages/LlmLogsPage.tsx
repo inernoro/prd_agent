@@ -1114,7 +1114,6 @@ export default function LlmLogsPage() {
       `}</style>
       <PageHeader
         title="LLM 请求日志"
-        description="仅展示后端发往大模型 Provider 的请求与流式响应（仅隐藏密钥/Token；请求正文仍按后端落库策略保留摘要）"
         tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
         activeTab={tab}
         onTabChange={(key) => setTab(key as 'llm' | 'system')}

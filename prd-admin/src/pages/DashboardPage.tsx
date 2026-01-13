@@ -228,79 +228,89 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <PageHeader
         title="仪表盘"
-        description="LLM 可观测性 · Token · TTFB · 缓存 · 趋势"
         actions={
-          <>
-            <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium h-[35px]" uiSize="sm">
-              <option value={7}>最近7天</option>
-              <option value={14}>最近14天</option>
-              <option value={30}>最近30天</option>
-            </Select>
-            <div className="inline-flex items-center gap-2 h-[35px]">
-              <Badge variant="new">LLM</Badge>
-              <Badge variant="featured">Observability</Badge>
-            </div>
-          </>
+          <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium h-[28px]" uiSize="sm">
+            <option value={7}>最近7天</option>
+            <option value={14}>最近14天</option>
+            <option value={30}>最近30天</option>
+          </Select>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard title="总用户数" value={overview?.totalUsers ?? 0} loading={loadingBase} />
+        <KpiCard title="总用户数" value={overview?.totalUsers ?? 0} loading={loadingBase} accent="gold" />
         <KpiCard title="活跃用户" value={overview?.activeUsers ?? 0} loading={loadingBase} accent="green" />
-        <KpiCard title="群组数" value={overview?.totalGroups ?? 0} loading={loadingBase} />
-        <KpiCard title="今日消息" value={overview?.todayMessages ?? 0} loading={loadingBase} accent="green" />
+        <KpiCard title="群组数" value={overview?.totalGroups ?? 0} loading={loadingBase} accent="blue" />
+        <KpiCard title="今日消息" value={overview?.todayMessages ?? 0} loading={loadingBase} accent="purple" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <Card>
-          <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>LLM 关键指标（近 180 条采样）</div>
-          <div className="mt-3 grid gap-3">
-            <div className="rounded-[14px] p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>TTFB 分位数</div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <div className="text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loadingBase ? '—' : fmtMs(obs?.ttfbP50Ms ?? null)}</div>
-                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>P50</div>
-              </div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <div className="text-[16px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{loadingBase ? '—' : fmtMs(obs?.ttfbP95Ms ?? null)}</div>
-                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>P95</div>
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>LLM 关键指标</div>
+            <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
+              近 180 条
+            </div>
+          </div>
+          <div className="grid gap-3">
+            <div className="rounded-[12px] p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>TTFB</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[20px] font-bold tabular-nums" style={{ color: 'var(--accent-gold)' }}>{loadingBase ? '—' : fmtMs(obs?.ttfbP50Ms ?? null)}</div>
+                  <div className="text-[10px] font-medium mt-0.5" style={{ color: 'var(--text-muted)' }}>P50</div>
+                </div>
+                <div>
+                  <div className="text-[20px] font-bold tabular-nums" style={{ color: 'var(--text-secondary)' }}>{loadingBase ? '—' : fmtMs(obs?.ttfbP95Ms ?? null)}</div>
+                  <div className="text-[10px] font-medium mt-0.5" style={{ color: 'var(--text-muted)' }}>P95</div>
+                </div>
               </div>
             </div>
 
-            <div className="rounded-[14px] p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Prompt Cache 命中率</div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <div className="text-[22px] font-semibold" style={{ color: 'var(--accent-green)' }}>
-                  {loadingBase ? '—' : fmtPct01(obs?.cacheHitRate ?? null)}
-                </div>
-                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-                  sample {obs?.sample ?? 0}
+            <div className="rounded-[12px] p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Cache Hit</div>
+                <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                  {obs?.sample ?? 0} samples
                 </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {(obs?.typeCounts ?? []).map((x) => (
-                  <span
-                    key={x.type}
-                    className="inline-flex items-center gap-2 rounded-full px-2.5 h-6 text-[11px] font-semibold"
-                    style={{ border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)' }}
-                    title={x.type}
-                  >
-                    <span style={{ color: '#E7CE97' }}>{x.type}</span>
-                    <span style={{ color: 'var(--text-muted)' }}>{x.count}</span>
-                  </span>
-                ))}
+              <div className="text-[24px] font-bold tabular-nums" style={{ color: 'var(--accent-green)' }}>
+                {loadingBase ? '—' : fmtPct01(obs?.cacheHitRate ?? null)}
               </div>
+              {(obs?.typeCounts?.length ?? 0) > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {(obs?.typeCounts ?? []).map((x) => (
+                    <span
+                      key={x.type}
+                      className="inline-flex items-center gap-1.5 rounded-[8px] px-2 h-[22px] text-[10px] font-semibold"
+                      style={{ background: 'rgba(214,178,106,0.08)', border: '1px solid rgba(214,178,106,0.15)', color: 'var(--accent-gold)' }}
+                      title={x.type}
+                    >
+                      <span>{x.type}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{x.count}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </Card>
 
         <Card className="lg:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>消息趋势（近 {days} 天）</div>
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>消息趋势</div>
+            <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
+              近 {days} 天
+            </div>
           </div>
-          <div className="mt-3 rounded-[14px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
+          <div className="rounded-[12px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}>
             {loadingSeries ? (
-              <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+              <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span className="text-sm">加载中...</span>
+                </div>
+              </div>
             ) : trend.length === 0 ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>暂无数据</div>
             ) : (
@@ -312,19 +322,39 @@ export default function DashboardPage() {
         </Card>
 
         <Card>
-          <div className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>Token（近 {days} 天总量）</div>
-          <div className="mt-3 grid gap-2">
-            <div className="rounded-[14px] px-4 py-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Input</div>
-              <div className="mt-1 text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loadingSeries ? '—' : (token?.totalInput ?? 0)}</div>
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>Token 用量</div>
+            <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
+              近 {days} 天
             </div>
-            <div className="rounded-[14px] px-4 py-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Output</div>
-              <div className="mt-1 text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>{loadingSeries ? '—' : (token?.totalOutput ?? 0)}</div>
+          </div>
+          <div className="grid gap-2">
+            <div className="rounded-[12px] px-4 py-3" style={{ background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.1)' }}>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Input</div>
+                <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(59,130,246,0.8)' }} />
+              </div>
+              <div className="mt-1 text-[18px] font-bold tabular-nums" style={{ color: 'rgba(59,130,246,0.95)' }}>
+                {loadingSeries ? '—' : (token?.totalInput ?? 0).toLocaleString()}
+              </div>
             </div>
-            <div className="rounded-[14px] px-4 py-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>Total</div>
-              <div className="mt-1 text-[20px] font-semibold" style={{ color: '#E7CE97' }}>{loadingSeries ? '—' : (token?.totalTokens ?? 0)}</div>
+            <div className="rounded-[12px] px-4 py-3" style={{ background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.1)' }}>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Output</div>
+                <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(34,197,94,0.8)' }} />
+              </div>
+              <div className="mt-1 text-[18px] font-bold tabular-nums" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                {loadingSeries ? '—' : (token?.totalOutput ?? 0).toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-[12px] px-4 py-3" style={{ background: 'rgba(214,178,106,0.04)', border: '1px solid rgba(214,178,106,0.1)' }}>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Total</div>
+                <div className="w-2 h-2 rounded-full" style={{ background: 'var(--accent-gold)' }} />
+              </div>
+              <div className="mt-1 text-[18px] font-bold tabular-nums" style={{ color: 'var(--accent-gold)' }}>
+                {loadingSeries ? '—' : (token?.totalTokens ?? 0).toLocaleString()}
+              </div>
             </div>
           </div>
         </Card>
@@ -332,12 +362,20 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card>
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-            内容缺失统计（共{gapStats?.total ?? 0}条）
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>内容缺失</div>
+            <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(245,158,11,0.1)', color: 'rgba(245,158,11,0.9)' }}>
+              {gapStats?.total ?? 0} 条
+            </div>
           </div>
-          <div className="mt-3 rounded-[14px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
+          <div className="rounded-[12px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}>
             {loadingBase ? (
-              <div className="h-[260px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+              <div className="h-[260px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span className="text-sm">加载中...</span>
+                </div>
+              </div>
             ) : !gapStats ? (
               <div className="h-[260px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>暂无数据</div>
             ) : (
@@ -349,42 +387,44 @@ export default function DashboardPage() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>活跃群组 TOP 8</div>
-            <Badge variant="subtle" size="sm">按消息/缺失综合</Badge>
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>活跃群组</div>
+            <Badge variant="subtle" size="sm">TOP 8</Badge>
           </div>
-          <div className="mt-3 overflow-hidden rounded-[14px]" style={{ border: '1px solid var(--border-subtle)' }}>
+          <div className="overflow-hidden rounded-[12px]" style={{ border: '1px solid rgba(255,255,255,0.05)' }}>
             <table className="w-full text-sm">
-              <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
+              <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
                 <tr>
-                  <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>群组</th>
-                  <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>成员</th>
-                  <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>消息</th>
-                  <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>缺失</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>群组</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>成员</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>消息</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>缺失</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingBase ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</td>
+                    <td colSpan={4} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                        <span>加载中...</span>
+                      </div>
+                    </td>
                   </tr>
                 ) : groups.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>暂无数据</td>
                   </tr>
                 ) : (
-                  groups.map((g) => (
-                    <tr key={g.groupId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                      <td className="px-4 py-3">
-                        <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{g.groupName}</div>
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{g.groupId}</div>
+                  groups.map((g, idx) => (
+                    <tr key={g.groupId} className="transition-colors hover:bg-white/[0.02]" style={{ borderTop: idx === 0 ? 'none' : '1px solid rgba(255,255,255,0.04)' }}>
+                      <td className="px-4 py-2.5">
+                        <div className="font-medium text-[13px]" style={{ color: 'var(--text-primary)' }}>{g.groupName}</div>
+                        <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>{g.groupId.slice(0, 8)}...</div>
                       </td>
-                      <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{g.memberCount}</td>
-                      <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-green)' }}>{g.messageCount}</td>
-                      <td
-                        className="px-4 py-3 text-right"
-                        style={{ color: g.gapCount > 0 ? 'rgba(245,158,11,0.95)' : 'rgba(247,247,251,0.45)' }}
-                      >
+                      <td className="px-4 py-2.5 text-right tabular-nums font-medium" style={{ color: 'var(--text-secondary)' }}>{g.memberCount}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums font-semibold" style={{ color: 'var(--accent-green)' }}>{g.messageCount}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums font-medium" style={{ color: g.gapCount > 0 ? 'rgba(245,158,11,0.95)' : 'var(--text-muted)' }}>
                         {g.gapCount}
                       </td>
                     </tr>

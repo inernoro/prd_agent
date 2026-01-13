@@ -1,9 +1,12 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog, User, Settings } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
+// 导航排序功能已移除
+// import { useNavOrderStore, mergeNavOrder } from '@/stores/navOrderStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
@@ -18,7 +21,6 @@ export default function AppShell() {
   const location = useLocation();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
-  const permissions = useAuthStore((s) => s.permissions);
   const patchUser = useAuthStore((s) => s.patchUser);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
@@ -28,7 +30,7 @@ export default function AppShell() {
   const backdropStopping = !backdropRunning && !!pendingStopId;
   const [avatarOpen, setAvatarOpen] = useState(false);
 
-  // 兜底：部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 在输入控件中可能无法触发默认“全选”
+  // 兜底：部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 在输入控件中可能无法触发默认"全选"
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
@@ -95,11 +97,9 @@ export default function AppShell() {
     []
   );
 
-  const visibleItems = useMemo(() => {
-    const perms = Array.isArray(permissions) ? permissions : [];
-    return items.filter((it) => !it.perm || perms.includes(it.perm));
-  }, [items, permissions]);
-
+  // 直接使用 items，不再进行排序
+  const visibleItems = items;
+  
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
@@ -147,7 +147,7 @@ export default function AppShell() {
         <aside
           className={cn(
             'absolute flex flex-col p-2.5 transition-[width] duration-220 ease-out',
-            collapsed ? 'gap-2' : 'gap-2.5'
+            collapsed ? 'gap-2 items-center' : 'gap-2.5'
           )}
           style={{
             left: asideGap,
@@ -157,99 +157,212 @@ export default function AppShell() {
             zIndex: 20,
             borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
-            // 与主内容区 Card 保持一致的配色方案
-            backgroundColor: 'var(--bg-elevated)',
-            backgroundImage: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 96%, white) 0%, color-mix(in srgb, var(--bg-elevated) 92%, black) 100%)',
-            border: '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+            // 与主内容区 Card 保持一致的配色方案（避免 color-mix 兼容性问题）
+            backgroundColor: '#121216',
+            backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
             boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
+          {/* 用户头像区域 */}
           <div
             className={cn(
-              'relative overflow-hidden transition-all duration-300 ease-out shrink-0',
-              collapsed
-                ? 'rounded-[16px] w-[50px] self-center'
-                : 'rounded-[16px] p-3'
+              'group relative shrink-0 rounded-[14px]',
+              collapsed ? 'w-[50px] py-2 flex justify-center' : 'px-3 py-2.5'
             )}
-            style={{
-              background: 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)',
-              border: '1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent)',
-              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
-            }}
+            style={{ background: 'transparent' }}
           >
-            {collapsed ? (
-              <div className="flex flex-col items-center gap-2 py-2">
-                <div
-                  className="h-9 w-9 rounded-[10px] flex items-center justify-center text-[10px] font-black tracking-tighter shrink-0"
-                  style={{ 
-                    background: 'var(--gold-gradient)',
-                    color: '#1a1206',
-                    boxShadow: '0 2px 8px rgba(214, 178, 106, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1) inset'
-                  }}
-                >
-                  PRD
-                </div>
-                <button
-                  type="button"
-                  onClick={() => toggleNavCollapsed()}
-                  className="h-7 w-7 inline-flex items-center justify-center rounded-[9px] transition-all duration-200 hover:bg-white/8"
-                  style={{ 
-                    color: 'var(--text-secondary)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)'
-                  }}
-                  aria-label="展开侧边栏"
-                  title="展开侧边栏"
-                >
-                  <PanelLeftOpen size={16} />
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
+            {/* 悬停背景效果 */}
+            <div 
+              className="absolute inset-0 rounded-[14px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+              style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+            />
+            
+            <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
+              {/* 头像+用户名（触发下拉菜单） */}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <div
+                    className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
+                    title="用户菜单"
+                  >
+                    {/* 头像 */}
                     <div
-                      className="h-8 w-8 rounded-[9px] flex items-center justify-center text-[10px] font-black tracking-tighter shrink-0"
-                      style={{ 
-                        background: 'var(--gold-gradient)',
-                        color: '#1a1206',
-                        boxShadow: '0 2px 8px rgba(214, 178, 106, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1) inset'
-                      }}
+                      className="h-9 w-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-[var(--accent-gold)]/30 transition-colors duration-200"
+                      style={{ boxShadow: '0 0 0 1px rgba(214, 178, 106, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
                     >
-                      PRD
+                      {(() => {
+                        const url = resolveAvatarUrl({
+                          username: user?.username,
+                          userType: user?.userType,
+                          botKind: user?.botKind,
+                          avatarFileName: user?.avatarFileName ?? null,
+                          avatarUrl: user?.avatarUrl,
+                        });
+                        const fallback = resolveNoHeadAvatarUrl();
+                        return (
+                          <img
+                            src={url}
+                            alt="avatar"
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              const el = e.currentTarget;
+                              if (el.getAttribute('data-fallback-applied') === '1') return;
+                              if (!fallback) return;
+                              el.setAttribute('data-fallback-applied', '1');
+                              el.src = fallback;
+                            }}
+                          />
+                        );
+                      })()}
                     </div>
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-bold truncate tracking-tight" style={{ color: 'var(--text-primary)' }}>PRD Admin</div>
-                      <div className="text-[10px] truncate tracking-wide" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Web Console</div>
+                    
+                    {/* 用户信息（仅展开时显示） */}
+                    {!collapsed && (
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                          {user?.displayName || 'Admin'}
+                        </div>
+                        <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+                          {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </DropdownMenu.Trigger>
+
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="min-w-[220px] rounded-[16px] p-2 z-50"
+                style={{
+                  backgroundColor: '#151518',
+                  backgroundImage: 'linear-gradient(135deg, rgba(22,22,26,1) 0%, rgba(16,16,19,1) 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                }}
+                sideOffset={8}
+                side="bottom"
+                align="start"
+              >
+                {/* 用户信息区 */}
+                <div className="px-2 py-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-full overflow-hidden shrink-0"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255, 255, 255, 0.08)' }}
+                    >
+                      {(() => {
+                        const url = resolveAvatarUrl({
+                          username: user?.username,
+                          userType: user?.userType,
+                          botKind: user?.botKind,
+                          avatarFileName: user?.avatarFileName ?? null,
+                          avatarUrl: user?.avatarUrl,
+                        });
+                        const fallback = resolveNoHeadAvatarUrl();
+                        return (
+                          <img
+                            src={url}
+                            alt="avatar"
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              const el = e.currentTarget;
+                              if (el.getAttribute('data-fallback-applied') === '1') return;
+                              if (!fallback) return;
+                              el.setAttribute('data-fallback-applied', '1');
+                              el.src = fallback;
+                            }}
+                          />
+                        );
+                      })()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[14px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {user?.displayName || 'Admin'}
+                      </div>
+                      <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                      </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleNavCollapsed()}
-                    className="h-7 w-7 inline-flex items-center justify-center rounded-[9px] transition-all duration-200 hover:bg-white/8 shrink-0"
-                    style={{ 
-                      color: 'var(--text-secondary)',
-                      border: '1px solid rgba(255, 255, 255, 0.06)'
-                    }}
-                    aria-label="折叠侧边栏"
-                  >
-                    <PanelLeftClose size={16} />
-                  </button>
                 </div>
-                <div 
-                  className="h-px w-full"
-                  style={{
-                    background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)'
-                  }}
-                />
-              </>
-            )}
-          </div>
 
-          <nav className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', collapsed ? 'gap-0.5' : 'gap-0.5')}
-               style={{ paddingTop: 2, paddingRight: 2 }}>
+                <DropdownMenu.Separator
+                  className="h-px mx-2 my-1"
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
+                />
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => setAvatarOpen(true)}
+                >
+                  <User size={16} className="shrink-0" />
+                  <span className="text-[13px]">账户管理</span>
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => setAvatarOpen(true)}
+                >
+                  <Settings size={16} className="shrink-0" />
+                  <span className="text-[13px]">修改头像</span>
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Separator
+                  className="h-px mx-2 my-1"
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
+                />
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => logout()}
+                >
+                  <LogOut size={16} className="shrink-0" />
+                  <span className="text-[13px]">退出登录</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          
+          {/* 折叠按钮（仅展开时显示，在 DropdownMenu 外部） */}
+          {!collapsed && (
+            <button
+              type="button"
+              onClick={toggleNavCollapsed}
+              className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-40 hover:opacity-100 shrink-0"
+              style={{ color: 'var(--text-muted)' }}
+              aria-label="折叠侧边栏"
+            >
+              <PanelLeftClose size={14} />
+            </button>
+          )}
+            </div>
+          </div>
+          
+          {/* 展开按钮（仅收缩时显示） */}
+          {collapsed && (
+            <button
+              type="button"
+              onClick={toggleNavCollapsed}
+              className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-60 hover:opacity-100"
+              style={{ color: 'var(--text-muted)' }}
+              aria-label="展开侧边栏"
+              title="展开侧边栏"
+            >
+              <PanelLeftOpen size={14} />
+            </button>
+          )}
+
+          <nav className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', collapsed ? 'gap-0.5 items-center' : 'gap-0.5')}
+               style={{ paddingTop: 2, paddingRight: collapsed ? 0 : 2 }}>
             {visibleItems.map((it) => {
               const active = it.key === activeKey;
               return (
@@ -258,158 +371,43 @@ export default function AppShell() {
                   type="button"
                   onClick={() => navigate(it.key)}
                   className={cn(
-                    'relative flex items-center gap-3 rounded-[12px] transition-colors',
-                    'hover:bg-white/4',
-                    // 收拢态：按钮点击区为正方形圆角矩形（避免扁长）
-                    collapsed ? 'justify-center px-0 py-0 w-[50px] h-[50px] self-center shrink-0' : 'px-3 py-2'
+                    'relative flex items-center gap-3 rounded-[12px] transition-[background-color,border-color,color] duration-200',
+                    'hover:bg-white/5',
+                    collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
                   )}
                   style={{
-                    background: active ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent',
-                    border: active ? '1px solid color-mix(in srgb, var(--accent-gold) 35%, var(--border-subtle))' : '1px solid transparent',
+                    background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                    border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                   }}
                   title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                 >
-                  <span className={cn('inline-flex items-center justify-center shrink-0', active && 'drop-shadow')}>
+                  <span 
+                    className="inline-flex items-center justify-center shrink-0 transition-colors duration-200"
+                    style={{ color: active ? 'var(--accent-gold)' : undefined }}
+                  >
                     {it.icon}
                   </span>
                   {!collapsed && (
                     <div className="min-w-0 flex-1 text-left">
                       <div className="text-sm font-medium truncate">{it.label}</div>
                       {it.description && (
-                        <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.9 : 0.7 }}>
+                        <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
                           {it.description}
                         </div>
                       )}
                     </div>
                   )}
-                  {active && (
+                  {active && !collapsed && (
                     <span
                       className="absolute left-0 top-1/2 -translate-y-1/2"
-                      style={{ width: 3, height: 18, background: 'var(--accent-gold)', borderRadius: '0 999px 999px 0' }}
+                      style={{ width: 2, height: 16, background: 'var(--accent-gold)', borderRadius: '0 999px 999px 0' }}
                     />
                   )}
                 </button>
               );
             })}
           </nav>
-
-          <div
-            className={cn(
-              'relative overflow-hidden transition-all duration-300 ease-out shrink-0',
-              collapsed
-                ? 'rounded-full w-[50px] h-[50px] self-center'
-                : 'rounded-[16px] p-3'
-            )}
-            style={{
-              background: collapsed
-                ? 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)'
-                : 'linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 98%, white) 0%, color-mix(in srgb, var(--bg-elevated) 94%, black) 100%)',
-              border: '1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent)',
-              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
-            }}
-          >
-            {collapsed ? (
-              <button
-                type="button"
-                onClick={() => setAvatarOpen(true)}
-                className="h-full w-full rounded-full overflow-hidden"
-                title="修改头像"
-              >
-                {(() => {
-                  const url = resolveAvatarUrl({
-                    username: user?.username,
-                    userType: user?.userType,
-                    botKind: user?.botKind,
-                    avatarFileName: user?.avatarFileName ?? null,
-                    avatarUrl: user?.avatarUrl,
-                  });
-                  const fallback = resolveNoHeadAvatarUrl();
-                  return (
-                    <img
-                      src={url}
-                      alt="avatar"
-                      className="h-full w-full object-cover"
-                      onError={(e) => {
-                        const el = e.currentTarget;
-                        if (el.getAttribute('data-fallback-applied') === '1') return;
-                        if (!fallback) return;
-                        el.setAttribute('data-fallback-applied', '1');
-                        el.src = fallback;
-                      }}
-                    />
-                  );
-                })()}
-              </button>
-            ) : (
-              <>
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => setAvatarOpen(true)}
-                    className="h-9 w-9 rounded-[10px] overflow-hidden shrink-0 transition-all duration-200 hover:scale-105"
-                    style={{ 
-                      background: 'rgba(255,255,255,0.04)', 
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)'
-                    }}
-                    title="修改头像"
-                  >
-                    {(() => {
-                      const url = resolveAvatarUrl({
-                        username: user?.username,
-                        userType: user?.userType,
-                        botKind: user?.botKind,
-                        avatarFileName: user?.avatarFileName ?? null,
-                        avatarUrl: user?.avatarUrl,
-                      });
-                      const fallback = resolveNoHeadAvatarUrl();
-                      return (
-                        <img
-                          src={url}
-                          alt="avatar"
-                          className="h-full w-full object-cover"
-                          onError={(e) => {
-                            const el = e.currentTarget;
-                            if (el.getAttribute('data-fallback-applied') === '1') return;
-                            if (!fallback) return;
-                            el.setAttribute('data-fallback-applied', '1');
-                            el.src = fallback;
-                          }}
-                        />
-                      );
-                    })()}
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-bold truncate tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                      {user?.displayName || 'Admin'}
-                    </div>
-                    <div className="text-[10px] truncate tracking-wide mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-                      {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
-                    </div>
-                  </div>
-                </div>
-                <div 
-                  className="h-px w-full my-2.5"
-                  style={{
-                    background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)'
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => logout()}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-[10px] transition-all duration-200 hover:bg-white/6 group"
-                  style={{ 
-                    color: 'var(--text-secondary)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)'
-                  }}
-                >
-                  <LogOut size={16} className="shrink-0 transition-transform duration-200 group-hover:-translate-x-0.5" />
-                  <span className="text-[12px] font-medium">退出登录</span>
-                </button>
-              </>
-            )}
-          </div>
 
           <AvatarEditDialog
             open={avatarOpen}

@@ -4,6 +4,7 @@ import { saveImageMasterWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
+import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   addImageMasterWorkspaceMessage,
@@ -19,16 +20,22 @@ import {
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
 import {
   ArrowUp,
+  ArrowUpToLine,
+  ArrowDownToLine,
   AtSign,
   Check,
+  ChevronUp,
+  ChevronDown,
   Copy,
   Download,
   Eraser,
+  Grid3X3,
   Hand,
   ImagePlus,
   MapPin,
@@ -151,6 +158,8 @@ type PersistedCanvasElementV1 =
       naturalH?: number;
       locked?: boolean;
       hidden?: boolean;
+      /** 占位状态：running 表示生成中，后端会回填 */
+      status?: 'running' | 'error';
       ext?: Record<string, unknown>;
     }
   | {
@@ -257,10 +266,11 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
     if (kind === 'image') {
       const assetId = String(it.assetId ?? '').trim();
       const srcOk = isRemoteImageSrc(it.src);
-      if (!assetId && !srcOk) {
-        // 仅把“真正的本地临时内容”计入 skipped：
+      const isPlaceholder = it.status === 'running' || it.status === 'error';
+      if (!assetId && !srcOk && !isPlaceholder) {
+        // 仅把"真正的本地临时内容"计入 skipped：
         // - data: / blob: 属于本地内容，刷新后无法从服务器恢复 => 计数并提示
-        // - 空 src（例如生图占位 running/error）不应被误判为“本地临时内容”
+        // - 空 src（例如生图占位 running/error）不应被误判为"本地临时内容"
         const rawSrc = String(it.src ?? '').trim();
         if (rawSrc && (rawSrc.startsWith('data:') || rawSrc.startsWith('blob:'))) {
           skippedLocalOnlyImages += 1;
@@ -275,6 +285,8 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
         sha256: String(it.sha256 ?? '').trim() || undefined,
         naturalW: it.naturalW,
         naturalH: it.naturalH,
+        // 保存占位状态，以便后端回填时能找到目标元素
+        status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
         ext: {},
       });
     } else if (kind === 'generator') {
@@ -332,7 +344,8 @@ function persistedV1ToCanvas(
       const aid = String(el.assetId ?? '').trim();
       const a = aid ? byId.get(aid) : undefined;
       const src = a?.url || (isRemoteImageSrc(String(el.src ?? '')) ? String(el.src) : '');
-      if (!src) {
+      const isPlaceholder = el.status === 'running' || el.status === 'error';
+      if (!src && !isPlaceholder) {
         if (!aid && !el.src) localOnlyImages += 1;
         else missingAssets += 1;
         continue;
@@ -345,7 +358,8 @@ function persistedV1ToCanvas(
         createdAt: Date.now(),
         prompt,
         src,
-        status: 'done',
+        // 恢复占位状态：running 表示后端仍在生成中
+        status: isPlaceholder ? el.status! : 'done',
         kind: 'image',
         syncStatus: src.startsWith('/api/v1/admin/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
         syncError: null,
@@ -428,9 +442,24 @@ type CanvasPlacing =
 
 const clampZoom = (z: number) => Math.max(0.05, Math.min(3, z));
 const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
+
+/** 格式化时间戳为 yyyy.MM.dd HH:mm:ss */
+function formatMsgTimestamp(ts: number): string {
+  const d = new Date(ts);
+  if (!d || Number.isNaN(d.getTime())) return '';
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const y = d.getFullYear();
+  const mo = pad2(d.getMonth() + 1);
+  const day = pad2(d.getDate());
+  const h = pad2(d.getHours());
+  const mi = pad2(d.getMinutes());
+  const s = pad2(d.getSeconds());
+  return `${y}.${mo}.${day} ${h}:${mi}:${s}`;
+}
 const zoomFactorFromDeltaY = (deltaY: number) => {
-  // 更细腻：factor = exp(-dy*k)，并限制单次变化幅度，避免“一滚就跳”
-  const k = 0.0016;
+  // 更细腻：factor = exp(-dy*k)，并限制单次变化幅度，避免"一滚就跳"
+  // k=0.0024 适配 macOS 触控板手势（原 0.0016 提速 1.5 倍）
+  const k = 0.003;
   return clampZoomFactor(Math.exp(-deltaY * k));
 };
 
@@ -529,38 +558,6 @@ function truncateLabelFront(s: string, maxChars: number): string {
   if (t.length <= n) return t;
   // 用 "..."，与用户期望一致
   return t.slice(0, Math.max(1, n - 3)) + '...';
-}
-
-function renderMentionHighlights(text: string) {
-  const s = String(text ?? '');
-  // 仅高亮“原子 tag”：@model(...) / @vision(...) / @imgN
-  const rx = /@model\([^)]+\)|@vision\([^)]+\)|@img\d+|\(\s*@size\s*:\s*\d{2,5}\s*[xX×＊*]\s*\d{2,5}\s*\)/g;
-  const out: Array<JSX.Element | string> = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = rx.exec(s))) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (start > last) out.push(s.slice(last, start));
-    const token = s.slice(start, end);
-    out.push(
-      <span
-        key={`${start}_${end}`}
-        style={{
-          background: 'rgba(250, 204, 21, 0.18)',
-          border: '1px solid rgba(250, 204, 21, 0.22)',
-          borderRadius: 10,
-          boxDecorationBreak: 'clone',
-          WebkitBoxDecorationBreak: 'clone',
-        }}
-      >
-        {token}
-      </span>
-    );
-    last = end;
-  }
-  if (last < s.length) out.push(s.slice(last));
-  return out.length > 0 ? out : [''];
 }
 
 const SIZE_TOKEN_RE_SRC = String.raw`\(\s*@size\s*:\s*(\d{2,5}\s*[xX×＊*]\s*\d{2,5})\s*\)\s*`;
@@ -720,14 +717,6 @@ function tryParseWxH(size: string | null | undefined): { w: number; h: number } 
   return { w: Math.round(w), h: Math.round(h) };
 }
 
-// 检测参照图的分辨率档位（1K/2K/4K）
-function detectTierFromRefImage(w: number, h: number): '1k' | '2k' | '4k' {
-  const area = w * h;
-  if (area >= 8_000_000) return '4k'; // ~4096² = 16,777,216
-  if (area >= 2_500_000) return '2k'; // ~2048² = 4,194,304
-  return '1k';
-}
-
 // 从尺寸字符串检测档位
 function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
   const s = (size || '').trim().toLowerCase();
@@ -753,41 +742,49 @@ function detectAspectFromSize(size: string): string {
 // 从白名单中找到最接近的尺寸（基于比例和像素面积）
 function findClosestSize(requestedSize: string, allowedSizes: string[]): string | null {
   if (allowedSizes.length === 0) return null;
-  
+
   const parseSize = (s: string) => {
     const m = /(\d+)\s*[xX×]\s*(\d+)/.exec(s);
     if (!m) return null;
     return { w: Number(m[1]), h: Number(m[2]) };
   };
-  
+
   const req = parseSize(requestedSize);
   if (!req) return null;
-  
+
   const reqRatio = req.w / req.h;
   const reqArea = req.w * req.h;
-  
+
   let bestMatch: string | null = null;
   let bestScore = Infinity;
-  
+
   for (const allowed of allowedSizes) {
     const a = parseSize(allowed);
     if (!a) continue;
-    
+
     const aRatio = a.w / a.h;
     const aArea = a.w * a.h;
-    
+
     // 评分：比例差异权重 0.7，面积差异权重 0.3
     const ratioDiff = Math.abs(reqRatio - aRatio) / reqRatio;
     const areaDiff = Math.abs(reqArea - aArea) / reqArea;
     const score = ratioDiff * 0.7 + areaDiff * 0.3;
-    
+
     if (score < bestScore) {
       bestScore = score;
       bestMatch = allowed;
     }
   }
-  
+
   return bestMatch;
+}
+
+// 检测参照图的分辨率档位（1K/2K/4K）
+function detectTierFromRefImage(w: number, h: number): '1k' | '2k' | '4k' {
+  const area = w * h;
+  if (area >= 8_000_000) return '4k'; // ~4096² = 16,777,216
+  if (area >= 2_500_000) return '2k'; // ~2048² = 4,194,304
+  return '1k';
 }
 
 function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | undefined): string | null {
@@ -944,7 +941,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     return byId ?? serverDefaultModel;
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
-  // 白名单检测：获取当前模型支持的尺寸列表（用于禁用不支持的档位）
+  // 白名单检测（用于尺寸选择器）
   const [allowedSizes, setAllowedSizes] = useState<string[]>([]);
   useEffect(() => {
     const modelId = effectiveModel?.id;
@@ -1003,13 +1000,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const quickInputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeComposerRef = useRef<'right' | 'quick'>('right');
+  
+  // 富文本编辑器 ref
+  const richComposerRef = useRef<RichComposerRef | null>(null);
   const composingRef = useRef(false);
   const [composerSize, setComposerSize] = useState<string | null>(null);
   const composerSizeAutoRef = useRef(true);
   const inputPanelRef = useRef<HTMLDivElement | null>(null);
-  const highlightRef = useRef<HTMLDivElement | null>(null);
   const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
-  const [taHeight, setTaHeight] = useState<number>(MIN_TA_HEIGHT);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
@@ -1018,6 +1016,23 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
+  
+  // 图片选项（用于 @ 下拉菜单）
+  const imageOptions = useMemo<ImageOption[]>(() => {
+    return canvas
+      .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
+      .map((it) => {
+        const id = it.refId ?? 0;
+        return {
+          key: it.key,
+          refId: id,
+          src: it.src || '',
+          label: guessRefName(it) || `img${id}`,
+        };
+      })
+      .filter((opt) => opt.refId > 0);
+  }, [canvas]);
+  
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const selectedKeysRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1036,6 +1051,19 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     if (!src) return null;
     return it;
   }, [selected, selectedKeys.length]);
+
+  // 多选时：获取所有选中的图片（用于顶部 chip 显示）
+  const selectedImagesForComposer = useMemo(() => {
+    if (selectedKeys.length === 0) return [];
+    return selectedKeys
+      .map((k) => canvas.find((c) => c.key === k))
+      .filter((it): it is CanvasImageItem => {
+        if (!it) return false;
+        if ((it.kind ?? 'image') !== 'image') return false;
+        const src = String(it.src ?? '').trim();
+        return !!src;
+      });
+  }, [canvas, selectedKeys]);
 
   const autoSizeForSelectedImage = useMemo(() => {
     const it = selectedSingleImageForComposer;
@@ -1068,9 +1096,20 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     if (composerSizeAutoRef.current) setComposerSize(autoSize);
   }, [autoSizeForSelectedImage, selectedSingleImageForComposer?.key]);
 
-  // chip 作为内联元素，只需要很小的上边距（让按钮和文字更好地融合）
-  // 按钮高度 20px（减小2px），上边距 6px，让按钮更贴近文字基线
-  const composerMetaPadTop = selectedSingleImageForComposer ? 28 : 0;
+  // chip 作为内联元素，需要根据选中数量计算高度
+  // 每个 chip 约 140px 宽，每行可容纳 2-3 个
+  // 行高 20px + gap 6px = 26px，加上尺寸选择器
+  const composerMetaPadTop = useMemo(() => {
+    const count = selectedImagesForComposer.length;
+    if (count === 0) return 0;
+    // 估算：每行约 2-3 个 chip，考虑尺寸选择器占一行
+    // 1-2 张：1 行 chip + 尺寸 = 28 + 26 = 54px（但通常一行够）
+    // 3+ 张：可能换行
+    // 简化：count <= 2 用 28px，3-4 用 54px，5+ 用 80px
+    if (count <= 2) return 28;
+    if (count <= 4) return 54;
+    return 80;
+  }, [selectedImagesForComposer.length]);
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
@@ -1447,7 +1486,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       // ignore
     }
     requestAnimationFrame(() => {
-      inputRef.current?.focus();
+      // 优先使用富文本编辑器
+      if (richComposerRef.current) {
+        richComposerRef.current.focus();
+      } else {
+        inputRef.current?.focus();
+      }
     });
   }, []);
 
@@ -1630,6 +1674,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
   }, []);
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string }>({ open: false, src: '', prompt: '' });
+
+  // 图片右键菜单状态
+  const [imgContextMenu, setImgContextMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    src: string;
+    prompt: string;
+    key: string; // 右键点击的元素 key，用于图层操作
+  }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -2263,44 +2317,48 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
 
       const w = Math.max(1, Math.round(desiredW));
       const h = Math.max(1, Math.round(desiredH));
-      // “最近路径”思路：在网格上做 BFS，从中心向外扩展，找到第一个不重叠的位置
       const step = 48;
-      // 自适应搜索半径：大图/密集场景时固定半径不够会 fallback 到中心，从而出现“还是盖住老图”
+      // 自适应搜索半径
       const viewSpan = Math.max(stageSizeRef.current.w || 900, stageSizeRef.current.h || 700);
       const existingMax = existing.length ? Math.max(...existing.map((r) => Math.max(r.w, r.h))) : 0;
       const maxDim = Math.max(viewSpan * 2, existingMax * 2, w * 2, h * 2);
       const maxSteps = Math.max(26, Math.ceil((maxDim + 240) / step));
-      const q: Array<{ gx: number; gy: number }> = [{ gx: 0, gy: 0 }];
-      const seen = new Set<string>(['0,0']);
-      const dirs = [
-        { dx: 1, dy: 0 },
-        { dx: -1, dy: 0 },
-        { dx: 0, dy: 1 },
-        { dx: 0, dy: -1 },
-      ];
-      while (q.length) {
-        const cur = q.shift()!;
-        const dist = Math.abs(cur.gx) + Math.abs(cur.gy);
-        if (dist <= maxSteps) {
-          const worldCx = nearWorld.x + cur.gx * step;
-          const worldCy = nearWorld.y + cur.gy * step;
-          const x = Math.round(worldCx - w / 2);
-          const y = Math.round(worldCy - h / 2);
-          const cand = { x, y, w, h };
-          const hit = existing.some((r) => intersects(r, cand, 18));
-          if (!hit) return { x, y };
-        }
-        for (const d of dirs) {
-          const nx = cur.gx + d.dx;
-          const ny = cur.gy + d.dy;
-          const nd = Math.abs(nx) + Math.abs(ny);
-          if (nd > maxSteps) continue;
-          const key = `${nx},${ny}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          q.push({ gx: nx, gy: ny });
+
+      // 使用欧氏距离优先的搜索：生成候选位置并按欧氏距离排序
+      // 这样可以确保选择真正几何距离最近的空闲位置
+      type Candidate = { gx: number; gy: number; dist: number };
+      const candidates: Candidate[] = [];
+      const seen = new Set<string>();
+
+      // 生成网格候选位置（从中心向外扩展）
+      for (let r = 0; r <= maxSteps; r++) {
+        for (let gx = -r; gx <= r; gx++) {
+          for (let gy = -r; gy <= r; gy++) {
+            // 只取当前环上的点（曼哈顿距离 == r 或 首次出现）
+            const key = `${gx},${gy}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            // 欧氏距离
+            const dist = Math.sqrt(gx * gx + gy * gy);
+            candidates.push({ gx, gy, dist });
+          }
         }
       }
+
+      // 按欧氏距离排序（最近的在前）
+      candidates.sort((a, b) => a.dist - b.dist);
+
+      // 依次检查候选位置，返回第一个不重叠的
+      for (const c of candidates) {
+        const worldCx = nearWorld.x + c.gx * step;
+        const worldCy = nearWorld.y + c.gy * step;
+        const x = Math.round(worldCx - w / 2);
+        const y = Math.round(worldCy - h / 2);
+        const cand = { x, y, w, h };
+        const hit = existing.some((r) => intersects(r, cand, 18));
+        if (!hit) return { x, y };
+      }
+
       // fallback：直接放在中心
       return { x: Math.round(nearWorld.x - w / 2), y: Math.round(nearWorld.y - h / 2) };
     },
@@ -2390,6 +2448,44 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         const k = easeOutCubic(t);
         const next = { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k };
         setViewport(zoomRef.current, next, { syncUi: t >= 1 });
+        if (t < 1) cameraAnimRef.current = requestAnimationFrame(tick);
+        else cameraAnimRef.current = null;
+      };
+      cameraAnimRef.current = requestAnimationFrame(tick);
+    },
+    [setViewport, stageSize.h, stageSize.w]
+  );
+
+  /** 动画移动视角并适配尺寸，使指定矩形区域完整显示在视口中 */
+  const animateCameraToFitRect = useCallback(
+    (rect: { x: number; y: number; w: number; h: number }) => {
+      if (!stageSize.w || !stageSize.h) return;
+      const pad = 60; // 留边距
+      const viewW = Math.max(1, stageSize.w - pad * 2);
+      const viewH = Math.max(1, stageSize.h - pad * 2);
+      const rectW = Math.max(1, rect.w);
+      const rectH = Math.max(1, rect.h);
+      // 计算合适的缩放比例，使矩形能够完整显示
+      const targetZoom = clampZoom(Math.min(viewW / rectW, viewH / rectH, 1)); // 最大不超过 100%
+      const worldCx = rect.x + rectW / 2;
+      const worldCy = rect.y + rectH / 2;
+      const fromZoom = zoomRef.current;
+      const fromCam = { ...cameraRef.current };
+      const toZoom = targetZoom;
+      const toCam = {
+        x: stageSize.w / 2 - worldCx * toZoom,
+        y: stageSize.h / 2 - worldCy * toZoom,
+      };
+      if (cameraAnimRef.current != null) cancelAnimationFrame(cameraAnimRef.current);
+      const start = performance.now();
+      const dur = 320; // 稍长一点的动画时间
+      const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / dur);
+        const k = easeOutCubic(t);
+        const nextZoom = fromZoom + (toZoom - fromZoom) * k;
+        const nextCam = { x: fromCam.x + (toCam.x - fromCam.x) * k, y: fromCam.y + (toCam.y - fromCam.y) * k };
+        setViewport(nextZoom, nextCam, { syncUi: t >= 1 });
         if (t < 1) cameraAnimRef.current = requestAnimationFrame(tick);
         else cameraAnimRef.current = null;
       };
@@ -2605,29 +2701,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     return { forced, clean };
   };
 
-  const recomputeTextareaHeight = useCallback(() => {
-    const ta = inputRef.current;
-    const wrap = inputPanelRef.current;
-    if (!ta || !wrap) return;
-    // max: 父容器高度的一半
-    const parent = wrap.parentElement;
-    const parentH = parent?.clientHeight ?? 0;
-    const maxH = Math.max(MIN_TA_HEIGHT, Math.floor(parentH / 2));
-    // 先清空高度再测 scrollHeight
-    ta.style.height = 'auto';
-    const next = Math.min(Math.max(ta.scrollHeight, MIN_TA_HEIGHT), maxH);
-    setTaHeight(next);
-  }, [MIN_TA_HEIGHT]);
-
-  useEffect(() => {
-    recomputeTextareaHeight();
-  }, [input, mentionOpen, recomputeTextareaHeight, rightWidth]);
-
-  useEffect(() => {
-    const onResize = () => recomputeTextareaHeight();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [recomputeTextareaHeight]);
+  // RichComposer 自动处理高度，已移除 recomputeTextareaHeight 相关逻辑
 
   const runFromText = async (
     displayText: string,
@@ -2716,6 +2790,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       ? selectedFirstKey
       : pickNearestGeneratorKey(canvasRef.current, near);
     const key = generatorExistingKey ?? `gen_${Date.now()}`;
+    // 获取参考图（选中图）的位置信息，用于联合适配
+    const refItem = primaryRef ?? selectedAtSend;
+    const refRect = refItem && typeof refItem.x === 'number' && typeof refItem.y === 'number'
+      ? { x: refItem.x, y: refItem.y, w: refItem.w ?? 320, h: refItem.h ?? 220 }
+      : undefined;
+
     setCanvas((prev) => {
       const existingRects = prev
         .filter(
@@ -2728,7 +2808,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
               x.status === 'error')
         )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
-      // 占位尺寸随 requested size（保持比例），避免“永远 1K 方形”的观感
+      // 占位尺寸随 requested size（保持比例），避免"永远 1K 方形"的观感
       const parsedSize = tryParseWxH(resolvedSizeForGen);
       const genW = parsedSize?.w ?? 1024;
       const genH = parsedSize?.h ?? 1024;
@@ -2739,12 +2819,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         const gy = found?.y ?? near.y - genH / 2;
         const gw = found?.w ?? genW;
         const gh = found?.h ?? genH;
-        focusKeyRef.current = { key, cx: gx + gw / 2, cy: gy + gh / 2 };
+        focusKeyRef.current = { key, cx: gx + gw / 2, cy: gy + gh / 2, w: gw, h: gh, refRect };
         return prev.map((x) =>
           x.key === generatorExistingKey
             ? {
                 ...x,
-                // 需求：一旦开始生成，生成器立即转换为“普通图片”（running）
+                // 需求：一旦开始生成，生成器立即转换为"普通图片"（running）
                 // 这样底部白色快捷输入框会消失，同时仍保持加载动画与可选中行为
                 kind: 'image',
                 createdAt: Date.now(),
@@ -2775,16 +2855,31 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         x: pos.x,
         y: pos.y,
       };
-      focusKeyRef.current = { key, cx: pos.x + genW / 2, cy: pos.y + genH / 2 };
+      focusKeyRef.current = { key, cx: pos.x + genW / 2, cy: pos.y + genH / 2, w: genW, h: genH, refRect };
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
       return [...prev, placeholder].slice(-60);
     });
-    // 体验：像“上传图片”一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
+    // 体验：像"上传图片"一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
     setSelectedKeys([key]);
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f || f.key !== key) return;
-      animateCameraToWorldCenter(f.cx, f.cy);
+      // 新图可能很大，移动视角前先适配尺寸（选中图 + 目标图联合适配）
+      if (f.w && f.h) {
+        const targetRect = { x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h };
+        if (f.refRect) {
+          // 计算联合边界框
+          const minX = Math.min(targetRect.x, f.refRect.x);
+          const minY = Math.min(targetRect.y, f.refRect.y);
+          const maxX = Math.max(targetRect.x + targetRect.w, f.refRect.x + f.refRect.w);
+          const maxY = Math.max(targetRect.y + targetRect.h, f.refRect.y + f.refRect.h);
+          animateCameraToFitRect({ x: minX, y: minY, w: maxX - minX, h: maxY - minY });
+        } else {
+          animateCameraToFitRect(targetRect);
+        }
+      } else {
+        animateCameraToWorldCenter(f.cx, f.cy);
+      }
     });
 
     try {
@@ -2905,6 +3000,24 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       }
 
       const cur = canvasRef.current.find((x) => x.key === key) ?? null;
+
+      // 关键：在调用后端生成任务前，强制立即保存 canvas（确保占位元素已持久化）
+      // 避免用户关闭页面后，后端回填时找不到目标元素
+      {
+        const built = canvasToPersistedV1(canvasRef.current ?? []);
+        const json = JSON.stringify(built.state);
+        if (json !== lastSavedJsonRef.current) {
+          lastSavedJsonRef.current = json;
+          lastSaveAtRef.current = Date.now();
+          await saveImageMasterWorkspaceCanvas({
+            id: workspaceId,
+            schemaVersion: PERSIST_SCHEMA_VERSION,
+            payloadJson: json,
+            idempotencyKey: `preGenSave_${key}`,
+          });
+        }
+      }
+
       const runRes = await createWorkspaceImageGenRun({
         id: workspaceId,
         input: {
@@ -3115,6 +3228,25 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     await sendText(raw);
   };
 
+  // 富文本编辑器发送
+  const onSendRich = async () => {
+    const composer = richComposerRef.current;
+    if (!composer) return;
+    
+    const { text } = composer.getStructuredContent();
+    if (!text.trim()) return;
+    
+    // 只有 (@size:...) 而没有实际内容时，不应发送
+    const clean = String(extractSizeToken(text).cleanText ?? '').trim();
+    if (!clean) return;
+    
+    composer.clear();
+    setInput('');
+    composerSizeAutoRef.current = true;
+    if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
+    await sendText(text);
+  };
+
   const onSendQuick = async () => {
     const raw = quickInput.trim();
     if (!raw) return;
@@ -3184,11 +3316,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
             return ax0 < bx1 && ax1 > bx0 && ay0 < by1 && ay1 > by0;
           });
           const pos = hit ? findNearestFreeTopLeft(others, nextW, nextH, { x: cx, y: cy }) : { x: it.x ?? 0, y: it.y ?? 0 };
-          focusKeyRef.current = { key: targetKey, cx: pos.x + nextW / 2, cy: pos.y + nextH / 2 };
+          focusKeyRef.current = { key: targetKey, cx: pos.x + nextW / 2, cy: pos.y + nextH / 2, w: nextW, h: nextH };
           requestAnimationFrame(() => {
             const f = focusKeyRef.current;
             if (!f || f.key !== targetKey) return;
-            animateCameraToWorldCenter(f.cx, f.cy);
+            // 新图可能很大，移动视角前先适配尺寸
+            if (f.w && f.h) {
+              animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h });
+            } else {
+              animateCameraToWorldCenter(f.cx, f.cy);
+            }
           });
           return {
             ...it,
@@ -3304,7 +3441,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         )
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
       const placed: CanvasImageItem[] = [];
-      let focus: { key: string; cx: number; cy: number } | null = null;
+      let focus: { key: string; cx: number; cy: number; w?: number; h?: number } | null = null;
       for (const it of added) {
         const w = it.w ?? 1;
         const h = it.h ?? 1;
@@ -3312,7 +3449,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         const nextIt: CanvasImageItem = { ...it, w, h, x: pos.x, y: pos.y };
         placed.push(nextIt);
         existingRects.push({ x: pos.x, y: pos.y, w, h });
-        focus = { key: it.key, cx: pos.x + w / 2, cy: pos.y + h / 2 };
+        focus = { key: it.key, cx: pos.x + w / 2, cy: pos.y + h / 2, w, h };
       }
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
       const merged = [...prev, ...placed].slice(-60);
@@ -3325,7 +3462,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f) return;
-      animateCameraToWorldCenter(f.cx, f.cy);
+      // 新图可能很大，移动视角前先适配尺寸
+      if (f.w && f.h) {
+        animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h });
+      } else {
+        animateCameraToWorldCenter(f.cx, f.cy);
+      }
     });
     pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
 
@@ -3441,10 +3583,36 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
     { id: 'story', title: 'Story Board', desc: '生成短片分镜首帧图（情绪与镜头）' },
   ] as const;
 
-  const fitToStage = useCallback(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const itemsAll = canvas.filter(
+  /** 适配指定内容到视口（Figma 风格）*/
+  const fitItemsToViewport = useCallback(
+    (items: CanvasImageItem[]) => {
+      if (items.length === 0) {
+        // 回到原点附近
+        setViewport(DEFAULT_ZOOM, { x: Math.round(stageSize.w / 2), y: Math.round(stageSize.h / 2) }, { syncUi: true });
+        return;
+      }
+      const minX = Math.min(...items.map((it) => it.x ?? 0));
+      const minY = Math.min(...items.map((it) => it.y ?? 0));
+      const maxX = Math.max(...items.map((it) => (it.x ?? 0) + (it.w ?? 320)));
+      const maxY = Math.max(...items.map((it) => (it.y ?? 0) + (it.h ?? 220)));
+      const bboxW = Math.max(1, maxX - minX);
+      const bboxH = Math.max(1, maxY - minY);
+      const pad = 80;
+      const viewW = Math.max(1, stageSize.w - pad * 2);
+      const viewH = Math.max(1, stageSize.h - pad * 2);
+      const nextZoom = clampZoom(Math.min(viewW / bboxW, viewH / bboxH));
+      const cx = minX + bboxW / 2;
+      const cy = minY + bboxH / 2;
+      const camX = stageSize.w / 2 - cx * nextZoom;
+      const camY = stageSize.h / 2 - cy * nextZoom;
+      setViewport(nextZoom, { x: camX, y: camY }, { syncUi: true });
+    },
+    [setViewport, stageSize.h, stageSize.w]
+  );
+
+  /** 获取所有可见画布元素 */
+  const getVisibleCanvasItems = useCallback(() => {
+    return canvas.filter(
       (x) =>
         ((x.kind ?? 'image') === 'generator' ||
           (x.kind ?? 'image') === 'shape' ||
@@ -3453,31 +3621,154 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
           x.status === 'running' ||
           x.status === 'error')
     );
-    const items =
-      selectedKeys.length > 0 ? itemsAll.filter((x) => selectedKeys.includes(x.key)) : itemsAll;
-    if (items.length === 0) {
-      // 回到原点附近
-      setViewport(DEFAULT_ZOOM, { x: Math.round(stageSize.w / 2), y: Math.round(stageSize.h / 2) }, { syncUi: true });
-      return;
-    }
-    const minX = Math.min(...items.map((it) => it.x ?? 0));
-    const minY = Math.min(...items.map((it) => it.y ?? 0));
-    const maxX = Math.max(...items.map((it) => (it.x ?? 0) + (it.w ?? 320)));
-    const maxY = Math.max(...items.map((it) => (it.y ?? 0) + (it.h ?? 220)));
-    const bboxW = Math.max(1, maxX - minX);
-    const bboxH = Math.max(1, maxY - minY);
-    const pad = 80;
-    const viewW = Math.max(1, stageSize.w - pad * 2);
-    const viewH = Math.max(1, stageSize.h - pad * 2);
-    const nextZoom = clampZoom(Math.min(viewW / bboxW, viewH / bboxH));
-    const cx = minX + bboxW / 2;
-    const cy = minY + bboxH / 2;
-    const camX = stageSize.w / 2 - cx * nextZoom;
-    const camY = stageSize.h / 2 - cy * nextZoom;
-    setViewport(nextZoom, { x: camX, y: camY }, { syncUi: true });
-  }, [canvas, selectedKeys, setViewport, stageSize.h, stageSize.w]);
+  }, [canvas]);
 
-  // Figma-ish：Shift+1 适配画布（仅在画布区域操作时生效）
+  /** Shift+1: 适配选中内容（无选中时适配全部） */
+  const fitToSelection = useCallback(() => {
+    const itemsAll = getVisibleCanvasItems();
+    const items = selectedKeys.length > 0 ? itemsAll.filter((x) => selectedKeys.includes(x.key)) : itemsAll;
+    fitItemsToViewport(items);
+  }, [fitItemsToViewport, getVisibleCanvasItems, selectedKeys]);
+
+  /** Cmd/Ctrl+0: 适配全部内容 */
+  const fitToAll = useCallback(() => {
+    const items = getVisibleCanvasItems();
+    fitItemsToViewport(items);
+  }, [fitItemsToViewport, getVisibleCanvasItems]);
+
+  /** Cmd/Ctrl+1: 缩放到 100%（保持当前视口中心不变） */
+  const zoomTo100 = useCallback(() => {
+    // 计算当前视口中心对应的世界坐标
+    const currentZoom = zoomRef.current;
+    const currentCam = cameraRef.current;
+    const viewCenterX = stageSize.w / 2;
+    const viewCenterY = stageSize.h / 2;
+    // 视口中心对应的世界坐标
+    const worldCx = (viewCenterX - currentCam.x) / currentZoom;
+    const worldCy = (viewCenterY - currentCam.y) / currentZoom;
+    // 设置新的 camera 使得相同的世界坐标仍然在视口中心（但 zoom = 1）
+    const newCamX = viewCenterX - worldCx * 1;
+    const newCamY = viewCenterY - worldCy * 1;
+    setViewport(1, { x: newCamX, y: newCamY }, { syncUi: true });
+  }, [setViewport, stageSize.h, stageSize.w]);
+
+  /** 自动排列：网格布局 */
+  const arrangeGrid = useCallback(() => {
+    const items = canvasRef.current.filter(
+      (it) =>
+        (it.kind ?? 'image') === 'image' ||
+        (it.kind ?? 'image') === 'generator' ||
+        (it.kind ?? 'image') === 'shape' ||
+        (it.kind ?? 'image') === 'text'
+    );
+    if (items.length === 0) return;
+
+    // 按创建时间排序
+    const sorted = [...items].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+
+    // 计算平均尺寸作为网格单元基准
+    let totalW = 0, totalH = 0;
+    for (const it of sorted) {
+      totalW += it.w ?? 320;
+      totalH += it.h ?? 220;
+    }
+    const avgW = totalW / sorted.length;
+    const avgH = totalH / sorted.length;
+
+    // 计算列数：根据视口宽度和元素平均宽度
+    const gap = 40; // 元素间距
+    const viewW = stageSize.w || 1200;
+    const cols = Math.max(1, Math.floor((viewW * 0.8) / (avgW + gap)));
+
+    // 计算起始位置（以当前视口中心为基准）
+    const currentCam = cameraRef.current;
+    const currentZoom = zoomRef.current;
+    const viewCenterX = (stageSize.w / 2 - currentCam.x) / currentZoom;
+    const viewCenterY = (stageSize.h / 2 - currentCam.y) / currentZoom;
+
+    // 计算网格总尺寸
+    const rows = Math.ceil(sorted.length / cols);
+    const gridW = cols * (avgW + gap) - gap;
+    const gridH = rows * (avgH + gap) - gap;
+
+    // 起点：网格左上角
+    const startX = viewCenterX - gridW / 2;
+    const startY = viewCenterY - gridH / 2;
+
+    // 分配位置
+    const updates: Record<string, { x: number; y: number }> = {};
+    let col = 0, row = 0;
+    for (const it of sorted) {
+      const x = startX + col * (avgW + gap);
+      const y = startY + row * (avgH + gap);
+      updates[it.key] = { x, y };
+      col++;
+      if (col >= cols) {
+        col = 0;
+        row++;
+      }
+    }
+
+    // 更新画布
+    setCanvas((prev) => {
+      const next = prev.map((it) =>
+        updates[it.key] ? { ...it, x: updates[it.key].x, y: updates[it.key].y } : it
+      );
+      canvasRef.current = next;
+      return next;
+    });
+
+    // 适配视口
+    requestAnimationFrame(() => {
+      fitToAll();
+    });
+  }, [fitToAll, stageSize.w, stageSize.h]);
+
+  // 图层操作回调
+  const layerMoveUp = useCallback(() => {
+    if (selectedKeys.length === 0) return;
+    setCanvas((prev) => {
+      const next = moveUp(prev, selectedKeys);
+      canvasRef.current = next;
+      return next;
+    });
+  }, [selectedKeys]);
+
+  const layerMoveDown = useCallback(() => {
+    if (selectedKeys.length === 0) return;
+    setCanvas((prev) => {
+      const next = moveDown(prev, selectedKeys);
+      canvasRef.current = next;
+      return next;
+    });
+  }, [selectedKeys]);
+
+  const layerBringToFront = useCallback(() => {
+    if (selectedKeys.length === 0) return;
+    setCanvas((prev) => {
+      const next = bringToFront(prev, selectedKeys);
+      canvasRef.current = next;
+      return next;
+    });
+  }, [selectedKeys]);
+
+  const layerSendToBack = useCallback(() => {
+    if (selectedKeys.length === 0) return;
+    setCanvas((prev) => {
+      const next = sendToBack(prev, selectedKeys);
+      canvasRef.current = next;
+      return next;
+    });
+  }, [selectedKeys]);
+
+  // Figma 风格快捷键（仅在画布区域操作时生效）
+  // - Shift+1: 适配全部内容 (Zoom to Fit)
+  // - Shift+2: 适配选中内容 (Zoom to Selection)，无选中时等同于 Shift+1
+  // - Shift+0: 缩放到 100% (Zoom to 100%)
+  // - Cmd/Ctrl+]: 上移一层
+  // - Cmd/Ctrl+[: 下移一层
+  // - Cmd/Ctrl+Shift+]: 置于顶层
+  // - Cmd/Ctrl+Shift+[: 置于底层
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       // 输入控件内不处理，避免抢占用户输入
@@ -3490,25 +3781,81 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
         Boolean(ae?.getAttribute?.('contenteditable'));
       if (isEditable) return;
 
-      // 仅当“在画板上操作”时才响应：画板 hover 或画板获得焦点
+      // 仅当"在画板上操作"时才响应：画板 hover 或画板获得焦点
       const stageEl = stageRef.current;
       const isInStage = (stageEl && ae && stageEl.contains(ae)) || stageHoverRef.current;
       if (!isInStage) return;
 
-      // 避免与浏览器/系统快捷键冲突
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const isMod = e.metaKey || e.ctrlKey;
+      const is0 = e.key === '0' || e.code === 'Digit0';
+      const is1 = e.key === '1' || e.code === 'Digit1';
+      const is2 = e.key === '2' || e.code === 'Digit2';
+      const isBracketRight = e.key === ']' || e.code === 'BracketRight';
+      const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
 
-      if (e.shiftKey && (e.key === '1' || e.code === 'Digit1')) {
+      // Cmd/Ctrl+Shift+]: 置于顶层
+      if (isMod && e.shiftKey && !e.altKey && isBracketRight) {
         e.preventDefault();
-        fitToStage();
+        layerBringToFront();
+        return;
+      }
+
+      // Cmd/Ctrl+Shift+[: 置于底层
+      if (isMod && e.shiftKey && !e.altKey && isBracketLeft) {
+        e.preventDefault();
+        layerSendToBack();
+        return;
+      }
+
+      // Cmd/Ctrl+]: 上移一层
+      if (isMod && !e.shiftKey && !e.altKey && isBracketRight) {
+        e.preventDefault();
+        layerMoveUp();
+        return;
+      }
+
+      // Cmd/Ctrl+[: 下移一层
+      if (isMod && !e.shiftKey && !e.altKey && isBracketLeft) {
+        e.preventDefault();
+        layerMoveDown();
+        return;
+      }
+
+      // Shift+0: 缩放到 100%
+      if (e.shiftKey && !isMod && !e.altKey && is0) {
+        e.preventDefault();
+        zoomTo100();
+        return;
+      }
+
+      // Shift+1: 适配全部内容
+      if (e.shiftKey && !isMod && !e.altKey && is1) {
+        e.preventDefault();
+        fitToAll();
+        return;
+      }
+
+      // Shift+2: 适配选中内容（无选中时适配全部）
+      if (e.shiftKey && !isMod && !e.altKey && is2) {
+        e.preventDefault();
+        fitToSelection();
+        return;
       }
     };
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [fitToStage]);
+  }, [fitToAll, fitToSelection, zoomTo100, layerMoveUp, layerMoveDown, layerBringToFront, layerSendToBack]);
 
-  const focusKeyRef = useRef<{ key: string; cx: number; cy: number } | null>(null);
+  const focusKeyRef = useRef<{
+    key: string;
+    cx: number;
+    cy: number;
+    w?: number;
+    h?: number;
+    /** 参考图/选中图的位置，用于联合适配 */
+    refRect?: { x: number; y: number; w: number; h: number };
+  } | null>(null);
 
   const selectedGenerator = useMemo(() => {
     const k = selectedKeys[0];
@@ -3845,7 +4192,10 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
                 const showSelectOverlay = effectiveTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
-                const showHandles = showSelectOverlay && selectedKeys.length === 1;
+                // 单选时显示可交互的四角控制点；多选时也显示但仅作为视觉标识（不可 resize）
+                const isSingleSelect = selectedKeys.length === 1;
+                const showHandles = showSelectOverlay; // 多选时也显示四角圆点
+                const canResize = showSelectOverlay && isSingleSelect; // 仅单选可交互
                 const boxW = Math.max(40, Math.round(w));
                 const boxH = Math.max(40, Math.round(h));
                 const nw = typeof it.naturalW === 'number' ? it.naturalW : 0;
@@ -3870,6 +4220,11 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                   border: '2px solid rgba(96,165,250,0.95)',
                   boxShadow: '0 10px 22px rgba(0,0,0,0.28)',
                 };
+                // 动态计算边框宽度：确保屏幕像素永远 >= 2px（参考四角控制点的缩放策略）
+                const invZoom = 1 / Math.max(0.0001, zoom);
+                // 基准宽度 * invZoom，确保最小 2px 屏幕像素
+                const strokeOuter = Math.max(2, 4 * invZoom);
+                const strokeInner = Math.max(2, 2.5 * invZoom);
                 return (
                   <div
                     key={it.key}
@@ -3881,18 +4236,38 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                       height: boxH,
                       // 外层容器仅负责布局/拖拽命中；边框应贴合图片本体，因此容器不画边框
                       border: '1px solid transparent',
-                      // 根因：这里的 background/boxShadow 会永远渲染一个“长方形卡片”
+                      // 根因：这里的 background/boxShadow 会永远渲染一个"长方形卡片"
                       // 需求：元素本体就是图片本身，不应出现任何额外长方形框 => 直接去掉
                       background: 'transparent',
                       boxShadow: 'none',
                       overflow: 'visible',
                       cursor: panning || effectiveTool === 'hand' ? 'inherit' : 'pointer',
                     }}
+                    onContextMenu={(e) => {
+                      // 阻止默认右键菜单，避免选中整个页面
+                      e.preventDefault();
+                      e.stopPropagation();
+                      // 显示右键菜单（图层操作对所有类型都可用）
+                      setImgContextMenu({
+                        open: true,
+                        x: e.clientX,
+                        y: e.clientY,
+                        src: it.src || '',
+                        prompt: it.prompt || 'image',
+                        key: it.key,
+                      });
+                      // 如果当前元素未被选中，则单选它（便于后续图层操作）
+                      if (!selectedKeys.includes(it.key)) {
+                        setSelectedKeys([it.key]);
+                      }
+                    }}
                     onMouseDown={(e) => {
                       if (effectiveTool !== 'hand') e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
                       if (effectiveTool === 'hand') return;
+                      // 右键点击不启动拖拽，让 contextmenu 事件正常触发
+                      if (e.button === 2) return;
                       focusStage();
                       e.stopPropagation();
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
@@ -3900,7 +4275,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                       const cur = selectedKeys;
                       let nextKeys: string[];
                       if (shift) {
-                        // shift+拖拽不做“取消选择”，只做追加选择
+                        // shift+拖拽不做"取消选择"，只做追加选择
                         nextKeys = cur.includes(it.key) ? cur : cur.concat(it.key);
                         setSelectedKeys(nextKeys);
                       } else {
@@ -4252,7 +4627,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                           overflow="visible"
                           style={{ position: 'absolute', inset: 0 }}
                         >
-                          {/* 外描边：深色更粗，提升在大图/复杂背景下的可见性（保持屏幕像素恒定） */}
+                          {/* 外描边：深色更粗，提升在大图/复杂背景下的可见性（动态宽度确保 >= 2px 屏幕像素） */}
                           <rect
                             x="0"
                             y="0"
@@ -4262,8 +4637,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                             ry={selRadius}
                             fill="none"
                             stroke="rgba(0,0,0,0.45)"
-                            strokeWidth="5"
-                            vectorEffect="non-scaling-stroke"
+                            strokeWidth={strokeOuter}
                           />
                           <rect
                             x="0"
@@ -4274,73 +4648,112 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                             ry={selRadius}
                             fill="none"
                             stroke="rgba(96,165,250,0.95)"
-                            strokeWidth="2.5"
-                            vectorEffect="non-scaling-stroke"
+                            strokeWidth={strokeInner}
                           />
                         </svg>
 
                         {showHandles ? (
                           <>
+                            {/* 四角控制点：单选时可交互 resize，多选时仅作为视觉标识 */}
                             <div
-                              role="button"
-                              aria-label="resize-nw"
+                              role={canResize ? 'button' : undefined}
+                              aria-label={canResize ? 'resize-nw' : undefined}
                               style={{
                                 position: 'absolute',
                                 left: 0,
                                 top: 0,
-                                pointerEvents: 'auto',
-                                cursor: 'nwse-resize',
+                                pointerEvents: canResize ? 'auto' : 'none',
+                                cursor: canResize ? 'nwse-resize' : 'default',
                                 transform: 'translate(-50%, -50%) scale(var(--invZoom))',
                                 transformOrigin: 'center',
                                 ...handleBase,
+                                // 多选时半透明以区分不可交互
+                                opacity: canResize ? 1 : 0.7,
                               }}
-                              onPointerDown={(e) => startResize(e, it, 'nw')}
+                              onPointerDown={canResize ? (e) => startResize(e, it, 'nw') : undefined}
                             />
                             <div
-                              role="button"
-                              aria-label="resize-ne"
+                              role={canResize ? 'button' : undefined}
+                              aria-label={canResize ? 'resize-ne' : undefined}
                               style={{
                                 position: 'absolute',
                                 left: '100%',
                                 top: 0,
-                                pointerEvents: 'auto',
-                                cursor: 'nesw-resize',
+                                pointerEvents: canResize ? 'auto' : 'none',
+                                cursor: canResize ? 'nesw-resize' : 'default',
                                 transform: 'translate(-50%, -50%) scale(var(--invZoom))',
                                 transformOrigin: 'center',
                                 ...handleBase,
+                                opacity: canResize ? 1 : 0.7,
                               }}
-                              onPointerDown={(e) => startResize(e, it, 'ne')}
+                              onPointerDown={canResize ? (e) => startResize(e, it, 'ne') : undefined}
                             />
                             <div
-                              role="button"
-                              aria-label="resize-sw"
+                              role={canResize ? 'button' : undefined}
+                              aria-label={canResize ? 'resize-sw' : undefined}
                               style={{
                                 position: 'absolute',
                                 left: 0,
                                 top: '100%',
-                                pointerEvents: 'auto',
-                                cursor: 'nesw-resize',
+                                pointerEvents: canResize ? 'auto' : 'none',
+                                cursor: canResize ? 'nesw-resize' : 'default',
                                 transform: 'translate(-50%, -50%) scale(var(--invZoom))',
                                 transformOrigin: 'center',
                                 ...handleBase,
+                                opacity: canResize ? 1 : 0.7,
                               }}
-                              onPointerDown={(e) => startResize(e, it, 'sw')}
+                              onPointerDown={canResize ? (e) => startResize(e, it, 'sw') : undefined}
                             />
                             <div
-                              role="button"
-                              aria-label="resize-se"
+                              role={canResize ? 'button' : undefined}
+                              aria-label={canResize ? 'resize-se' : undefined}
                               style={{
                                 position: 'absolute',
                                 left: '100%',
                                 top: '100%',
-                                pointerEvents: 'auto',
-                                cursor: 'nwse-resize',
+                                pointerEvents: canResize ? 'auto' : 'none',
+                                cursor: canResize ? 'nwse-resize' : 'default',
                                 transform: 'translate(-50%, -50%) scale(var(--invZoom))',
                                 transformOrigin: 'center',
                                 ...handleBase,
+                                opacity: canResize ? 1 : 0.7,
                               }}
-                              onPointerDown={(e) => startResize(e, it, 'se')}
+                              onPointerDown={canResize ? (e) => startResize(e, it, 'se') : undefined}
                             />
+
+                            {/* 多选时显示选中顺序角标 */}
+                            {selectedKeys.length > 1 && (() => {
+                              const selectionOrder = selectedKeys.indexOf(it.key) + 1;
+                              if (selectionOrder <= 0) return null;
+                              return (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    right: 0,
+                                    top: 0,
+                                    transform: 'translate(50%, -50%) scale(var(--invZoom))',
+                                    transformOrigin: 'center',
+                                    minWidth: 20,
+                                    height: 20,
+                                    padding: '0 6px',
+                                    borderRadius: 999,
+                                    background: 'rgba(96, 165, 250, 0.95)',
+                                    color: '#fff',
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+                                    pointerEvents: 'none',
+                                    userSelect: 'none',
+                                  }}
+                                  title={`选中顺序: ${selectionOrder}`}
+                                >
+                                  {selectionOrder}
+                                </div>
+                              );
+                            })()}
                           </>
                         ) : null}
                       </div>
@@ -4747,7 +5160,6 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
             <div
               className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1"
               style={{
-                width: 222,
                 border: '1px solid rgba(255,255,255,0.12)',
                 background: 'rgba(0,0,0,0.25)',
                 backdropFilter: 'blur(10px)',
@@ -4788,9 +5200,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
               <button
                 type="button"
                 className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
-                onClick={fitToStage}
+                onClick={fitToSelection}
                 disabled={canvas.length === 0}
-                title="适配画布（Shift+1）"
+                title="适配选中/全部 (Shift+2) | 适配全部 (Shift+1) | 100% (Shift+0)"
               >
                 适配
               </button>
@@ -4805,6 +5217,17 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 title="回到 100%"
               >
                 100%
+              </button>
+              <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              <button
+                type="button"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                onClick={arrangeGrid}
+                disabled={canvas.length === 0}
+                title="自动排列（网格布局）"
+                aria-label="自动排列"
+              >
+                <Grid3X3 size={14} />
               </button>
             </div>
           </div>
@@ -5279,14 +5702,19 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                       w,
                       h,
                     };
-                    focusKeyRef.current = { key, cx: pos.x + w / 2, cy: pos.y + h / 2 };
+                    focusKeyRef.current = { key, cx: pos.x + w / 2, cy: pos.y + h / 2, w, h };
                     return [next, ...prev].slice(0, 80);
                   });
                   setSelectedKeys([key]);
                   requestAnimationFrame(() => {
                     const f = focusKeyRef.current;
                     if (!f || f.key !== key) return;
-                    animateCameraToWorldCenter(f.cx, f.cy);
+                    // 新图可能很大，移动视角前先适配尺寸
+                    if (f.w && f.h) {
+                      animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h });
+                    } else {
+                      animateCameraToWorldCenter(f.cx, f.cy);
+                    }
                   });
                   focusQuickComposer();
                 }}
@@ -5417,7 +5845,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="max-w-[92%] rounded-[14px] px-3 py-2 text-[14px] leading-[20px]"
+                      className="group relative max-w-[92%] rounded-[14px] px-3 py-2 text-[14px] leading-[20px]"
                       style={{
                         // 用户气泡更克制：减少金色占比，让它更贴整体背景
                         background: isUser
@@ -5429,6 +5857,13 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                         wordBreak: 'break-word',
                       }}
                     >
+                      {/* 悬浮时显示时间 */}
+                      <span
+                        className="pointer-events-none absolute bottom-1 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] tabular-nums select-none"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+                      >
+                        {formatMsgTimestamp(m.ts)}
+                      </span>
                       {isUser && (refSrc || msgSize) ? (
                         <span className="flex flex-wrap items-center gap-x-1.5">
                           {refSrc ? (
@@ -5560,369 +5995,307 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
                 </div>
               ) : null}
 
-              {/* 输入框 meta chip（视觉上"在 textarea 内"）：参照图 + 尺寸 */}
-              {selectedSingleImageForComposer ? (
+              {/* 选中图片时：显示参照图 chip（支持多选） */}
+              {selectedImagesForComposer.length > 0 ? (
                 <div
                   className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
                   style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
                 >
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1.5"
-                    style={{
-                      height: 20,
-                      maxWidth: 260,
-                      paddingLeft: 6,
-                      paddingRight: 8,
-                      borderRadius: 4,
-                      overflow: 'hidden',
-                      border: '1px solid var(--border-subtle)',
-                      background: 'rgba(255,255,255,0.02)',
-                      color: 'rgba(255,255,255,0.82)',
-                    }}
-                    title={guessRefName(selectedSingleImageForComposer) ? `参照图：${guessRefName(selectedSingleImageForComposer)}` : '参照图'}
-                    aria-label="预览参考图"
-                    onClick={() =>
-                      setPreview({
-                        open: true,
-                        src: String(selectedSingleImageForComposer.src ?? ''),
-                        prompt: guessRefName(selectedSingleImageForComposer) || '参照图',
-                      })
-                    }
-                  >
-                    <span
+                  {/* 渲染每个选中的图片 chip */}
+                  {selectedImagesForComposer.map((img, idx) => (
+                    <button
+                      key={img.key}
+                      type="button"
+                      className="inline-flex items-center gap-1.5"
                       style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: 3,
+                        height: 20,
+                        maxWidth: 140,
+                        paddingLeft: 4,
+                        paddingRight: 6,
+                        borderRadius: 4,
                         overflow: 'hidden',
-                        border: '1px solid rgba(255,255,255,0.22)',
-                        background: 'rgba(255,255,255,0.06)',
-                        display: 'inline-flex',
-                        flex: '0 0 auto',
+                        border: '1px solid var(--border-subtle)',
+                        background: 'rgba(255,255,255,0.02)',
+                        color: 'rgba(255,255,255,0.82)',
                       }}
+                      title={guessRefName(img) ? `参照图 ${idx + 1}：${guessRefName(img)}` : `参照图 ${idx + 1}`}
+                      aria-label={`预览参考图 ${idx + 1}`}
+                      onClick={() =>
+                        setPreview({
+                          open: true,
+                          src: String(img.src ?? ''),
+                          prompt: guessRefName(img) || `参照图 ${idx + 1}`,
+                        })
+                      }
                     >
-                      <img
-                        src={String(selectedSingleImageForComposer.src ?? '')}
-                        alt={guessRefName(selectedSingleImageForComposer) || '参照图'}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                      />
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        lineHeight: '18px',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        maxWidth: 180,
-                      }}
-                    >
-                      {truncateLabelFront(guessRefName(selectedSingleImageForComposer) || '参照图', 9) || '参照图'}
-                    </span>
-                  </button>
-
-                  {/* 档位选择器（1K/2K/4K） */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-0.5"
+                      {/* 序号标记 */}
+                      <span
                         style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
+                          minWidth: 14,
+                          height: 14,
+                          borderRadius: 3,
+                          background: 'rgba(99, 102, 241, 0.25)',
+                          border: '1px solid rgba(99, 102, 241, 0.4)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 9,
+                          fontWeight: 700,
+                          color: 'rgba(99, 102, 241, 1)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {idx + 1}
+                      </span>
+                      <span
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 3,
                           overflow: 'hidden',
-                          border: '1px solid var(--border-subtle)',
-                          background: 'rgba(255,255,255,0.02)',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择档位"
-                        aria-label="选择档位"
-                      >
-                        {(() => {
-                          const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                          const tier = detectTierFromSize(size);
-                          return (
-                            <>
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[80px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          background: 'var(--bg-elevated)',
-                          border: '1px solid var(--border-subtle)',
-                          boxShadow: 'var(--shadow-lg)',
+                          border: '1px solid rgba(255,255,255,0.22)',
+                          background: 'rgba(255,255,255,0.06)',
+                          display: 'inline-flex',
+                          flex: '0 0 auto',
                         }}
                       >
-                        {(['1k', '2k', '4k'] as const).map((tier) => {
-                          const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                          const currentTier = detectTierFromSize(currentSize);
-                          const isSelected = currentTier === tier;
-                          const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-                          
-                          return (
-                            <DropdownMenu.Item
-                              key={tier}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'var(--text-primary)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                const currentAspect = detectAspectFromSize(currentSize);
-                                const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                                if (!targetOpt) return;
-                                
-                                const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                const sizeKey = newSize.trim().toLowerCase();
-                                const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-                                
-                                if (!supported) {
-                                  const fallback = findClosestSize(newSize, allowedSizes);
-                                  if (fallback) {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(fallback);
-                                  }
-                                } else {
-                                  composerSizeAutoRef.current = false;
-                                  setComposerSize(newSize);
-                                }
-                                requestAnimationFrame(() => inputRef.current?.focus());
-                              }}
-                            >
-                              <span className="font-semibold">{label}</span>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-
-                  {/* 比例选择器 */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-0.5"
+                        <img
+                          src={String(img.src ?? '')}
+                          alt={guessRefName(img) || `参照图 ${idx + 1}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                      </span>
+                      <span
                         style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
+                          fontSize: 10,
+                          lineHeight: '16px',
+                          whiteSpace: 'nowrap',
                           overflow: 'hidden',
-                          border: '1px solid var(--border-subtle)',
-                          background: 'rgba(255,255,255,0.02)',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择比例"
-                        aria-label="选择比例"
-                      >
-                        {(() => {
-                          const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                          const aspect = detectAspectFromSize(size);
-                          return (
-                            <>
-                              <AspectIcon size={size} />
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {aspect || '1:1'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[120px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          background: 'var(--bg-elevated)',
-                          border: '1px solid var(--border-subtle)',
-                          boxShadow: 'var(--shadow-lg)',
+                          textOverflow: 'ellipsis',
+                          maxWidth: 70,
                         }}
                       >
-                        {ASPECT_OPTIONS.map((opt) => {
-                          const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                          const currentAspect = detectAspectFromSize(currentSize);
-                          const currentTier = detectTierFromSize(currentSize);
-                          const isSelected = currentAspect === opt.id;
-                          
-                          const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                          const sizeKey = targetSize.trim().toLowerCase();
-                          const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-                          
-                          return (
-                            <DropdownMenu.Item
-                              key={opt.id}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'var(--text-primary)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                                opacity: supported ? 1 : 0.5,
-                              }}
-                              onSelect={() => {
-                                if (!supported) {
-                                  const fallback = findClosestSize(targetSize, allowedSizes);
-                                  if (fallback) {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(fallback);
-                                  }
-                                } else {
-                                  composerSizeAutoRef.current = false;
-                                  setComposerSize(targetSize);
-                                }
-                                requestAnimationFrame(() => inputRef.current?.focus());
-                              }}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <AspectIcon size={targetSize} />
-                                <span className="font-semibold">{opt.label}</span>
-                              </div>
-                              {!supported && (
-                                <span className="text-[9px]" style={{ color: 'rgba(251, 146, 60, 0.8)' }}>
-                                  ×
-                                </span>
-                              )}
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
+                        {truncateLabelFront(guessRefName(img) || `图${idx + 1}`, 6)}
+                      </span>
+                    </button>
+                  ))}
+
+                  {/* 尺寸选择器（单选/多选都显示） */}
+                  <>
+                    {/* 档位选择器（1K/2K/4K） */}
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-0.5"
+                            style={{
+                              height: 20,
+                              paddingLeft: 6,
+                              paddingRight: 6,
+                              borderRadius: 4,
+                              overflow: 'hidden',
+                              border: '1px solid var(--border-subtle)',
+                              background: 'rgba(255,255,255,0.02)',
+                              color: 'rgba(255,255,255,0.82)',
+                            }}
+                            title="选择档位"
+                            aria-label="选择档位"
+                          >
+                            {(() => {
+                              const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const tier = detectTierFromSize(size);
+                              return (
+                                <>
+                                  <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
+                                    {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
+                                  </span>
+                                  <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                    ▾
+                                  </span>
+                                </>
+                              );
+                            })()}
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            side="top"
+                            align="start"
+                            sideOffset={8}
+                            className="rounded-[12px] p-1 min-w-[80px]"
+                            style={{
+                              outline: 'none',
+                              zIndex: 90,
+                              background: 'var(--bg-elevated)',
+                              border: '1px solid var(--border-subtle)',
+                              boxShadow: 'var(--shadow-lg)',
+                            }}
+                          >
+                            {(['1k', '2k', '4k'] as const).map((tier) => {
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentTier = detectTierFromSize(currentSize);
+                              const isSelected = currentTier === tier;
+                              const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+
+                              return (
+                                <DropdownMenu.Item
+                                  key={tier}
+                                  className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                                  style={{
+                                    color: 'var(--text-primary)',
+                                    background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                    borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                                  }}
+                                  onSelect={() => {
+                                    const currentAspect = detectAspectFromSize(currentSize);
+                                    const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                                    if (!targetOpt) return;
+
+                                    const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
+                                    const sizeKey = newSize.trim().toLowerCase();
+                                    const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+
+                                    if (!supported) {
+                                      const fallback = findClosestSize(newSize, allowedSizes);
+                                      if (fallback) {
+                                        composerSizeAutoRef.current = false;
+                                        setComposerSize(fallback);
+                                      }
+                                    } else {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(newSize);
+                                    }
+                                    requestAnimationFrame(() => inputRef.current?.focus());
+                                  }}
+                                >
+                                  <span className="font-semibold">{label}</span>
+                                </DropdownMenu.Item>
+                              );
+                            })}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+
+                      {/* 比例选择器 */}
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-0.5"
+                            style={{
+                              height: 20,
+                              paddingLeft: 6,
+                              paddingRight: 6,
+                              borderRadius: 4,
+                              overflow: 'hidden',
+                              border: '1px solid var(--border-subtle)',
+                              background: 'rgba(255,255,255,0.02)',
+                              color: 'rgba(255,255,255,0.82)',
+                            }}
+                            title="选择比例"
+                            aria-label="选择比例"
+                          >
+                            {(() => {
+                              const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const aspect = detectAspectFromSize(size);
+                              return (
+                                <>
+                                  <AspectIcon size={size} />
+                                  <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
+                                    {aspect || '1:1'}
+                                  </span>
+                                  <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                    ▾
+                                  </span>
+                                </>
+                              );
+                            })()}
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            side="top"
+                            align="start"
+                            sideOffset={8}
+                            className="rounded-[12px] p-1 min-w-[120px]"
+                            style={{
+                              outline: 'none',
+                              zIndex: 90,
+                              background: 'var(--bg-elevated)',
+                              border: '1px solid var(--border-subtle)',
+                              boxShadow: 'var(--shadow-lg)',
+                            }}
+                          >
+                            {ASPECT_OPTIONS.map((opt) => {
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentAspect = detectAspectFromSize(currentSize);
+                              const currentTier = detectTierFromSize(currentSize);
+                              const isSelected = currentAspect === opt.id;
+
+                              const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+                              const sizeKey = targetSize.trim().toLowerCase();
+                              const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+
+                              return (
+                                <DropdownMenu.Item
+                                  key={opt.id}
+                                  className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                                  style={{
+                                    color: 'var(--text-primary)',
+                                    background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                    borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                                    opacity: supported ? 1 : 0.5,
+                                  }}
+                                  onSelect={() => {
+                                    if (!supported) {
+                                      const fallback = findClosestSize(targetSize, allowedSizes);
+                                      if (fallback) {
+                                        composerSizeAutoRef.current = false;
+                                        setComposerSize(fallback);
+                                      }
+                                    } else {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(targetSize);
+                                    }
+                                    requestAnimationFrame(() => inputRef.current?.focus());
+                                  }}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <AspectIcon size={targetSize} />
+                                    <span className="font-semibold">{opt.label}</span>
+                                  </div>
+                                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    {targetSize}
+                                  </span>
+                                </DropdownMenu.Item>
+                              );
+                            })}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                  </>
                 </div>
               ) : null}
 
-              {/* 图6 控制条（v1：先作为输入条上方的一行） */}
-              {/* 已移除：输入框上方 4 个控制按钮（模型/参考/大小/比例）与其右侧“生成”按钮；保持输入区极简 */}
-
-              {/* @tag 高亮层（不影响 textarea 编辑/选择），让用户感知“原子化整体” */}
-              <div
-                ref={highlightRef}
-                aria-hidden="true"
-                className="absolute left-3 right-3 top-3"
+              {/* 富文本编辑器 */}
+              <RichComposer
+                ref={richComposerRef}
+                placeholder={selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
+                imageOptions={imageOptions}
+                onChange={(text) => {
+                  setInput(text);
+                }}
+                onSubmit={() => {
+                  // IME 合成输入时不触发发送
+                  if (composingRef.current) return false;
+                  void onSendRich();
+                  return true;
+                }}
                 style={{
-                  height: taHeight,
-                  minHeight: MIN_TA_HEIGHT,
-                  maxHeight: '50%',
-                  overflow: 'auto',
-                  pointerEvents: 'none',
                   paddingTop: composerMetaPadTop,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  fontSize: 14,
-                  lineHeight: '1.25rem',
-                  color: 'transparent',
                 }}
-              >
-                {renderMentionHighlights(input)}
-              </div>
-
-              <textarea
-                ref={inputRef}
-                value={input}
-                onFocus={() => {
-                  activeComposerRef.current = 'right';
-                }}
-                onCompositionStart={() => {
-                  composingRef.current = true;
-                }}
-                onCompositionEnd={() => {
-                  composingRef.current = false;
-                }}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setInput(v);
-                  refreshMention(v, e.target.selectionStart ?? v.length);
-                }}
-                onInput={() => {
-                  recomputeTextareaHeight();
-                }}
-                onScroll={(e) => {
-                  const el = e.currentTarget;
-                  const hl = highlightRef.current;
-                  if (hl) {
-                    hl.scrollTop = el.scrollTop;
-                    hl.scrollLeft = el.scrollLeft;
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Backspace') {
-                    if (applyAtomicDelete()) {
-                      e.preventDefault();
-                      return;
-                    }
-                  }
-                  if (e.key === 'Delete') {
-                    if (applyAtomicDelete()) {
-                      e.preventDefault();
-                      return;
-                    }
-                  }
-                  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
-                    e.preventDefault();
-                    e.currentTarget.select();
-                    return;
-                  }
-                  if (mentionOpen && e.key === 'Escape') {
-                    e.preventDefault();
-                    setMentionOpen(false);
-                    setMentionQuery('');
-                    setMentionAtPos(null);
-                    return;
-                  }
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    // IME 合成输入时：Enter 代表“确认候选”，不应触发发送
-                    // keyCode===229 是部分浏览器/系统的合成态标志
-                    const ne = e.nativeEvent as unknown as { isComposing?: boolean; keyCode?: number };
-                    if (composingRef.current || ne.isComposing || ne.keyCode === 229) return;
-                    e.preventDefault();
-                    void onSend();
-                  }
-                }}
-                onKeyUp={(e) => {
-                  const ta = e.currentTarget;
-                  refreshMention(ta.value, ta.selectionStart ?? ta.value.length);
-                }}
-                placeholder={selectedSingleImageForComposer ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
-                className="w-full resize-none rounded-none px-0 py-0 text-sm outline-none focus:outline-none focus-visible:outline-none"
-                style={{
-                  height: taHeight,
-                  minHeight: MIN_TA_HEIGHT,
-                  maxHeight: '50%',
-                  overflowY: 'auto',
-                  paddingTop: composerMetaPadTop,
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--text-primary)',
-                  outline: 'none',
-                  boxShadow: 'none',
-                }}
+                minHeight={MIN_TA_HEIGHT}
+                maxHeight="50%"
               />
 
               {mentionOpen ? (
@@ -6292,6 +6665,127 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
           </div>
         </div>
       </div>
+
+      {/* 图片右键菜单 */}
+      {imgContextMenu.open ? (
+        <div
+          className="fixed inset-0 z-[9999]"
+          onClick={() => setImgContextMenu((p) => ({ ...p, open: false }))}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setImgContextMenu((p) => ({ ...p, open: false }));
+          }}
+        >
+          <div
+            className="absolute rounded-[12px] py-1.5 min-w-[140px] shadow-2xl"
+            style={{
+              left: imgContextMenu.x,
+              top: imgContextMenu.y,
+              background: 'rgba(32,32,38,0.96)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.88)' }}
+              onClick={() => {
+                void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                setImgContextMenu((p) => ({ ...p, open: false }));
+              }}
+            >
+              <Download size={16} />
+              下载图片
+            </button>
+            <button
+              type="button"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.88)' }}
+              onClick={() => {
+                void copyToClipboard(imgContextMenu.prompt || '');
+                setImgContextMenu((p) => ({ ...p, open: false }));
+              }}
+            >
+              <Copy size={16} />
+              复制提示词
+            </button>
+            {imgContextMenu.src ? (
+              <button
+                type="button"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                style={{ color: 'rgba(255,255,255,0.88)' }}
+                onClick={() => {
+                  setPreview({ open: true, src: imgContextMenu.src, prompt: imgContextMenu.prompt });
+                  setImgContextMenu((p) => ({ ...p, open: false }));
+                }}
+              >
+                <Maximize2 size={16} />
+                预览大图
+              </button>
+            ) : null}
+
+            {/* 分隔线 */}
+            <div className="my-1.5 mx-2 h-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+
+            {/* 图层操作 */}
+            <button
+              type="button"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.88)' }}
+              onClick={() => {
+                layerBringToFront();
+                setImgContextMenu((p) => ({ ...p, open: false }));
+              }}
+            >
+              <ArrowUpToLine size={16} />
+              置于顶层
+              <span className="ml-auto text-[11px] opacity-50">Cmd+Shift+]</span>
+            </button>
+            <button
+              type="button"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.88)' }}
+              onClick={() => {
+                layerMoveUp();
+                setImgContextMenu((p) => ({ ...p, open: false }));
+              }}
+            >
+              <ChevronUp size={16} />
+              上移一层
+              <span className="ml-auto text-[11px] opacity-50">Cmd+]</span>
+            </button>
+            <button
+              type="button"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.88)' }}
+              onClick={() => {
+                layerMoveDown();
+                setImgContextMenu((p) => ({ ...p, open: false }));
+              }}
+            >
+              <ChevronDown size={16} />
+              下移一层
+              <span className="ml-auto text-[11px] opacity-50">Cmd+[</span>
+            </button>
+            <button
+              type="button"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.88)' }}
+              onClick={() => {
+                layerSendToBack();
+                setImgContextMenu((p) => ({ ...p, open: false }));
+              }}
+            >
+              <ArrowDownToLine size={16} />
+              置于底层
+              <span className="ml-auto text-[11px] opacity-50">Cmd+Shift+[</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <Dialog
         open={preview.open}

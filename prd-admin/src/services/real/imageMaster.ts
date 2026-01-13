@@ -136,6 +136,7 @@ export const updateImageMasterWorkspaceReal: UpdateImageMasterWorkspaceContract 
       coverAssetId: input.coverAssetId ?? null,
       articleContent: input.articleContent,
       scenarioType: input.scenarioType,
+      folderName: input.folderName,
     },
   });
 };

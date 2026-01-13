@@ -50,7 +50,7 @@ export function ConfirmTip({
           sideOffset={10}
           className="z-50 rounded-[14px] p-3"
           style={{
-            background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+            background: 'rgba(15, 15, 18, 1)',
             border: '1px solid var(--border-default)',
             boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
             minWidth: 240,

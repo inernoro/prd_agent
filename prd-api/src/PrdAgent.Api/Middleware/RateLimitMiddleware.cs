@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Json;
 using PrdAgent.Core.Models;
 
@@ -20,13 +21,15 @@ public class RateLimitMiddleware
     public RateLimitMiddleware(
         RequestDelegate next, 
         ILogger<RateLimitMiddleware> logger,
-        int maxRequestsPerMinute = 300,
-        int maxConcurrentRequests = 50)
+        IConfiguration configuration)
     {
         _next = next;
         _logger = logger;
-        _maxRequestsPerMinute = maxRequestsPerMinute;
-        _maxConcurrentRequests = maxConcurrentRequests;
+        _maxRequestsPerMinute = configuration.GetValue<int>("RateLimit:MaxRequestsPerMinute", 600);
+        _maxConcurrentRequests = configuration.GetValue<int>("RateLimit:MaxConcurrentRequests", 100);
+        
+        _logger.LogInformation("RateLimit initialized: MaxRequestsPerMinute={MaxRequestsPerMinute}, MaxConcurrentRequests={MaxConcurrentRequests}", 
+            _maxRequestsPerMinute, _maxConcurrentRequests);
     }
 
     public async Task InvokeAsync(HttpContext context)

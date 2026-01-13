@@ -234,7 +234,6 @@ export default function GroupsPage() {
       <PageHeader
         title="群组管理"
         subtitle={`共 ${total} 个群组`}
-        description="协作群组、成员与邀请管理"
       />
 
       <Card className="flex-1 min-h-0 flex flex-col">

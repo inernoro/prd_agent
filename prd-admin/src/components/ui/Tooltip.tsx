@@ -26,7 +26,7 @@ export function Tooltip({
             sideOffset={10}
             className="rounded-[12px] px-3 py-2 text-xs"
             style={{
-              background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+              background: 'rgba(15, 15, 18, 1)',
               border: '1px solid rgba(255,255,255,0.14)',
               color: 'var(--text-primary)',
               boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
@@ -39,7 +39,7 @@ export function Tooltip({
             <TooltipPrimitive.Arrow
               width={10}
               height={6}
-              style={{ fill: 'color-mix(in srgb, var(--bg-elevated) 92%, black)' }}
+              style={{ fill: 'rgba(15, 15, 18, 1)' }}
             />
           </TooltipPrimitive.Content>
         </TooltipPrimitive.Portal>

@@ -57,62 +57,49 @@ function StatCard({
   loading?: boolean;
 }) {
   const accentColors = {
-    default: 'rgba(255,255,255,0.08)',
-    gold: 'rgba(250,204,21,0.12)',
-    blue: 'rgba(59,130,246,0.12)',
-    green: 'rgba(34,197,94,0.12)',
-    purple: 'rgba(168,85,247,0.12)',
+    default: { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.06)', icon: 'rgba(255,255,255,0.5)', text: 'var(--text-primary)' },
+    gold: { bg: 'rgba(214,178,106,0.06)', border: 'rgba(214,178,106,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
+    blue: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.12)', icon: 'rgba(59,130,246,0.9)', text: 'rgba(59,130,246,0.95)' },
+    green: { bg: 'rgba(34,197,94,0.06)', border: 'rgba(34,197,94,0.12)', icon: 'rgba(34,197,94,0.9)', text: 'rgba(34,197,94,0.95)' },
+    purple: { bg: 'rgba(168,85,247,0.06)', border: 'rgba(168,85,247,0.12)', icon: 'rgba(168,85,247,0.9)', text: 'rgba(168,85,247,0.95)' },
   };
 
-  const iconColors = {
-    default: 'rgba(255,255,255,0.65)',
-    gold: 'rgba(250,204,21,0.95)',
-    blue: 'rgba(59,130,246,0.95)',
-    green: 'rgba(34,197,94,0.95)',
-    purple: 'rgba(168,85,247,0.95)',
-  };
+  const colors = accentColors[accent];
 
   return (
     <div
-      className="relative overflow-hidden rounded-[16px] p-4 transition-all duration-200 hover:scale-[1.02]"
+      className="relative overflow-hidden rounded-[12px] p-3.5 transition-all duration-200"
       style={{
-        background: `linear-gradient(135deg, ${accentColors[accent]} 0%, rgba(0,0,0,0.20) 100%)`,
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: '0 4px 20px -4px rgba(0,0,0,0.3)',
+        background: colors.bg,
+        border: `1px solid ${colors.border}`,
       }}
     >
-      {/* 装饰性光晕 */}
-      <div
-        className="absolute -top-8 -right-8 w-24 h-24 rounded-full opacity-30 blur-2xl"
-        style={{ background: accentColors[accent] }}
-      />
-
       <div className="relative flex items-start gap-3">
         <div
-          className="shrink-0 w-10 h-10 rounded-[12px] flex items-center justify-center"
+          className="shrink-0 w-9 h-9 rounded-[10px] flex items-center justify-center"
           style={{
-            background: accentColors[accent],
-            border: '1px solid rgba(255,255,255,0.06)',
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.05)',
           }}
         >
-          <span style={{ color: iconColors[accent] }}>{icon}</span>
+          <span style={{ color: colors.icon }}>{icon}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium truncate" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-[11px] font-semibold uppercase tracking-wider truncate" style={{ color: 'var(--text-muted)' }}>
             {label}
           </div>
           <div
-            className="mt-1 text-2xl font-bold tabular-nums tracking-tight"
-            style={{ color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
+            className="mt-1 text-xl font-bold tabular-nums tracking-tight"
+            style={{ color: colors.text, letterSpacing: '-0.02em' }}
           >
             {loading ? (
-              <span className="inline-block w-16 h-7 rounded-md animate-pulse" style={{ background: 'rgba(255,255,255,0.06)' }} />
+              <span className="inline-block w-14 h-6 rounded-[8px] animate-pulse" style={{ background: 'rgba(255,255,255,0.05)' }} />
             ) : (
               value
             )}
           </div>
           {subValue && (
-            <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+            <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {subValue}
             </div>
           )}
@@ -147,48 +134,47 @@ function DomainCard({
   accent?: 'default' | 'blue' | 'green' | 'purple';
 }) {
   const accentColors = {
-    default: { bg: 'rgba(255,255,255,0.06)', border: 'rgba(255,255,255,0.12)', icon: 'rgba(255,255,255,0.75)' },
-    blue: { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.30)', icon: 'rgba(59,130,246,0.95)' },
-    green: { bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.30)', icon: 'rgba(34,197,94,0.95)' },
-    purple: { bg: 'rgba(168,85,247,0.15)', border: 'rgba(168,85,247,0.30)', icon: 'rgba(168,85,247,0.95)' },
+    default: { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)', icon: 'rgba(255,255,255,0.6)' },
+    blue: { bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.15)', icon: 'rgba(59,130,246,0.9)' },
+    green: { bg: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.15)', icon: 'rgba(34,197,94,0.9)' },
+    purple: { bg: 'rgba(168,85,247,0.08)', border: 'rgba(168,85,247,0.15)', icon: 'rgba(168,85,247,0.9)' },
   };
 
   const colors = accentColors[accent];
 
   return (
     <div
-      className="rounded-[18px] overflow-hidden transition-all duration-200"
+      className="rounded-[16px] overflow-hidden transition-all duration-200"
       style={{
-        backgroundColor: 'var(--bg-elevated)',
-        backgroundImage: 'linear-gradient(180deg, rgba(30,30,35,0.98) 0%, rgba(18,18,22,0.99) 100%)',
-        border: '1px solid rgba(255,255,255,0.10)',
-        boxShadow: '0 8px 32px -8px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.02) inset',
+        backgroundColor: '#121216',
+        backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
       }}
     >
       {/* 头部 */}
       <div
-        className="px-5 py-4 flex items-center justify-between gap-4"
+        className="px-4 py-3 flex items-center justify-between gap-3"
         style={{
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          background: 'rgba(255,255,255,0.02)',
         }}
       >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div
-            className="shrink-0 w-10 h-10 rounded-[12px] flex items-center justify-center"
+            className="shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center"
             style={{
               background: colors.bg,
               border: `1px solid ${colors.border}`,
-              boxShadow: `0 4px 12px -4px ${colors.bg}`,
             }}
           >
             <span style={{ color: colors.icon }}>{icon}</span>
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
               {title}
             </div>
-            <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
               {description}
             </div>
           </div>
@@ -201,21 +187,21 @@ function DomainCard({
       </div>
 
       {/* 数据列表 */}
-      <div className="px-5 py-4">
-        <div className="space-y-3">
+      <div className="px-4 py-3">
+        <div className="space-y-2">
           {items.map((item) => (
             <div
               key={item.label}
-              className="flex items-center justify-between gap-3 px-3 py-2 rounded-[10px]"
+              className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]"
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.05)',
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.04)',
               }}
             >
-              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                 {item.label}
               </span>
-              <span className="text-sm font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
+              <span className="text-[12px] font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
                 {loading ? '-' : fmtNum(item.value)}
               </span>
             </div>
@@ -225,10 +211,10 @@ function DomainCard({
 
       {/* 底部操作 */}
       <div
-        className="px-5 py-3 flex items-center justify-end"
+        className="px-4 py-2.5 flex items-center justify-end"
         style={{
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-          background: 'rgba(0,0,0,0.20)',
+          borderTop: '1px solid rgba(255,255,255,0.05)',
+          background: 'rgba(0,0,0,0.1)',
         }}
       >
         <ConfirmTip
@@ -243,8 +229,8 @@ function DomainCard({
           align="end"
         >
           <Button variant="danger" size="xs" disabled={loading || purging || total === 0}>
-            <Trash2 size={14} />
-            清空数据
+            <Trash2 size={13} />
+            清空
           </Button>
         </ConfirmTip>
       </div>
@@ -274,27 +260,27 @@ function DangerActionCard({
 
   return (
     <div
-      className="rounded-[14px] p-4 transition-all duration-200"
+      className="rounded-[12px] p-3 transition-all duration-200"
       style={{
-        background: 'linear-gradient(135deg, rgba(239,68,68,0.06) 0%, rgba(0,0,0,0.15) 100%)',
-        border: '1px solid rgba(239,68,68,0.15)',
+        background: 'rgba(239,68,68,0.04)',
+        border: '1px solid rgba(239,68,68,0.12)',
       }}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2.5">
         <div
-          className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center mt-0.5"
+          className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center mt-0.5"
           style={{
-            background: 'rgba(239,68,68,0.12)',
-            border: '1px solid rgba(239,68,68,0.20)',
+            background: 'rgba(239,68,68,0.1)',
+            border: '1px solid rgba(239,68,68,0.15)',
           }}
         >
-          <AlertTriangle size={16} style={{ color: 'rgba(239,68,68,0.85)' }} />
+          <AlertTriangle size={14} style={{ color: 'rgba(239,68,68,0.8)' }} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
             {title}
           </div>
-          <div className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-0.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {description}
           </div>
         </div>
@@ -312,7 +298,7 @@ function DangerActionCard({
               align="end"
             >
               <Button variant="danger" size="xs" disabled={loading}>
-                <Trash2 size={14} />
+                <Trash2 size={12} />
                 {buttonText}
               </Button>
             </ConfirmTip>
@@ -320,7 +306,7 @@ function DangerActionCard({
             <Tooltip content="该操作不可恢复" side="top" align="end">
               <span>
                 <Button variant="danger" size="xs" disabled={loading} onClick={() => void onAction()}>
-                  <Trash2 size={14} />
+                  <Trash2 size={12} />
                   {buttonText}
                 </Button>
               </span>
@@ -473,7 +459,6 @@ export default function DataManagePage() {
       {/* 页面头部 */}
       <PageHeader
         title="数据管理"
-        description="数据概览、清理与配置迁移，仅管理员可用"
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
@@ -491,40 +476,40 @@ export default function DataManagePage() {
       {/* 消息提示 */}
       {err && (
         <div
-          className="rounded-[12px] px-4 py-3 text-sm flex items-center gap-3"
+          className="rounded-[12px] px-4 py-2.5 text-[13px] flex items-center gap-2.5"
           style={{
-            background: 'linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(239,68,68,0.06) 100%)',
-            border: '1px solid rgba(239,68,68,0.25)',
-            color: 'rgba(239,68,68,0.95)',
+            background: 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.04) 100%)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            color: 'rgba(239,68,68,0.9)',
           }}
         >
-          <AlertTriangle size={16} />
+          <AlertTriangle size={15} />
           {err}
         </div>
       )}
       {msg && (
         <div
-          className="rounded-[12px] px-4 py-3 text-sm flex items-center gap-3"
+          className="rounded-[12px] px-4 py-2.5 text-[13px] flex items-center gap-2.5"
           style={{
-            background: 'linear-gradient(135deg, rgba(34,197,94,0.12) 0%, rgba(34,197,94,0.06) 100%)',
-            border: '1px solid rgba(34,197,94,0.25)',
-            color: 'rgba(34,197,94,0.95)',
+            background: 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.04) 100%)',
+            border: '1px solid rgba(34,197,94,0.2)',
+            color: 'rgba(34,197,94,0.9)',
           }}
         >
-          <Zap size={16} />
+          <Zap size={15} />
           {msg}
         </div>
       )}
 
       {/* 核心数据概览（开发期清库会保留） */}
-      <Card className="p-5" variant="gold">
-        <div className="flex items-center justify-between gap-4 mb-4">
+      <Card variant="gold">
+        <div className="flex items-center justify-between gap-3 mb-4">
           <div>
-            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
               核心数据
             </h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              系统基础配置（开发期清库会保留）
+            <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              系统基础配置
             </p>
           </div>
           <Badge variant={loading ? 'subtle' : 'success'} size="sm">
@@ -532,7 +517,7 @@ export default function DataManagePage() {
           </Badge>
         </div>
 
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4">
           <StatCard
             icon={<Users size={18} />}
             label="用户账号"
@@ -569,22 +554,22 @@ export default function DataManagePage() {
       </Card>
 
       {/* 业务数据概览（可清理） */}
-      <Card className="p-5">
-        <div className="flex items-center justify-between gap-4 mb-4">
+      <Card>
+        <div className="flex items-center justify-between gap-3 mb-4">
           <div>
-            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
               业务数据
             </h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              运行时产生的数据（可按领域清理）
+            <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              运行时产生的数据
             </p>
           </div>
           <Badge variant="subtle" size="sm">
-            共 {loading ? '-' : fmtNum(totalRecords)} 条
+            {loading ? '-' : fmtNum(totalRecords)} 条
           </Badge>
         </div>
 
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4">
           <StatCard
             icon={<Server size={18} />}
             label="LLM 请求日志"
@@ -619,7 +604,7 @@ export default function DataManagePage() {
           />
         </div>
 
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mt-3">
+        <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4 mt-2.5">
           <StatCard
             icon={<MessageSquare size={18} />}
             label="ImageMaster 会话"
@@ -656,7 +641,7 @@ export default function DataManagePage() {
       </Card>
 
       {/* 数据域管理 - 分列布局 */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <DomainCard
           icon={<Server size={18} />}
           title="LLM 请求日志"

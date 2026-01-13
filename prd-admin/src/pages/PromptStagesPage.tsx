@@ -828,21 +828,8 @@ export default function PromptStagesPage() {
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
       <PageHeader
         title="提示词管理"
-        description={
-          <div className="flex items-center gap-2">
-            {(showUserPrompts || showSystemPrompts) && !uiValidation.ok && (
-              <span style={{ color: 'rgba(255,120,120,0.95)' }}>
-                {uiValidation.message}
-              </span>
-            )}
-            {uiIsDirty && (
-              <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
-                未保存
-              </Badge>
-            )}
-          </div>
-        }
         variant="gold"
+        tabsInline={true}
         tabs={[
           { key: 'prd', label: 'PRD提示词' },
           { key: 'literary', label: '文学创作' },
@@ -855,7 +842,20 @@ export default function PromptStagesPage() {
           setSysErr(null);
           setSysMsg(null);
         }}
-        actions={undefined}
+        actions={
+          <div className="flex items-center gap-2">
+            {(showUserPrompts || showSystemPrompts) && !uiValidation.ok && (
+              <span className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
+                {uiValidation.message}
+              </span>
+            )}
+            {uiIsDirty && (
+              <Badge variant="featured" size="sm" icon={<AlertTriangle size={10} />}>
+                未保存
+              </Badge>
+            )}
+          </div>
+        }
       />
 
       {uiErr && (

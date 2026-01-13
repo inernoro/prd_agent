@@ -7,3 +7,5 @@ export { SearchableSelect } from './SearchableSelect';
 export type { SearchableSelectOption, SearchableSelectProps } from './SearchableSelect';
 export { Switch } from './Switch';
 export { PageHeader } from './PageHeader';
+export { TabBar } from './TabBar';
+export type { TabBarItem } from './TabBar';
