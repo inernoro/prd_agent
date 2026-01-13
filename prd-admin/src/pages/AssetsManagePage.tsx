@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import { Card } from '@/components/design/Card';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import {
@@ -517,15 +517,14 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <PageHeader
-        title="资源管理"
+      <TabBar
         variant="gold"
-        tabs={[
-          { key: 'desktop', label: 'Desktop 皮肤资源' },
-          { key: 'single', label: '全局资源' },
+        items={[
+          { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
+          { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
         ]}
-        activeTab={activeTab}
-        onTabChange={(key) => setActiveTab(key as 'desktop' | 'single')}
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key as 'desktop' | 'single')}
       />
 
       {err && (

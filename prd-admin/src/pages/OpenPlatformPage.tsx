@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil, Plug } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import type { OpenPlatformApp, CreateAppRequest, UpdateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -237,18 +237,19 @@ export default function OpenPlatformPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <PageHeader
+      <TabBar
         title="开放平台"
+        icon={<Plug size={16} />}
         actions={
-          <div className="flex gap-2">
+          <>
             <Button variant="secondary" size="sm" onClick={() => handleViewLogs()}>
               查看所有日志
             </Button>
-            <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-              <Plus size={16} className="mr-1" />
+            <Button variant="primary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+              <Plus size={14} />
               新建应用
             </Button>
-          </div>
+          </>
         }
       />
 

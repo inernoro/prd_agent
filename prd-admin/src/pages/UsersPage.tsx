@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog } from '@/services';
-import { CheckCircle2, Circle, Clock, MoreVertical, Pencil, Search, XCircle, UserCog } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, MoreVertical, Pencil, Search, XCircle, UserCog, Users } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -706,9 +706,9 @@ export default function UsersPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
-      <PageHeader
+      <TabBar
         title="用户管理"
-        subtitle={`${total} 用户`}
+        icon={<Users size={16} />}
       />
 
       <Card className="flex-1 min-h-0 flex flex-col">

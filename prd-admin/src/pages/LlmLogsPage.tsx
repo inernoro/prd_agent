@@ -3,7 +3,7 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
@@ -1088,11 +1088,10 @@ export default function LlmLogsPage() {
   if (tab === 'system') {
     return (
       <div className="h-full min-h-0 flex flex-col gap-4">
-        <PageHeader
-          title="日志管理"
-          tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
-          activeTab={tab}
-          onTabChange={(key) => setTab(key as 'llm' | 'system')}
+        <TabBar
+          items={tabs}
+          activeKey={tab}
+          onChange={(key) => setTab(key as 'llm' | 'system')}
         />
         <div className="flex-1 min-h-0">
           <SystemLogsTab />
@@ -1112,11 +1111,10 @@ export default function LlmLogsPage() {
         @keyframes prd-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--prd-marquee-shift)))}}
         @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
       `}</style>
-      <PageHeader
-        title="LLM 请求日志"
-        tabs={tabs.map((x) => ({ key: x.key, label: x.label, icon: x.icon }))}
-        activeTab={tab}
-        onTabChange={(key) => setTab(key as 'llm' | 'system')}
+      <TabBar
+        items={tabs}
+        activeKey={tab}
+        onChange={(key) => setTab(key as 'llm' | 'system')}
         actions={
           <Button
             variant="secondary"

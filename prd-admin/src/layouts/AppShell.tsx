@@ -1,7 +1,7 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog, User, Settings } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -29,6 +29,39 @@ export default function AppShell() {
   const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
   const [avatarOpen, setAvatarOpen] = useState(false);
+
+  // 导航滚动状态：用于显示渐变阴影指示器
+  const navRef = useRef<HTMLElement>(null);
+  const [navScrollState, setNavScrollState] = useState<{ atTop: boolean; atBottom: boolean; canScroll: boolean }>({
+    atTop: true,
+    atBottom: true,
+    canScroll: false,
+  });
+
+  const updateNavScrollState = useCallback(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const { scrollTop, scrollHeight, clientHeight } = nav;
+    const canScroll = scrollHeight > clientHeight + 2; // 2px 容差
+    const atTop = scrollTop <= 2;
+    const atBottom = scrollTop + clientHeight >= scrollHeight - 2;
+    setNavScrollState({ atTop, atBottom, canScroll });
+  }, []);
+
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    // 初始化检测
+    updateNavScrollState();
+    // 监听滚动
+    nav.addEventListener('scroll', updateNavScrollState, { passive: true });
+    // 监听窗口大小变化（可能影响可滚动性）
+    window.addEventListener('resize', updateNavScrollState);
+    return () => {
+      nav.removeEventListener('scroll', updateNavScrollState);
+      window.removeEventListener('resize', updateNavScrollState);
+    };
+  }, [updateNavScrollState]);
 
   // 兜底：部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 在输入控件中可能无法触发默认"全选"
   useEffect(() => {
@@ -101,6 +134,7 @@ export default function AppShell() {
   const visibleItems = items;
   
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
+  const isLabPage = location.pathname.startsWith('/lab');
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
   // 专注模式（fullBleedMain）下隐藏侧栏，主区最大化
@@ -157,13 +191,21 @@ export default function AppShell() {
             zIndex: 20,
             borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
-            // 与主内容区 Card 保持一致的配色方案（避免 color-mix 兼容性问题）
-            backgroundColor: '#121216',
-            backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-            boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
+            // 实验室页面使用液态玻璃效果，其他页面保持原样式
+            ...(isLabPage ? {
+              background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
+              WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
+              boxShadow: '0 12px 48px -8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 2px 0 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.15) inset',
+            } : {
+              backgroundColor: '#121216',
+              backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
+              border: '1px solid rgba(255, 255, 255, 0.05)',
+              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+            }),
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
@@ -361,53 +403,86 @@ export default function AppShell() {
             </button>
           )}
 
-          <nav className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', collapsed ? 'gap-0.5 items-center' : 'gap-0.5')}
-               style={{ paddingTop: 2, paddingRight: collapsed ? 0 : 2 }}>
-            {visibleItems.map((it) => {
-              const active = it.key === activeKey;
-              return (
-                <button
-                  key={it.key}
-                  type="button"
-                  onClick={() => navigate(it.key)}
-                  className={cn(
-                    'relative flex items-center gap-3 rounded-[12px] transition-[background-color,border-color,color] duration-200',
-                    'hover:bg-white/5',
-                    collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
-                  )}
-                  style={{
-                    background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                    border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
-                    color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  }}
-                  title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
-                >
-                  <span 
-                    className="inline-flex items-center justify-center shrink-0 transition-colors duration-200"
-                    style={{ color: active ? 'var(--accent-gold)' : undefined }}
+          {/* 导航区域容器：包含滚动指示器 */}
+          <div className="relative flex-1 min-h-0">
+            {/* 顶部渐变阴影：提示可向上滚动 */}
+            <div
+              className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
+              style={{
+                height: 32,
+                background: isLabPage
+                  ? 'linear-gradient(to bottom, rgba(15, 15, 18, 0.95) 0%, rgba(15, 15, 18, 0.6) 40%, transparent 100%)'
+                  : 'linear-gradient(to bottom, rgba(18, 18, 22, 0.98) 0%, rgba(18, 18, 22, 0.7) 35%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atTop ? 1 : 0,
+              }}
+            />
+            
+            <nav 
+              ref={navRef}
+              className={cn(
+                'h-full flex flex-col overflow-y-auto overflow-x-hidden nav-scroll-hidden',
+                collapsed ? 'gap-0.5 items-center' : 'gap-0.5'
+              )}
+              style={{ paddingTop: 2, paddingRight: collapsed ? 0 : 2, paddingBottom: 8 }}
+            >
+              {visibleItems.map((it) => {
+                const active = it.key === activeKey;
+                return (
+                  <button
+                    key={it.key}
+                    type="button"
+                    onClick={() => navigate(it.key)}
+                    className={cn(
+                      'relative flex items-center gap-3 rounded-[12px] transition-[background-color,border-color,color] duration-200',
+                      'hover:bg-white/5',
+                      collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
+                    )}
+                    style={{
+                      background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                      border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
+                      color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    }}
+                    title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                   >
-                    {it.icon}
-                  </span>
-                  {!collapsed && (
-                    <div className="min-w-0 flex-1 text-left">
-                      <div className="text-sm font-medium truncate">{it.label}</div>
-                      {it.description && (
-                        <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
-                          {it.description}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {active && !collapsed && (
-                    <span
-                      className="absolute left-0 top-1/2 -translate-y-1/2"
-                      style={{ width: 2, height: 16, background: 'var(--accent-gold)', borderRadius: '0 999px 999px 0' }}
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+                    <span 
+                      className="inline-flex items-center justify-center shrink-0 transition-colors duration-200"
+                      style={{ color: active ? 'var(--accent-gold)' : undefined }}
+                    >
+                      {it.icon}
+                    </span>
+                    {!collapsed && (
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="text-sm font-medium truncate">{it.label}</div>
+                        {it.description && (
+                          <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
+                            {it.description}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {active && !collapsed && (
+                      <span
+                        className="absolute left-0 top-1/2 -translate-y-1/2"
+                        style={{ width: 2, height: 16, background: 'var(--accent-gold)', borderRadius: '0 999px 999px 0' }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+            
+            {/* 底部渐变阴影：提示可向下滚动 */}
+            <div
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
+              style={{
+                height: 40,
+                background: isLabPage
+                  ? 'linear-gradient(to top, rgba(15, 15, 18, 0.95) 0%, rgba(15, 15, 18, 0.6) 45%, transparent 100%)'
+                  : 'linear-gradient(to top, rgba(18, 18, 22, 0.98) 0%, rgba(18, 18, 22, 0.7) 40%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 1 : 0,
+              }}
+            />
+          </div>
 
           <AvatarEditDialog
             open={avatarOpen}

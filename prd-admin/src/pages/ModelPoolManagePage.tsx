@@ -1,6 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -209,16 +209,16 @@ export function ModelPoolManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <PageHeader
+      <TabBar
         title="模型池管理"
-        subtitle="创建和管理模型池，将不同平台的模型组合用于负载均衡"
+        icon={<Database size={16} />}
         actions={
           <>
-            <Button variant="secondary" size="xs" onClick={loadData} disabled={loading}>
+            <Button variant="secondary" size="sm" onClick={loadData} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               刷新
             </Button>
-            <Button variant="primary" size="xs" onClick={handleAddPool}>
+            <Button variant="primary" size="sm" onClick={handleAddPool}>
               <Plus size={14} />
               新建模型池
             </Button>

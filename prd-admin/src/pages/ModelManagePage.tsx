@@ -3,7 +3,7 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { Select } from '@/components/design/Select';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -34,7 +34,7 @@ import {
 } from '@/services';
 import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, Cpu, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
@@ -948,14 +948,9 @@ export default function ModelManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <PageHeader
+      <TabBar
         title="模型管理"
-        subtitle={
-          `平台 ${selectedPlatformId && selectedPlatformId !== '__all__' ? 1 : platforms.length} 个` +
-          (selectedPlatformId && selectedPlatformId !== '__all__'
-            ? ` / 模型 ${models.filter((m) => m.platformId === selectedPlatformId).length} 个`
-            : '')
-        }
+        icon={<Cpu size={16} />}
       />
 
       <div className={`grid gap-5 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>

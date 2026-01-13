@@ -7,15 +7,21 @@ export interface TabBarItem {
 }
 
 interface TabBarProps {
-  items: TabBarItem[];
+  /** 标题模式：显示 icon + title */
+  title?: string;
+  /** 标题图标 */
+  icon?: React.ReactNode;
+  /** 切换模式：显示 tabs */
+  items?: TabBarItem[];
   activeKey?: string;
   onChange?: (key: string) => void;
+  /** 右侧操作按钮 */
   actions?: React.ReactNode;
   variant?: 'default' | 'gold';
 }
 
-export function TabBar({ items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
-  const [internalKey, setInternalKey] = useState(items[0]?.key ?? '');
+export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
+  const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
   const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -25,8 +31,12 @@ export function TabBar({ items, activeKey, onChange, actions, variant = 'default
     onChange?.(key);
   };
 
+  // 是否为切换模式
+  const hasTabs = items && items.length > 0;
+
   // 更新滑块位置
   useEffect(() => {
+    if (!hasTabs) return;
     const activeButton = buttonsRef.current.get(currentKey);
     if (activeButton) {
       const container = activeButton.parentElement;
@@ -39,75 +49,106 @@ export function TabBar({ items, activeKey, onChange, actions, variant = 'default
         });
       }
     }
-  }, [currentKey, items]);
+  }, [currentKey, items, hasTabs]);
 
   return (
     <div
-      className="h-[46px] rounded-[14px] px-4 transition-all duration-200"
+      className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden shrink-0"
       style={{
+        // macOS 风格的多层背景
         background: variant === 'gold'
-          ? 'rgba(255, 255, 255, 0.06)'
-          : 'rgba(255, 255, 255, 0.04)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        backdropFilter: 'blur(20px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+          ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)'
+          : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        // 增强的模糊效果
+        backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
+        WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
+        // 更精致的阴影层次
         boxShadow: variant === 'gold'
-          ? '0 8px 32px -8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(255, 255, 255, 0.1) inset'
-          : '0 4px 24px -4px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(255, 255, 255, 0.05) inset',
+          ? '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset'
+          : '0 8px 32px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.08) inset',
       }}
     >
       <div className="h-full flex items-center justify-between gap-4">
-        {/* 左侧：tabs */}
-        <div className="relative flex items-center gap-2">
-          {/* 滑动指示器 */}
-          <div
-            className="absolute rounded-[9px] h-[28px] transition-all duration-300 ease-out pointer-events-none"
-            style={{
-              left: indicatorStyle.left,
-              width: indicatorStyle.width,
-              background: 'rgba(255, 255, 255, 0.08)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
-            }}
-          />
-          
-          {/* 按钮 */}
-          {items.map((item) => {
-            const isActive = item.key === currentKey;
-            return (
-              <button
-                key={item.key}
-                ref={(el) => {
-                  if (el) {
-                    buttonsRef.current.set(item.key, el);
-                  } else {
-                    buttonsRef.current.delete(item.key);
-                  }
-                }}
-                type="button"
-                onClick={() => handleChange(item.key)}
-                className="relative flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold transition-colors duration-200"
-                style={{
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                  zIndex: 1,
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.color = 'var(--text-secondary)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.color = 'var(--text-muted)';
-                  }
-                }}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
+        {/* 左侧：标题或切换栏 */}
+        {hasTabs ? (
+          <div className="relative flex items-center gap-2">
+            {/* 滑动指示器 - macOS 风格 */}
+            <div
+              className="absolute rounded-[9px] h-[28px] pointer-events-none"
+              style={{
+                left: indicatorStyle.left,
+                width: indicatorStyle.width,
+                // 平滑的弹性动画
+                transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                // 多层背景效果
+                background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
+                border: '1px solid rgba(255, 255, 255, 0.18)',
+                // 精致的阴影和高光
+                boxShadow: `
+                  0 2px 8px -1px rgba(0, 0, 0, 0.3),
+                  0 1px 2px 0 rgba(0, 0, 0, 0.2),
+                  0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+                  0 1px 0 0 rgba(255, 255, 255, 0.2) inset
+                `,
+                // 额外的模糊效果
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+              }}
+            />
+            
+            {/* Tab 按钮 */}
+            {items.map((item) => {
+              const isActive = item.key === currentKey;
+              return (
+                <button
+                  key={item.key}
+                  ref={(el) => {
+                    if (el) {
+                      buttonsRef.current.set(item.key, el);
+                    } else {
+                      buttonsRef.current.delete(item.key);
+                    }
+                  }}
+                  type="button"
+                  onClick={() => handleChange(item.key)}
+                  className="relative flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold transition-colors duration-200"
+                  style={{
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                    zIndex: 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.color = 'var(--text-secondary)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.color = 'var(--text-muted)';
+                    }
+                  }}
+                >
+                  {item.icon}
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          // 标题模式
+          <div className="flex items-center gap-2">
+            {icon && (
+              <div className="flex items-center justify-center w-[20px] h-[20px]" style={{ color: 'var(--text-muted)' }}>
+                {icon}
+              </div>
+            )}
+            {title && (
+              <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {title}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* 右侧：操作按钮 */}
         {actions && (

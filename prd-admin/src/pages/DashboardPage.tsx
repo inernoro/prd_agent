@@ -4,7 +4,8 @@ import { Badge } from '@/components/design/Badge';
 import { Card } from '@/components/design/Card';
 import { KpiCard } from '@/components/design/KpiCard';
 import { Select } from '@/components/design/Select';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
+import { LayoutDashboard } from 'lucide-react';
 import { getActiveGroups, getGapStats, getLlmLogs, getMessageTrend, getOverviewStats, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem, TokenUsage } from '@/services/contracts/adminStats';
 import type { LlmRequestLogListItem } from '@/types/admin';
@@ -226,8 +227,9 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <TabBar
         title="仪表盘"
+        icon={<LayoutDashboard size={16} />}
         actions={
           <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-w-[120px] font-medium h-[28px]" uiSize="sm">
             <option value={7}>最近7天</option>

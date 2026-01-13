@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   deleteAdminGroup,
@@ -18,7 +18,7 @@ import {
   simulateStreamMessages,
   updateAdminGapStatus,
 } from '@/services';
-import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send } from 'lucide-react';
+import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send, FolderKanban } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -231,9 +231,9 @@ export default function GroupsPage() {
 
   return (
     <div className="h-full flex flex-col gap-6">
-      <PageHeader
+      <TabBar
         title="群组管理"
-        subtitle={`共 ${total} 个群组`}
+        icon={<FolderKanban size={16} />}
       />
 
       <Card className="flex-1 min-h-0 flex flex-col">

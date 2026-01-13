@@ -1,7 +1,7 @@
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -455,18 +455,19 @@ export default function DataManagePage() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
+    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden overflow-y-auto">
       {/* 页面头部 */}
-      <PageHeader
+      <TabBar
         title="数据管理"
+        icon={<Database size={16} />}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               刷新
             </Button>
             <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)}>
-              <Database size={16} />
+              <Database size={14} />
               配置导入/导出
             </Button>
           </>
@@ -502,7 +503,7 @@ export default function DataManagePage() {
       )}
 
       {/* 核心数据概览（开发期清库会保留） */}
-      <Card variant="gold">
+      <GlassCard variant="gold" glow accentHue={45}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -551,10 +552,10 @@ export default function DataManagePage() {
             loading={loading}
           />
         </div>
-      </Card>
+      </GlassCard>
 
       {/* 业务数据概览（可清理） */}
-      <Card>
+      <GlassCard glow accentHue={210}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -638,7 +639,7 @@ export default function DataManagePage() {
             loading={loading}
           />
         </div>
-      </Card>
+      </GlassCard>
 
       {/* 数据域管理 - 分列布局 */}
       <div className="grid gap-3 md:grid-cols-3">
@@ -689,7 +690,7 @@ export default function DataManagePage() {
       </div>
 
       {/* 危险操作区域 */}
-      <Card className="p-5">
+      <GlassCard glow accentHue={0} padding="lg">
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle size={16} style={{ color: 'rgba(239,68,68,0.75)' }} />
           <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -718,7 +719,7 @@ export default function DataManagePage() {
             confirmDescription="将删除除 users / llmplatforms / 启用 llmmodels 外的所有数据，并清掉相关缓存（不可恢复）。"
           />
         </div>
-      </Card>
+      </GlassCard>
 
       {/* 用户清理弹窗 */}
       <Dialog

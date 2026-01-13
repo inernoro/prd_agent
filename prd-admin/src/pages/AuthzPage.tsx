@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Cpu, Database, Image, Plug, ScrollText, Settings2, Shield, ShieldCheck, Users, Users2, Wand2 } from 'lucide-react';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -228,7 +228,7 @@ export default function AuthzPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
-      <PageHeader title="权限管理" subtitle="系统角色（RBAC-lite）+ 权限点（permission strings）" />
+      <TabBar title="权限管理" icon={<Shield size={16} />} />
 
       {/* 固定为当前视口高度：左右两栏内部滚动，避免卡片撑出屏幕 */}
       <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>

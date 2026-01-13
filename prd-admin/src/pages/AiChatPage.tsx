@@ -1,5 +1,7 @@
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
+import { TabBar } from '@/components/design/TabBar';
+import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { getAiChatHistory, uploadAiChatDocument } from '@/services';
@@ -7,7 +9,7 @@ import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
 import { apiRequest } from '@/services/real/apiClient';
-import { Paperclip, Plus, Send, Square } from 'lucide-react';
+import { MessageSquare, Paperclip, Plus, Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -916,191 +918,194 @@ export default function AiChatPage() {
     setPendingAttachmentText(text || '');
   };
 
-  const chatPanel = (
-    <Card className="h-full min-h-0 overflow-hidden">
-      <div className="h-full min-h-0 flex flex-col">
-        <div className="flex items-center justify-between gap-3 pb-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-          <div className="min-w-0 flex items-center gap-3">
-            {/* 标题按钮 + 下拉菜单 */}
-            <div className="relative">
+  // 头部切换下拉菜单
+  const sessionDropdownMenu = sessionMenuOpen && (
+    <>
+      <div className="fixed inset-0 z-[100]" onClick={() => setSessionMenuOpen(false)} />
+      <div
+        className="absolute left-0 top-full mt-1 z-[110] w-[320px] max-h-[400px] overflow-auto rounded-[14px] p-2 shadow-lg"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+      >
+        {sessions.map((s) => {
+          const isActive = s.sessionId === activeSessionId;
+          const isArchived = !!s.archivedAtUtc;
+          return (
+            <div
+              key={s.sessionId}
+              className="flex items-center gap-2 px-2 py-1 rounded-[10px] group"
+              style={{
+                background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
+              }}
+            >
               <button
                 type="button"
-                className="px-3 py-1.5 rounded-[10px] text-[13px] font-semibold hover:bg-white/5 transition-colors truncate flex items-center gap-1.5"
-                style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', maxWidth: '400px' }}
+                className="flex-1 min-w-0 text-left px-1 py-1 rounded-[8px] hover:bg-white/5 transition-colors"
                 onClick={() => {
-                  if (sessions.length === 0) {
-                    // 无会话时直接打开上传弹窗
-                    setCreateOpen(true);
-                  } else {
-                    setSessionMenuOpen((v) => !v);
-                  }
+                  pickSession(s.sessionId);
+                  setSessionMenuOpen(false);
                 }}
-                disabled={!userId}
-                title={sessions.length > 0 ? '点击切换对话' : '上传 PRD'}
+                title={s.title}
               >
-                <span
-                  className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{
-                    border: '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))',
-                    color: 'var(--accent-gold)',
-                    background: 'color-mix(in srgb, var(--accent-gold) 10%, transparent)',
-                    flexShrink: 0,
-                  }}
-                >
-                  切换
-                </span>
-                <span className="truncate">
-                  {activeSession?.title || activeSession?.documentTitle || '上传 PRD'}
-                </span>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: sessions.length > 0 ? 0.75 : 0.35, flexShrink: 0 }}>
-                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  {s.title || `${s.sessionId.slice(0, 8)}`}
+                </div>
+                {isArchived && (
+                  <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>已归档</div>
+                )}
               </button>
-              {/* 下拉菜单 */}
-              {sessionMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-[100]" onClick={() => setSessionMenuOpen(false)} />
-                  <div
-                    className="absolute left-0 top-full mt-1 z-[110] w-[320px] max-h-[400px] overflow-auto rounded-[14px] p-2 shadow-lg"
-                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
-                  >
-                    {sessions.map((s) => {
-                      const isActive = s.sessionId === activeSessionId;
-                      const isArchived = !!s.archivedAtUtc;
-                      return (
-                        <div
-                          key={s.sessionId}
-                          className="flex items-center gap-2 px-2 py-1 rounded-[10px] group"
-                          style={{
-                            background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="flex-1 min-w-0 text-left px-1 py-1 rounded-[8px] hover:bg-white/5 transition-colors"
-                            onClick={() => {
-                              pickSession(s.sessionId);
-                              setSessionMenuOpen(false);
-                            }}
-                            title={s.title}
-                          >
-                            <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                              {s.title || `${s.sessionId.slice(0, 8)}`}
-                            </div>
-                            {isArchived && (
-                              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>已归档</div>
-                            )}
-                          </button>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                            <button
-                              type="button"
-                              className="p-1 rounded-[6px] hover:bg-white/10 text-[10px]"
-                              style={{ color: 'var(--text-muted)' }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void archiveSession(s.sessionId, !isArchived);
-                              }}
-                              title={isArchived ? '取消归档' : '归档'}
-                            >
-                              {isArchived ? '恢复' : '归档'}
-                            </button>
-                            <button
-                              type="button"
-                              className="p-1 rounded-[6px] hover:bg-red-500/20 text-[10px]"
-                              style={{ color: 'var(--status-error)' }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void deleteSession(s.sessionId);
-                              }}
-                              title="删除"
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div className="border-t my-2" style={{ borderColor: 'var(--border-subtle)' }} />
-                    <button
-                      type="button"
-                      className="w-full text-left px-3 py-2 rounded-[10px] hover:bg-white/5 transition-colors flex items-center gap-2"
-                      onClick={() => {
-                        setSessionMenuOpen(false);
-                        setCreateOpen(true);
-                      }}
-                    >
-                      <Plus size={14} style={{ opacity: 0.6 }} />
-                      <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>上传新 PRD</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="flex gap-1.5">
-              {(['PM', 'DEV', 'QA'] as const).map((role) => (
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                 <button
-                  key={role}
                   type="button"
-                  className="px-2.5 py-1 rounded-[8px] text-[11px] font-medium hover:bg-white/5 transition-colors"
-                  style={{
-                    border: currentRole === role ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, var(--border-subtle))' : '1px solid var(--border-subtle)',
-                    background: currentRole === role ? 'color-mix(in srgb, var(--accent-gold) 10%, transparent)' : 'transparent',
-                    color: currentRole === role ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                  className="p-1 rounded-[6px] hover:bg-white/10 text-[10px]"
+                  style={{ color: 'var(--text-muted)' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void archiveSession(s.sessionId, !isArchived);
                   }}
-                  onClick={() => setCurrentRole(role)}
+                  title={isArchived ? '取消归档' : '归档'}
                 >
-                  {role}
+                  {isArchived ? '恢复' : '归档'}
                 </button>
-              ))}
+                <button
+                  type="button"
+                  className="p-1 rounded-[6px] hover:bg-red-500/20 text-[10px]"
+                  style={{ color: 'var(--status-error)' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void deleteSession(s.sessionId);
+                  }}
+                  title="删除"
+                >
+                  删除
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setCreateOpen(true)}
-              disabled={!userId}
-              title="新建/上传 PRD（创建新的对话）"
-            >
-              <Plus size={16} />
-              新建
-            </Button>
-            <button
-              type="button"
-              className="text-[11px] px-2.5 py-1.5 rounded-[8px] transition-colors"
-              style={{ 
-                border: '1px solid var(--border-subtle)', 
-                color: isTestMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
-                background: isTestMode ? 'rgba(214, 178, 106, 0.08)' : 'transparent',
-                cursor: isTestMode ? 'default' : 'pointer',
-              }}
-              onClick={() => !isTestMode && setDebugMode((v) => !v)}
-              title={
-                isTestMode && testData
-                  ? `测试提示词：${testData.promptTitle}`
-                  : debugMode
-                    ? '调试模式：显示消息 ID / replyTo / resendOf 等技术信息'
-                    : '正常对话：隐藏调试信息'
-              }
-            >
-              {isTestMode && testData?.promptTemplate 
-                ? '未保存的提示词测试' 
-                : isTestMode 
-                  ? '使用已生效的提示词'
-                  : debugMode
-                    ? '调试模式'
-                    : '正常对话'}
-            </button>
-            {isStreaming ? (
-              <Button variant="danger" size="sm" onClick={() => stopStreaming()}>
-                <Square size={16} />
-                取消
-              </Button>
-            ) : null}
-          </div>
-        </div>
+          );
+        })}
+        <div className="border-t my-2" style={{ borderColor: 'var(--border-subtle)' }} />
+        <button
+          type="button"
+          className="w-full text-left px-3 py-2 rounded-[10px] hover:bg-white/5 transition-colors flex items-center gap-2"
+          onClick={() => {
+            setSessionMenuOpen(false);
+            setCreateOpen(true);
+          }}
+        >
+          <Plus size={14} style={{ opacity: 0.6 }} />
+          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>上传新 PRD</span>
+        </button>
+      </div>
+    </>
+  );
 
-        <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-3">
+  // 头部左侧内容：会话切换 + 角色切换
+  const headerLeftContent = (
+    <div className="flex items-center gap-3">
+      {/* 会话切换按钮 + 下拉菜单 */}
+      <div className="relative">
+        <button
+          type="button"
+          className="px-3 h-[28px] rounded-[9px] text-[12px] font-semibold hover:bg-white/5 transition-colors truncate flex items-center gap-1.5"
+          style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)', maxWidth: '280px', background: 'rgba(255,255,255,0.04)' }}
+          onClick={() => {
+            if (sessions.length === 0) {
+              setCreateOpen(true);
+            } else {
+              setSessionMenuOpen((v) => !v);
+            }
+          }}
+          disabled={!userId}
+          title={sessions.length > 0 ? '点击切换对话' : '上传 PRD'}
+        >
+          <span className="truncate">
+            {activeSession?.title || activeSession?.documentTitle || '上传 PRD'}
+          </span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: sessions.length > 0 ? 0.75 : 0.35, flexShrink: 0 }}>
+            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        {sessionDropdownMenu}
+      </div>
+      {/* 角色切换 */}
+      <GlassSwitch
+        options={[
+          { key: 'PM', label: 'PM' },
+          { key: 'DEV', label: 'DEV' },
+          { key: 'QA', label: 'QA' },
+        ]}
+        value={currentRole}
+        onChange={(key) => setCurrentRole(key as 'PM' | 'DEV' | 'QA')}
+        accentHue={45}
+        size="sm"
+      />
+    </div>
+  );
+
+  // 头部右侧按钮
+  const headerRightActions = (
+    <>
+      <Button
+        variant="primary"
+        size="sm"
+        onClick={() => setCreateOpen(true)}
+        disabled={!userId}
+        title="新建/上传 PRD（创建新的对话）"
+      >
+        <Plus size={16} />
+        新建
+      </Button>
+      <button
+        type="button"
+        className="text-[11px] h-[28px] px-2.5 rounded-[9px] transition-colors"
+        style={{ 
+          border: '1px solid rgba(255,255,255,0.12)', 
+          color: isTestMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
+          background: isTestMode ? 'rgba(214, 178, 106, 0.08)' : 'rgba(255,255,255,0.04)',
+          cursor: isTestMode ? 'default' : 'pointer',
+        }}
+        onClick={() => !isTestMode && setDebugMode((v) => !v)}
+        title={
+          isTestMode && testData
+            ? `测试提示词：${testData.promptTitle}`
+            : debugMode
+              ? '调试模式：显示消息 ID / replyTo / resendOf 等技术信息'
+              : '正常对话：隐藏调试信息'
+        }
+      >
+        {isTestMode && testData?.promptTemplate 
+          ? '未保存的提示词测试' 
+          : isTestMode 
+            ? '使用已生效的提示词'
+            : debugMode
+              ? '调试模式'
+              : '正常对话'}
+      </button>
+      {isStreaming ? (
+        <Button variant="danger" size="sm" onClick={() => stopStreaming()}>
+          <Square size={16} />
+          取消
+        </Button>
+      ) : null}
+    </>
+  );
+
+  const chatPanel = (
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      {/* 头部 TabBar */}
+      <TabBar
+        title="PRD Agent"
+        icon={<MessageSquare size={16} />}
+        actions={
+          <>
+            {headerLeftContent}
+            {headerRightActions}
+          </>
+        }
+      />
+
+      {/* 内容区 */}
+      <GlassCard className="flex-1 min-h-0 flex flex-col" overflow="hidden" padding="none" glow accentHue={210}>
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 pr-3 space-y-3">
           {messages.length === 0 ? (
             activeSessionId ? (
               <div className="py-20 text-center">
@@ -1312,7 +1317,7 @@ export default function AiChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+        <div className="shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           {/* 提示词快捷标签 */}
           {prompts.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
@@ -1439,8 +1444,8 @@ export default function AiChatPage() {
             }}
           />
         </div>
-      </div>
-    </Card>
+      </GlassCard>
+    </div>
   );
 
   const rightPanel = chatPanel;

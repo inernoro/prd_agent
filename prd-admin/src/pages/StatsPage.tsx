@@ -3,7 +3,8 @@ import { EChart } from '@/components/charts/EChart';
 import { Card } from '@/components/design/Card';
 import { KpiCard } from '@/components/design/KpiCard';
 import { Select } from '@/components/design/Select';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
+import { TrendingUp } from 'lucide-react';
 import { getActiveGroups, getGapStats, getMessageTrend, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem } from '@/services/contracts/adminStats';
 import { useEffect, useMemo, useState } from 'react';
@@ -139,13 +140,15 @@ export default function StatsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <TabBar
         title="Token统计"
+        icon={<TrendingUp size={16} />}
         actions={
           <Select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
             className="min-w-[130px] font-medium"
+            uiSize="sm"
           >
             <option value={7}>最近7天</option>
             <option value={14}>最近14天</option>

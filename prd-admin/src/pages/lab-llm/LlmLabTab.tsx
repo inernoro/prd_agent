@@ -3,7 +3,8 @@ import { Check, ChevronDown, Clock3, Copy, Download, Expand, ImagePlus, Layers, 
 import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
+import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
@@ -2564,7 +2565,7 @@ export default function LlmLabTab() {
       <div className="h-full min-h-0 grid grid-cols-1 gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
         {/* 左上：试验区 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
-          <Card className="p-4 lg:h-full">
+          <GlassCard glow accentHue={210} className="lg:h-full">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2636,12 +2637,12 @@ export default function LlmLabTab() {
               {runError}
             </div>
           ) : null}
-          </Card>
+          </GlassCard>
         </div>
 
         {/* 左下：自定义模型集合 + 大模型实验 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-2">
-          <Card className="p-4 overflow-hidden flex flex-col min-h-0 lg:h-full">
+          <GlassCard glow accentHue={270} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2828,105 +2829,51 @@ export default function LlmLabTab() {
               )}
             </div>
           </div>
-          </Card>
+          </GlassCard>
         </div>
 
         {/* 右上：提示词 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
-          <Card className="p-4 lg:h-full">
+          <GlassCard glow variant="gold" className="lg:h-full">
           {/* Row 1: 一行放所有“切换/动作”按钮（避免堆叠） */}
           <div className="flex items-start justify-between gap-3 min-w-0">
             <div className="min-w-0 flex-1 overflow-x-auto pr-1">
               <div className="inline-flex items-center gap-2 w-max">
-                <div
-                  className="inline-flex p-[3px] rounded-[12px] overflow-x-auto pr-1"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-                >
-                  {([
-                    { key: 'infer' as const, label: '推理' },
-                    { key: 'image' as const, label: '生图' },
-                  ] as const).map((x) => {
-                    const active = mainMode === x.key;
-                    return (
-                      <button
-                        key={x.key}
-                        type="button"
-                        className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                        style={{
-                          color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                          background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                          border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                        }}
-                        aria-pressed={active}
-                        onClick={() => onMainModeChange(x.key)}
-                      >
-                        {x.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <GlassSwitch
+                  options={[
+                    { key: 'infer', label: '推理' },
+                    { key: 'image', label: '生图' },
+                  ]}
+                  value={mainMode}
+                  onChange={(key) => onMainModeChange(key as MainMode)}
+                  accentHue={45}
+                />
 
                 {mainMode === 'infer' ? (
-                  <div
-                    className="inline-flex items-center max-w-full p-[3px] rounded-[12px] overflow-x-auto pr-1"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.10)' }}
-                  >
-                    {(
-                      [
-                        { key: 'intent' as const, label: '意图' },
-                        { key: 'json' as const, label: 'JSON' },
-                        { key: 'mcp' as const, label: 'MCP' },
-                        { key: 'functionCall' as const, label: 'FunctionCall' },
-                        { key: 'imageGenPlan' as const, label: '生图意图' },
-                      ] as const
-                    ).map((x) => {
-                      const active = mode === x.key;
-                      return (
-                        <button
-                          key={x.key}
-                          type="button"
-                          className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                          style={{
-                            color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                            background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                            border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                          }}
-                          aria-pressed={active}
-                          onClick={() => onModeClick(x.key)}
-                        >
-                          {x.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <GlassSwitch
+                    options={[
+                      { key: 'intent', label: '意图' },
+                      { key: 'json', label: 'JSON' },
+                      { key: 'mcp', label: 'MCP' },
+                      { key: 'functionCall', label: 'FunctionCall' },
+                      { key: 'imageGenPlan', label: '生图意图' },
+                    ]}
+                    value={mode}
+                    onChange={(key) => onModeClick(key as LabMode)}
+                    accentHue={45}
+                  />
                 ) : (
                   <div className="inline-flex items-center gap-2 w-max">
-                    <div className="flex gap-2 shrink-0">
-                      <Button
-                        size="xs"
-                        variant={imageSubMode === 'single' ? 'primary' : 'secondary'}
-                        className="shrink-0"
-                        onClick={() => setImageSubMode('single')}
-                      >
-                        单张
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant={imageSubMode === 'batch' ? 'primary' : 'secondary'}
-                        className="shrink-0"
-                        onClick={() => setImageSubMode('batch')}
-                      >
-                        批量
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant={imageSubMode === 'fullSize' ? 'primary' : 'secondary'}
-                        className="shrink-0"
-                        onClick={() => setImageSubMode('fullSize')}
-                      >
-                        全尺寸(所有)
-                      </Button>
-                    </div>
+                    <GlassSwitch
+                      options={[
+                        { key: 'single', label: '单张' },
+                        { key: 'batch', label: '批量' },
+                        { key: 'fullSize', label: '全尺寸' },
+                      ]}
+                      value={imageSubMode}
+                      onChange={(key) => setImageSubMode(key as ImageSubMode)}
+                      accentHue={45}
+                    />
                     {imageSubMode === 'single' ? (
                       <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
                         数量
@@ -3299,12 +3246,12 @@ export default function LlmLabTab() {
               </>
             )}
           </div>
-          </Card>
+          </GlassCard>
         </div>
 
         {/* 右下：实时结果 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
-          <Card className="p-4 overflow-hidden flex flex-col min-h-0 lg:h-full">
+          <GlassCard glow accentHue={150} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           {mainMode === 'infer' ? (
             <>
           <div className="flex items-center justify-between shrink-0">
@@ -3323,43 +3270,19 @@ export default function LlmLabTab() {
                   判定主模型：{(allModels.find((m) => (m as any).isMain && (m as any).enabled)?.name ?? '未设置').toString()}
                 </div>
               ) : null}
-              <div
-                className="inline-flex p-[3px] rounded-[12px]"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)' }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setSortBy(mode === 'imageGenPlan' ? 'imagePlanItemsDesc' : 'ttft')}
-                  aria-pressed={mode === 'imageGenPlan' ? sortBy === 'imagePlanItemsDesc' : sortBy === 'ttft'}
-                  className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
-                  style={{
-                    color: 'var(--text-primary)',
-                    background: (mode === 'imageGenPlan' ? sortBy === 'imagePlanItemsDesc' : sortBy === 'ttft') ? 'rgba(255,255,255,0.08)' : 'transparent',
-                    border: (mode === 'imageGenPlan' ? sortBy === 'imagePlanItemsDesc' : sortBy === 'ttft') ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
-                  }}
-                  title={mode === 'imageGenPlan' ? '按识别条目数（倒序）排序' : '按首字延迟（TTFT）排序'}
-                >
-                  <Zap size={14} />
-                  {mode === 'imageGenPlan' ? '识别条目' : '首字延迟'}
-                </button>
-                {mode !== 'imageGenPlan' ? (
-                  <button
-                    type="button"
-                    onClick={() => setSortBy('total')}
-                    aria-pressed={sortBy === 'total'}
-                    className="h-[30px] px-3 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5"
-                    style={{
-                      color: 'var(--text-primary)',
-                      background: sortBy === 'total' ? 'rgba(255,255,255,0.08)' : 'transparent',
-                      border: sortBy === 'total' ? '1px solid rgba(255,255,255,0.16)' : '1px solid transparent',
-                    }}
-                    title="按总耗时排序"
-                  >
-                    <Clock3 size={14} />
-                    总时长
-                  </button>
-                ) : null}
-              </div>
+              <GlassSwitch
+                options={
+                  mode === 'imageGenPlan'
+                    ? [{ key: 'imagePlanItemsDesc', label: '识别条目', icon: <Zap size={14} /> }]
+                    : [
+                        { key: 'ttft', label: '首字延迟', icon: <Zap size={14} /> },
+                        { key: 'total', label: '总时长', icon: <Clock3 size={14} /> },
+                      ]
+                }
+                value={sortBy}
+                onChange={(key) => setSortBy(key as SortBy)}
+                accentHue={45}
+              />
               {!running && failedRunCount > 0 ? (
                 <Button
                   size="xs"
@@ -4411,7 +4334,7 @@ export default function LlmLabTab() {
               </div>
             </>
           )}
-          </Card>
+          </GlassCard>
         </div>
       </div>
 

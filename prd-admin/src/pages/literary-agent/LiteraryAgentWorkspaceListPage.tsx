@@ -1,6 +1,6 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -10,7 +10,7 @@ import {
   updateImageMasterWorkspace,
 } from '@/services';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
-import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
@@ -523,10 +523,11 @@ export default function LiteraryAgentWorkspaceListPage() {
     >
       {contextMenu.Menu}
 
-      <PageHeader
+      <TabBar
         title="文学创作"
+        icon={<BookOpen size={16} />}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             <Button variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
               <FolderPlus size={14} />
             </Button>
@@ -534,7 +535,7 @@ export default function LiteraryAgentWorkspaceListPage() {
               <Plus size={14} />
               新建
             </Button>
-          </div>
+          </>
         }
       />
 

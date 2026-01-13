@@ -1,6 +1,6 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -13,7 +13,7 @@ import {
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
-import { Plus, Users2, Pencil, Trash2, ArrowRight } from 'lucide-react';
+import { Plus, Users2, Pencil, Trash2, ArrowRight, Image } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -411,11 +411,12 @@ export default function VisualAgentWorkspaceListPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <PageHeader
+      <TabBar
         title="视觉创作 Agent"
+        icon={<Image size={16} />}
         actions={
           <Button variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
-            <Plus size={16} />
+            <Plus size={14} />
             新建 Workspace
           </Button>
         }

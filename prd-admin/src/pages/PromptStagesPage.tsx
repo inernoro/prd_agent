@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { PageHeader } from '@/components/design/PageHeader';
+import { TabBar } from '@/components/design/TabBar';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
 import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts, listLiteraryPrompts, createLiteraryPrompt, updateLiteraryPrompt, deleteLiteraryPrompt } from '@/services';
@@ -10,7 +10,7 @@ import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contracts/systemPrompts';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
-import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket } from 'lucide-react';
+import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket, FileText, BookOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function safeIdempotencyKey() {
@@ -826,16 +826,14 @@ export default function PromptStagesPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-6 overflow-x-hidden">
-      <PageHeader
-        title="提示词管理"
+      <TabBar
         variant="gold"
-        tabsInline={true}
-        tabs={[
-          { key: 'prd', label: 'PRD提示词' },
-          { key: 'literary', label: '文学创作' },
+        items={[
+          { key: 'prd', label: 'PRD提示词', icon: <FileText size={14} /> },
+          { key: 'literary', label: '文学创作', icon: <BookOpen size={14} /> },
         ]}
-        activeTab={topTab}
-        onTabChange={(next) => {
+        activeKey={topTab}
+        onChange={(next) => {
           setTopTab(next as TopTabKey);
           setErr(null);
           setMsg(null);

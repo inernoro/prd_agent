@@ -9,3 +9,6 @@ export { Switch } from './Switch';
 export { PageHeader } from './PageHeader';
 export { TabBar } from './TabBar';
 export type { TabBarItem } from './TabBar';
+export { GlassCard } from './GlassCard';
+export type { GlassCardProps, GlassCardVariant } from './GlassCard';export { GlassSwitch } from './GlassSwitch';
+export type { GlassSwitchProps, GlassSwitchOption } from './GlassSwitch';

@@ -68,6 +68,15 @@ select optgroup {
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: content-box; }
 
+/* 侧边栏导航：隐藏滚动条但保留滚动功能 */
+.nav-scroll-hidden {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.nav-scroll-hidden::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}
+
 /* 图片上传：海浪透明遮罩（用于 syncStatus=pending 的画布图片） */
 @keyframes prdUploadWaveMove {
   0% { transform: translateX(-28%); opacity: 0.55; }
