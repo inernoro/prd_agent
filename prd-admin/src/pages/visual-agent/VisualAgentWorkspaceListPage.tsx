@@ -1,6 +1,5 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
-import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -13,7 +12,30 @@ import {
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
-import { Plus, Users2, Pencil, Trash2, ArrowRight, Image } from 'lucide-react';
+import {
+  Plus,
+  Users2,
+  Pencil,
+  Trash2,
+  ArrowRight,
+  Image,
+  Paperclip,
+  MapPin,
+  Zap,
+  Globe,
+  Smile,
+  ArrowUp,
+  ChevronRight,
+  Palette,
+  ShoppingCart,
+  PenTool,
+  Video,
+  LayoutGrid,
+  Star,
+  Sparkles,
+  FolderPlus,
+  FilePlus,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -22,7 +44,10 @@ function formatDate(iso: string | null | undefined) {
   if (!s) return '';
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['coverAssets'] }) {
@@ -45,7 +70,7 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
         className="h-full w-full"
         style={{
           ...p.style,
-          background: 'linear-gradient(135deg, rgba(250,204,21,0.06) 0%, rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.05) 100%)',
+          background: 'rgba(255,255,255,0.03)',
         }}
       />
     );
@@ -64,7 +89,6 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
     );
   }
 
-  // 2 张：左右两栏（更直观）
   if (n === 2) {
     return (
       <div
@@ -72,8 +96,7 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
         style={{
           gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
           gridTemplateRows: 'repeat(1, minmax(0, 1fr))',
-          gap: 1,
-          background: 'var(--border-subtle)',
+          gap: 2,
         }}
       >
         <Tile idx={0} />
@@ -82,7 +105,6 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
     );
   }
 
-  // 3 张：左边全高大图，右边上下两半
   if (n === 3) {
     return (
       <div
@@ -90,8 +112,7 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
         style={{
           gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)',
           gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
-          gap: 1,
-          background: 'var(--border-subtle)',
+          gap: 2,
         }}
       >
         <Tile idx={0} style={{ gridColumn: '1', gridRow: '1 / span 2' }} />
@@ -101,15 +122,13 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
     );
   }
 
-  // 4+ 张：保持四宫格（取前 4 张），避免过密
   return (
     <div
       className="absolute inset-0 grid"
       style={{
         gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
         gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
-        gap: 1,
-        background: 'var(--border-subtle)',
+        gap: 2,
       }}
     >
       <Tile idx={0} />
@@ -120,6 +139,493 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
   );
 }
 
+// ============ 浮动工具栏 ============
+function FloatingToolbar(props: {
+  onNewProject: () => void;
+  onNewFolder: () => void;
+}) {
+  const { onNewProject, onNewFolder } = props;
+
+  return (
+    <div
+      className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent"
+      style={{
+        border: '1px solid rgba(255,255,255,0.12)',
+        backdropFilter: 'blur(14px)',
+        WebkitBackdropFilter: 'blur(14px)',
+        boxShadow: '0 18px 60px rgba(0,0,0,0.35)',
+      }}
+    >
+      {/* 新建项目 */}
+      <button
+        type="button"
+        className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
+        style={{ color: 'rgba(255,255,255,0.86)' }}
+        title="新建项目"
+        onClick={onNewProject}
+      >
+        <FilePlus size={18} />
+      </button>
+
+      {/* 新建文件夹 */}
+      <button
+        type="button"
+        className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
+        style={{ color: 'rgba(255,255,255,0.86)' }}
+        title="新建文件夹"
+        onClick={onNewFolder}
+      >
+        <FolderPlus size={18} />
+      </button>
+    </div>
+  );
+}
+
+// ============ 场景标签定义 ============
+const SCENARIO_TAGS = [
+  { key: 'pro', label: 'PRD Agent Pro', icon: Sparkles, prompt: '', isPro: true },
+  { key: 'design', label: '平面设计', icon: LayoutGrid, prompt: '帮我设计一张' },
+  { key: 'branding', label: '品牌设计', icon: Star, prompt: '帮我设计一个品牌视觉，包括' },
+  { key: 'illustration', label: '插画创作', icon: PenTool, prompt: '帮我创作一幅插画，主题是' },
+  { key: 'ecommerce', label: '电商设计', icon: ShoppingCart, prompt: '帮我设计一张电商主图，产品是' },
+  { key: 'video', label: '视频封面', icon: Video, prompt: '帮我设计一张视频封面，内容是' },
+];
+
+// ============ Hero 区域 ============
+function HeroSection() {
+  return (
+    <div className="text-center py-6">
+      {/* Logo + 主标题 */}
+      <div className="flex items-center justify-center gap-3 mb-2">
+        <div
+          className="w-9 h-9 rounded-full flex items-center justify-center"
+          style={{
+            background: '#1a1a1a',
+            border: '2px solid #333',
+          }}
+        >
+          <Image size={16} style={{ color: '#fff' }} />
+        </div>
+        <h1 className="text-[26px] font-bold" style={{ color: 'var(--text-primary)' }}>
+          视觉创作 Agent
+        </h1>
+      </div>
+      {/* 副标题 */}
+      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+        AI 驱动的设计助手，让创作更简单
+      </p>
+    </div>
+  );
+}
+
+// ============ 打字动效占位符 ============
+const TYPING_TEXTS = [
+  '帮我设计一张活动海报...',
+  '帮我创作一个品牌LOGO...',
+  '帮我设计一张电商主图...',
+  '帮我创作一幅插画作品...',
+];
+
+function useTypingPlaceholder() {
+  const [displayText, setDisplayText] = useState('');
+  const [textIndex, setTextIndex] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [charIndex, setCharIndex] = useState(0);
+
+  useEffect(() => {
+    const currentText = TYPING_TEXTS[textIndex] || '';
+    
+    const timeout = setTimeout(() => {
+      if (!isDeleting) {
+        // 打字中
+        if (charIndex < currentText.length) {
+          setDisplayText(currentText.slice(0, charIndex + 1));
+          setCharIndex(charIndex + 1);
+        } else {
+          // 打完了，等待后开始删除
+          setTimeout(() => setIsDeleting(true), 1500);
+        }
+      } else {
+        // 删除中
+        if (charIndex > 0) {
+          setDisplayText(currentText.slice(0, charIndex - 1));
+          setCharIndex(charIndex - 1);
+        } else {
+          // 删完了，切换到下一个文本
+          setIsDeleting(false);
+          setTextIndex((textIndex + 1) % TYPING_TEXTS.length);
+        }
+      }
+    }, isDeleting ? 25 : 45);
+
+    return () => clearTimeout(timeout);
+  }, [charIndex, isDeleting, textIndex]);
+
+  return displayText;
+}
+
+// ============ 快捷输入框（深色卡片样式） ============
+function QuickInputBox(props: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  loading: boolean;
+}) {
+  const { value, onChange, onSubmit, loading } = props;
+  const typingPlaceholder = useTypingPlaceholder();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      onSubmit();
+    }
+  };
+
+  // 点击整个输入框区域时聚焦到textarea
+  const handleContainerClick = () => {
+    textareaRef.current?.focus();
+  };
+
+  return (
+    <div className="max-w-[768px] w-full mx-auto px-5 mt-[5vh]">
+      <div
+        className="rounded-2xl overflow-hidden cursor-text"
+        style={{
+          background: 'rgba(255,255,255,0.06)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          boxShadow: '0 4px 32px rgba(0,0,0,0.3)',
+        }}
+        onClick={handleContainerClick}
+      >
+        {/* 输入区域 - 整个区域可点击 */}
+        <div className="px-6 pt-5 pb-14 relative min-h-[80px]">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            className="w-full bg-transparent text-[16px] resize-none outline-none"
+            style={{ 
+              color: 'var(--text-primary)',
+              minHeight: '32px',
+            }}
+            disabled={loading}
+          />
+          {/* 自定义打字动效占位符 */}
+          {!value && (
+            <div
+              className="absolute top-5 left-6 pointer-events-none text-[16px]"
+              style={{ color: 'rgba(255,255,255,0.4)' }}
+            >
+              {typingPlaceholder}
+              <span className="animate-pulse">|</span>
+            </div>
+          )}
+        </div>
+        {/* 底部工具栏 */}
+        <div className="flex items-center justify-between px-5 pb-4">
+          {/* 左侧：附件按钮 */}
+          <button
+            type="button"
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              color: 'var(--text-muted)',
+            }}
+            title="附件"
+            disabled
+          >
+            <Paperclip size={18} />
+          </button>
+          {/* 右侧：功能按钮组 */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+              style={{ color: 'var(--text-muted)' }}
+              title="位置"
+              disabled
+            >
+              <MapPin size={18} />
+            </button>
+            <button
+              type="button"
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+              style={{ color: 'var(--text-muted)' }}
+              title="快捷"
+              disabled
+            >
+              <Zap size={18} />
+            </button>
+            <button
+              type="button"
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+              style={{ color: 'var(--text-muted)' }}
+              title="语言"
+              disabled
+            >
+              <Globe size={18} />
+            </button>
+            <button
+              type="button"
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
+              style={{
+                background: 'rgba(56,189,248,0.15)',
+                color: 'rgb(56,189,248)',
+              }}
+              title="表情"
+              disabled
+            >
+              <Smile size={18} />
+            </button>
+            {/* 发送按钮 */}
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={loading || !value.trim()}
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200"
+              style={{
+                background: value.trim() ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.12)',
+                color: value.trim() ? '#000' : 'var(--text-muted)',
+                cursor: value.trim() ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <ArrowUp size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ 场景标签 ============
+function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: string | null }) {
+  const { onSelect, activeKey } = props;
+
+  return (
+    <div className="flex items-center justify-center gap-2 flex-wrap px-5 mt-8">
+      {SCENARIO_TAGS.map((tag) => {
+        const Icon = tag.icon;
+        const isActive = activeKey === tag.key;
+        const isPro = tag.isPro;
+
+        if (isPro) {
+          return (
+            <button
+              key={tag.key}
+              type="button"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all duration-200"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(250,176,5,0.5)',
+                color: 'rgba(250,176,5,1)',
+              }}
+              onClick={() => {}}
+            >
+              <Icon size={14} />
+              {tag.label}
+            </button>
+          );
+        }
+
+        return (
+          <button
+            key={tag.key}
+            type="button"
+            onClick={() => onSelect(tag.prompt)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all duration-200"
+            style={{
+              background: isActive ? 'rgba(255,255,255,0.08)' : 'transparent',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+            }}
+          >
+            <Icon size={14} />
+            {tag.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============ 项目卡片（网格布局） ============
+function ProjectCard(props: {
+  workspace: ImageMasterWorkspace;
+  onRename: () => void;
+  onShare: () => void;
+  onDelete: () => void;
+  onClick: () => void;
+}) {
+  const { workspace: ws, onRename, onShare, onDelete, onClick } = props;
+  const hasCover = ws.coverAssets && ws.coverAssets.length > 0;
+
+  return (
+    <div
+      className="group cursor-pointer"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
+      {/* 封面区域 */}
+      <div
+        className="h-[160px] w-full relative overflow-hidden rounded-lg transition-transform duration-200 group-hover:scale-[1.02]"
+        data-ws-card="1"
+        data-ws-id={ws.id}
+        style={{
+          background: hasCover ? 'transparent' : 'rgba(255,255,255,0.04)',
+          border: hasCover ? 'none' : '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        {hasCover && <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />}
+      </div>
+      {/* 信息区域 */}
+      <div className="pt-2 px-0.5">
+        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+          {ws.title || '未命名'}
+        </div>
+        <div className="mt-0.5 text-[11px] flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
+          <span>更新于 {formatDate(ws.updatedAt)}</span>
+          <div
+            className="flex items-center gap-0.5 opacity-0 pointer-events-none transition-opacity duration-100 group-hover:opacity-100 group-hover:pointer-events-auto"
+          >
+            <Button
+              size="xs"
+              variant="secondary"
+              className="h-5 w-5 p-0 rounded-md gap-0"
+              onClick={(e) => { e.stopPropagation(); onRename(); }}
+              title="重命名"
+            >
+              <Pencil size={10} />
+            </Button>
+            <Button
+              size="xs"
+              variant="secondary"
+              className="h-5 w-5 p-0 rounded-md gap-0"
+              onClick={(e) => { e.stopPropagation(); onShare(); }}
+              title="共享"
+            >
+              <Users2 size={10} />
+            </Button>
+            <Button
+              size="xs"
+              variant="danger"
+              className="h-5 w-5 p-0 rounded-md gap-0"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="删除"
+            >
+              <Trash2 size={10} />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ 新建项目卡片（网格布局） ============
+function NewProjectCard(props: { onClick: () => void }) {
+  return (
+    <div
+      className="cursor-pointer"
+      onClick={props.onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          props.onClick();
+        }
+      }}
+    >
+      {/* 封面区域 - 与其他卡片高度一致 */}
+      <div
+        className="h-[160px] rounded-lg flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:bg-white/5"
+        style={{
+          border: '1px dashed rgba(255,255,255,0.15)',
+          background: 'transparent',
+        }}
+      >
+        <Plus size={24} style={{ color: 'var(--text-muted)' }} />
+        <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+          新建项目
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ============ 项目列表（网格布局，一排5个） ============
+function ProjectCarousel(props: {
+  items: ImageMasterWorkspace[];
+  loading: boolean;
+  onCreate: () => void;
+  onRename: (ws: ImageMasterWorkspace) => void;
+  onShare: (ws: ImageMasterWorkspace) => void;
+  onDelete: (ws: ImageMasterWorkspace) => void;
+  onOpen: (ws: ImageMasterWorkspace) => void;
+}) {
+  const { items, loading, onCreate, onRename, onShare, onDelete, onOpen } = props;
+
+  if (loading) {
+    return (
+      <div className="px-5 py-8">
+        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          加载中...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 flex-1">
+      {/* 标题栏 */}
+      <div className="flex items-center justify-between mb-3 max-w-[1340px] mx-auto px-5">
+        <h2 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          最近项目
+        </h2>
+        <button
+          type="button"
+          className="flex items-center gap-0.5 text-[13px] font-medium transition-colors hover:opacity-80"
+          style={{ color: 'rgba(250,176,5,0.9)' }}
+        >
+          查看全部
+          <ChevronRight size={14} />
+        </button>
+      </div>
+      {/* 网格布局，固定5列，居中 */}
+      <div
+        className="grid gap-4 pb-4 px-5 max-w-[1340px] mx-auto"
+        style={{
+          gridTemplateColumns: 'repeat(5, 250px)',
+        }}
+      >
+        <NewProjectCard onClick={onCreate} />
+        {items.map((ws) => (
+          <ProjectCard
+            key={ws.id}
+            workspace={ws}
+            onRename={() => onRename(ws)}
+            onShare={() => onShare(ws)}
+            onDelete={() => onDelete(ws)}
+            onClick={() => onOpen(ws)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============ 主页面 ============
 export default function VisualAgentWorkspaceListPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
@@ -128,6 +634,12 @@ export default function VisualAgentWorkspaceListPage() {
   const refreshBusyRef = useRef<Set<string>>(new Set());
   const lastRefreshHashRef = useRef<Map<string, string>>(new Map());
 
+  // 快捷输入框状态
+  const [inputValue, setInputValue] = useState('');
+  const [inputLoading, setInputLoading] = useState(false);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
   const [shareWs, setShareWs] = useState<ImageMasterWorkspace | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -146,7 +658,6 @@ export default function VisualAgentWorkspaceListPage() {
         return;
       }
       const list = Array.isArray(res.data?.items) ? res.data.items : [];
-      // 只显示非文章配图类型（排除文学创作的数据）
       const filtered = list.filter((item) => item.scenarioType !== 'article-illustration');
       setItems(filtered);
     } finally {
@@ -158,7 +669,7 @@ export default function VisualAgentWorkspaceListPage() {
     void reload();
   }, []);
 
-  // 仅对“进入视口”的卡片做封面 refresh（无人观察就不刷新）
+  // 封面刷新逻辑
   useEffect(() => {
     if (items.length === 0) return;
     const els = Array.from(document.querySelectorAll<HTMLElement>('[data-ws-card="1"][data-ws-id]'));
@@ -208,6 +719,7 @@ export default function VisualAgentWorkspaceListPage() {
     return () => io.disconnect();
   }, [items]);
 
+  // 创建新 workspace（无初始 prompt）
   const onCreate = async () => {
     const title = await systemDialog.prompt({
       title: '新建 Workspace',
@@ -224,6 +736,50 @@ export default function VisualAgentWorkspaceListPage() {
     }
     const ws = res.data.workspace;
     navigate(`/visual-agent/${encodeURIComponent(ws.id)}`);
+  };
+
+  // 快捷输入提交：创建 workspace 并跳转（带初始 prompt）
+  const onQuickSubmit = async () => {
+    const prompt = inputValue.trim();
+    if (!prompt) return;
+
+    setInputLoading(true);
+    try {
+      const res = await createImageMasterWorkspace({
+        title: prompt.slice(0, 20) || '未命名',
+        idempotencyKey: `ws_quick_${Date.now()}`,
+      });
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '创建失败');
+        return;
+      }
+      const ws = res.data.workspace;
+      navigate(`/visual-agent/${encodeURIComponent(ws.id)}?prompt=${encodeURIComponent(prompt)}`);
+    } finally {
+      setInputLoading(false);
+    }
+  };
+
+  // 场景标签选择
+  const onTagSelect = (prompt: string) => {
+    if (!prompt) return;
+    setInputValue(prompt);
+    const tag = SCENARIO_TAGS.find((t) => t.prompt === prompt);
+    setActiveTag(tag?.key ?? null);
+  };
+
+  // 新建文件夹（目前作为占位功能，后续可接入后端）
+  const onCreateFolder = async () => {
+    const folderName = await systemDialog.prompt({
+      title: '新建文件夹',
+      message: '请输入文件夹名称',
+      defaultValue: '新文件夹',
+      confirmText: '创建',
+      cancelText: '取消',
+    });
+    if (folderName == null) return;
+    // TODO: 后端尚未支持文件夹功能，暂时提示
+    await systemDialog.alert(`文件夹功能正在开发中，将创建名为「${folderName.trim() || '新文件夹'}」的文件夹。`);
   };
 
   const onRename = async (ws: ImageMasterWorkspace) => {
@@ -298,148 +854,62 @@ export default function VisualAgentWorkspaceListPage() {
     await reload();
   };
 
-  const grid = (
+  return (
     <div
-      className="grid gap-3"
+      className="h-full min-h-0 flex flex-col overflow-auto relative"
       style={{
-        // 4栏布局：最小宽度240px，按比例缩小
-        gridTemplateColumns: 'repeat(auto-fill, minmax(min(240px, 100%), 1fr))',
+        background: 'linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%)',
       }}
     >
-      <Card className="p-0 overflow-hidden">
-        <button
-          type="button"
-          className="w-full h-full min-h-[140px] flex flex-col items-center justify-center gap-1.5"
-          onClick={() => void onCreate()}
-          style={{ color: 'var(--text-secondary)' }}
-        >
-          <div
-            className="h-10 w-10 rounded-[12px] flex items-center justify-center"
-            style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-          >
-            <Plus size={18} />
-          </div>
-          <div className="text-[12px] font-semibold">新建项目</div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            Workspace
-          </div>
-        </button>
-      </Card>
+      {/* 浮动工具栏 - 页面左侧垂直居中 */}
+      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
+        <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
+      </div>
 
-      {items.map((ws) => (
-        <Card key={ws.id} className="p-0 overflow-hidden">
-          <div
-            role="button"
-            tabIndex={0}
-            className="group w-full text-left cursor-pointer"
-            onClick={() => navigate(`/visual-agent/${encodeURIComponent(ws.id)}`)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigate(`/visual-agent/${encodeURIComponent(ws.id)}`);
-              }
-            }}
-            title={ws.title || ws.id}
-          >
-            <div
-              className="h-[110px] w-full relative overflow-hidden"
-              data-ws-card="1"
-              data-ws-id={ws.id}
-              style={{
-                background:
-                  'linear-gradient(135deg, rgba(250,204,21,0.10) 0%, rgba(255,255,255,0.03) 40%, rgba(0,0,0,0.05) 100%)',
-                borderBottom: '1px solid var(--border-subtle)',
-              }}
-            >
-              <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />
-              {/* subtle overlay to keep text contrast consistent even with bright covers */}
-              <div
-                className="absolute inset-0"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.20) 100%)',
-                }}
-              />
-            </div>
-            <div className="p-2">
-              <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                {ws.title || '未命名'}
-              </div>
-              <div className="mt-0.5 text-[10px] flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
-                <span>更新于 {formatDate(ws.updatedAt)}</span>
-                <div
-                  className={[
-                    'flex items-center gap-0.5',
-                    'opacity-0 pointer-events-none transition-opacity duration-100',
-                    'group-hover:opacity-100 group-hover:pointer-events-auto',
-                  ].join(' ')}
-                >
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    className="h-5 w-5 p-0 rounded-[6px] gap-0"
-                    onClick={(e) => { e.stopPropagation(); void onRename(ws); }}
-                    title="重命名"
-                  >
-                    <Pencil size={10} />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    className="h-5 w-5 p-0 rounded-[6px] gap-0"
-                    onClick={(e) => { e.stopPropagation(); void openShare(ws); }}
-                    title="共享"
-                  >
-                    <Users2 size={10} />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="danger"
-                    className="h-5 w-5 p-0 rounded-[6px] gap-0"
-                    onClick={(e) => { e.stopPropagation(); void onDelete(ws); }}
-                    title="删除"
-                  >
-                    <Trash2 size={10} />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
+      {/* 顶部居中区域 */}
+      <div className="flex flex-col items-center justify-center pt-[12vh] pb-6">
+        {/* Hero 区域 */}
+        <HeroSection />
 
-  return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      <TabBar
-        title="视觉创作 Agent"
-        icon={<Image size={16} />}
-        actions={
-          <Button variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
-            <Plus size={14} />
-            新建 Workspace
-          </Button>
-        }
+        {/* 快捷输入框 */}
+        <QuickInputBox
+        value={inputValue}
+        onChange={(v) => {
+          setInputValue(v);
+          const tag = SCENARIO_TAGS.find((t) => t.prompt === v);
+          setActiveTag(tag?.key ?? null);
+        }}
+        onSubmit={onQuickSubmit}
+        loading={inputLoading}
       />
 
+        {/* 场景标签 */}
+        <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
+      </div>
+
+      {/* 错误提示 */}
       {error ? (
-        <Card>
-          <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
-            {error}
-          </div>
-        </Card>
+        <div className="px-5 mt-4">
+          <Card>
+            <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
+              {error}
+            </div>
+          </Card>
+        </div>
       ) : null}
 
-      {loading ? (
-        <Card>
-          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            加载中...
-          </div>
-        </Card>
-      ) : (
-        grid
-      )}
+      {/* 项目列表 */}
+      <ProjectCarousel
+        items={items}
+        loading={loading}
+        onCreate={onCreate}
+        onRename={onRename}
+        onShare={openShare}
+        onDelete={onDelete}
+        onOpen={(ws) => navigate(`/visual-agent/${encodeURIComponent(ws.id)}`)}
+      />
 
+      {/* 共享对话框 */}
       <Dialog
         open={shareOpen}
         onOpenChange={(o) => {
@@ -454,10 +924,10 @@ export default function VisualAgentWorkspaceListPage() {
             <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
               当前项目：{shareWs?.title || '未命名'}
             </div>
-            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
               已选成员：{memberIds.length} 个
             </div>
-            <div className="flex-1 min-h-0 overflow-auto rounded-[12px]" style={{ border: '1px solid var(--border-subtle)' }}>
+            <div className="flex-1 min-h-0 overflow-auto rounded-xl" style={{ border: '1px solid var(--border-subtle)' }}>
               {usersLoading ? (
                 <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>
                   加载管理员列表中...
@@ -474,7 +944,7 @@ export default function VisualAgentWorkspaceListPage() {
                       <button
                         key={u.userId}
                         type="button"
-                        className="w-full flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-white/5"
+                        className="w-full flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/5"
                         style={{ border: '1px solid transparent', color: 'var(--text-primary)' }}
                         onClick={() => {
                           setMemberSet((prev) => {
@@ -488,7 +958,7 @@ export default function VisualAgentWorkspaceListPage() {
                         <input type="checkbox" checked={checked} readOnly />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold truncate">{u.displayName || u.username}</div>
-                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                             {u.userId}
                           </div>
                         </div>
@@ -513,5 +983,3 @@ export default function VisualAgentWorkspaceListPage() {
     </div>
   );
 }
-
-

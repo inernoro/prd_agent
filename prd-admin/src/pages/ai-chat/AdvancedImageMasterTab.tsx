@@ -899,9 +899,10 @@ function buildTemplate(name: string) {
   return '';
 }
 
-export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
+export default function AdvancedImageMasterTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
+  const initialPrompt = String(props.initialPrompt ?? '').trim();
   // 固定默认参数：用户不需要选择
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
   const imageGenSize = '1024x1024' as const;
@@ -3103,6 +3104,26 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string }) {
       pushMsg('Assistant', `生成失败：${msg}`);
     }
   };
+
+  // 处理初始 prompt（从首页快捷输入跳转过来）
+  const initialPromptHandledRef = useRef(false);
+  useEffect(() => {
+    if (!initialPrompt) return;
+    if (initialPromptHandledRef.current) return;
+    if (!workspace) return;
+    if (modelsLoading) return;
+    if (!canvasBootedRef.current) return;
+
+    // 标记已处理，避免重复执行
+    initialPromptHandledRef.current = true;
+
+    // 延迟执行，确保 UI 已渲染完成
+    const timer = window.setTimeout(() => {
+      void runFromText(initialPrompt, initialPrompt, null, undefined, undefined);
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [initialPrompt, workspace, modelsLoading]);
 
   const insertAtCursor = (text: string) => {
     const ta = inputRef.current;
