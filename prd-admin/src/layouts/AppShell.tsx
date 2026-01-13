@@ -118,7 +118,7 @@ export default function AppShell() {
       { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} />, description: '平台、模型与配置管理', perm: 'admin.models.read' },
       { key: '/prompts', label: '提示词管理', icon: <FileText size={18} />, description: 'PRD 问答提示词配置', perm: 'admin.settings.write' },
       { key: '/ai-chat', label: 'PRD Agent', icon: <MessagesSquare size={18} />, description: 'PRD 智能解读与问答', perm: 'admin.agent.use' },
-      { key: '/visual-agent', label: '视觉创作 Agent', icon: <Wand2 size={18} />, description: '高级视觉创作工作区', perm: 'admin.agent.use' },
+      { key: '/visual-agent-fullscreen', label: '视觉创作 Agent', icon: <Wand2 size={18} />, description: '高级视觉创作工作区', perm: 'admin.agent.use' },
       { key: '/literary-agent', label: '文学创作 Agent', icon: <PenLine size={18} />, description: '文章配图智能生成', perm: 'admin.agent.use' },
       { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置', perm: 'admin.assets.read' },
       { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} />, description: 'LLM 请求与系统日志', perm: 'admin.logs.read' },

@@ -14,6 +14,7 @@ import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentWorkspaceListPage from '@/pages/visual-agent/VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from '@/pages/visual-agent/VisualAgentWorkspaceEditorPage';
+import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
@@ -90,6 +91,18 @@ export default function App() {
       <ToastContainer />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+
+        {/* 独立全屏页面 - 不使用 AppShell 布局 */}
+        <Route
+          path="/visual-agent-fullscreen"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="admin.agent.use">
+                <VisualAgentFullscreenPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
 
       <Route
         path="/"

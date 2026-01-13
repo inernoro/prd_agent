@@ -1,6 +1,7 @@
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
+import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   createImageMasterWorkspace,
@@ -19,14 +20,7 @@ import {
   Trash2,
   ArrowRight,
   Image,
-  Paperclip,
-  MapPin,
-  Zap,
-  Globe,
-  Smile,
-  ArrowUp,
   ChevronRight,
-  Palette,
   ShoppingCart,
   PenTool,
   Video,
@@ -38,6 +32,276 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
+// ============ 夜景背景 Canvas 组件 ============
+function NightSkyBackground() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number>(0);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let width = canvas.offsetWidth || window.innerWidth;
+    let height = canvas.offsetHeight || window.innerHeight;
+
+    const resize = () => {
+      width = canvas.offsetWidth || window.innerWidth;
+      height = canvas.offsetHeight || window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    // 星星类
+    class StarObj {
+      size: number;
+      speed: number;
+      x: number;
+      y: number;
+      opacity: number;
+
+      constructor(x: number, y: number) {
+        this.size = Math.random() * 2;
+        this.speed = Math.random() * 0.03;
+        this.x = x;
+        this.y = y;
+        this.opacity = Math.random() * 0.5 + 0.3;
+      }
+
+      reset() {
+        this.size = Math.random() * 2;
+        this.speed = Math.random() * 0.03;
+        this.x = width;
+        this.y = Math.random() * height;
+        this.opacity = Math.random() * 0.5 + 0.3;
+      }
+
+      update() {
+        this.x -= this.speed;
+        if (this.x < 0) {
+          this.reset();
+        } else {
+          ctx!.globalAlpha = this.opacity;
+          ctx!.fillRect(this.x, this.y, this.size, this.size);
+          ctx!.globalAlpha = 1;
+        }
+      }
+    }
+
+    // 流星类
+    class ShootingStar {
+      x: number;
+      y: number;
+      len: number;
+      speed: number;
+      size: number;
+      waitTime: number;
+      active: boolean;
+
+      constructor() {
+        this.x = 0;
+        this.y = 0;
+        this.len = 0;
+        this.speed = 0;
+        this.size = 0;
+        this.waitTime = 0;
+        this.active = false;
+        this.reset();
+      }
+
+      reset() {
+        this.x = Math.random() * width;
+        this.y = 0;
+        this.len = Math.random() * 80 + 10;
+        this.speed = Math.random() * 10 + 6;
+        this.size = Math.random() * 1 + 0.1;
+        this.waitTime = Date.now() + Math.random() * 5000 + 1000;
+        this.active = false;
+      }
+
+      update() {
+        if (this.active) {
+          this.x -= this.speed;
+          this.y += this.speed;
+          if (this.x < 0 || this.y >= height) {
+            this.reset();
+          } else {
+            ctx!.lineWidth = this.size;
+            ctx!.beginPath();
+            ctx!.moveTo(this.x, this.y);
+            ctx!.lineTo(this.x + this.len, this.y - this.len);
+            ctx!.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx!.stroke();
+          }
+        } else {
+          if (this.waitTime < Date.now()) {
+            this.active = true;
+          }
+        }
+      }
+    }
+
+    // 地形类
+    class Terrain {
+      terrainCanvas: HTMLCanvasElement;
+      terCtx: CanvasRenderingContext2D;
+      scrollDelay: number;
+      lastScroll: number;
+      fillStyle: string;
+      mHeight: number;
+      points: number[];
+
+      constructor(options: {
+        scrollDelay?: number;
+        fillStyle?: string;
+        mHeight?: number;
+        displacement?: number;
+      } = {}) {
+        this.terrainCanvas = document.createElement('canvas');
+        this.terCtx = this.terrainCanvas.getContext('2d')!;
+        this.scrollDelay = options.scrollDelay || 90;
+        this.lastScroll = Date.now();
+        this.fillStyle = options.fillStyle || '#191D4C';
+        this.mHeight = options.mHeight || height;
+        this.points = [];
+
+        this.terrainCanvas.width = width;
+        this.terrainCanvas.height = height;
+
+        let displacement = options.displacement || 140;
+        const power = Math.pow(2, Math.ceil(Math.log(width) / Math.log(2)));
+
+        this.points[0] = this.mHeight;
+        this.points[power] = this.points[0];
+
+        for (let i = 1; i < power; i *= 2) {
+          for (let j = power / i / 2; j < power; j += power / i) {
+            this.points[j] =
+              (this.points[j - power / i / 2] + this.points[j + power / i / 2]) / 2 +
+              Math.floor(Math.random() * -displacement + displacement);
+          }
+          displacement *= 0.6;
+        }
+      }
+
+      update() {
+        this.terCtx.clearRect(0, 0, width, height);
+        this.terCtx.fillStyle = this.fillStyle;
+
+        if (Date.now() > this.lastScroll + this.scrollDelay) {
+          this.lastScroll = Date.now();
+          this.points.push(this.points.shift()!);
+        }
+
+        this.terCtx.beginPath();
+        for (let i = 0; i <= width; i++) {
+          if (i === 0) {
+            this.terCtx.moveTo(0, this.points[0]);
+          } else if (this.points[i] !== undefined) {
+            this.terCtx.lineTo(i, this.points[i]);
+          }
+        }
+
+        this.terCtx.lineTo(width, this.terrainCanvas.height);
+        this.terCtx.lineTo(0, this.terrainCanvas.height);
+        this.terCtx.lineTo(0, this.points[0]);
+        this.terCtx.fill();
+
+        // 绘制到主 canvas
+        ctx!.drawImage(this.terrainCanvas, 0, 0);
+      }
+    }
+
+    // 初始化实体
+    const stars: StarObj[] = [];
+    const shootingStars: ShootingStar[] = [];
+    const terrains: Terrain[] = [];
+
+    // 创建星星
+    for (let i = 0; i < Math.min(height, 300); i++) {
+      stars.push(new StarObj(Math.random() * width, Math.random() * height));
+    }
+
+    // 创建流星
+    shootingStars.push(new ShootingStar());
+    shootingStars.push(new ShootingStar());
+
+    // 创建地形层 - 使用更暗的色调与页面融合
+    terrains.push(
+      new Terrain({
+        mHeight: height / 2 - 100,
+        fillStyle: 'rgba(20, 22, 45, 0.5)',
+        displacement: 160,
+        scrollDelay: 120,
+      })
+    );
+    terrains.push(
+      new Terrain({
+        displacement: 130,
+        scrollDelay: 70,
+        fillStyle: 'rgba(14, 15, 28, 0.65)',
+        mHeight: height / 2 - 40,
+      })
+    );
+    terrains.push(
+      new Terrain({
+        displacement: 100,
+        scrollDelay: 35,
+        fillStyle: 'rgba(10, 10, 14, 0.85)',
+        mHeight: height / 2 + 20,
+      })
+    );
+
+    function animate() {
+      // 背景渐变 - 顶部深邃，中部带微微紫调
+      const gradient = ctx!.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, '#08080a');
+      gradient.addColorStop(0.3, '#0d0b14');
+      gradient.addColorStop(0.6, '#0a090e');
+      gradient.addColorStop(1, '#0a0a0c');
+      ctx!.fillStyle = gradient;
+      ctx!.fillRect(0, 0, width, height);
+
+      // 绘制星星
+      ctx!.fillStyle = '#ffffff';
+      for (const star of stars) {
+        star.update();
+      }
+
+      // 绘制流星
+      for (const shootingStar of shootingStars) {
+        shootingStar.update();
+      }
+
+      // 绘制地形
+      for (const terrain of terrains) {
+        terrain.update();
+      }
+
+      animationRef.current = requestAnimationFrame(animate);
+    }
+
+    animate();
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animationRef.current);
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      style={{ zIndex: 0 }}
+    />
+  );
+}
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -139,6 +403,44 @@ function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['cover
   );
 }
 
+// ============ 浮动工具栏按钮 ============
+function ToolbarButton(props: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover:bg-white/10 hover:scale-105 active:scale-95"
+        style={{ color: 'rgba(255,255,255,0.7)' }}
+        onClick={props.onClick}
+        onMouseEnter={() => setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
+      >
+        {props.icon}
+      </button>
+      {/* Tooltip */}
+      {showTooltip && (
+        <div
+          className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
+          style={{
+            background: 'rgba(30, 30, 35, 0.95)',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          }}
+        >
+          {props.label}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============ 浮动工具栏 ============
 function FloatingToolbar(props: {
   onNewProject: () => void;
@@ -148,35 +450,25 @@ function FloatingToolbar(props: {
 
   return (
     <div
-      className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent"
+      className="rounded-2xl p-1.5 flex flex-col gap-1 bg-transparent"
       style={{
-        border: '1px solid rgba(255,255,255,0.12)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        boxShadow: '0 18px 60px rgba(0,0,0,0.35)',
+        background: 'rgba(18, 18, 22, 0.6)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
       }}
     >
-      {/* 新建项目 */}
-      <button
-        type="button"
-        className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-        style={{ color: 'rgba(255,255,255,0.86)' }}
-        title="新建项目"
+      <ToolbarButton
+        icon={<FilePlus size={17} />}
+        label="新建项目"
         onClick={onNewProject}
-      >
-        <FilePlus size={18} />
-      </button>
-
-      {/* 新建文件夹 */}
-      <button
-        type="button"
-        className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-        style={{ color: 'rgba(255,255,255,0.86)' }}
-        title="新建文件夹"
+      />
+      <ToolbarButton
+        icon={<FolderPlus size={17} />}
+        label="新建文件夹"
         onClick={onNewFolder}
-      >
-        <FolderPlus size={18} />
-      </button>
+      />
     </div>
   );
 }
@@ -194,24 +486,29 @@ const SCENARIO_TAGS = [
 // ============ Hero 区域 ============
 function HeroSection() {
   return (
-    <div className="text-center py-6">
-      {/* Logo + 主标题 */}
-      <div className="flex items-center justify-center gap-3 mb-2">
-        <div
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{
-            background: '#1a1a1a',
-            border: '2px solid #333',
-          }}
-        >
-          <Image size={16} style={{ color: '#fff' }} />
-        </div>
-        <h1 className="text-[26px] font-bold" style={{ color: 'var(--text-primary)' }}>
-          视觉创作 Agent
-        </h1>
+    <div className="text-center py-8">
+      {/* Logo - 独立展示，增加视觉焦点 */}
+      <div className="flex items-center justify-center mb-5">
+        <PrdPetalBreathingLoader size={56} variant="gold" />
       </div>
-      {/* 副标题 */}
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+      {/* 主标题 - 加大字号，建立视觉层级 */}
+      <h1
+        className="text-[42px] font-bold tracking-tight mb-3"
+        style={{
+          color: '#fff',
+          letterSpacing: '-0.02em',
+        }}
+      >
+        视觉创作 Agent
+      </h1>
+      {/* 副标题 - 调整透明度和字号 */}
+      <p
+        className="text-[15px]"
+        style={{
+          color: 'rgba(255,255,255,0.6)',
+          letterSpacing: '0.01em',
+        }}
+      >
         AI 驱动的设计助手，让创作更简单
       </p>
     </div>
@@ -287,114 +584,91 @@ function QuickInputBox(props: {
     textareaRef.current?.focus();
   };
 
+  const canSubmit = value.trim() && !loading;
+
   return (
-    <div className="max-w-[768px] w-full mx-auto px-5 mt-[5vh]">
+    <div className="max-w-[680px] w-full mx-auto px-6 mt-8">
       <div
-        className="rounded-2xl overflow-hidden cursor-text"
+        className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
-          background: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: '0 4px 32px rgba(0,0,0,0.3)',
+          // 更强的磨砂玻璃效果
+          background: 'rgba(20, 20, 25, 0.75)',
+          backdropFilter: 'blur(24px) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+          // 统一边框
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset',
         }}
         onClick={handleContainerClick}
       >
-        {/* 输入区域 - 整个区域可点击 */}
-        <div className="px-6 pt-5 pb-14 relative min-h-[80px]">
+        {/* 输入区域 - 简化内边距 */}
+        <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
           <textarea
             ref={textareaRef}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            rows={1}
-            className="w-full bg-transparent text-[16px] resize-none outline-none"
+            rows={2}
+            className="w-full bg-transparent text-[15px] resize-none outline-none leading-relaxed"
             style={{ 
-              color: 'var(--text-primary)',
-              minHeight: '32px',
+              color: '#fff',
+              minHeight: '52px',
             }}
             disabled={loading}
           />
           {/* 自定义打字动效占位符 */}
           {!value && (
             <div
-              className="absolute top-5 left-6 pointer-events-none text-[16px]"
-              style={{ color: 'rgba(255,255,255,0.4)' }}
+              className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
+              style={{ color: 'rgba(255,255,255,0.45)' }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
             </div>
           )}
         </div>
-        {/* 底部工具栏 */}
-        <div className="flex items-center justify-between px-5 pb-4">
+        {/* 底部工具栏 - 简化，只保留核心操作 */}
+        <div className="flex items-center justify-between px-4 pb-3">
           {/* 左侧：附件按钮 */}
-          <button
-            type="button"
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
-            style={{
-              background: 'rgba(255,255,255,0.08)',
-              color: 'var(--text-muted)',
-            }}
-            title="附件"
-            disabled
-          >
-            <Paperclip size={18} />
-          </button>
-          {/* 右侧：功能按钮组 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
-              style={{ color: 'var(--text-muted)' }}
-              title="位置"
-              disabled
-            >
-              <MapPin size={18} />
-            </button>
-            <button
-              type="button"
-              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
-              style={{ color: 'var(--text-muted)' }}
-              title="快捷"
-              disabled
-            >
-              <Zap size={18} />
-            </button>
-            <button
-              type="button"
-              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
-              style={{ color: 'var(--text-muted)' }}
-              title="语言"
-              disabled
-            >
-              <Globe size={18} />
-            </button>
-            <button
-              type="button"
-              className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
+              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
               style={{
-                background: 'rgba(56,189,248,0.15)',
-                color: 'rgb(56,189,248)',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'rgba(255,255,255,0.5)',
               }}
-              title="表情"
+              title="添加图片参考（开发中）"
               disabled
             >
-              <Smile size={18} />
-            </button>
-            {/* 发送按钮 */}
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={loading || !value.trim()}
-              className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200"
-              style={{
-                background: value.trim() ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.12)',
-                color: value.trim() ? '#000' : 'var(--text-muted)',
-                cursor: value.trim() ? 'pointer' : 'not-allowed',
-              }}
-            >
-              <ArrowUp size={18} />
+              <Image size={14} />
+              <span>图片</span>
             </button>
           </div>
+          {/* 右侧：发送按钮 - 增强视觉权重 */}
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={!canSubmit}
+            className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
+            style={{
+              background: canSubmit
+                ? 'linear-gradient(135deg, rgba(250,176,5,0.95) 0%, rgba(245,158,11,0.95) 100%)'
+                : 'rgba(255,255,255,0.08)',
+              color: canSubmit ? '#000' : 'rgba(255,255,255,0.35)',
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+              boxShadow: canSubmit ? '0 4px 16px rgba(250,176,5,0.25)' : 'none',
+            }}
+          >
+            {loading ? (
+              <span>生成中...</span>
+            ) : (
+              <>
+                <Sparkles size={14} />
+                <span>开始创作</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>
@@ -406,44 +680,47 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
   const { onSelect, activeKey } = props;
 
   return (
-    <div className="flex items-center justify-center gap-2 flex-wrap px-5 mt-8">
+    <div className="flex items-center justify-center gap-2.5 flex-wrap px-6 mt-6">
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
         const isActive = activeKey === tag.key;
         const isPro = tag.isPro;
 
         if (isPro) {
+          // PRD Agent Pro - 特殊高亮样式
           return (
             <button
               key={tag.key}
               type="button"
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all duration-200"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02]"
               style={{
-                background: 'transparent',
-                border: '1px solid rgba(250,176,5,0.5)',
+                background: 'linear-gradient(135deg, rgba(250,176,5,0.15) 0%, rgba(245,158,11,0.08) 100%)',
+                border: '1px solid rgba(250,176,5,0.4)',
                 color: 'rgba(250,176,5,1)',
+                boxShadow: '0 0 20px rgba(250,176,5,0.1)',
               }}
               onClick={() => {}}
             >
-              <Icon size={14} />
+              <Icon size={15} />
               {tag.label}
             </button>
           );
         }
 
+        // 普通标签 - 更柔和的样式
         return (
           <button
             key={tag.key}
             type="button"
             onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all duration-200"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/10"
             style={{
-              background: isActive ? 'rgba(255,255,255,0.08)' : 'transparent',
-              border: '1px solid rgba(255,255,255,0.12)',
-              color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+              background: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
+              border: isActive ? '1px solid rgba(255,255,255,0.25)' : '1px solid rgba(255,255,255,0.12)',
+              color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
             }}
           >
-            <Icon size={14} />
+            <Icon size={14} style={{ opacity: isActive ? 1 : 0.7 }} />
             {tag.label}
           </button>
         );
@@ -478,25 +755,33 @@ function ProjectCard(props: {
     >
       {/* 封面区域 */}
       <div
-        className="h-[160px] w-full relative overflow-hidden rounded-lg transition-transform duration-200 group-hover:scale-[1.02]"
+        className="h-[160px] w-full relative overflow-hidden rounded-xl transition-all duration-300 group-hover:scale-[1.02]"
         data-ws-card="1"
         data-ws-id={ws.id}
         style={{
           background: hasCover ? 'transparent' : 'rgba(255,255,255,0.04)',
-          border: hasCover ? 'none' : '1px solid rgba(255,255,255,0.06)',
+          border: hasCover ? 'none' : '1px solid rgba(255,255,255,0.1)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
         }}
       >
         {hasCover && <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />}
+        {/* Hover 遮罩 */}
+        <div
+          className="absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+          style={{
+            background: 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 50%)',
+          }}
+        />
       </div>
       {/* 信息区域 */}
-      <div className="pt-2 px-0.5">
-        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+      <div className="pt-2.5 px-0.5">
+        <div className="text-[13px] font-semibold truncate" style={{ color: 'rgba(255,255,255,0.9)' }}>
           {ws.title || '未命名'}
         </div>
-        <div className="mt-0.5 text-[11px] flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
-          <span>更新于 {formatDate(ws.updatedAt)}</span>
+        <div className="mt-1 text-[11px] flex items-center justify-between" style={{ color: 'rgba(255,255,255,0.45)' }}>
+          <span>{formatDate(ws.updatedAt)}</span>
           <div
-            className="flex items-center gap-0.5 opacity-0 pointer-events-none transition-opacity duration-100 group-hover:opacity-100 group-hover:pointer-events-auto"
+            className="flex items-center gap-1 opacity-0 pointer-events-none transition-all duration-150 group-hover:opacity-100 group-hover:pointer-events-auto"
           >
             <Button
               size="xs"
@@ -536,7 +821,7 @@ function ProjectCard(props: {
 function NewProjectCard(props: { onClick: () => void }) {
   return (
     <div
-      className="cursor-pointer"
+      className="cursor-pointer group"
       onClick={props.onClick}
       role="button"
       tabIndex={0}
@@ -549,14 +834,22 @@ function NewProjectCard(props: { onClick: () => void }) {
     >
       {/* 封面区域 - 与其他卡片高度一致 */}
       <div
-        className="h-[160px] rounded-lg flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:bg-white/5"
+        className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-white/25"
         style={{
-          border: '1px dashed rgba(255,255,255,0.15)',
-          background: 'transparent',
+          border: '1.5px dashed rgba(255,255,255,0.2)',
+          background: 'rgba(255,255,255,0.02)',
         }}
       >
-        <Plus size={24} style={{ color: 'var(--text-muted)' }} />
-        <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <div
+          className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 group-hover:scale-110"
+          style={{
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.1)',
+          }}
+        >
+          <Plus size={22} style={{ color: 'rgba(255,255,255,0.6)' }} />
+        </div>
+        <span className="text-[13px] font-medium" style={{ color: 'rgba(255,255,255,0.5)' }}>
           新建项目
         </span>
       </div>
@@ -587,24 +880,32 @@ function ProjectCarousel(props: {
   }
 
   return (
-    <div className="mt-4 flex-1">
-      {/* 标题栏 */}
-      <div className="flex items-center justify-between mb-3 max-w-[1340px] mx-auto px-5">
-        <h2 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-          最近项目
-        </h2>
-        <button
-          type="button"
-          className="flex items-center gap-0.5 text-[13px] font-medium transition-colors hover:opacity-80"
-          style={{ color: 'rgba(250,176,5,0.9)' }}
+    <div className="mt-8 flex-1 relative z-10">
+      {/* 标题栏 - 增加分隔线和更好的层级 */}
+      <div className="max-w-[1340px] mx-auto px-5 mb-4">
+        <div
+          className="flex items-center justify-between py-3"
+          style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
         >
-          查看全部
-          <ChevronRight size={14} />
-        </button>
+          <h2
+            className="text-[14px] font-medium tracking-wide"
+            style={{ color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+          >
+            最近项目
+          </h2>
+          <button
+            type="button"
+            className="flex items-center gap-1 text-[13px] font-medium transition-all duration-200 hover:gap-2"
+            style={{ color: 'rgba(250,176,5,0.8)' }}
+          >
+            查看全部
+            <ChevronRight size={14} />
+          </button>
+        </div>
       </div>
       {/* 网格布局，固定5列，居中 */}
       <div
-        className="grid gap-4 pb-4 px-5 max-w-[1340px] mx-auto"
+        className="grid gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
         style={{
           gridTemplateColumns: 'repeat(5, 250px)',
         }}
@@ -857,31 +1158,32 @@ export default function VisualAgentWorkspaceListPage() {
   return (
     <div
       className="h-full min-h-0 flex flex-col overflow-auto relative"
-      style={{
-        background: 'linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%)',
-      }}
+      style={{ background: '#0a0a0c' }}
     >
+      {/* 夜景背景 */}
+      <NightSkyBackground />
+
       {/* 浮动工具栏 - 页面左侧垂直居中 */}
       <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
         <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
       </div>
 
-      {/* 顶部居中区域 */}
-      <div className="flex flex-col items-center justify-center pt-[12vh] pb-6">
+      {/* 顶部居中区域 - 调整间距使布局更紧凑 */}
+      <div className="flex flex-col items-center justify-center pt-[8vh] pb-4 relative z-10">
         {/* Hero 区域 */}
         <HeroSection />
 
         {/* 快捷输入框 */}
         <QuickInputBox
-        value={inputValue}
-        onChange={(v) => {
-          setInputValue(v);
-          const tag = SCENARIO_TAGS.find((t) => t.prompt === v);
-          setActiveTag(tag?.key ?? null);
-        }}
-        onSubmit={onQuickSubmit}
-        loading={inputLoading}
-      />
+          value={inputValue}
+          onChange={(v) => {
+            setInputValue(v);
+            const tag = SCENARIO_TAGS.find((t) => t.prompt === v);
+            setActiveTag(tag?.key ?? null);
+          }}
+          onSubmit={onQuickSubmit}
+          loading={inputLoading}
+        />
 
         {/* 场景标签 */}
         <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />

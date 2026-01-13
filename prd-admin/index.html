@@ -1,12 +1,32 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" style="background:#0a0a0c">
   <head>
     <meta charset="UTF-8" />
+    <meta name="theme-color" content="#0a0a0c" />
+    <meta name="color-scheme" content="dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PRD Admin</title>
+    <style>
+      /* 防止加载时闪白屏 - 关键：必须在所有其他样式之前生效 */
+      html, body, #root {
+        background-color: #0a0a0c !important;
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+      }
+      /* 隐藏初始内容直到 React 渲染完成 */
+      #root:empty::before {
+        content: '';
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: #0a0a0c;
+        z-index: 99999;
+      }
+    </style>
   </head>
-  <body>
+  <body style="background:#0a0a0c;margin:0">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
