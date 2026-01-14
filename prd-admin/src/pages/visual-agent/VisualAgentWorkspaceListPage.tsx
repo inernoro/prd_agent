@@ -498,15 +498,11 @@ function HeroSection() {
       <h1
         className="text-[42px] font-bold tracking-tight mb-3 visual-agent-title-breath"
         style={{
-          color: 'rgba(255, 250, 240, 0.95)',
+          background: 'linear-gradient(135deg, rgba(255, 250, 240, 1) 0%, rgba(255, 240, 200, 1) 50%, rgba(218, 175, 75, 0.95) 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
           letterSpacing: '-0.02em',
-          textShadow: `
-            0 0 4px rgba(255, 250, 240, 0.7),
-            0 0 8px rgba(255, 250, 240, 0.5),
-            0 0 12px rgba(255, 250, 240, 0.4),
-            0 0 16px rgba(255, 250, 240, 0.25),
-            0 0 24px rgba(218, 175, 75, 0.15)
-          `,
           animation: 'visualAgentTitleBreath 3s ease-in-out infinite',
         }}
       >
