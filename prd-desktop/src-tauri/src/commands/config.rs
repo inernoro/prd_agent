@@ -327,7 +327,7 @@ pub fn init_config(app: &tauri::AppHandle) {
     // 2) 若有 config.json，则使用其中的 apiBaseUrl 覆盖
     // 3) 否则保持默认值（DEFAULT_API_URL）
     //
-    // 注意：debug 模式不再强制写死 localhost:5000，允许你本地/容器映射到其他端口。
+    // 注意：debug 模式不再强制写死 localhost:*，允许你本地/容器映射到其他端口。
     if let Ok(config) = load_config_from_file(app) {
         let mut cfg = config;
         if sanitize_config_for_release(&mut cfg) {

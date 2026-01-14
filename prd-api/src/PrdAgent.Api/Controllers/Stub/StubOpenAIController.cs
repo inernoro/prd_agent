@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Stub;
 
 /// <summary>
 /// 本机 Stub：OpenAI 兼容接口（用于开发期联调）
-/// - baseUrl 推荐配置为：http://localhost:5000/api/v1/stub
+/// - baseUrl 推荐配置为：http://localhost:*/api/v1/stub
 ///   OpenAICompatUrl 规则会拼到：/api/v1/stub/v1/{capabilityPath}
 /// - 支持：
 ///   - POST /v1/chat/completions（stream=true -> SSE）

@@ -34,6 +34,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -1413,19 +1414,6 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     navigate(getEditorPath(ws.id));
   };
 
-  // 构建内联图片标记（参考 AdvancedImageMasterTab 的 buildInlineImageToken）
-  const buildInlineImageToken = (src: string, name?: string): string => {
-    const s = String(src ?? '').trim();
-    if (!s) return '';
-    // 不把大内容塞进消息：data/blob URL 不可持久化也不应写入数据库
-    if (s.startsWith('data:') || s.startsWith('blob:')) return '';
-    const n = String(name ?? '').trim();
-    const safeSrc = encodeURIComponent(s);
-    const safeName = n ? encodeURIComponent(n) : '';
-    // v2 token：可扩展 kv
-    return safeName ? `[IMAGE src=${safeSrc} name=${safeName}] ` : `[IMAGE src=${safeSrc}] `;
-  };
-
   // 快捷输入提交：创建 workspace 并跳转（带初始 prompt 和图片）
   const onQuickSubmit = async () => {
     const prompt = inputValue.trim();
@@ -1511,6 +1499,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       await systemDialog.alert('图片文件过大，请选择小于 10MB 的图片');
       return;
     }
+    const dim = await readImageSizeFromFile(file);
+    const autoSize = computeRequestedSizeByRefRatio(dim) ?? '1024x1024';
+    setSelectedSize(autoSize);
     // 生成预览 URL
     const previewUrl = await new Promise<string>((resolve) => {
       const reader = new FileReader();
@@ -1526,6 +1517,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   // 移除图片
   const onRemoveImage = () => {
     setSelectedImage(null);
+  };
+
+  const onSelectedSizeChange = (size: string) => {
+    setSelectedSize(size);
   };
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）
@@ -1646,7 +1641,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           selectedImage={selectedImage}
           onRemoveImage={onRemoveImage}
           size={selectedSize}
-          onSizeChange={setSelectedSize}
+          onSizeChange={onSelectedSizeChange}
         />
 
         {/* 场景标签 */}

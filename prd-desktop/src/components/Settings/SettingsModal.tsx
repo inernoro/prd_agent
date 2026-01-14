@@ -175,9 +175,9 @@ export default function SettingsModal() {
 
   const handleDeveloperChange = (checked: boolean) => {
     setIsDeveloper(checked);
-    // 仅影响“默认值”，输入框始终可编辑：
-    // - 切到开发者：若当前还是线上默认（或空），则切到 localhost:5000
-    // - 退出开发者：若当前是 localhost:5000，则切回线上默认
+    // 仅影响"默认值"，输入框始终可编辑：
+    // - 切到开发者：若当前还是线上默认（或空），则切到 localhost:*
+    // - 退出开发者：若当前是 localhost:*，则切回线上默认
     const trimmed = apiUrl.trim();
     if (checked) {
       if (!trimmed || trimmed === DEFAULT_API_URL_NON_DEV) setApiUrl(DEFAULT_API_URL_DEV);
