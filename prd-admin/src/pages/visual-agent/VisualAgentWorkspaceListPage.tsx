@@ -10,6 +10,7 @@ import {
   listImageMasterWorkspaces,
   refreshImageMasterWorkspaceCover,
   updateImageMasterWorkspace,
+  uploadImageMasterWorkspaceAsset,
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
@@ -32,6 +33,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -569,6 +572,28 @@ function useTypingPlaceholder() {
   return displayText;
 }
 
+// 从尺寸字符串检测档位
+function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
+  const s = (size || '').trim().toLowerCase();
+  for (const opt of ASPECT_OPTIONS) {
+    if (opt.size4k.toLowerCase() === s) return '4k';
+    if (opt.size2k.toLowerCase() === s) return '2k';
+    if (opt.size1k.toLowerCase() === s) return '1k';
+  }
+  return '1k';
+}
+
+// 从尺寸字符串检测比例
+function detectAspectFromSize(size: string): string {
+  const s = (size || '').trim().toLowerCase();
+  for (const opt of ASPECT_OPTIONS) {
+    if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
+      return opt.id;
+    }
+  }
+  return '1:1';
+}
+
 // ============ 快捷输入框（深色卡片样式） ============
 function QuickInputBox(props: {
   value: string;
@@ -576,8 +601,12 @@ function QuickInputBox(props: {
   onSubmit: () => void;
   loading: boolean;
   onImageSelect?: (file: File) => void;
+  selectedImage?: { file: File; previewUrl: string } | null;
+  onRemoveImage?: () => void;
+  size?: string;
+  onSizeChange?: (size: string) => void;
 }) {
-  const { value, onChange, onSubmit, loading, onImageSelect } = props;
+  const { value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage, size = '1024x1024', onSizeChange } = props;
   const typingPlaceholder = useTypingPlaceholder();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -643,6 +672,300 @@ function QuickInputBox(props: {
       >
         {/* 输入区域 - 简化内边距 */}
         <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
+          {/* 图片预览 chip - 参考 AdvancedImageMasterTab 样式 */}
+          {selectedImage ? (
+            <div
+              className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
+              style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
+            >
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5"
+                style={{
+                  height: 20,
+                  maxWidth: 140,
+                  paddingLeft: 4,
+                  paddingRight: 6,
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                  border: '1px solid rgba(255,255,255,0.22)',
+                  background: 'rgba(255,255,255,0.02)',
+                  color: 'rgba(255,255,255,0.82)',
+                }}
+                title={`参考图：${selectedImage.file.name}`}
+                aria-label="预览参考图"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // 可以在这里打开预览对话框
+                }}
+              >
+                {/* 序号标记 */}
+                <span
+                  style={{
+                    minWidth: 14,
+                    height: 14,
+                    borderRadius: 3,
+                    background: 'rgba(99, 102, 241, 0.25)',
+                    border: '1px solid rgba(99, 102, 241, 0.4)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: 'rgba(99, 102, 241, 1)',
+                    flexShrink: 0,
+                  }}
+                >
+                  1
+                </span>
+                {/* 图片缩略图 */}
+                <span
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: 3,
+                    overflow: 'hidden',
+                    border: '1px solid rgba(255,255,255,0.22)',
+                    background: 'rgba(255,255,255,0.06)',
+                    display: 'inline-flex',
+                    flex: '0 0 auto',
+                  }}
+                >
+                  <img
+                    src={selectedImage.previewUrl}
+                    alt={selectedImage.file.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                </span>
+                {/* 文件名 */}
+                <span
+                  style={{
+                    fontSize: 10,
+                    lineHeight: '16px',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: 70,
+                  }}
+                >
+                  {selectedImage.file.name.length > 8 ? `${selectedImage.file.name.slice(0, 6)}...` : selectedImage.file.name}
+                </span>
+                {/* 删除按钮 */}
+                {onRemoveImage && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveImage();
+                    }}
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 2,
+                      border: 'none',
+                      background: 'rgba(239,68,68,0.2)',
+                      color: 'rgba(239,68,68,0.9)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      fontSize: 10,
+                      padding: 0,
+                      marginLeft: 2,
+                    }}
+                    title="移除图片"
+                  >
+                    ×
+                  </button>
+                )}
+              </button>
+
+              {/* 尺寸选择器（参考 AdvancedImageMasterTab 样式） */}
+              {onSizeChange && (
+                <>
+                  {/* 档位选择器（1K/2K/4K） */}
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-0.5"
+                        style={{
+                          height: 20,
+                          paddingLeft: 6,
+                          paddingRight: 6,
+                          borderRadius: 4,
+                          overflow: 'hidden',
+                          border: '1px solid rgba(255,255,255,0.22)',
+                          background: 'rgba(255,255,255,0.02)',
+                          color: 'rgba(255,255,255,0.82)',
+                        }}
+                        title="选择档位"
+                        aria-label="选择档位"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {(() => {
+                          const tier = detectTierFromSize(size);
+                          return (
+                            <>
+                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
+                                {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
+                              </span>
+                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                ▾
+                              </span>
+                            </>
+                          );
+                        })()}
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                        className="rounded-[12px] p-1 min-w-[80px]"
+                        style={{
+                          outline: 'none',
+                          zIndex: 90,
+                          background: 'rgba(28, 24, 20, 0.95)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.5)',
+                        }}
+                      >
+                        {(['1k', '2k', '4k'] as const).map((tier) => {
+                          const currentTier = detectTierFromSize(size);
+                          const isSelected = currentTier === tier;
+                          const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                          const currentAspect = detectAspectFromSize(size);
+                          const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                          if (!targetOpt) return null;
+
+                          return (
+                            <DropdownMenu.Item
+                              key={tier}
+                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                              style={{
+                                color: 'rgba(255,255,255,0.9)',
+                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                              }}
+                              onSelect={() => {
+                                const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
+                                onSizeChange(newSize);
+                              }}
+                            >
+                              <span className="font-semibold">{label}</span>
+                            </DropdownMenu.Item>
+                          );
+                        })}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+
+                  {/* 比例选择器 */}
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1"
+                        style={{
+                          height: 20,
+                          paddingLeft: 6,
+                          paddingRight: 6,
+                          borderRadius: 4,
+                          overflow: 'hidden',
+                          border: '1px solid rgba(255,255,255,0.22)',
+                          background: 'rgba(255,255,255,0.02)',
+                          color: 'rgba(255,255,255,0.82)',
+                        }}
+                        title="选择比例"
+                        aria-label="选择比例"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {(() => {
+                          const currentAspect = detectAspectFromSize(size);
+                          const opt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                          const iconW = opt?.iconW ?? 20;
+                          const iconH = opt?.iconH ?? 20;
+                          return (
+                            <>
+                              <span
+                                style={{
+                                  width: iconW,
+                                  height: iconH,
+                                  borderRadius: 2,
+                                  border: '1px solid rgba(255,255,255,0.3)',
+                                  background: 'rgba(255,255,255,0.1)',
+                                  display: 'inline-block',
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
+                                {opt?.label || '1:1'}
+                              </span>
+                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                ▾
+                              </span>
+                            </>
+                          );
+                        })()}
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                        className="rounded-[12px] p-1 min-w-[120px]"
+                        style={{
+                          outline: 'none',
+                          zIndex: 90,
+                          background: 'rgba(28, 24, 20, 0.95)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.5)',
+                        }}
+                      >
+                        {ASPECT_OPTIONS.map((opt) => {
+                          const currentTier = detectTierFromSize(size);
+                          const currentSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+                          const isSelected = size.toLowerCase() === currentSize.toLowerCase();
+                          return (
+                            <DropdownMenu.Item
+                              key={opt.id}
+                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                              style={{
+                                color: 'rgba(255,255,255,0.9)',
+                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                              }}
+                              onSelect={() => {
+                                onSizeChange(currentSize);
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span
+                                  style={{
+                                    width: opt.iconW,
+                                    height: opt.iconH,
+                                    borderRadius: 2,
+                                    border: '1px solid rgba(255,255,255,0.3)',
+                                    background: 'rgba(255,255,255,0.1)',
+                                    display: 'inline-block',
+                                    flexShrink: 0,
+                                  }}
+                                />
+                                <span className="font-semibold">{opt.label}</span>
+                              </div>
+                            </DropdownMenu.Item>
+                          );
+                        })}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                </>
+              )}
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={value}
@@ -656,11 +979,12 @@ function QuickInputBox(props: {
               color: '#fff',
               minHeight: '52px',
               border: 'none',
+              paddingTop: selectedImage ? '32px' : '0',
             }}
             disabled={loading}
           />
           {/* 自定义打字动效占位符 - 偏暖白 */}
-          {!value && (
+          {!value && !selectedImage && (
             <div
               className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
               style={{ color: 'rgba(255,248,235,0.42)' }}
@@ -1000,7 +1324,8 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputValue, setInputValue] = useState('');
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
@@ -1101,13 +1426,27 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     navigate(getEditorPath(ws.id));
   };
 
-  // 快捷输入提交：创建 workspace 并跳转（带初始 prompt）
+  // 构建内联图片标记（参考 AdvancedImageMasterTab 的 buildInlineImageToken）
+  const buildInlineImageToken = (src: string, name?: string): string => {
+    const s = String(src ?? '').trim();
+    if (!s) return '';
+    // 不把大内容塞进消息：data/blob URL 不可持久化也不应写入数据库
+    if (s.startsWith('data:') || s.startsWith('blob:')) return '';
+    const n = String(name ?? '').trim();
+    const safeSrc = encodeURIComponent(s);
+    const safeName = n ? encodeURIComponent(n) : '';
+    // v2 token：可扩展 kv
+    return safeName ? `[IMAGE src=${safeSrc} name=${safeName}] ` : `[IMAGE src=${safeSrc}] `;
+  };
+
+  // 快捷输入提交：创建 workspace 并跳转（带初始 prompt 和图片）
   const onQuickSubmit = async () => {
     const prompt = inputValue.trim();
     if (!prompt) return;
 
     setInputLoading(true);
     try {
+      // 1. 创建 workspace
       const res = await createImageMasterWorkspace({
         title: prompt.slice(0, 20) || '未命名',
         idempotencyKey: `ws_quick_${Date.now()}`,
@@ -1117,7 +1456,53 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         return;
       }
       const ws = res.data.workspace;
-      navigate(`${getEditorPath(ws.id)}?prompt=${encodeURIComponent(prompt)}`);
+
+      // 2. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
+      // 格式：${inlineRefToken}${uiSizeToken}${display || reqText}
+      // 即：[IMAGE src=... name=...] (@size:1024x1024) 文本内容
+      let messageText = prompt;
+      let assetId: string | null = null;
+      let imageToken = '';
+
+      // 如果有选中的图片，上传图片并添加到消息中
+      if (selectedImage) {
+        const uploadRes = await uploadImageMasterWorkspaceAsset({
+          id: ws.id,
+          data: selectedImage.previewUrl,
+          prompt: selectedImage.file.name || '参考图',
+          idempotencyKey: `ws_asset_${ws.id}_${Date.now()}`,
+        });
+        if (uploadRes.success) {
+          const asset = uploadRes.data.asset;
+          assetId = asset.id;
+          // 使用 [IMAGE src=... name=...] 标记（不是 @img1）
+          // 注意：buildInlineImageToken 会对 URL 进行 encodeURIComponent，这是正确的
+          imageToken = buildInlineImageToken(asset.url, selectedImage.file.name || asset.prompt || '参考图');
+        } else {
+          // 图片上传失败，但仍然继续（只使用文本提示）
+          await systemDialog.alert(`图片上传失败：${uploadRes.error?.message || '未知错误'}\n\n将仅使用文本提示创建项目。`);
+        }
+      }
+
+      // 构建最终消息：图片标记 + 尺寸标记 + 文本内容
+      const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
+      messageText = `${imageToken}${sizeToken}${messageText}`;
+
+      // 3. 使用 sessionStorage 传递参数（避免刷新时重复创建）
+      const sessionKey = `visual_agent_init_${ws.id}`;
+      sessionStorage.setItem(sessionKey, JSON.stringify({
+        messageText,
+        assetId,
+        timestamp: Date.now(),
+      }));
+
+      // 4. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）
+      navigate(getEditorPath(ws.id));
+
+      // 清空输入和图片
+      setInputValue('');
+      setSelectedImage(null);
+      setSelectedSize('1024x1024');
     } finally {
       setInputLoading(false);
     }
@@ -1139,9 +1524,21 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       await systemDialog.alert('图片文件过大，请选择小于 10MB 的图片');
       return;
     }
-    setSelectedImage(file);
-    // 显示提示信息
-    await systemDialog.alert(`已选择图片：${file.name}\n\n图片将在创建项目时作为参考使用。`);
+    // 生成预览 URL
+    const previewUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+    if (previewUrl) {
+      setSelectedImage({ file, previewUrl });
+    }
+  };
+
+  // 移除图片
+  const onRemoveImage = () => {
+    setSelectedImage(null);
   };
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）
@@ -1259,6 +1656,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           onSubmit={onQuickSubmit}
           loading={inputLoading}
           onImageSelect={onImageSelect}
+          selectedImage={selectedImage}
+          onRemoveImage={onRemoveImage}
+          size={selectedSize}
+          onSizeChange={setSelectedSize}
         />
 
         {/* 场景标签 */}

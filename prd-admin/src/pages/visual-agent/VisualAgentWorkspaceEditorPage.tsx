@@ -1,13 +1,11 @@
 import { Card } from '@/components/design/Card';
 import AdvancedImageMasterTab from '@/pages/ai-chat/AdvancedImageMasterTab';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useRef } from 'react';
 
 export default function VisualAgentWorkspaceEditorPage() {
   const params = useParams();
-  const [searchParams] = useSearchParams();
   const workspaceId = String(params.workspaceId ?? '').trim();
-  const initialPrompt = searchParams.get('prompt') ?? '';
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   if (!workspaceId) {
@@ -22,9 +20,10 @@ export default function VisualAgentWorkspaceEditorPage() {
     );
   }
   // AdvancedImageMasterTab 内部使用大量 h-full/min-h-0 布局，必须由父容器提供稳定高度
+  // initialPrompt 现在在 AdvancedImageMasterTab 内部从 sessionStorage 读取
   return (
     <div ref={wrapRef} className="h-full min-h-0 flex flex-col">
-      <AdvancedImageMasterTab workspaceId={workspaceId} initialPrompt={initialPrompt} />
+      <AdvancedImageMasterTab workspaceId={workspaceId} />
     </div>
   );
 }

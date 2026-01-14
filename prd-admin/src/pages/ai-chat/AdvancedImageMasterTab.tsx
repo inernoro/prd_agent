@@ -902,7 +902,7 @@ function buildTemplate(name: string) {
 export default function AdvancedImageMasterTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
-  const initialPrompt = String(props.initialPrompt ?? '').trim();
+  const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
   // 固定默认参数：用户不需要选择
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
   const imageGenSize = '1024x1024' as const;
@@ -3105,8 +3105,33 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     }
   };
 
-  // 处理初始 prompt（从首页快捷输入跳转过来）
+  // 处理初始 prompt（从首页快捷输入跳转过来，或从 sessionStorage 读取）
   const initialPromptHandledRef = useRef(false);
+  const [initialPrompt, setInitialPrompt] = useState<string>(initialPromptFromProps);
+
+  // 从 sessionStorage 读取初始消息（如果 props 中没有提供）
+  useEffect(() => {
+    if (initialPromptFromProps) {
+      setInitialPrompt(initialPromptFromProps);
+      return;
+    }
+    if (!workspaceId) return;
+    const sessionKey = `visual_agent_init_${workspaceId}`;
+    try {
+      const stored = sessionStorage.getItem(sessionKey);
+      if (!stored) return;
+      const data = JSON.parse(stored);
+      // 读取后立即删除，避免重复执行
+      sessionStorage.removeItem(sessionKey);
+      const messageText = String(data.messageText || '').trim();
+      if (messageText) {
+        setInitialPrompt(messageText);
+      }
+    } catch {
+      // ignore
+    }
+  }, [workspaceId, initialPromptFromProps]);
+
   useEffect(() => {
     if (!initialPrompt) return;
     if (initialPromptHandledRef.current) return;
