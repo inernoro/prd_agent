@@ -103,6 +103,16 @@ export default function App() {
             </RequireAuth>
           }
         />
+        <Route
+          path="/visual-agent-fullscreen/:workspaceId"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="admin.agent.use">
+                <VisualAgentFullscreenPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
 
       <Route
         path="/"

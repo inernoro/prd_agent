@@ -77,6 +77,16 @@ function fmtDate(v?: string | null) {
   return v;
 }
 
+/**
+ * LLM 经常用 ```markdown / ```md 包裹"本来就想渲染的 Markdown"，
+ * 这会导致 ReactMarkdown 将其当作代码块显示（<pre><code>），而非解析内部的 markdown 语法。
+ * 这里仅解包 markdown/md 语言标记，其它代码块保持不动。
+ */
+function unwrapMarkdownFences(text: string): string {
+  if (!text) return text;
+  return text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+}
+
 function MessageMarkdown({ content }: { content: string }) {
   const text = (content ?? '').trim();
   return (
@@ -92,7 +102,7 @@ function MessageMarkdown({ content }: { content: string }) {
           ),
         }}
       >
-        {text || '（空内容）'}
+        {unwrapMarkdownFences(text) || '（空内容）'}
       </ReactMarkdown>
     </div>
   );

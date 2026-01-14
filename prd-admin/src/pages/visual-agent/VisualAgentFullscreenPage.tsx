@@ -3,11 +3,27 @@
  * 不受外层 AppShell 布局影响
  */
 import { ArrowLeft } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
+import VisualAgentWorkspaceEditorPage from './VisualAgentWorkspaceEditorPage';
 
 export default function VisualAgentFullscreenPage() {
   const navigate = useNavigate();
+  const params = useParams();
+  const workspaceId = params.workspaceId;
+
+  // 判断是列表页还是编辑页
+  const isEditor = !!workspaceId;
+
+  // 返回目标：编辑页返回全屏列表页，列表页返回首页
+  const onBack = () => {
+    if (isEditor) {
+      navigate('/visual-agent-fullscreen');
+    } else {
+      navigate('/');
+    }
+  };
 
   return (
     <div
@@ -16,10 +32,13 @@ export default function VisualAgentFullscreenPage() {
         background: '#0a0a0c',
       }}
     >
+      {/* SystemDialogHost - 独立页面需要自己渲染对话框 */}
+      <SystemDialogHost />
+
       {/* 返回按钮 - 固定在左上角 */}
       <button
         type="button"
-        onClick={() => navigate('/')}
+        onClick={onBack}
         className="fixed top-5 left-5 z-50 flex items-center gap-2 px-4 py-2 rounded-[12px] transition-all duration-200"
         style={{
           background: 'rgba(18, 18, 22, 0.8)',
@@ -38,12 +57,15 @@ export default function VisualAgentFullscreenPage() {
           e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
         }}
       >
-        <ArrowLeft size={18} />
-        <span className="text-sm font-medium">返回主页</span>
+        <ArrowLeft size={18} /> 
       </button>
 
-      {/* 视觉创作内容 */}
-      <VisualAgentWorkspaceListPage />
+      {/* 根据路由显示列表页或编辑页 */}
+      {isEditor ? (
+        <VisualAgentWorkspaceEditorPage />
+      ) : (
+        <VisualAgentWorkspaceListPage fullscreenMode />
+      )}
     </div>
   );
 }

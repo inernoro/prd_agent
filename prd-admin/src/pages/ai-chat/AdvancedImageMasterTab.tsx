@@ -4533,11 +4533,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                       <div className="w-full h-full flex items-center justify-center">
                         {it.status === 'error' ? (
                           <div
-                            className="w-full h-full rounded-[16px] relative flex flex-col items-center justify-center gap-2 px-4 text-center"
+                            className="w-full h-full rounded-[16px] relative flex flex-col items-center justify-center text-center"
                             style={{
                               background: 'rgba(0,0,0,0.18)',
                               border: active ? '2px solid rgba(250,204,21,0.75)' : '1px solid rgba(255,255,255,0.12)',
                               boxShadow: active ? '0 0 0 1px rgba(0,0,0,0.22) inset, 0 0 18px rgba(250,204,21,0.30)' : 'none',
+                              overflow: 'hidden',
                             }}
                           >
                             <div
@@ -4554,18 +4555,29 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                               {Math.round(w)} × {Math.round(h)}
                             </div>
                             <div
-                              className="flex flex-col items-center justify-center gap-2 px-2"
-                              style={{ transform: overlayTransform, transformOrigin: 'center' }}
+                              className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 overflow-hidden"
                             >
-                              <div className="text-[16px] font-extrabold" style={{ color: 'rgba(255,255,255,0.90)' }}>
+                              <div
+                                className="font-extrabold"
+                                style={{
+                                  color: 'rgba(255,255,255,0.90)',
+                                  fontSize: `clamp(14px, ${Math.min(w, h) * 0.06}px, 24px)`,
+                                  lineHeight: 1.3,
+                                  flexShrink: 0,
+                                }}
+                              >
                                 图片加载失败
                               </div>
                               <div
-                                className="text-[14px]"
                                 style={{
                                   color: 'rgba(255,255,255,0.70)',
+                                  fontSize: `clamp(10px, ${Math.min(w, h) * 0.045}px, 16px)`,
+                                  lineHeight: 1.4,
                                   maxWidth: '100%',
-                                  whiteSpace: 'pre-wrap',
+                                  overflow: 'hidden',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 4,
+                                  WebkitBoxOrient: 'vertical',
                                   wordBreak: 'break-word',
                                   overflowWrap: 'anywhere',
                                 }}

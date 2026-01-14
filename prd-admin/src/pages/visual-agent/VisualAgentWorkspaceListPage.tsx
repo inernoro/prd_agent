@@ -231,11 +231,11 @@ function NightSkyBackground() {
     shootingStars.push(new ShootingStar());
     shootingStars.push(new ShootingStar());
 
-    // 创建地形层 - 使用偏暖的深褐/深紫色调，与金色主题呼应
+    // 创建地形层 - 使用金色/琥珀色调，与主题呼应
     terrains.push(
       new Terrain({
         mHeight: height / 2 - 100,
-        fillStyle: 'rgba(25, 20, 30, 0.4)',  // 最远层：偏紫褐
+        fillStyle: 'rgba(85, 65, 45, 0.35)',  // 最远层：暖金褐色，较亮
         displacement: 160,
         scrollDelay: 120,
       })
@@ -244,7 +244,7 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 130,
         scrollDelay: 70,
-        fillStyle: 'rgba(18, 15, 22, 0.55)',  // 中间层：更深
+        fillStyle: 'rgba(55, 42, 28, 0.55)',  // 中间层：深琥珀色
         mHeight: height / 2 - 40,
       })
     );
@@ -252,18 +252,18 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 100,
         scrollDelay: 35,
-        fillStyle: 'rgba(12, 10, 14, 0.75)',  // 最近层：接近纯黑
+        fillStyle: 'rgba(30, 22, 15, 0.85)',  // 最近层：深褐黑
         mHeight: height / 2 + 20,
       })
     );
 
     function animate() {
-      // 背景渐变 - 顶部深邃，整体偏暖褐调
+      // 背景渐变 - 顶部深邃，底部微暖褐调配合金色山川
       const gradient = ctx!.createLinearGradient(0, 0, 0, height);
-      gradient.addColorStop(0, '#0a0908');      // 顶部：微暖黑
-      gradient.addColorStop(0.35, '#0c0a0f');   // 中上：深褐紫
-      gradient.addColorStop(0.65, '#0a090b');   // 中下：暖灰黑
-      gradient.addColorStop(1, '#0a0a0a');      // 底部：纯暗
+      gradient.addColorStop(0, '#080808');      // 顶部：纯黑
+      gradient.addColorStop(0.3, '#0a0908');    // 中上：微暖黑
+      gradient.addColorStop(0.6, '#12100c');    // 中下：暖褐黑
+      gradient.addColorStop(1, '#0d0b08');      // 底部：深褐
       ctx!.fillStyle = gradient;
       ctx!.fillRect(0, 0, width, height);
 
@@ -592,17 +592,17 @@ function QuickInputBox(props: {
       <div
         className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
-          // 更强的磨砂玻璃效果
-          background: 'rgba(20, 20, 25, 0.75)',
+          // 暖褐色调磨砂玻璃，与金色主题协调
+          background: 'rgba(28, 24, 20, 0.82)',
           backdropFilter: 'blur(24px) saturate(1.4)',
           WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
-          // 聚焦时边框变亮 - 使用更柔和的琥珀金
+          // 聚焦时边框变亮 - 使用柔和的琥珀金
           border: isFocused
-            ? '1px solid rgba(212, 170, 85, 0.45)'
-            : '1px solid rgba(255, 255, 255, 0.12)',
+            ? '1px solid rgba(212, 170, 85, 0.5)'
+            : '1px solid rgba(180, 150, 100, 0.18)',
           boxShadow: isFocused
-            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(212, 170, 85, 0.12), 0 1px 0 rgba(255,255,255,0.06) inset'
-            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset',
+            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(212, 170, 85, 0.15), 0 1px 0 rgba(255,240,200,0.08) inset'
+            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,240,200,0.05) inset',
         }}
         onClick={handleContainerClick}
       >
@@ -643,8 +643,9 @@ function QuickInputBox(props: {
               type="button"
               className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
               style={{
-                background: 'rgba(255,255,255,0.06)',
-                color: 'rgba(255,255,255,0.5)',
+                background: 'rgba(180, 150, 100, 0.1)',
+                color: 'rgba(255, 240, 210, 0.55)',
+                border: '1px solid rgba(180, 150, 100, 0.15)',
               }}
               title="添加图片参考（开发中）"
               disabled
@@ -935,8 +936,16 @@ function ProjectCarousel(props: {
 }
 
 // ============ 主页面 ============
-export default function VisualAgentWorkspaceListPage() {
+export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: boolean }) {
+  const { fullscreenMode = false } = props;
   const navigate = useNavigate();
+
+  // 根据模式决定导航路径前缀
+  const getEditorPath = (workspaceId: string) => {
+    return fullscreenMode
+      ? `/visual-agent-fullscreen/${encodeURIComponent(workspaceId)}`
+      : `/visual-agent/${encodeURIComponent(workspaceId)}`;
+  };
   const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -1044,7 +1053,7 @@ export default function VisualAgentWorkspaceListPage() {
       return;
     }
     const ws = res.data.workspace;
-    navigate(`/visual-agent/${encodeURIComponent(ws.id)}`);
+    navigate(getEditorPath(ws.id));
   };
 
   // 快捷输入提交：创建 workspace 并跳转（带初始 prompt）
@@ -1063,7 +1072,7 @@ export default function VisualAgentWorkspaceListPage() {
         return;
       }
       const ws = res.data.workspace;
-      navigate(`/visual-agent/${encodeURIComponent(ws.id)}?prompt=${encodeURIComponent(prompt)}`);
+      navigate(`${getEditorPath(ws.id)}?prompt=${encodeURIComponent(prompt)}`);
     } finally {
       setInputLoading(false);
     }
@@ -1216,7 +1225,7 @@ export default function VisualAgentWorkspaceListPage() {
         onRename={onRename}
         onShare={openShare}
         onDelete={onDelete}
-        onOpen={(ws) => navigate(`/visual-agent/${encodeURIComponent(ws.id)}`)}
+        onOpen={(ws) => navigate(getEditorPath(ws.id))}
       />
 
       {/* 共享对话框 */}
