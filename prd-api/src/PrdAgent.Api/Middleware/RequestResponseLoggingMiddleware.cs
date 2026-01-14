@@ -224,7 +224,7 @@ public class RequestResponseLoggingMiddleware
 
         // 单行输出（控制台更清爽）
         // 示例：
-        // 完成 GET http://localhost:5000/api/v1/config/models?page=1 - 200 null 3ms
+        // 完成 GET http://localhost:*/api/v1/config/models?page=1 - 200 null 3ms
         _logger.Log(level,
             "完成 {Method} {Url} - {StatusCode} null {DurationMs}ms",
             method,
