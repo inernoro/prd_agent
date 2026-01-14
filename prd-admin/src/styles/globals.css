@@ -752,6 +752,24 @@ select optgroup {
   .prd-recgrid-canvas { opacity: 0.9; }
 }
 
+/* 视觉创作 Agent 标题呼吸动画 */
+@keyframes visualAgentTitleBreath {
+  0%, 100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 0.85;
+    filter: brightness(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visual-agent-title-breath {
+    animation: none !important;
+  }
+}
+
 /* success.html 参考：三态按钮 + confetti（局部复用组件） */
 @keyframes saLoading {
   0% { cy: 10; }

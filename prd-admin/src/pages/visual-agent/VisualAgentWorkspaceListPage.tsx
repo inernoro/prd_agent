@@ -493,10 +493,18 @@ function HeroSection() {
       </div>
       {/* 主标题 - 加大字号，建立视觉层级 */}
       <h1
-        className="text-[42px] font-bold tracking-tight mb-3"
+        className="text-[42px] font-bold tracking-tight mb-3 visual-agent-title-breath"
         style={{
-          color: '#fff',
+          color: 'rgba(255, 250, 240, 0.95)',
           letterSpacing: '-0.02em',
+          textShadow: `
+            0 0 10px rgba(255, 250, 240, 0.5),
+            0 0 20px rgba(255, 250, 240, 0.35),
+            0 0 30px rgba(255, 250, 240, 0.25),
+            0 0 40px rgba(255, 250, 240, 0.15),
+            0 0 60px rgba(218, 175, 75, 0.1)
+          `,
+          animation: 'visualAgentTitleBreath 3s ease-in-out infinite',
         }}
       >
         视觉创作 Agent
