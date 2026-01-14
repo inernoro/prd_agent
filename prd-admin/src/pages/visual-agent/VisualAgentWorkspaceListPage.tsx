@@ -48,12 +48,12 @@ function NightSkyBackground() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let width = canvas.offsetWidth || window.innerWidth;
-    let height = canvas.offsetHeight || window.innerHeight;
+    let width = window.innerWidth;
+    let height = window.innerHeight;
 
     const resize = () => {
-      width = canvas.offsetWidth || window.innerWidth;
-      height = canvas.offsetHeight || window.innerHeight;
+      width = window.innerWidth;
+      height = window.innerHeight;
       canvas.width = width;
       canvas.height = height;
     };
@@ -300,7 +300,7 @@ function NightSkyBackground() {
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 w-full h-full pointer-events-none"
+      className="fixed inset-0 w-full h-full pointer-events-none"
       style={{ zIndex: 0 }}
     />
   );
@@ -1266,14 +1266,6 @@ function ProjectCarousel(props: {
           >
             最近项目
           </h2>
-          <button
-            type="button"
-            className="flex items-center gap-1 text-[13px] font-medium transition-all duration-200 hover:gap-2"
-            style={{ color: 'rgba(212,170,85,0.75)' }}
-          >
-            查看全部
-            <ChevronRight size={14} />
-          </button>
         </div>
       </div>
       {/* 网格布局，固定5列，居中 */}
