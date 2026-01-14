@@ -564,20 +564,20 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   // 将actions传递给父组件 - 只在首次挂载时设置
   const actionsSetRef = useRef(false);
   const actions = useMemo(() => (
-    <>
-      <Button variant="secondary" size="sm" onClick={handleInitDefaultApps}>
-        <RefreshCw size={14} />
-        初始化应用
-      </Button>
-      <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)}>
-        <Settings size={14} />
-        系统配置
-      </Button>
-      <Button variant="primary" size="sm" onClick={() => window.location.href = '/model-manage?tab=pools'}>
-        <Plus size={14} />
-        新建模型池
-      </Button>
-    </>
+        <>
+          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps}>
+            <RefreshCw size={14} />
+            初始化应用
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)}>
+            <Settings size={14} />
+            系统配置
+          </Button>
+          <Button variant="primary" size="sm" onClick={() => window.location.href = '/model-manage?tab=pools'}>
+            <Plus size={14} />
+            新建模型池
+          </Button>
+        </>
   ), [handleInitDefaultApps]);
 
   useEffect(() => {

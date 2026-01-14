@@ -1184,91 +1184,101 @@ export default function AiChatPage() {
     setPendingAttachmentText(text || '');
   };
 
-  // 头部切换下拉菜单
-  const sessionDropdownMenu = sessionMenuOpen && (
-    <>
-      <div className="fixed inset-0 z-[100]" onClick={() => setSessionMenuOpen(false)} />
-      <div
-        className="absolute left-0 top-full mt-1 z-[110] w-[320px] max-h-[400px] overflow-auto rounded-[14px] p-2 shadow-lg"
-        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
-      >
-        {sessions.map((s) => {
-          const isActive = s.sessionId === activeSessionId;
-          const isArchived = !!s.archivedAtUtc;
-          return (
-            <div
-              key={s.sessionId}
-              className="flex items-center gap-2 px-2 py-1 rounded-[10px] group"
-              style={{
-                background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
-              }}
-            >
-              <button
-                type="button"
-                className="flex-1 min-w-0 text-left px-1 py-1 rounded-[8px] hover:bg-white/5 transition-colors"
-                onClick={() => {
-                  pickSession(s.sessionId);
-                  setSessionMenuOpen(false);
-                }}
-                title={s.title}
-              >
-                <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                  {s.title || `${s.sessionId.slice(0, 8)}`}
-                </div>
-                {isArchived && (
-                  <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>已归档</div>
-                )}
-              </button>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                <button
-                  type="button"
-                  className="p-1 rounded-[6px] hover:bg-white/10 text-[10px]"
-                  style={{ color: 'var(--text-muted)' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void archiveSession(s.sessionId, !isArchived);
-                  }}
-                  title={isArchived ? '取消归档' : '归档'}
-                >
-                  {isArchived ? '恢复' : '归档'}
-                </button>
-                <button
-                  type="button"
-                  className="p-1 rounded-[6px] hover:bg-red-500/20 text-[10px]"
-                  style={{ color: 'var(--status-error)' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void deleteSession(s.sessionId);
-                  }}
-                  title="删除"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          );
-        })}
-        <div className="border-t my-2" style={{ borderColor: 'var(--border-subtle)' }} />
-        <button
-          type="button"
-          className="w-full text-left px-3 py-2 rounded-[10px] hover:bg-white/5 transition-colors flex items-center gap-2"
-          onClick={() => {
-            setSessionMenuOpen(false);
-            setCreateOpen(true);
-          }}
+  // 头部切换下拉菜单 - 改为弹窗
+  const sessionDropdownMenu = (
+    <DialogPrimitive.Root open={sessionMenuOpen} onOpenChange={setSessionMenuOpen}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          className="fixed inset-0 z-[100]"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+        />
+        <DialogPrimitive.Content
+          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[110] w-[400px] max-h-[500px] overflow-auto rounded-[16px] p-4 shadow-xl"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
         >
-          <Plus size={14} style={{ opacity: 0.6 }} />
-          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>上传新 PRD</span>
-        </button>
-      </div>
-    </>
+          <DialogPrimitive.Title className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+            选择对话
+          </DialogPrimitive.Title>
+          <div className="space-y-1">
+            {sessions.map((s) => {
+              const isActive = s.sessionId === activeSessionId;
+              const isArchived = !!s.archivedAtUtc;
+              return (
+                <div
+                  key={s.sessionId}
+                  className="flex items-center gap-2 px-2 py-1 rounded-[10px] group"
+                  style={{
+                    background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="flex-1 min-w-0 text-left px-1 py-1 rounded-[8px] hover:bg-white/5 transition-colors"
+                    onClick={() => {
+                      pickSession(s.sessionId);
+                      setSessionMenuOpen(false);
+                    }}
+                    title={s.title}
+                  >
+                    <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      {s.title || `${s.sessionId.slice(0, 8)}`}
+                    </div>
+                    {isArchived && (
+                      <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>已归档</div>
+                    )}
+                  </button>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      type="button"
+                      className="p-1 rounded-[6px] hover:bg-white/10 text-[10px]"
+                      style={{ color: 'var(--text-muted)' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void archiveSession(s.sessionId, !isArchived);
+                      }}
+                      title={isArchived ? '取消归档' : '归档'}
+                    >
+                      {isArchived ? '恢复' : '归档'}
+                    </button>
+                    <button
+                      type="button"
+                      className="p-1 rounded-[6px] hover:bg-red-500/20 text-[10px]"
+                      style={{ color: 'var(--status-error)' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void deleteSession(s.sessionId);
+                      }}
+                      title="删除"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="border-t my-3" style={{ borderColor: 'var(--border-subtle)' }} />
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 rounded-[10px] hover:bg-white/5 transition-colors flex items-center gap-2"
+            onClick={() => {
+              setSessionMenuOpen(false);
+              setCreateOpen(true);
+            }}
+          >
+            <Plus size={14} style={{ opacity: 0.6 }} />
+            <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>上传新 PRD</span>
+          </button>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 
   // 头部左侧内容：会话切换 + 角色切换
   const headerLeftContent = (
     <div className="flex items-center gap-3">
       {/* 会话切换按钮 + 下拉菜单 */}
-      <div className="relative z-[120]">
+      <div className="relative">
         <button
           type="button"
           className="px-3 h-[28px] rounded-[9px] text-[12px] font-semibold hover:bg-white/5 transition-colors truncate flex items-center gap-1.5"

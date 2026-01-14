@@ -575,10 +575,12 @@ function QuickInputBox(props: {
   onChange: (v: string) => void;
   onSubmit: () => void;
   loading: boolean;
+  onImageSelect?: (file: File) => void;
 }) {
-  const { value, onChange, onSubmit, loading } = props;
+  const { value, onChange, onSubmit, loading, onImageSelect } = props;
   const typingPlaceholder = useTypingPlaceholder();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -591,6 +593,31 @@ function QuickInputBox(props: {
   // 点击整个输入框区域时聚焦到textarea
   const handleContainerClick = () => {
     textareaRef.current?.focus();
+  };
+
+  // 处理图片按钮点击
+  const handleImageButtonClick = (e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止冒泡到容器，避免触发 handleContainerClick
+    fileInputRef.current?.click();
+  };
+
+  // 处理文件选择
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // 验证文件类型
+      if (!file.type.startsWith('image/')) {
+        void systemDialog.alert('请选择图片文件');
+        e.target.value = '';
+        return;
+      }
+      // 调用回调
+      if (onImageSelect) {
+        onImageSelect(file);
+      }
+    }
+    // 清空 input 值，允许重复选择同一文件
+    e.target.value = '';
   };
 
   const canSubmit = value.trim() && !loading;
@@ -647,16 +674,25 @@ function QuickInputBox(props: {
         <div className="flex items-center justify-between px-4 pb-3">
           {/* 左侧：附件按钮 */}
           <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileChange}
+              disabled={loading}
+            />
             <button
               type="button"
-              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
+              onClick={handleImageButtonClick}
+              disabled={loading}
+              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 background: 'rgba(180, 150, 100, 0.1)',
                 color: 'rgba(255, 240, 210, 0.55)',
                 border: '1px solid rgba(180, 150, 100, 0.15)',
               }}
-              title="添加图片参考（开发中）"
-              disabled
+              title="添加图片参考"
             >
               <Image size={14} />
               <span>图片</span>
@@ -964,6 +1000,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputValue, setInputValue] = useState('');
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
@@ -1094,6 +1131,19 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     setActiveTag(tag?.key ?? null);
   };
 
+  // 处理图片选择
+  const onImageSelect = async (file: File) => {
+    // 验证文件大小（例如限制为 10MB）
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      await systemDialog.alert('图片文件过大，请选择小于 10MB 的图片');
+      return;
+    }
+    setSelectedImage(file);
+    // 显示提示信息
+    await systemDialog.alert(`已选择图片：${file.name}\n\n图片将在创建项目时作为参考使用。`);
+  };
+
   // 新建文件夹（目前作为占位功能，后续可接入后端）
   const onCreateFolder = async () => {
     const folderName = await systemDialog.prompt({
@@ -1208,6 +1258,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           }}
           onSubmit={onQuickSubmit}
           loading={inputLoading}
+          onImageSelect={onImageSelect}
         />
 
         {/* 场景标签 */}
