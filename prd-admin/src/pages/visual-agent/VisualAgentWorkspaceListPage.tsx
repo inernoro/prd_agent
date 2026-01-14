@@ -21,7 +21,6 @@ import {
   Trash2,
   ArrowRight,
   Image,
-  ChevronRight,
   ShoppingCart,
   PenTool,
   Video,
