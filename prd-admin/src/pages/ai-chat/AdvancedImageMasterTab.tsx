@@ -20,6 +20,16 @@ import {
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import {
+  buildInlineImageToken,
+  computeRequestedSizeByRefRatio,
+  extractInlineImageToken,
+  extractSizeToken,
+  parseInlinePrompt,
+  readImageSizeFromFile,
+  readImageSizeFromSrc,
+  tryParseWxH,
+} from '@/lib/visualAgentPromptUtils';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
@@ -463,70 +473,6 @@ const zoomFactorFromDeltaY = (deltaY: number) => {
   return clampZoomFactor(Math.exp(-deltaY * k));
 };
 
-const INLINE_IMAGE_RX = /^\[IMAGE([^\]]*)\]\s*/;
-const INLINE_IMAGE_LEGACY_RX = /^\[IMAGE=([^\]|]+)(?:\|([^\]]+))?\]\s*/;
-
-function safeDecodeURIComponent(s: string): string {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
-
-function parseInlineImageKv(body: string): { src?: string; name?: string } {
-  // body example: " src=... name=... sha=..."
-  const out: Record<string, string> = {};
-  const parts = String(body ?? '')
-    .trim()
-    .split(/\s+/g)
-    .filter(Boolean);
-  for (const p of parts) {
-    const idx = p.indexOf('=');
-    if (idx <= 0) continue;
-    const k = p.slice(0, idx).trim().toLowerCase();
-    const v = p.slice(idx + 1).trim();
-    if (!k || !v) continue;
-    out[k] = safeDecodeURIComponent(v);
-  }
-  return { src: out.src, name: out.name };
-}
-
-function extractInlineImageToken(raw: string): { src: string; name?: string; clean: string } | null {
-  const s = String(raw ?? '');
-  // v2: [IMAGE src=... name=...]
-  const m2 = INLINE_IMAGE_RX.exec(s);
-  if (m2) {
-    const body = String(m2[1] ?? '');
-    const kv = parseInlineImageKv(body);
-    const src = String(kv.src ?? '').trim();
-    const name = String(kv.name ?? '').trim();
-    const clean = s.slice(m2[0].length);
-    if (!src) return null;
-    return { src, name: name || undefined, clean };
-  }
-  // legacy: [IMAGE=src|name] or [IMAGE=src]
-  const m1 = INLINE_IMAGE_LEGACY_RX.exec(s);
-  if (!m1) return null;
-  const src = String(m1[1] ?? '').trim();
-  const nameEncoded = String(m1[2] ?? '').trim();
-  const name = nameEncoded ? safeDecodeURIComponent(nameEncoded) : '';
-  const clean = s.slice(m1[0].length);
-  if (!src) return null;
-  return { src, name: name || undefined, clean };
-}
-
-function buildInlineImageToken(src: string, name?: string): string {
-  const s = String(src ?? '').trim();
-  if (!s) return '';
-  // 不把大内容塞进消息：data/blob URL 不可持久化也不应写入数据库
-  if (s.startsWith('data:') || s.startsWith('blob:')) return '';
-  const n = String(name ?? '').trim();
-  const safeSrc = encodeURIComponent(s);
-  const safeName = n ? encodeURIComponent(n) : '';
-  // v2 token：可扩展 kv
-  return safeName ? `[IMAGE src=${safeSrc} name=${safeName}] ` : `[IMAGE src=${safeSrc}] `;
-}
 
 function guessRefName(ref: CanvasImageItem | null): string {
   const p = String(ref?.prompt ?? '').trim();
@@ -560,25 +506,6 @@ function truncateLabelFront(s: string, maxChars: number): string {
   return t.slice(0, Math.max(1, n - 3)) + '...';
 }
 
-const SIZE_TOKEN_RE_SRC = String.raw`\(\s*@size\s*:\s*(\d{2,5}\s*[xX×＊*]\s*\d{2,5})\s*\)\s*`;
-
-function makeSizeTokenRx() {
-  return new RegExp(SIZE_TOKEN_RE_SRC, 'g');
-}
-
-function extractSizeToken(raw: string): { size: string | null; cleanText: string } {
-  const text = String(raw ?? '');
-  if (!text) return { size: null, cleanText: '' };
-  let lastSize: string | null = null;
-  const matches = Array.from(text.matchAll(makeSizeTokenRx()));
-  for (const m of matches) {
-    const sizeRaw = String(m?.[1] ?? '').trim();
-    const parsed = tryParseWxH(sizeRaw);
-    lastSize = parsed ? `${parsed.w}x${parsed.h}` : sizeRaw.replace(/\s+/g, '');
-  }
-  const cleanText = text.replace(makeSizeTokenRx(), '').replace(/\s{2,}/g, ' ').trim();
-  return { size: lastSize, cleanText };
-}
 
 function gcd(a: number, b: number) {
   let x = Math.abs(Math.round(a));
@@ -684,38 +611,6 @@ async function downloadImage(src: string, filename: string) {
   document.body.removeChild(a);
 }
 
-async function readImageSizeFromSrc(src: string): Promise<{ w: number; h: number } | null> {
-  const s = String(src ?? '');
-  if (!s) return null;
-  try {
-    const img = new Image();
-    // data: 同源；http(s) 可能跨域，但失败时我们会 fallback
-    img.decoding = 'async';
-    img.src = s;
-    // decode 更可靠，不支持则走 onload
-    await (img.decode ? img.decode() : new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('load failed'));
-    }));
-    const w = img.naturalWidth || 0;
-    const h = img.naturalHeight || 0;
-    if (!w || !h) return null;
-    return { w, h };
-  } catch {
-    return null;
-  }
-}
-
-function tryParseWxH(size: string | null | undefined): { w: number; h: number } | null {
-  const s = String(size ?? '').trim();
-  if (!s) return null;
-  const m = /^\s*(\d+)\s*[xX×＊*]\s*(\d+)\s*$/.exec(s);
-  if (!m) return null;
-  const w = Number(m[1]);
-  const h = Number(m[2]);
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
-  return { w: Math.round(w), h: Math.round(h) };
-}
 
 // 从尺寸字符串检测档位
 function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
@@ -779,96 +674,6 @@ function findClosestSize(requestedSize: string, allowedSizes: string[]): string 
   return bestMatch;
 }
 
-// 检测参照图的分辨率档位（1K/2K/4K）
-function detectTierFromRefImage(w: number, h: number): '1k' | '2k' | '4k' {
-  const area = w * h;
-  if (area >= 8_000_000) return '4k'; // ~4096² = 16,777,216
-  if (area >= 2_500_000) return '2k'; // ~2048² = 4,194,304
-  return '1k';
-}
-
-function computeRequestedSizeByRefRatio(ref: { w: number; h: number } | null | undefined): string | null {
-  if (!ref || !ref.w || !ref.h) return null;
-  const w0 = Math.max(1, Math.round(ref.w));
-  const h0 = Math.max(1, Math.round(ref.h));
-  const r = w0 / h0;
-  if (!Number.isFinite(r) || r <= 0) return null;
-
-  // 智能档位选择：根据参照图分辨率推断档位（1K/2K/4K）
-  const tier = detectTierFromRefImage(w0, h0);
-
-  // 先尝试比例容差匹配（优先，避免 GCD 简化后无法匹配常见比例）
-  const actualRatio = w0 / h0;
-  let bestMatch: typeof ASPECT_OPTIONS[0] | null = null;
-  let bestRatioDiff = Infinity;
-  
-  for (const opt of ASPECT_OPTIONS) {
-    // 解析该比例的标准宽高比
-    const [rw, rh] = opt.id.split(':').map(Number);
-    if (!rw || !rh) continue;
-    const optRatio = rw / rh;
-    const diff = Math.abs(actualRatio - optRatio);
-    
-    // 容差 5%：如果实际比例与预定义比例相差小于 5%，视为匹配
-    if (diff / optRatio < 0.05 && diff < bestRatioDiff) {
-      bestRatioDiff = diff;
-      bestMatch = opt;
-    }
-  }
-  
-  if (bestMatch) {
-    // 返回对应档位的尺寸
-    return tier === '1k' ? bestMatch.size1k : tier === '2k' ? bestMatch.size2k : bestMatch.size4k;
-  }
-
-  // 回退：精确 GCD 匹配
-  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
-  const g = gcd(w0, h0);
-  const a = Math.max(1, Math.round(w0 / g));
-  const b = Math.max(1, Math.round(h0 / g));
-  const ratioId = `${a}:${b}` as any;
-
-  const exactMatch = ASPECT_OPTIONS.find((x) => x.id === ratioId);
-  if (exactMatch) {
-    return tier === '1k' ? exactMatch.size1k : tier === '2k' ? exactMatch.size2k : exactMatch.size4k;
-  }
-
-  // 未匹配到预定义比例：从白名单中选择比例最接近的尺寸
-  // 禁止自由计算任意尺寸，因为下游（如 nanobanana）只接受白名单内的尺寸
-  let closestOpt: typeof ASPECT_OPTIONS[0] | null = null;
-  let closestDiff = Infinity;
-  for (const opt of ASPECT_OPTIONS) {
-    const [rw, rh] = opt.id.split(':').map(Number);
-    if (!rw || !rh) continue;
-    const optRatio = rw / rh;
-    const diff = Math.abs(r - optRatio);
-    if (diff < closestDiff) {
-      closestDiff = diff;
-      closestOpt = opt;
-    }
-  }
-
-  if (closestOpt) {
-    return tier === '1k' ? closestOpt.size1k : tier === '2k' ? closestOpt.size2k : closestOpt.size4k;
-  }
-
-  // 兜底：返回默认的 1:1 尺寸
-  return tier === '1k' ? '1024x1024' : tier === '2k' ? '2048x2048' : '4096x4096';
-}
-
-async function readImageSizeFromFile(file: File): Promise<{ w: number; h: number } | null> {
-  try {
-    // createImageBitmap 能可靠拿到本地文件像素尺寸（不受跨域/解码限制影响）
-    const bmp = await createImageBitmap(file);
-    const w = bmp.width || 0;
-    const h = bmp.height || 0;
-    bmp.close();
-    if (!w || !h) return null;
-    return { w, h };
-  } catch {
-    return null;
-  }
-}
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return await new Promise<string>((resolve) => {
@@ -913,6 +718,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
   const serverDefaultModel = useMemo(() => firstEnabledImageModel(models), [models]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
+  const authToken = useAuthStore((s) => s.token ?? '');
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
   // 专注模式属于临时态：离开页面必须恢复，避免影响其他页面布局
@@ -950,17 +756,23 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       setAllowedSizes([]);
       return;
     }
+    const token = authToken || localStorage.getItem('token') || '';
     fetch('/api/v1/admin/image-gen/size-caps?includeFallback=true', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) {
+          console.warn('[image-master] size caps request failed', { status: r.status });
+        }
+        return r.json();
+      })
       .then((data) => {
         const caps = (data?.data ?? []).find((x: any) => x.modelId === modelId);
         const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
         setAllowedSizes(sizes.map((s: string) => String(s).trim().toLowerCase()));
       })
       .catch(() => setAllowedSizes([]));
-  }, [effectiveModel?.id]);
+  }, [authToken, effectiveModel?.id]);
 
   const [messages, setMessages] = useState<UiMsg[]>([
     {
@@ -1629,6 +1441,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     sizeOverride?: string | null;
   };
   const pendingJobsRef = useRef<GenJob[]>([]);
+  const sendGuardRef = useRef<{ text: string; at: number } | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const runningCountRef = useRef(0);
   const [runningCount, setRunningCount] = useState(0);
@@ -3107,12 +2920,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
 
   // 处理初始 prompt（从首页快捷输入跳转过来，或从 sessionStorage 读取）
   const initialPromptHandledRef = useRef(false);
-  const [initialPrompt, setInitialPrompt] = useState<string>(initialPromptFromProps);
+  const [initialPrompt, setInitialPrompt] = useState<{
+    text: string;
+    size: string | null;
+    inlineImage?: { src: string; name?: string };
+  } | null>(initialPromptFromProps ? parseInlinePrompt(initialPromptFromProps) : null);
 
   // 从 sessionStorage 读取初始消息（如果 props 中没有提供）
   useEffect(() => {
     if (initialPromptFromProps) {
-      setInitialPrompt(initialPromptFromProps);
+      setInitialPrompt(parseInlinePrompt(initialPromptFromProps));
       return;
     }
     if (!workspaceId) return;
@@ -3125,7 +2942,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       sessionStorage.removeItem(sessionKey);
       const messageText = String(data.messageText || '').trim();
       if (messageText) {
-        setInitialPrompt(messageText);
+        setInitialPrompt(parseInlinePrompt(messageText));
       }
     } catch {
       // ignore
@@ -3133,7 +2950,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
   }, [workspaceId, initialPromptFromProps]);
 
   useEffect(() => {
-    if (!initialPrompt) return;
+    if (!initialPrompt?.text) return;
     if (initialPromptHandledRef.current) return;
     if (!workspace) return;
     if (modelsLoading) return;
@@ -3144,7 +2961,23 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
 
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
-      void runFromText(initialPrompt, initialPrompt, null, undefined, undefined);
+      const inline = initialPrompt.inlineImage;
+      const inlineRef = inline?.src
+        ? {
+            key: `inline_${Date.now()}`,
+            createdAt: Date.now(),
+            prompt: inline.name || '参考图',
+            src: inline.src,
+            status: 'done' as const,
+            kind: 'image' as const,
+          }
+        : null;
+      console.info('[image-master] initial prompt run', {
+        text: initialPrompt.text,
+        size: initialPrompt.size,
+        inlineImage: inline?.src ? { src: inline.src, name: inline.name } : null,
+      });
+      void runFromText(initialPrompt.text, initialPrompt.text, inlineRef, undefined, initialPrompt.size ?? null);
     }, 500);
 
     return () => window.clearTimeout(timer);
@@ -3240,9 +3073,22 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     }
   };
 
-  const sendText = async (rawText: string) => {
+  const sendText = async (rawText: string, source: 'right' | 'quick' | 'button' | 'initial') => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
+    const now = Date.now();
+    const last = sendGuardRef.current;
+    if (last && last.text === raw && now - last.at < 500) {
+      console.info('[image-master] send blocked (duplicate)', { source, raw });
+      return;
+    }
+    sendGuardRef.current = { text: raw, at: now };
+    console.info('[image-master] send queued', {
+      source,
+      raw,
+      selectedKeys: [...(selectedKeysRef.current ?? [])],
+      sizeOverride: composerSize ?? autoSizeForSelectedImage ?? null,
+    });
     const sized = extractSizeToken(raw);
     const cleanDisplay = String(sized.cleanText ?? '').trim();
     if (!cleanDisplay) return;
@@ -3271,7 +3117,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(raw);
+    await sendText(raw, 'button');
   };
 
   // 富文本编辑器发送
@@ -3290,7 +3136,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(text);
+    await sendText(text, 'right');
   };
 
   const onSendQuick = async () => {
@@ -3301,7 +3147,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     setQuickInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(raw);
+    await sendText(raw, 'quick');
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
@@ -4437,7 +4283,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   // 使用当前 prompt 直接重试（引用图由用户当前多选决定）
-                                  void sendText(it.prompt || '');
+                                  void sendText(it.prompt || '', 'button');
                                 }}
                               >
                                 重试
@@ -6341,6 +6187,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                 placeholder={selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
                 imageOptions={imageOptions}
                 onChange={(text) => {
+                  activeComposerRef.current = 'right';
                   setInput(text);
                 }}
                 onSubmit={() => {
@@ -7010,5 +6857,3 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     </div>
   );
 }
-
-
