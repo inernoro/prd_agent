@@ -14,6 +14,7 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  $isTextNode,
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
 } from 'lexical';
@@ -89,17 +90,17 @@ function EditorInner({
         const imageRefs: Array<{ canvasKey: string; refId: number }> = [];
         editor.getEditorState().read(() => {
           const root = $getRoot();
-          // 遍历所有节点
+          text = root.getTextContent();
+          // 遍历所有节点（只收集 image refs，避免重复拼接文本）
           const traverse = (node: any) => {
             if ($isImageChipNode(node)) {
-              text += `@img${node.getRefId()}`;
               imageRefs.push({
                 canvasKey: node.getCanvasKey(),
                 refId: node.getRefId(),
               });
-            } else if (node.getTextContent) {
-              text += node.getTextContent();
+              return;
             }
+            if ($isTextNode(node)) return;
             if (node.getChildren) {
               for (const child of node.getChildren()) {
                 traverse(child);
