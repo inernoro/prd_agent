@@ -501,11 +501,11 @@ function HeroSection() {
           color: 'rgba(255, 250, 240, 0.95)',
           letterSpacing: '-0.02em',
           textShadow: `
-            0 0 10px rgba(255, 250, 240, 0.5),
-            0 0 20px rgba(255, 250, 240, 0.35),
-            0 0 30px rgba(255, 250, 240, 0.25),
-            0 0 40px rgba(255, 250, 240, 0.15),
-            0 0 60px rgba(218, 175, 75, 0.1)
+            0 0 4px rgba(255, 250, 240, 0.7),
+            0 0 8px rgba(255, 250, 240, 0.5),
+            0 0 12px rgba(255, 250, 240, 0.4),
+            0 0 16px rgba(255, 250, 240, 0.25),
+            0 0 24px rgba(218, 175, 75, 0.15)
           `,
           animation: 'visualAgentTitleBreath 3s ease-in-out infinite',
         }}
