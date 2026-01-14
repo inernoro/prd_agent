@@ -1,6 +1,6 @@
 [package]
 name = "prd-agent-desktop"
-version = "1.2.6"
+version = "1.6.0"
 description = "PRD Agent Desktop Client"
 authors = ["PRD Agent Team"]
 license = "MIT"
