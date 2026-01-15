@@ -41,11 +41,6 @@ public static class WatermarkLayoutCalculator
 
     public static double CalculateScaledFontSize(WatermarkSpec spec, int targetWidth)
     {
-        if (!spec.ScaleWithImage)
-        {
-            return Math.Max(1d, spec.FontSizePx);
-        }
-
         var scale = spec.BaseCanvasWidth > 0 ? targetWidth / (double)spec.BaseCanvasWidth : 1d;
         if (!double.IsFinite(scale) || scale <= 0) scale = 1d;
         return Math.Max(1d, spec.FontSizePx * scale);
