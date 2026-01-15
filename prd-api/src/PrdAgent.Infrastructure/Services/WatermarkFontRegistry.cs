@@ -1,23 +1,25 @@
 using System.Collections.Concurrent;
+using System.Net.Http;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using MongoDB.Driver;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using SixLabors.Fonts;
 
 namespace PrdAgent.Infrastructure.Services;
 
-public record WatermarkFontDefinition(string FontKey, string DisplayName, string FileName, string? FontFamily = null);
+public record WatermarkFontDefinition(string FontKey, string DisplayName, string FileName, string? FontFamily = null, string? Sha256 = null);
 
 public record WatermarkResolvedFont(Font Font, bool FallbackUsed, string? FallbackReason, string FontKey, string FontFamily);
 
 public class WatermarkFontRegistry
 {
+    private const string DefaultFontKeyValue = "default";
+    private const string DefaultFontFileName = "default.ttf";
+    private const string DefaultRemoteFontUrl = "https://i.pa.759800.com/watermark/font/default.ttf";
+
     private readonly string _fontDir;
-    private readonly string _customFontDir;
-    private readonly MongoDbContext _db;
+    private readonly IWatermarkFontAssetSource _fontAssetSource;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<WatermarkFontRegistry> _logger;
     private readonly FontCollection _fontCollection = new();
@@ -27,23 +29,22 @@ public class WatermarkFontRegistry
 
     public WatermarkFontRegistry(
         IHostEnvironment env,
-        MongoDbContext db,
+        IWatermarkFontAssetSource fontAssetSource,
         IAssetStorage assetStorage,
         ILogger<WatermarkFontRegistry> logger)
     {
-        _db = db;
+        _fontAssetSource = fontAssetSource;
         _assetStorage = assetStorage;
         _logger = logger;
         _fontDir = Path.Combine(env.ContentRootPath, "Assets", "Fonts");
-        _customFontDir = Path.Combine(_fontDir, "Custom");
         _defaultDefinitions = new List<WatermarkFontDefinition>
         {
-            new("dejavu-sans", "DejaVu Sans", "DejaVuSans.ttf")
+            new(DefaultFontKeyValue, "Default", DefaultFontFileName, "Default")
         };
         LoadCustomDefinitionsFromDb();
     }
 
-    public string DefaultFontKey => "dejavu-sans";
+    public string DefaultFontKey => DefaultFontKeyValue;
 
     public IReadOnlyList<WatermarkFontDefinition> Definitions
         => _defaultDefinitions.Concat(_customDefinitions.Values).ToList();
@@ -51,6 +52,15 @@ public class WatermarkFontRegistry
     public IReadOnlyList<string> DefaultFontKeys => _defaultDefinitions.Select(x => x.FontKey).ToList();
 
     public IReadOnlyList<string> FontKeys => Definitions.Select(x => x.FontKey).ToList();
+
+    public string NormalizeFontKey(string? fontKey)
+    {
+        var key = (fontKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(key)) return DefaultFontKey;
+        if (_customDefinitions.ContainsKey(key)) return key;
+        if (_defaultDefinitions.Any(x => x.FontKey.Equals(key, StringComparison.OrdinalIgnoreCase))) return key;
+        return DefaultFontKey;
+    }
 
     public string? TryResolveFontFile(string fontKey)
     {
@@ -102,8 +112,32 @@ public class WatermarkFontRegistry
         return _familyCache.GetOrAdd(def.FontKey, _ =>
         {
             var path = ResolveFontPath(def);
-            if (!File.Exists(path)) return null;
-            return _fontCollection.Add(path);
+            if (File.Exists(path)) return _fontCollection.Add(path);
+
+            if (def.FontKey == DefaultFontKey)
+            {
+                var bytes = TryDownloadDefaultFontBytes();
+                if (bytes != null && bytes.Length > 0)
+                {
+                    TryPersistFontBytes(path, bytes);
+                    return _fontCollection.Add(new MemoryStream(bytes));
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(def.Sha256))
+            {
+                var result = _assetStorage.TryReadByShaAsync(
+                    def.Sha256,
+                    CancellationToken.None,
+                    domain: AppDomainPaths.DomainWatermark,
+                    type: AppDomainPaths.TypeFont).GetAwaiter().GetResult();
+                if (result != null && result.Value.bytes.Length > 0)
+                {
+                    return _fontCollection.Add(new MemoryStream(result.Value.bytes));
+                }
+            }
+
+            return null;
         });
     }
 
@@ -123,78 +157,25 @@ public class WatermarkFontRegistry
         _familyCache.TryRemove(fontKey, out _);
     }
 
-    public string SaveCustomFontFile(string fontKey, string extension, byte[] bytes)
-    {
-        var ext = (extension ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(ext)) ext = "ttf";
-        Directory.CreateDirectory(_customFontDir);
-        var fileName = $"{fontKey}.{ext}";
-        var filePath = Path.Combine(_customFontDir, fileName);
-        File.WriteAllBytes(filePath, bytes);
-        return NormalizeCustomRelativeFileName(fileName);
-    }
-
-    public void DeleteCustomFontFile(string fileName)
-    {
-        if (string.IsNullOrWhiteSpace(fileName)) return;
-        try
-        {
-            var path = ResolveFontPath(new WatermarkFontDefinition(string.Empty, string.Empty, fileName));
-            if (File.Exists(path)) File.Delete(path);
-        }
-        catch
-        {
-            // ignore
-        }
-    }
-
-    private static string NormalizeCustomRelativeFileName(string fileName)
-    {
-        var rel = Path.Combine("Custom", fileName);
-        return rel.Replace('\\', '/');
-    }
-
     private void LoadCustomDefinitionsFromDb()
     {
         try
         {
-            var assets = _db.WatermarkFontAssets.Find(_ => true).ToList();
+            var assets = _fontAssetSource.LoadAll();
             foreach (var asset in assets)
             {
-                if (string.IsNullOrWhiteSpace(asset.FontKey) || string.IsNullOrWhiteSpace(asset.FileName)) continue;
-                EnsureCustomFontFile(asset);
+                if (string.IsNullOrWhiteSpace(asset.FontKey)) continue;
                 _customDefinitions[asset.FontKey] = new WatermarkFontDefinition(
                     asset.FontKey,
                     asset.DisplayName,
-                    asset.FileName,
-                    asset.FontFamily);
+                    asset.FileName ?? string.Empty,
+                    asset.FontFamily,
+                    asset.Sha256);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to load custom watermark fonts.");
-        }
-    }
-
-    private void EnsureCustomFontFile(WatermarkFontAsset asset)
-    {
-        var def = new WatermarkFontDefinition(asset.FontKey, asset.DisplayName, asset.FileName, asset.FontFamily);
-        var path = ResolveFontPath(def);
-        if (File.Exists(path)) return;
-        try
-        {
-            var result = _assetStorage.TryReadByShaAsync(
-                asset.Sha256,
-                CancellationToken.None,
-                domain: AppDomainPaths.DomainWatermark,
-                type: AppDomainPaths.TypeFont).GetAwaiter().GetResult();
-            if (result == null || result.Value.bytes.Length == 0) return;
-            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? _customFontDir);
-            File.WriteAllBytes(path, result.Value.bytes);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to hydrate custom font file {FontKey}.", asset.FontKey);
         }
     }
 
@@ -211,11 +192,43 @@ public class WatermarkFontRegistry
         return Path.Combine(_fontDir, relative);
     }
 
+    private byte[]? TryDownloadDefaultFontBytes()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var bytes = client.GetByteArrayAsync(DefaultRemoteFontUrl).GetAwaiter().GetResult();
+            return bytes.Length == 0 ? null : bytes;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to download default watermark font.");
+            return null;
+        }
+    }
+
+    private void TryPersistFontBytes(string path, byte[] bytes)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? _fontDir);
+            File.WriteAllBytes(path, bytes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to cache watermark font file at {Path}", path);
+        }
+    }
+
     private IReadOnlyList<WatermarkFontInfo> BuildFontInfos(IEnumerable<WatermarkFontDefinition> defs, Func<string, string> fileUrlResolver)
     {
         return defs.Select(def =>
         {
-            var family = GetOrLoadFamily(def);
+            FontFamily? family = null;
+            if (string.IsNullOrWhiteSpace(def.FontFamily))
+            {
+                family = GetOrLoadFamily(def);
+            }
             var familyName = family?.Name ?? def.FontFamily ?? def.DisplayName;
             return new WatermarkFontInfo
             {

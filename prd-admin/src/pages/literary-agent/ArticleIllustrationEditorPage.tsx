@@ -18,8 +18,9 @@ import {
   createLiteraryPrompt,
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
+  getWatermark,
 } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -27,6 +28,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
+import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
@@ -92,9 +94,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
+  const [markerStreaming, setMarkerStreaming] = useState(false);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
   
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -172,6 +176,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return String(a.modelName || a.name || '').localeCompare(String(b.modelName || b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
       });
       setImageGenModel(list[0] ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getWatermark();
+      if (cancelled) return;
+      if (res?.success) {
+        setWatermarkEnabled(Boolean(res.data?.enabled ?? res.data?.spec?.enabled));
+      }
     })();
     return () => {
       cancelled = true;
@@ -305,12 +323,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [selectedPrompt]);
 
+  const isBusy = generating || markerStreaming;
+
   useEffect(() => {
-    if (debouncedArticleContent && workspaceId && phase === 1 && !generating) { // Editing
+    if (debouncedArticleContent && workspaceId && phase === 1 && !isBusy) { // Editing
       void saveArticleContent();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedArticleContent]);
+  }, [debouncedArticleContent, isBusy]);
 
   async function saveArticleContent() {
     try {
@@ -426,7 +446,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // 使用选中的提示词作为系统提示词
     const systemPrompt = selectedPrompt.content;
 
-    setGenerating(true);
+    setMarkerStreaming(true);
     isStreamingRef.current = true; // 标记开始流式输出
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
@@ -518,22 +538,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         await updateMarkerStatus(markerIndex, {
                           status: 'parsed',
                           draftText: planItem.prompt,
+                          planItem: {
+                            prompt: planItem.prompt,
+                            count: planItem.count,
+                            size: planItem.size,
+                          },
                         });
-                        
-                        // 保存 planItem 到后端（需要扩展 API）
-                        try {
-                          await updateArticleMarker({
-                            workspaceId,
-                            markerIndex,
-                            planItem: {
-                              prompt: planItem.prompt,
-                              count: planItem.count,
-                              size: planItem.size,
-                            },
-                          });
-                        } catch (error) {
-                          console.error('Failed to save planItem:', error);
-                        }
                       } else {
                         setMarkerRunItems((prev) =>
                           prev.map((x) =>
@@ -627,6 +637,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             : x
                         )
                       );
+                      await updateMarkerStatus(markerIndex, {
+                        status: 'parsed',
+                        draftText: planItem.prompt,
+                        planItem: {
+                          prompt: planItem.prompt,
+                          count: planItem.count,
+                          size: planItem.size,
+                        },
+                      });
                     } else {
                       setMarkerRunItems((p) =>
                         p.map((x) =>
@@ -683,6 +702,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             : x
                         )
                       );
+                      await updateMarkerStatus(markerIndex, {
+                        status: 'parsed',
+                        draftText: planItem.prompt,
+                        planItem: {
+                          prompt: planItem.prompt,
+                          count: planItem.count,
+                          size: planItem.size,
+                        },
+                      });
                     } else {
                       setMarkerRunItems((p) =>
                         p.map((x) =>
@@ -732,7 +760,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setMarkers([]);
       setPhase(1); // Editing
     } finally {
-      setGenerating(false);
+      setMarkerStreaming(false);
       isStreamingRef.current = false; // 标记流式输出结束
     }
   };
@@ -777,7 +805,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           String(it.assetUrl || it.url || '').trim() ||
           (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
 
-        if (url) {
+        if (url && it.status === 'done') {
           changed = true;
           patches.push({
             start: m.startPos,
@@ -820,6 +848,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     [buildPreviewMarkdownWithImages]
   );
 
+  const locateMarkerInPreview = (markerIndex: number) => {
+    const container = articlePreviewRef.current;
+    if (!container) return;
+    const markers = container.querySelectorAll('.prd-md-marker');
+    const target = markers[markerIndex] as HTMLElement | undefined;
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    const imgAlt = `配图 ${markerIndex + 1}`;
+    const img = container.querySelector(`img[alt="${imgAlt}"]`) as HTMLElement | null;
+    if (!img) return;
+    img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
   // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
   useEffect(() => {
     if (phase === 2) { // MarkersGenerated
@@ -828,6 +871,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
   const runSingleMarker = async (markerIndex: number) => {
+    if (isStreamingRef.current) {
+      await systemDialog.alert('标记正在生成中，请稍后再试');
+      return;
+    }
     if (!imageGenModel) {
       await systemDialog.alert(imageGenModelError || '未选择生图模型');
       return;
@@ -840,43 +887,77 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    // 1) 逐条解析 JSON（实验室同款：planImageGen），maxItems=1
+    const cachedPlanItem = current.planItem;
+    const cachedDraft = String(current.draftText || '').trim();
+    // 1) 已解析过则直接复用，避免重复 planImageGen
     setMarkerRunItems((prev) =>
       prev.map((x) =>
         x.markerIndex === markerIndex
-          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null }
+          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null, base64: null, url: null, assetUrl: null }
           : x
       )
     );
     await updateMarkerStatus(markerIndex, { status: 'parsing' }); // 保存到后端
-    const planRes = await planImageGen({ text, maxItems: 1 });
-    if (!planRes.success) {
-      const errorMsg = planRes.error?.message || '解析失败';
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
-      );
-      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+
+    let plannedPrompt = '';
+    let plannedSize = '';
+    let planItem: ImageGenPlanItem | null = null;
+
+    if (cachedPlanItem && String(cachedPlanItem.prompt || '').trim()) {
+      planItem = cachedPlanItem;
+      plannedPrompt = String(cachedPlanItem.prompt || '').trim();
+      plannedSize = String(cachedPlanItem.size || '').trim();
+    } else if (cachedDraft) {
+      plannedPrompt = cachedDraft;
+    } else {
+      const planRes = await planImageGen({ text, maxItems: 1 });
+      if (!planRes.success) {
+        const errorMsg = planRes.error?.message || '解析失败';
+        setMarkerRunItems((prev) =>
+          prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
+        );
+        await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
+        return;
+      }
+      const first = (planRes.data?.items ?? [])[0] ?? null;
+      if (!first || !String(first.prompt || '').trim()) {
+        const errorMsg = '解析失败：未返回有效 JSON';
+        setMarkerRunItems((prev) =>
+          prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
+        );
+        await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
+        return;
+      }
+      planItem = first;
+      plannedPrompt = String(first.prompt || '').trim();
+      plannedSize = String(first.size || '').trim();
     }
-    const first = (planRes.data?.items ?? [])[0] ?? null;
-    if (!first || !String(first.prompt || '').trim()) {
-      const errorMsg = '解析失败：未返回有效 JSON';
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
-      );
-      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
-    }
-    const plannedPrompt = String(first.prompt || '').trim();
-    const plannedSize = String(first.size || '').trim() || parseSizeFromText(plannedPrompt) || parseSizeFromText(text) || '1024x1024';
+
+    plannedSize = plannedSize || parseSizeFromText(plannedPrompt) || parseSizeFromText(text) || '1024x1024';
 
     setMarkerRunItems((prev) =>
-      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'parsed', planItem: first } : x))
+      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'parsed', planItem } : x))
     );
-    await updateMarkerStatus(markerIndex, { status: 'parsed', draftText: plannedPrompt }); // 保存
+    if (planItem) {
+      await updateMarkerStatus(markerIndex, {
+        status: 'parsed',
+        draftText: plannedPrompt,
+        planItem: {
+          prompt: planItem.prompt,
+          count: planItem.count,
+          size: planItem.size,
+        },
+      });
+    } else {
+      await updateMarkerStatus(markerIndex, { status: 'parsed', draftText: plannedPrompt });
+    }
 
     // 2) 创建 run（传入 workspaceId，后端会自动保存到 COS）
-    setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'running' } : x)));
+    setMarkerRunItems((prev) =>
+      prev.map((x) =>
+        x.markerIndex === markerIndex ? { ...x, status: 'running', base64: null, url: null, assetUrl: null } : x
+      )
+    );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const created = await createImageGenRun({
       input: {
@@ -925,6 +1006,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const o = obj as Record<string, unknown>;
         const t = String(o.type ?? '');
         if (t === 'imageDone') {
+          const evtRunId = String(o.runId ?? '').trim();
+          if (evtRunId && evtRunId !== runId) return;
           const b64 = (o.base64 as string | null | undefined) ?? null;
           const url = (o.url as string | null | undefined) ?? null;
           gotBase64 = b64;
@@ -1019,12 +1102,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     status?: string;
     runId?: string;
     errorMessage?: string;
+    planItem?: { prompt: string; count?: number; size?: string };
   }) => {
     try {
+      const planItem = updates.planItem
+        ? {
+            prompt: updates.planItem.prompt,
+            count: updates.planItem.count ?? 1,
+            size: updates.planItem.size,
+          }
+        : undefined;
       await updateArticleMarker({
         workspaceId,
         markerIndex,
         ...updates,
+        planItem,
       });
     } catch (error) {
       console.error('Failed to update marker status:', error);
@@ -1078,7 +1170,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
-    if (generating) return;
+    if (isBusy) return;
     setGenerating(true);
     try {
       await runSingleMarker(markerIndex);
@@ -1103,7 +1195,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleDeleteMarker = async (markerIndex: number) => {
-    if (generating) return;
+    if (isBusy) return;
     const marker = markers.find((m) => m.index === markerIndex) ?? null;
     if (!marker) return;
 
@@ -1356,7 +1448,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       label: '一键生图',
       action: handleBatchGenerate,
       icon: Sparkles,
-      disabled: !imageGenModel || markerRunItems.length === 0,
+      disabled: !imageGenModel || generating,
       show: phase === 2 && markerRunItems.filter(x => x.status === 'done').length === 0, // MarkersGenerated
     },
     {
@@ -1418,7 +1510,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
-    if (targetPhase === phase || generating) return;
+    if (targetPhase === phase || isBusy) return;
 
     // 简单切换阶段（不做复杂的服务端校验）
     setPhase(targetPhase);
@@ -1454,6 +1546,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
                 系统提示词
               </div>
+              {watermarkEnabled && (
+                <div
+                  className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0"
+                  style={{ background: 'rgba(245, 158, 11, 0.12)', color: 'rgba(245, 158, 11, 0.85)', border: '1px solid rgba(245, 158, 11, 0.28)' }}
+                >
+                  水印
+                </div>
+              )}
               
               {/* 标题 */}
               <div className="flex-1 min-w-0">
@@ -1845,7 +1945,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const canShow = Boolean(src) && (it.status === 'done' || it.status === 'running');
+                const showPlaceholder = it.status === 'running' || it.status === 'parsing';
+                const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
@@ -1920,11 +2021,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </div>
                   ) : null}
 
-                  {canShow ? (
+                  {(showPlaceholder || canShow) ? (
                     <div
                       className="mt-2 rounded-[12px] overflow-hidden relative group"
-                      style={{ height: 160, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)', cursor: 'pointer' }}
+                      style={{
+                        height: 160,
+                        background: 'rgba(0,0,0,0.18)',
+                        border: '1px solid rgba(255,255,255,0.10)',
+                        cursor: canShow ? 'pointer' : 'default',
+                      }}
                       onClick={() => {
+                        if (!canShow) return;
                         const allImages = markerRunItems
                           .filter(x => x.assetUrl || x.url || x.base64)
                           .map((x, i) => ({
@@ -1939,54 +2046,63 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         setImagePreviewOpen(true);
                       }}
                     >
-                      <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
-                      
-                      {/* Copy and Download icons */}
-                      <div 
-                        className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          className="p-2 rounded-lg"
-                          style={{
-                            background: 'rgba(0, 0, 0, 0.6)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            backdropFilter: 'blur(10px)',
-                          }}
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(src);
-                              await systemDialog.alert({ title: '已复制', message: '图片链接已复制到剪贴板' });
-                            } catch (error) {
-                              console.error('Copy failed:', error);
-                            }
-                          }}
-                          title="复制图片链接"
-                        >
-                          <Copy size={16} style={{ color: 'white' }} />
-                        </button>
-                        <button
-                          className="p-2 rounded-lg"
-                          style={{
-                            background: 'rgba(0, 0, 0, 0.6)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            backdropFilter: 'blur(10px)',
-                          }}
-                          onClick={async () => {
-                            try {
-                              const link = document.createElement('a');
-                              link.href = src;
-                              link.download = `配图-${idx + 1}.png`;
-                              link.click();
-                            } catch (error) {
-                              console.error('Download failed:', error);
-                            }
-                          }}
-                          title="下载图片"
-                        >
-                          <DownloadCloud size={16} style={{ color: 'white' }} />
-                        </button>
-                      </div>
+                      {showPlaceholder ? (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <PrdPetalBreathingLoader size={140} />
+                        </div>
+                      ) : null}
+                      {canShow ? (
+                        <>
+                          <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+
+                          {/* Copy and Download icons */}
+                          <div
+                            className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              className="p-2 rounded-lg"
+                              style={{
+                                background: 'rgba(0, 0, 0, 0.6)',
+                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                backdropFilter: 'blur(10px)',
+                              }}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(src);
+                                  await systemDialog.alert({ title: '已复制', message: '图片链接已复制到剪贴板' });
+                                } catch (error) {
+                                  console.error('Copy failed:', error);
+                                }
+                              }}
+                              title="复制图片链接"
+                            >
+                              <Copy size={16} style={{ color: 'white' }} />
+                            </button>
+                            <button
+                              className="p-2 rounded-lg"
+                              style={{
+                                background: 'rgba(0, 0, 0, 0.6)',
+                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                backdropFilter: 'blur(10px)',
+                              }}
+                              onClick={async () => {
+                                try {
+                                  const link = document.createElement('a');
+                                  link.href = src;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.click();
+                                } catch (error) {
+                                  console.error('Download failed:', error);
+                                }
+                              }}
+                              title="下载图片"
+                            >
+                              <DownloadCloud size={16} style={{ color: 'white' }} />
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -2012,6 +2128,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     >
                       <Trash2 size={14} />
                       删除
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => locateMarkerInPreview(it.markerIndex)}
+                      title="定位到正文中的配图标记位置"
+                    >
+                      <MapPin size={14} />
+                      定位
                     </Button>
                     <Button
                       size="sm"
@@ -2457,7 +2582,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 水印设置
               </div>
               <div className="flex-1 min-h-0 overflow-auto">
-                <WatermarkSettingsPanel />
+                <WatermarkSettingsPanel onStatusChange={setWatermarkEnabled} />
               </div>
             </div>
           </div>

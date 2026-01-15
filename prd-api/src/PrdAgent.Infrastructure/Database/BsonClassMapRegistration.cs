@@ -1,4 +1,5 @@
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Bson.Serialization.Serializers;
 using PrdAgent.Core.Models;
 
@@ -10,6 +11,7 @@ namespace PrdAgent.Infrastructure.Database;
 public static class BsonClassMapRegistration
 {
     private static bool _registered;
+    private static bool _conventionsRegistered;
     private static readonly object _lock = new();
 
     /// <summary>
@@ -21,6 +23,7 @@ public static class BsonClassMapRegistration
         {
             if (_registered) return;
 
+            RegisterConventions();
             RegisterUser();
             RegisterGroup();
             RegisterGroupMember();
@@ -68,6 +71,19 @@ public static class BsonClassMapRegistration
         }
     }
 
+    private static void RegisterConventions()
+    {
+        if (_conventionsRegistered) return;
+
+        var pack = new ConventionPack
+        {
+            new StringIdCompatibilityConvention()
+        };
+
+        ConventionRegistry.Register("PrdAgentStringIdCompat", pack, _ => true);
+        _conventionsRegistered = true;
+    }
+
     private static void RegisterUser()
     {
         if (BsonClassMap.IsClassMapRegistered(typeof(User))) return;
@@ -93,6 +109,29 @@ public static class BsonClassMapRegistration
             }
             cm.SetIgnoreExtraElements(true);
         });
+    }
+
+    private sealed class StringIdCompatibilityConvention : IClassMapConvention
+    {
+        public string Name => "StringIdCompatibility";
+
+        public void Apply(BsonClassMap classMap)
+        {
+            var idMap = classMap.IdMemberMap;
+            if (idMap == null) return;
+            if (idMap.MemberType != typeof(string)) return;
+
+            if (idMap.GetSerializer() is not StringOrObjectIdSerializer)
+            {
+                idMap.SetSerializer(new StringOrObjectIdSerializer());
+            }
+
+            var idGenerator = idMap.IdGenerator;
+            if (idGenerator == null || idGenerator.GetType().Name == "StringObjectIdGenerator")
+            {
+                idMap.SetIdGenerator(GuidStringIdGenerator.Instance);
+            }
+        }
     }
 
     private static void RegisterGroup()
@@ -591,6 +630,9 @@ public static class BsonClassMapRegistration
         BsonClassMap.RegisterClassMap<WatermarkFontAsset>(cm =>
         {
             cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
             cm.MapMember(x => x.OwnerUserId).SetElementName("ownerUserId");
             cm.MapMember(x => x.FontKey).SetElementName("fontKey");

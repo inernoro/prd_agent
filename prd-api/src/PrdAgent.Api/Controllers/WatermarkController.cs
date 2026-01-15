@@ -61,6 +61,7 @@ public class WatermarkController : ControllerBase
         if (doc.Spec != null)
         {
             doc.Spec.Enabled = doc.Enabled;
+            doc.Spec.FontKey = _fontRegistry.NormalizeFontKey(doc.Spec.FontKey);
         }
 
         return Ok(ApiResponse<WatermarkSettings>.Ok(doc));
@@ -81,11 +82,23 @@ public class WatermarkController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "spec 不能为空"));
         }
 
+        _logger.LogInformation("Watermark PUT start for user {UserId}. Enabled={Enabled}, FontKey={FontKey}", userId, request.Spec.Enabled, request.Spec.FontKey);
+
         var spec = request.Spec;
+        spec.FontKey = _fontRegistry.NormalizeFontKey(spec.FontKey);
+        if (string.IsNullOrWhiteSpace(spec.TextColor) && !string.IsNullOrWhiteSpace(spec.Color))
+        {
+            spec.TextColor = spec.Color;
+        }
+        if (string.IsNullOrWhiteSpace(spec.Color) && !string.IsNullOrWhiteSpace(spec.TextColor))
+        {
+            spec.Color = spec.TextColor;
+        }
         var allowedFontKeys = await GetAllowedFontKeysAsync(userId, ct);
         var (ok, message) = WatermarkSpecValidator.Validate(spec, allowedFontKeys);
         if (!ok)
         {
+            _logger.LogWarning("Watermark PUT invalid spec for user {UserId}: {Message}", userId, message);
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message ?? "水印配置无效"));
         }
 
@@ -111,6 +124,7 @@ public class WatermarkController : ControllerBase
             options,
             ct);
 
+        _logger.LogInformation("Watermark PUT saved for user {UserId}. Enabled={Enabled}, FontKey={FontKey}", userId, saved.Enabled, saved.Spec?.FontKey);
         return Ok(ApiResponse<WatermarkSettings>.Ok(saved));
     }
 
@@ -124,9 +138,15 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(fontKey => $"/api/watermark/fonts/{Uri.EscapeDataString(fontKey)}/file");
+        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(fontKey =>
+        {
+            var localPath = _fontRegistry.TryResolveFontFile(fontKey);
+            return localPath == null
+                ? "https://i.pa.759800.com/watermark/font/default.ttf"
+                : $"/api/watermark/fonts/{Uri.EscapeDataString(fontKey)}/file";
+        });
         var assets = await _db.WatermarkFontAssets
-            .Find(x => x.OwnerUserId == userId)
+            .Find(Builders<WatermarkFontAsset>.Filter.Empty)
             .SortByDescending(x => x.UpdatedAt)
             .ToListAsync(ct);
         var customFonts = assets.Select(x => new WatermarkFontInfo
@@ -146,12 +166,36 @@ public class WatermarkController : ControllerBase
     public IActionResult GetFontFile([FromRoute] string fontKey)
     {
         var path = _fontRegistry.TryResolveFontFile(fontKey);
-        if (string.IsNullOrWhiteSpace(path)) return NotFound();
-        var fileName = Path.GetFileName(path);
-        var mime = "font/ttf";
-        if (fileName.EndsWith(".otf", StringComparison.OrdinalIgnoreCase)) mime = "font/otf";
-        if (fileName.EndsWith(".woff2", StringComparison.OrdinalIgnoreCase)) mime = "font/woff2";
-        return PhysicalFile(path, mime);
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            var fileName = Path.GetFileName(path);
+            var mime = "font/ttf";
+            if (fileName.EndsWith(".otf", StringComparison.OrdinalIgnoreCase)) mime = "font/otf";
+            if (fileName.EndsWith(".woff2", StringComparison.OrdinalIgnoreCase)) mime = "font/woff2";
+            return PhysicalFile(path, mime);
+        }
+
+        var doc = _db.WatermarkFontAssets
+            .Find(x => x.FontKey == fontKey)
+            .FirstOrDefault();
+        if (doc == null) return NotFound();
+
+        try
+        {
+            var result = _assetStorage.TryReadByShaAsync(
+                doc.Sha256,
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainWatermark,
+                type: AppDomainPaths.TypeFont).GetAwaiter().GetResult();
+            if (result == null || result.Value.bytes.Length == 0) return NotFound();
+            var mime = string.IsNullOrWhiteSpace(result.Value.mime) ? "font/ttf" : result.Value.mime;
+            return File(result.Value.bytes, mime);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read watermark font file {FontKey}", fontKey);
+            return NotFound();
+        }
     }
 
     [HttpPost("/api/watermark/fonts")]
@@ -164,6 +208,8 @@ public class WatermarkController : ControllerBase
         {
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
+
+        _logger.LogInformation("Watermark font upload start for user {UserId}. FileName={FileName}, Size={Size}", userId, file?.FileName, file?.Length ?? 0);
 
         if (file == null || file.Length <= 0)
         {
@@ -213,8 +259,8 @@ public class WatermarkController : ControllerBase
             ? $"/api/watermark/fonts/{Uri.EscapeDataString(fontKey)}/file"
             : stored.Url;
         var display = NormalizeDisplayName(displayName, file.FileName, fontKey);
-        var relativeFileName = _fontRegistry.SaveCustomFontFile(fontKey, ext, bytes);
-        _fontRegistry.AddCustomFontDefinition(new WatermarkFontDefinition(fontKey, display, relativeFileName, familyName));
+        var fileName = Path.GetFileName(file.FileName);
+        _fontRegistry.AddCustomFontDefinition(new WatermarkFontDefinition(fontKey, display, fileName, familyName, stored.Sha256));
 
         var now = DateTime.UtcNow;
         var update = Builders<WatermarkFontAsset>.Update
@@ -226,7 +272,7 @@ public class WatermarkController : ControllerBase
             .Set(x => x.Mime, stored.Mime)
             .Set(x => x.SizeBytes, stored.SizeBytes)
             .Set(x => x.Url, publicUrl)
-            .Set(x => x.FileName, relativeFileName)
+            .Set(x => x.FileName, fileName)
             .Set(x => x.UpdatedAt, now)
             .SetOnInsert(x => x.CreatedAt, now);
 
@@ -242,6 +288,7 @@ public class WatermarkController : ControllerBase
             options,
             ct);
 
+        _logger.LogInformation("Watermark font upload saved for user {UserId}. FontKey={FontKey}, FileName={FileName}", userId, saved.FontKey, saved.FileName);
         return Ok(ApiResponse<WatermarkFontInfo>.Ok(new WatermarkFontInfo
         {
             FontKey = saved.FontKey,
@@ -271,7 +318,6 @@ public class WatermarkController : ControllerBase
 
         await _db.WatermarkFontAssets.DeleteOneAsync(x => x.Id == doc.Id, ct);
         _fontRegistry.RemoveCustomFontDefinition(fontKey);
-        _fontRegistry.DeleteCustomFontFile(doc.FileName);
 
         try
         {
@@ -288,7 +334,7 @@ public class WatermarkController : ControllerBase
     private async Task<IReadOnlyCollection<string>> GetAllowedFontKeysAsync(string userId, CancellationToken ct)
     {
         var customKeys = await _db.WatermarkFontAssets
-            .Find(x => x.OwnerUserId == userId)
+            .Find(Builders<WatermarkFontAsset>.Filter.Empty)
             .Project(x => x.FontKey)
             .ToListAsync(ct);
         return _fontRegistry.DefaultFontKeys.Concat(customKeys).ToList();

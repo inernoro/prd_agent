@@ -66,6 +66,8 @@ services:
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
     tmpfs:
       - /tmp
+    volumes:
+      - ./deploy/assets/fonts:/app/Assets/Fonts
     depends_on:
       - mongodb
       - redis
@@ -80,7 +82,6 @@ volumes:
 networks:
   prdagent-network:
     driver: bridge
-
 
 
 

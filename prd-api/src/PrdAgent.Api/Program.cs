@@ -111,6 +111,7 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
+builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）

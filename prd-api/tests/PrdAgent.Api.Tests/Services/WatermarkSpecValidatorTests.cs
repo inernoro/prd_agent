@@ -17,8 +17,9 @@ public class WatermarkSpecValidatorTests
             FontKey = "dejavu-sans",
             FontSizePx = 24,
             Opacity = 0.5,
-            PosXRatio = 0.5,
-            PosYRatio = 0.6,
+            PositionMode = "ratio",
+            OffsetX = 0.5,
+            OffsetY = 0.6,
             IconEnabled = false,
             BaseCanvasWidth = 320,
             ModelKey = "default",
@@ -32,8 +33,8 @@ public class WatermarkSpecValidatorTests
         Assert.Equal(spec.Text, restored!.Text);
         Assert.Equal(spec.FontKey, restored.FontKey);
         Assert.Equal(spec.FontSizePx, restored.FontSizePx);
-        Assert.Equal(spec.PosXRatio, restored.PosXRatio);
-        Assert.Equal(spec.PosYRatio, restored.PosYRatio);
+        Assert.Equal(spec.OffsetX, restored.OffsetX);
+        Assert.Equal(spec.OffsetY, restored.OffsetY);
     }
 
     [Fact]
@@ -46,8 +47,9 @@ public class WatermarkSpecValidatorTests
             FontKey = "dejavu-sans",
             FontSizePx = 24,
             Opacity = 1.5,
-            PosXRatio = 0.5,
-            PosYRatio = 0.5,
+            PositionMode = "ratio",
+            OffsetX = 0.5,
+            OffsetY = 0.5,
             BaseCanvasWidth = 320
         };
 
@@ -65,8 +67,9 @@ public class WatermarkSpecValidatorTests
             FontKey = "missing-font",
             FontSizePx = 24,
             Opacity = 0.7,
-            PosXRatio = 0.5,
-            PosYRatio = 0.5,
+            PositionMode = "ratio",
+            OffsetX = 0.5,
+            OffsetY = 0.5,
             BaseCanvasWidth = 320
         };
 

@@ -59,8 +59,9 @@ public class WatermarkRenderer
         var textLeft = (float)(watermarkLeft + iconWidth + padding);
         var textTop = (float)(watermarkTop + padding);
 
-        var textColor = ResolveColorHex(spec.TextColor ?? spec.Color, spec.Opacity);
-        var borderColor = ResolveColorHex(spec.TextColor ?? spec.Color, spec.Opacity);
+        var textColorValue = !string.IsNullOrWhiteSpace(spec.TextColor) ? spec.TextColor : spec.Color;
+        var textColor = ResolveColorHex(textColorValue, spec.Opacity);
+        var borderColor = ResolveColorHex(textColorValue, spec.Opacity);
         var backgroundColor = ResolveColorHex(spec.BackgroundColor, spec.Opacity, fallback: Color.FromRgba(0, 0, 0, (byte)Math.Round(0.4 * 255)));
 
         image.Mutate(ctx =>
@@ -96,18 +97,28 @@ public class WatermarkRenderer
                 if (iconBytes != null && iconBytes.Length > 0)
                 {
                     using var icon = Image.Load<Rgba32>(iconBytes);
-                    var targetHeight = (int)Math.Round(textHeight);
-                    if (targetHeight > 0)
+                    var targetSize = (int)Math.Round(textHeight);
+                    if (targetSize > 0)
                     {
-                        icon.Mutate(i => i.Resize(new ResizeOptions
+                        var scale = targetSize / (double)Math.Max(icon.Width, icon.Height);
+                        var drawW = Math.Max(1, (int)Math.Round(icon.Width * scale));
+                        var drawH = Math.Max(1, (int)Math.Round(icon.Height * scale));
+                        var dx = (targetSize - drawW) / 2;
+                        var dy = (targetSize - drawH) / 2;
+
+                        using var resized = icon.Clone(ctx => ctx.Resize(new ResizeOptions
                         {
-                            Size = new Size(targetHeight, targetHeight),
-                            Mode = ResizeMode.Stretch
+                            Size = new Size(drawW, drawH),
+                            Mode = ResizeMode.Stretch,
+                            Sampler = KnownResamplers.Bicubic
                         }));
-                        icon.Mutate(i => i.Opacity((float)spec.Opacity));
+                        using var canvas = new Image<Rgba32>(targetSize, targetSize);
+                        canvas.Mutate(ctx => ctx.DrawImage(resized, new Point(dx, dy), 1f));
+                        canvas.Mutate(ctx => ctx.Opacity((float)spec.Opacity));
+
                         var iconLeft = (float)(watermarkLeft + padding);
                         var iconTop = (float)(watermarkTop + padding);
-                        image.Mutate(ctx => ctx.DrawImage(icon, new Point((int)iconLeft, (int)iconTop), 1f));
+                        image.Mutate(ctx => ctx.DrawImage(canvas, new Point((int)iconLeft, (int)iconTop), 1f));
                     }
                 }
             }

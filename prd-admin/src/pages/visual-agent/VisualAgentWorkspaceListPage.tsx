@@ -35,6 +35,7 @@ import { useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
+import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -1503,12 +1504,16 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     const autoSize = computeRequestedSizeByRefRatio(dim) ?? '1024x1024';
     setSelectedSize(autoSize);
     // 生成预览 URL
-    const previewUrl = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => resolve('');
-      reader.readAsDataURL(file);
-    });
+    const normalized = await normalizeFileToSquareDataUrl(file);
+    let previewUrl = normalized.dataUrl || '';
+    if (!previewUrl) {
+      previewUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(file);
+      });
+    }
     if (previewUrl) {
       setSelectedImage({ file, previewUrl });
     }
