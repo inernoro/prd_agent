@@ -1,5 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -65,6 +67,8 @@ public sealed class AdminAuthzController : ControllerBase
             roleKey = user.Role == UserRole.ADMIN ? "admin" : "none";
         }
 
+        await EnsurePermissionCatalogNoticeAsync(ct);
+
         return Ok(ApiResponse<AdminAuthzMeResponse>.Ok(new AdminAuthzMeResponse
         {
             UserId = user.UserId,
@@ -85,5 +89,62 @@ public sealed class AdminAuthzController : ControllerBase
             Items = AdminPermissionCatalog.All.ToList()
         }));
     }
-}
 
+    private async Task EnsurePermissionCatalogNoticeAsync(CancellationToken ct)
+    {
+        var catalogHash = ComputeCatalogHash(AdminPermissionCatalog.All);
+        var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct)
+                       ?? new AppSettings { Id = "global", EnablePromptCache = true, UpdatedAt = DateTime.UtcNow };
+
+        if (string.Equals(settings.PermissionCatalogHash, catalogHash, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var update = Builders<AppSettings>.Update
+            .Set(x => x.PermissionCatalogHash, catalogHash)
+            .Set(x => x.PermissionCatalogUpdatedAt, now)
+            .Set(x => x.UpdatedAt, now);
+
+        await _db.AppSettings.UpdateOneAsync(x => x.Id == "global", update, new UpdateOptions { IsUpsert = true }, ct);
+
+        var key = "permission-catalog-updated";
+        var existed = await _db.AdminNotifications
+            .Find(x => x.Key == key && x.Status == "open")
+            .FirstOrDefaultAsync(ct);
+
+        if (existed != null)
+        {
+            return;
+        }
+
+        var notification = new AdminNotification
+        {
+            Key = key,
+            Title = "权限目录已更新",
+            Message = "检测到新增权限点。请前往“权限管理”页面检查系统角色并执行“重置内置角色”，确保新权限生效。",
+            Level = "warning",
+            ActionLabel = "打开权限管理",
+            ActionUrl = "/authz",
+            ActionKind = "navigate",
+            Source = "system",
+            Status = "open",
+            CreatedAt = now,
+            UpdatedAt = now,
+            ExpiresAt = now.AddDays(7)
+        };
+
+        await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+    }
+
+    private static string ComputeCatalogHash(IEnumerable<AdminPermissionDef> permissions)
+    {
+        var raw = string.Join("|", permissions
+            .Select(x => $"{x.Key}:{x.Name}:{x.Description}")
+            .OrderBy(x => x, StringComparer.Ordinal));
+        using var sha = SHA256.Create();
+        var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(raw));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+}

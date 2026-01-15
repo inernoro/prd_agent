@@ -53,6 +53,7 @@ public static class BsonClassMapRegistration
             RegisterImageGenRunEvent();
             RegisterAdminPromptOverride();
             RegisterAdminIdempotencyRecord();
+            RegisterAdminNotification();
             RegisterSystemPromptSettings();
             RegisterDesktopAssetSkin();
             RegisterDesktopAssetKey();
@@ -357,6 +358,20 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterAdminNotification()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(AdminNotification))) return;
+
+        BsonClassMap.RegisterClassMap<AdminNotification>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 
