@@ -521,15 +521,18 @@ function WatermarkEditor(props: {
             return (
               <div key={size.label} className="rounded-[12px] p-2" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
                 <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
-                <WatermarkPreview
-                  spec={spec}
-                  font={currentFont}
-                  size={previewWidth}
-                  height={previewHeight}
-                  previewImage={previewImage}
-                  showDistances
-                  distancePlacement="inside"
-                />
+                <div className="flex items-center justify-center">
+                  <WatermarkPreview
+                    spec={spec}
+                    font={currentFont}
+                    size={previewWidth}
+                    height={previewHeight}
+                    previewImage={previewImage}
+                    showDistances
+                    showCrosshair
+                    distancePlacement="inside"
+                  />
+                </div>
               </div>
             );
           })}
@@ -777,7 +780,7 @@ function WatermarkPreview(props: {
   return (
     <div
       ref={canvasRef}
-      className="relative rounded-[12px]"
+      className="relative"
       style={{
         width,
         height: canvasHeight,
