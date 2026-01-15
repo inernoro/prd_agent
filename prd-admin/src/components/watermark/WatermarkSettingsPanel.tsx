@@ -370,6 +370,7 @@ function WatermarkEditor(props: {
               previewImage={previewImage}
               draggable
               showCrosshair
+              showDistances
               onPositionChange={(next) => updateSpec(next)}
             />
           </div>
@@ -525,6 +526,7 @@ function WatermarkEditor(props: {
                   size={previewWidth}
                   height={previewHeight}
                   previewImage={previewImage}
+                  showDistances
                 />
               </div>
             );
@@ -554,9 +556,10 @@ function WatermarkPreview(props: {
   previewImage?: string | null;
   draggable?: boolean;
   showCrosshair?: boolean;
+  showDistances?: boolean;
   onPositionChange?: (next: Pick<WatermarkSpec, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
-  const { spec, font, size, height, previewImage, draggable, showCrosshair, onPositionChange } = props;
+  const { spec, font, size, height, previewImage, draggable, showCrosshair, showDistances, onPositionChange } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const width = size;
@@ -612,6 +615,12 @@ function WatermarkPreview(props: {
   positionY = clampPixel(positionY, 0, maxY);
   const watermarkRect = { x: positionX, y: positionY, width: measuredWidth, height: measuredHeight };
   const activeAnchor = getDominantAnchor(watermarkRect, width, canvasHeight, spec.anchor);
+  const distanceLabels = {
+    top: Math.round(watermarkRect.y),
+    right: Math.round(Math.max(0, width - (watermarkRect.x + watermarkRect.width))),
+    bottom: Math.round(Math.max(0, canvasHeight - (watermarkRect.y + watermarkRect.height))),
+    left: Math.round(watermarkRect.x),
+  };
 
   // 使用 ref 存储回调和位置，避免依赖变化导致拖拽中断
   const posRef = useRef({ x: positionX, y: positionY });
@@ -745,6 +754,22 @@ function WatermarkPreview(props: {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      ) : null}
+      {showDistances ? (
+        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }}>
+          <div className="absolute left-1/2 top-2 -translate-x-1/2 text-[11px] font-semibold text-[#FF5C77]">
+            {distanceLabels.top}px
+          </div>
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-[#FF5C77]">
+            {distanceLabels.right}px
+          </div>
+          <div className="absolute left-1/2 bottom-2 -translate-x-1/2 text-[11px] font-semibold text-[#FF5C77]">
+            {distanceLabels.bottom}px
+          </div>
+          <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-[#FF5C77]">
+            {distanceLabels.left}px
           </div>
         </div>
       ) : null}
