@@ -721,6 +721,7 @@ public class OpenAIImageClient
             }
 
             var watermarkSpec = await TryGetWatermarkSpecAsync(ct);
+            _logger.LogInformation("ImageGen watermark spec resolved: {HasWatermark}", watermarkSpec != null);
             var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)
             {
@@ -754,6 +755,7 @@ public class OpenAIImageClient
                 {
                     try
                     {
+                        _logger.LogInformation("Applying watermark to image index {Index}. FontKey={FontKey}", images[i].Index, watermarkSpec.FontKey);
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkSpec, ct);
                         bytes = rendered.bytes;
                         outMime = rendered.mime;
@@ -1610,13 +1612,26 @@ public class OpenAIImageClient
     private async Task<WatermarkSpec?> TryGetWatermarkSpecAsync(CancellationToken ct)
     {
         var userId = (_ctxAccessor?.Current?.UserId ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(userId)) return null;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            _logger.LogWarning("Watermark skipped: missing userId in LLM request context.");
+            return null;
+        }
 
         var doc = await _db.WatermarkSettings.Find(x => x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
-        if (doc == null) return null;
-        if (!doc.Enabled || doc.Spec == null) return null;
+        if (doc == null)
+        {
+            _logger.LogInformation("Watermark skipped: no settings for user {UserId}", userId);
+            return null;
+        }
+        if (!doc.Enabled || doc.Spec == null)
+        {
+            _logger.LogInformation("Watermark skipped: disabled or missing spec for user {UserId}", userId);
+            return null;
+        }
 
         var spec = doc.Spec;
+        spec.FontKey = _fontRegistry.NormalizeFontKey(spec.FontKey);
         spec.Enabled = doc.Enabled;
         var (ok, message) = WatermarkSpecValidator.Validate(spec, _fontRegistry.FontKeys);
         if (!ok)
@@ -1625,6 +1640,7 @@ public class OpenAIImageClient
             return null;
         }
 
+        _logger.LogInformation("Watermark enabled for user {UserId}. FontKey={FontKey}", userId, spec.FontKey);
         return spec;
     }
 

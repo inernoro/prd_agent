@@ -19,15 +19,22 @@ public class ImageGenRunWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ImageGenRunWorker> _logger;
     private readonly IRunEventStore _runStore;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public ImageGenRunWorker(MongoDbContext db, IServiceScopeFactory scopeFactory, IRunEventStore runStore, ILogger<ImageGenRunWorker> logger)
+    public ImageGenRunWorker(
+        MongoDbContext db,
+        IServiceScopeFactory scopeFactory,
+        IRunEventStore runStore,
+        ILogger<ImageGenRunWorker> logger,
+        ILLMRequestContextAccessor llmRequestContext)
     {
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
         _logger = logger;
+        _llmRequestContext = llmRequestContext;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -224,6 +231,18 @@ public class ImageGenRunWorker : BackgroundService
                                 initImageBase64 = $"data:{mime};base64,{b64}";
                             }
                         }
+
+                        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                            RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
+                            GroupId: null,
+                            SessionId: null,
+                            UserId: run.OwnerAdminId,
+                            ViewRole: "ADMIN",
+                            DocumentChars: null,
+                            DocumentHash: null,
+                            SystemPromptRedacted: "[IMAGE_GEN_RUN]",
+                            RequestType: "imageGen",
+                            RequestPurpose: string.IsNullOrWhiteSpace(run.Purpose) ? "imageGen.run" : run.Purpose));
 
                         var res = await imageClient.GenerateAsync(
                             curPrompt,
@@ -619,5 +638,4 @@ public class ImageGenRunWorker : BackgroundService
         }
     }
 }
-
 

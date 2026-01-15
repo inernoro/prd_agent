@@ -18,6 +18,7 @@ import {
   createLiteraryPrompt,
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
+  getWatermark,
 } from '@/services';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -95,6 +96,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
   
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -172,6 +174,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return String(a.modelName || a.name || '').localeCompare(String(b.modelName || b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
       });
       setImageGenModel(list[0] ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getWatermark();
+      if (cancelled) return;
+      if (res?.success) {
+        setWatermarkEnabled(Boolean(res.data?.enabled ?? res.data?.spec?.enabled));
+      }
     })();
     return () => {
       cancelled = true;
@@ -1454,6 +1470,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
                 系统提示词
               </div>
+              {watermarkEnabled && (
+                <div
+                  className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0"
+                  style={{ background: 'rgba(245, 158, 11, 0.12)', color: 'rgba(245, 158, 11, 0.85)', border: '1px solid rgba(245, 158, 11, 0.28)' }}
+                >
+                  水印
+                </div>
+              )}
               
               {/* 标题 */}
               <div className="flex-1 min-w-0">
@@ -2457,7 +2481,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 水印设置
               </div>
               <div className="flex-1 min-h-0 overflow-auto">
-                <WatermarkSettingsPanel />
+                <WatermarkSettingsPanel onStatusChange={setWatermarkEnabled} />
               </div>
             </div>
           </div>

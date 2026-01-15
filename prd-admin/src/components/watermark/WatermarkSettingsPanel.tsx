@@ -130,9 +130,9 @@ const computeOffsetsFromAnchor = (
   }
 };
 
-function useFontFace(fonts: WatermarkFontInfo[]) {
+function useFontFace(font: WatermarkFontInfo | null | undefined, enabled: boolean) {
   useEffect(() => {
-    if (!fonts.length) return;
+    if (!enabled || !font) return;
     const styleId = 'watermark-font-face';
     let styleEl = document.getElementById(styleId) as HTMLStyleElement | null;
     if (!styleEl) {
@@ -140,13 +140,12 @@ function useFontFace(fonts: WatermarkFontInfo[]) {
       styleEl.id = styleId;
       document.head.appendChild(styleEl);
     }
-    styleEl.textContent = fonts
-      .map((font) => `@font-face { font-family: "${font.fontFamily}"; src: url("${font.fontFileUrl}"); font-display: swap; }`)
-      .join('\n');
-  }, [fonts]);
+    styleEl.textContent = `@font-face { font-family: "${font.fontFamily}"; src: url("${font.fontFileUrl}"); font-display: swap; }`;
+  }, [enabled, font]);
 }
 
-export function WatermarkSettingsPanel() {
+export function WatermarkSettingsPanel(props: { onStatusChange?: (enabled: boolean) => void } = {}) {
+  const { onStatusChange } = props;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fonts, setFonts] = useState<WatermarkFontInfo[]>([]);
@@ -155,8 +154,6 @@ export function WatermarkSettingsPanel() {
   const [draftSpec, setDraftSpec] = useState<WatermarkSpec | null>(null);
   const [fontUploading, setFontUploading] = useState(false);
   const [fontDeletingKey, setFontDeletingKey] = useState<string | null>(null);
-
-  useFontFace(fonts);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
 
@@ -170,7 +167,7 @@ export function WatermarkSettingsPanel() {
       if (wmRes?.success) {
         setSettings(wmRes.data ? { ...wmRes.data, spec: normalizeSpec(wmRes.data.spec) } : null);
       } else if (fontRes?.success) {
-        const defaultFont = fontRes.data?.[0]?.fontKey || 'dejavu-sans';
+        const defaultFont = fontRes.data?.[0]?.fontKey || 'default';
         setSettings({ enabled: false, spec: buildDefaultSpec(defaultFont) });
       }
     } finally {
@@ -184,6 +181,18 @@ export function WatermarkSettingsPanel() {
 
   const spec = settings?.spec;
   const currentFont = spec ? fontMap.get(spec.fontKey) : null;
+
+  useEffect(() => {
+    if (!onStatusChange) return;
+    onStatusChange(Boolean(spec?.enabled));
+  }, [onStatusChange, spec?.enabled]);
+
+  useEffect(() => {
+    if (!settings?.spec || fonts.length === 0) return;
+    if (fontMap.has(settings.spec.fontKey)) return;
+    const fallback = fonts.find((font) => font.fontKey === 'default')?.fontKey || fonts[0].fontKey;
+    setSettings((prev) => (prev ? { ...prev, spec: { ...prev.spec, fontKey: fallback } } : prev));
+  }, [fontMap, fonts, settings?.spec]);
 
   const saveSpec = useCallback(
     async (next: WatermarkSpec) => {
@@ -412,6 +421,7 @@ function WatermarkEditor(props: {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadingSizes, setLoadingSizes] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [fontLoading, setFontLoading] = useState(false);
   const previewSizes = useMemo(() => selectPreviewSizes(sizes), [sizes]);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
@@ -451,6 +461,20 @@ function WatermarkEditor(props: {
   };
 
   const currentFont = fontMap.get(spec.fontKey);
+  useFontFace(currentFont ?? null, true);
+
+  useEffect(() => {
+    if (!currentFont?.fontFamily || !document?.fonts?.load) {
+      setFontLoading(false);
+      return;
+    }
+    setFontLoading(true);
+    const fontSize = Math.max(12, Math.round(spec.fontSizePx));
+    document.fonts
+      .load(`${fontSize}px "${currentFont.fontFamily}"`)
+      .then(() => setFontLoading(false))
+      .catch(() => setFontLoading(false));
+  }, [currentFont?.fontFamily, spec.fontSizePx]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -490,6 +514,7 @@ function WatermarkEditor(props: {
                 value={spec.fontKey}
                 fonts={fonts}
                 deletingKey={fontDeletingKey}
+                loading={fontLoading}
                 onChange={(fontKey) => updateSpec({ fontKey })}
                 onDelete={onDeleteFont}
               />
@@ -734,10 +759,11 @@ function FontSelect(props: {
   value: string;
   fonts: WatermarkFontInfo[];
   deletingKey: string | null;
+  loading?: boolean;
   onChange: (fontKey: string) => void;
   onDelete: (font: WatermarkFontInfo) => void;
 }) {
-  const { value, fonts, deletingKey, onChange, onDelete } = props;
+  const { value, fonts, deletingKey, loading, onChange, onDelete } = props;
   const [open, setOpen] = useState(false);
   const current = fonts.find((font) => font.fontKey === value);
 
@@ -751,6 +777,11 @@ function FontSelect(props: {
           <span style={{ color: 'var(--text-primary)' }}>
             {current?.displayName || value || '请选择字体'}
           </span>
+          {loading ? (
+            <span className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              加载中...
+            </span>
+          ) : null}
           <ChevronDown
             size={16}
             className="absolute right-3 top-1/2 -translate-y-1/2"
@@ -760,7 +791,7 @@ function FontSelect(props: {
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="z-50 rounded-[14px] overflow-hidden"
+          className="z-[120] rounded-[14px] overflow-hidden"
           style={{
             background: 'rgba(15, 15, 18, 1)',
             border: '1px solid var(--border-default)',

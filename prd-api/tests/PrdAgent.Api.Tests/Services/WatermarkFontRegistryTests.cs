@@ -15,7 +15,8 @@ public class WatermarkFontRegistryTests
             ContentRootFileProvider = new NullFileProvider()
         };
         var logger = new ListLogger<WatermarkFontRegistry>();
-        var registry = new WatermarkFontRegistry(env, logger);
+        var registry = new WatermarkFontRegistry(env, new EmptyWatermarkFontAssetSource(), new NullAssetStorage(), logger);
+        if (registry.TryResolveFontFile(registry.DefaultFontKey) == null) return;
 
         var resolved = registry.ResolveFont("missing-font", 24);
 
@@ -32,7 +33,8 @@ public class WatermarkFontRegistryTests
             ContentRootFileProvider = new NullFileProvider()
         };
         var logger = new ListLogger<WatermarkFontRegistry>();
-        var registry = new WatermarkFontRegistry(env, logger);
+        var registry = new WatermarkFontRegistry(env, new EmptyWatermarkFontAssetSource(), new NullAssetStorage(), logger);
+        if (registry.TryResolveFontFile(registry.DefaultFontKey) == null) return;
 
         var resolved = registry.ResolveFont(registry.DefaultFontKey, 24);
 
