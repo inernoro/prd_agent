@@ -32,6 +32,7 @@ import {
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
+import { normalizeImageToSquareDataUrl } from '@/lib/imageSquare';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
 import type { Model } from '@/types/admin';
@@ -3155,7 +3156,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         reader.readAsDataURL(file);
       });
       if (!src) return;
-      const dim = dimFile ?? (await readImageSizeFromSrc(src));
+      const normalized = await normalizeImageToSquareDataUrl(src);
+      const finalSrc = normalized.dataUrl || src;
+      const dim = normalized.size.w > 0 ? normalized.size : (dimFile ?? (await readImageSizeFromSrc(src)));
       const nextW = dim?.w ?? target.w ?? 1;
       const nextH = dim?.h ?? target.h ?? 1;
 
@@ -3204,7 +3207,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
             ...it,
             createdAt: now,
             prompt: file.name || it.prompt,
-            src,
+            src: finalSrc,
             status: 'done',
             errorMessage: null,
             assetId: undefined,
@@ -3223,7 +3226,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       pushMsg('Assistant', '已替换当前选中图片。');
 
       // 持久化替换后的图片
-      const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: src, prompt: file.name || 'uploaded' });
+      const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: finalSrc, prompt: file.name || 'uploaded' });
       if (up.success) {
         const a = up.data.asset;
         setCanvas((prev) =>
@@ -3272,12 +3275,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
             reader.onload = async () => {
               const src = String(reader.result || '');
               if (src) {
-                const dim = (await readImageSizeFromFile(file)) ?? (await readImageSizeFromSrc(src));
+                const normalized = await normalizeImageToSquareDataUrl(src);
+                const finalSrc = normalized.dataUrl || src;
+                const dim = normalized.size.w > 0 ? normalized.size : (await readImageSizeFromFile(file)) ?? (await readImageSizeFromSrc(src));
                 added.push({
                   key,
                   createdAt: Date.now(),
                   prompt: file.name || 'uploaded',
-                  src,
+                  src: finalSrc,
                   status: 'done',
                   syncStatus: 'pending',
                   syncError: null,

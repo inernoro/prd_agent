@@ -14,6 +14,9 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Api.Models.Requests;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -1025,6 +1028,14 @@ public class AdminImageMasterController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片"));
         }
 
+        var normalizedSize = 0;
+        if (TryNormalizeToSquare(bytes, mime, out var normalizedBytes, out var normalizedMime, out var size))
+        {
+            bytes = normalizedBytes;
+            mime = normalizedMime;
+            normalizedSize = size;
+        }
+
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
 
         var asset = new ImageAsset
@@ -1043,8 +1054,16 @@ public class AdminImageMasterController : ControllerBase
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
         if (asset.OriginalMarkerText != null && asset.OriginalMarkerText.Length > 200) asset.OriginalMarkerText = asset.OriginalMarkerText[..200].Trim();
-        if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
-        if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
+        if (normalizedSize > 0)
+        {
+            asset.Width = normalizedSize;
+            asset.Height = normalizedSize;
+        }
+        else
+        {
+            if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
+            if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
+        }
 
         // 文章配图：同一 workspace + insertionIndex 只保留最新 1 张（避免导出替换顺序错乱）
         // - 只删除元数据；底层文件按 sha 全库引用计数决定是否删除（同 DeleteWorkspace 逻辑）
@@ -1583,6 +1602,14 @@ public class AdminImageMasterController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片"));
         }
 
+        var normalizedSize = 0;
+        if (TryNormalizeToSquare(bytes, mime, out var normalizedBytes, out var normalizedMime, out var size))
+        {
+            bytes = normalizedBytes;
+            mime = normalizedMime;
+            normalizedSize = size;
+        }
+
         // 3) store file (sha de-dupe at storage level) and upsert meta
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
 
@@ -1598,8 +1625,16 @@ public class AdminImageMasterController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
-        if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
-        if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
+        if (normalizedSize > 0)
+        {
+            asset.Width = normalizedSize;
+            asset.Height = normalizedSize;
+        }
+        else
+        {
+            if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
+            if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
+        }
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
 
@@ -1696,6 +1731,50 @@ public class AdminImageMasterController : ControllerBase
         {
             bytes = Convert.FromBase64String(s);
             return bytes.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryNormalizeToSquare(byte[] input, string mime, out byte[] output, out string outMime, out int size)
+    {
+        output = input;
+        outMime = mime;
+        size = 0;
+        try
+        {
+            using var image = Image.Load<Rgba32>(input);
+            var w = image.Width;
+            var h = image.Height;
+            size = Math.Max(w, h);
+            if (w <= 0 || h <= 0 || size <= 0) return false;
+            if (w == h) return true;
+
+            var scale = size / (double)Math.Max(w, h);
+            var drawW = Math.Max(1, (int)Math.Round(w * scale));
+            var drawH = Math.Max(1, (int)Math.Round(h * scale));
+            var dx = (size - drawW) / 2;
+            var dy = (size - drawH) / 2;
+
+            using var resized = scale.Equals(1d)
+                ? image.Clone()
+                : image.Clone(ctx => ctx.Resize(new ResizeOptions
+                {
+                    Size = new Size(drawW, drawH),
+                    Mode = ResizeMode.Stretch,
+                    Sampler = KnownResamplers.Bicubic
+                }));
+
+            using var canvas = new Image<Rgba32>(size, size);
+            canvas.Mutate(ctx => ctx.DrawImage(resized, new Point(dx, dy), 1f));
+
+            using var ms = new MemoryStream();
+            canvas.SaveAsPng(ms);
+            output = ms.ToArray();
+            outMime = "image/png";
+            return true;
         }
         catch
         {
@@ -2099,5 +2178,3 @@ public class SaveViewportRequest
     public double? X { get; set; }
     public double? Y { get; set; }
 }
-
-

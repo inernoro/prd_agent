@@ -93,6 +93,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
+  const [markerStreaming, setMarkerStreaming] = useState(false);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
@@ -321,12 +322,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [selectedPrompt]);
 
+  const isBusy = generating || markerStreaming;
+
   useEffect(() => {
-    if (debouncedArticleContent && workspaceId && phase === 1 && !generating) { // Editing
+    if (debouncedArticleContent && workspaceId && phase === 1 && !isBusy) { // Editing
       void saveArticleContent();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedArticleContent]);
+  }, [debouncedArticleContent, isBusy]);
 
   async function saveArticleContent() {
     try {
@@ -442,7 +445,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // 使用选中的提示词作为系统提示词
     const systemPrompt = selectedPrompt.content;
 
-    setGenerating(true);
+    setMarkerStreaming(true);
     isStreamingRef.current = true; // 标记开始流式输出
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
@@ -756,7 +759,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setMarkers([]);
       setPhase(1); // Editing
     } finally {
-      setGenerating(false);
+      setMarkerStreaming(false);
       isStreamingRef.current = false; // 标记流式输出结束
     }
   };
@@ -1123,7 +1126,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
-    if (generating) return;
+    if (isBusy) return;
     setGenerating(true);
     try {
       await runSingleMarker(markerIndex);
@@ -1148,7 +1151,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleDeleteMarker = async (markerIndex: number) => {
-    if (generating) return;
+    if (isBusy) return;
     const marker = markers.find((m) => m.index === markerIndex) ?? null;
     if (!marker) return;
 
@@ -1463,7 +1466,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
-    if (targetPhase === phase || generating) return;
+    if (targetPhase === phase || isBusy) return;
 
     // 简单切换阶段（不做复杂的服务端校验）
     setPhase(targetPhase);
