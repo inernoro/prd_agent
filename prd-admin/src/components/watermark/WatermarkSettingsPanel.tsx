@@ -450,12 +450,12 @@ function WatermarkPreview(props: {
   const iconSize = fontSize;
   const gap = fontSize / 4;
 
-  // 水印位置：基于短边计算偏移，保持相对于画布中心的视觉位置一致
+  // 水印位置：基于画布宽高计算，保持比例一致
   // posXRatio/posYRatio 范围 0~1，0.5 表示中心
   const offsetX = spec.posXRatio - 0.5; // 相对于中心的 X 偏移
   const offsetY = spec.posYRatio - 0.5; // 相对于中心的 Y 偏移
-  const centerX = width / 2 + offsetX * shortSide;
-  const centerY = canvasHeight / 2 + offsetY * shortSide;
+  const centerX = width / 2 + offsetX * width;
+  const centerY = canvasHeight / 2 + offsetY * canvasHeight;
 
   // 使用 ref 存储回调和位置，避免依赖变化导致拖拽中断
   const posRef = useRef({ x: spec.posXRatio, y: spec.posYRatio });

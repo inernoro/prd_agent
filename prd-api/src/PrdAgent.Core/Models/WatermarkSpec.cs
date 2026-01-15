@@ -25,5 +25,4 @@ public class WatermarkSpec
     public string? ModelKey { get; set; }
 
     public string? Color { get; set; }
-
 }
