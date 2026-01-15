@@ -133,6 +133,8 @@ builder.Services.AddScoped<ISmartModelScheduler, SmartModelScheduler>();
 
 // OpenAI 兼容 Images API（用于“生图模型”）
 builder.Services.AddScoped<OpenAIImageClient>();
+builder.Services.AddSingleton<WatermarkFontRegistry>();
+builder.Services.AddSingleton<WatermarkRenderer>();
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();

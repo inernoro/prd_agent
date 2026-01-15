@@ -88,6 +88,7 @@ public class MongoDbContext
     public IMongoCollection<ModelTestStub> ModelTestStubs => _database.GetCollection<ModelTestStub>("model_test_stubs");
     public IMongoCollection<SystemRole> SystemRoles => _database.GetCollection<SystemRole>("system_roles");
     public IMongoCollection<UserPreferences> UserPreferences => _database.GetCollection<UserPreferences>("user_preferences");
+    public IMongoCollection<WatermarkSettings> WatermarkSettings => _database.GetCollection<WatermarkSettings>("watermark_settings");
 
     private void CreateIndexes()
     {
@@ -604,5 +605,17 @@ public class MongoDbContext
         }
         LLMAppCallers.Indexes.CreateOne(new CreateIndexModel<LLMAppCaller>(
             Builders<LLMAppCaller>.IndexKeys.Descending(x => x.LastCalledAt)));
+
+        // WatermarkSettings：同一用户唯一
+        try
+        {
+            WatermarkSettings.Indexes.CreateOne(new CreateIndexModel<WatermarkSettings>(
+                Builders<WatermarkSettings>.IndexKeys.Ascending(x => x.OwnerUserId),
+                new CreateIndexOptions { Unique = true, Name = "uniq_watermark_settings_owner" }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
     }
 }

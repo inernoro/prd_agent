@@ -11,8 +11,10 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -28,6 +30,8 @@ public class OpenAIImageClient
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
     private readonly IAssetStorage _assetStorage;
+    private readonly WatermarkRenderer _watermarkRenderer;
+    private readonly WatermarkFontRegistry _fontRegistry;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
 
@@ -37,6 +41,8 @@ public class OpenAIImageClient
         IConfiguration config,
         ILogger<OpenAIImageClient> logger,
         IAssetStorage assetStorage,
+        WatermarkRenderer watermarkRenderer,
+        WatermarkFontRegistry fontRegistry,
         ILlmRequestLogWriter? logWriter = null,
         ILLMRequestContextAccessor? ctxAccessor = null)
     {
@@ -45,6 +51,8 @@ public class OpenAIImageClient
         _config = config;
         _logger = logger;
         _assetStorage = assetStorage;
+        _watermarkRenderer = watermarkRenderer;
+        _fontRegistry = fontRegistry;
         _logWriter = logWriter;
         _ctxAccessor = ctxAccessor;
     }
@@ -712,6 +720,7 @@ public class OpenAIImageClient
                 }
             }
 
+            var watermarkSpec = await TryGetWatermarkSpecAsync(ct);
             var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)
             {
@@ -740,6 +749,20 @@ public class OpenAIImageClient
                 }
 
                 if (bytes == null || bytes.Length == 0) continue;
+
+                if (watermarkSpec != null)
+                {
+                    try
+                    {
+                        var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkSpec, ct);
+                        bytes = rendered.bytes;
+                        outMime = rendered.mime;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to apply watermark. Skipping watermark for this image.");
+                    }
+                }
                 var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
                 images[i].Url = stored.Url;
                 images[i].Base64 = null;
@@ -1584,6 +1607,27 @@ public class OpenAIImageClient
         }
     }
 
+    private async Task<WatermarkSpec?> TryGetWatermarkSpecAsync(CancellationToken ct)
+    {
+        var userId = (_ctxAccessor?.Current?.UserId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(userId)) return null;
+
+        var doc = await _db.WatermarkSettings.Find(x => x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (doc == null) return null;
+        if (!doc.Enabled || doc.Spec == null) return null;
+
+        var spec = doc.Spec;
+        spec.Enabled = doc.Enabled;
+        var (ok, message) = WatermarkSpecValidator.Validate(spec, _fontRegistry.FontKeys);
+        if (!ok)
+        {
+            _logger.LogWarning("Invalid watermark spec for user {UserId}: {Message}", userId, message);
+            return null;
+        }
+
+        return spec;
+    }
+
     private static string? GetCurrentRequestedSizeForRetry(object reqObj, string? initImageBase64)
     {
         if (initImageBase64 == null)
@@ -1759,4 +1803,3 @@ internal class VolcesImageEditRequest
     public string? ResponseFormat { get; set; }
     public bool? Watermark { get; set; }
 }
-

@@ -140,6 +140,12 @@ import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
 import type { GetUserPreferencesContract, UpdateNavOrderContract } from '@/services/contracts/userPreferences';
+import type {
+  GetModelSizesContract,
+  GetWatermarkContract,
+  GetWatermarkFontsContract,
+  PutWatermarkContract,
+} from '@/services/contracts/watermark';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
@@ -176,6 +182,7 @@ import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLM
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal } from '@/services/real/llmLogs';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
+import { getModelSizesReal, getWatermarkFontsReal, getWatermarkReal, putWatermarkReal } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
   createModelLabExperimentReal,
@@ -528,3 +535,7 @@ export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService
 
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
 export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
+export const getWatermark: GetWatermarkContract = withAuth(getWatermarkReal);
+export const putWatermark: PutWatermarkContract = withAuth(putWatermarkReal);
+export const getWatermarkFonts: GetWatermarkFontsContract = withAuth(getWatermarkFontsReal);
+export const getModelSizes: GetModelSizesContract = withAuth(getModelSizesReal);
