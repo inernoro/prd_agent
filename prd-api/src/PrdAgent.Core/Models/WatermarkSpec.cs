@@ -12,9 +12,13 @@ public class WatermarkSpec
 
     public double Opacity { get; set; }
 
-    public double PosXRatio { get; set; }
+    public string PositionMode { get; set; } = "pixel";
 
-    public double PosYRatio { get; set; }
+    public string Anchor { get; set; } = "bottom-right";
+
+    public double OffsetX { get; set; } = 24;
+
+    public double OffsetY { get; set; } = 24;
 
     public bool IconEnabled { get; set; }
 

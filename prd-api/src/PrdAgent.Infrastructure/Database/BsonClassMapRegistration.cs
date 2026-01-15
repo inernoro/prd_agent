@@ -566,8 +566,10 @@ public static class BsonClassMapRegistration
                 cm.MapMember(x => x.FontKey).SetElementName("fontKey");
                 cm.MapMember(x => x.FontSizePx).SetElementName("fontSizePx");
                 cm.MapMember(x => x.Opacity).SetElementName("opacity");
-                cm.MapMember(x => x.PosXRatio).SetElementName("posXRatio");
-                cm.MapMember(x => x.PosYRatio).SetElementName("posYRatio");
+                cm.MapMember(x => x.PositionMode).SetElementName("positionMode");
+                cm.MapMember(x => x.Anchor).SetElementName("anchor");
+                cm.MapMember(x => x.OffsetX).SetElementName("offsetX");
+                cm.MapMember(x => x.OffsetY).SetElementName("offsetY");
                 cm.MapMember(x => x.IconEnabled).SetElementName("iconEnabled");
                 cm.MapMember(x => x.IconImageRef).SetElementName("iconImageRef");
                 cm.MapMember(x => x.BaseCanvasWidth).SetElementName("baseCanvasWidth");

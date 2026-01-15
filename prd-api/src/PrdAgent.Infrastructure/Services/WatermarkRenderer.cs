@@ -45,9 +45,18 @@ public class WatermarkRenderer
         var textHeight = textSize.Height;
         var textWidth = textSize.Width;
 
-        var (centerX, centerY) = WatermarkLayoutCalculator.CalculateTextCenter(spec, image.Width, image.Height);
-        var textLeft = (float)(centerX - textWidth / 2);
-        var textTop = (float)(centerY - textHeight / 2);
+        var gap = textHeight / 4d;
+        var iconWidth = spec.IconEnabled ? textHeight + gap : 0d;
+        var watermarkWidth = textWidth + iconWidth;
+        var watermarkHeight = textHeight;
+        var (watermarkLeft, watermarkTop) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(
+            spec,
+            image.Width,
+            image.Height,
+            watermarkWidth,
+            watermarkHeight);
+        var textLeft = (float)(watermarkLeft + iconWidth);
+        var textTop = (float)watermarkTop;
 
         var color = ResolveColor(spec, spec.Opacity);
 
@@ -73,9 +82,8 @@ public class WatermarkRenderer
                             Mode = ResizeMode.Stretch
                         }));
                         icon.Mutate(i => i.Opacity((float)spec.Opacity));
-                        var gap = textHeight / 4d;
-                        var iconLeft = (float)(textLeft - gap - targetHeight);
-                        var iconTop = textTop;
+                        var iconLeft = (float)watermarkLeft;
+                        var iconTop = (float)watermarkTop;
                         image.Mutate(ctx => ctx.DrawImage(icon, new Point((int)iconLeft, (int)iconTop), 1f));
                     }
                 }
