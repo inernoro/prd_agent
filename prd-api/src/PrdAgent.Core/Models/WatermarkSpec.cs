@@ -25,4 +25,6 @@ public class WatermarkSpec
     public string? ModelKey { get; set; }
 
     public string? Color { get; set; }
+
+    public bool ScaleWithImage { get; set; }
 }

@@ -45,7 +45,7 @@ public class WatermarkRenderer
         var textHeight = textSize.Height;
         var textWidth = textSize.Width;
 
-        var (centerX, centerY) = WatermarkLayoutCalculator.CalculateTextCenter(spec, image.Width);
+        var (centerX, centerY) = WatermarkLayoutCalculator.CalculateTextCenter(spec, image.Width, image.Height);
         var textLeft = (float)(centerX - textWidth / 2);
         var textTop = (float)(centerY - textHeight / 2);
 
