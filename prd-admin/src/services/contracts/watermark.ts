@@ -6,8 +6,10 @@ export type WatermarkSpec = {
   fontKey: string;
   fontSizePx: number;
   opacity: number;
-  posXRatio: number;
-  posYRatio: number;
+  positionMode: 'pixel' | 'ratio';
+  anchor: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  offsetX: number;
+  offsetY: number;
   iconEnabled: boolean;
   iconImageRef?: string | null;
   baseCanvasWidth: number;
