@@ -7,29 +7,16 @@ import type { ModelSizeInfo, WatermarkFontInfo, WatermarkSpec, WatermarkSettings
 import { UploadCloud, Image as ImageIcon, Pencil, Check, X } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
-const DEFAULT_SIZES: ModelSizeInfo[] = [
-  { width: 1024, height: 1024, label: '1024x1024', ratio: 1 },
-  { width: 1536, height: 1024, label: '1536x1024', ratio: 1.5 },
-  { width: 1024, height: 1536, label: '1024x1536', ratio: 0.6667 },
-  { width: 1344, height: 768, label: '1344x768', ratio: 1.75 },
-  { width: 768, height: 1344, label: '768x1344', ratio: 0.5714 },
-  { width: 1600, height: 900, label: '1600x900', ratio: 1.7778 },
-  { width: 900, height: 1600, label: '900x1600', ratio: 0.5625 },
-];
-
-const createTextMeasurer = () => {
-  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-  return (text: string, fontFamily: string, fontSize: number) => {
-    if (!canvas) return { width: text.length * fontSize * 0.6, height: fontSize };
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return { width: text.length * fontSize * 0.6, height: fontSize };
-    ctx.font = `${fontSize}px ${fontFamily}`;
-    const metrics = ctx.measureText(text);
-    return { width: metrics.width, height: fontSize };
-  };
+// 从尺寸列表中筛选出4个有代表性的预览尺寸（排除1:1，因为已有演示画布）
+const selectPreviewSizes = (sizes: ModelSizeInfo[]): ModelSizeInfo[] => {
+  // 排除 1:1 比例（已在画布中展示）
+  const filtered = sizes.filter((s) => Math.abs(s.ratio - 1) > 0.05);
+  if (filtered.length <= 4) return filtered;
+  // 按比例排序后均匀选取4个
+  const sorted = [...filtered].sort((a, b) => a.ratio - b.ratio);
+  const step = (sorted.length - 1) / 3;
+  return [0, 1, 2, 3].map((i) => sorted[Math.round(i * step)]);
 };
-
-const measureText = createTextMeasurer();
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(Math.max(value, min), max);
 
@@ -242,7 +229,7 @@ function WatermarkEditor(props: {
   const [sizes, setSizes] = useState<ModelSizeInfo[]>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadingSizes, setLoadingSizes] = useState(false);
-  const previewSizes = sizes.length ? sizes : DEFAULT_SIZES;
+  const previewSizes = useMemo(() => selectPreviewSizes(sizes), [sizes]);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
 
@@ -331,6 +318,17 @@ function WatermarkEditor(props: {
                 <option key={size} value={size}>{size}px</option>
               ))}
             </select>
+            <label className="mt-2 flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={spec.scaleWithImage ?? false}
+                onChange={(e) => updateSpec({ scaleWithImage: e.target.checked })}
+                className="w-4 h-4 rounded accent-[#d6b26a]"
+              />
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                按图片尺寸自适应缩放
+              </span>
+            </label>
           </div>
 
           <div>
@@ -407,16 +405,17 @@ function WatermarkEditor(props: {
                 <div key={`placeholder-${idx}`} className="h-[120px] rounded-[12px]" style={{ background: 'rgba(255,255,255,0.06)' }} />
               );
             }
-            const width = 180;
-            const height = Math.round((size.height / size.width) * width);
+            const previewWidth = 180;
+            const previewHeight = Math.round((size.height / size.width) * previewWidth);
             return (
               <div key={size.label} className="rounded-[12px] p-2" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
                 <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
                 <WatermarkPreview
                   spec={spec}
                   font={currentFont}
-                  size={width}
-                  height={height}
+                  size={previewWidth}
+                  height={previewHeight}
+                  actualWidth={size.width}
                   previewImage={previewImage}
                 />
               </div>
@@ -439,74 +438,96 @@ function WatermarkEditor(props: {
   );
 }
 
+// 自适应缩放基准宽度（fontSizePx 是基于此宽度设计的）
+const BASE_IMAGE_WIDTH = 1024;
+
 function WatermarkPreview(props: {
   spec: WatermarkSpec;
   font: WatermarkFontInfo | null | undefined;
   size: number;
   height?: number;
+  /** 实际图片宽度（用于自适应字体缩放） */
+  actualWidth?: number;
   previewImage?: string | null;
   draggable?: boolean;
   onPositionChange?: (x: number, y: number) => void;
 }) {
-  const { spec, font, size, height, previewImage, draggable, onPositionChange } = props;
+  const { spec, font, size, height, actualWidth, previewImage, draggable, onPositionChange } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const width = size;
   const canvasHeight = height ?? size;
 
   const fontFamily = font?.fontFamily || 'sans-serif';
-  const scale = width / (spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
-  const fontSize = spec.fontSizePx * scale;
-  const textMetrics = measureText(spec.text, fontFamily, fontSize);
-  const textWidth = textMetrics.width;
-  const textHeight = fontSize;
+  // 基于短边计算缩放比例，确保不同宽高比的画布上字体视觉比例一致
+  const baseSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
+  const shortSide = Math.min(width, canvasHeight);
+  const previewScale = shortSide / baseSize;
+  // 自适应字体缩放：根据实际图片宽度相对于基准宽度的比例
+  const imageScale = spec.scaleWithImage && actualWidth ? actualWidth / BASE_IMAGE_WIDTH : 1;
+  const fontSize = spec.fontSizePx * previewScale * imageScale;
   const iconSize = fontSize;
   const gap = fontSize / 4;
 
-  const centerX = spec.posXRatio * width;
-  const centerY = spec.posYRatio * width;
+  // 水印位置：基于短边计算偏移，保持相对于画布中心的视觉位置一致
+  // posXRatio/posYRatio 范围 0~1，0.5 表示中心
+  const offsetX = spec.posXRatio - 0.5; // 相对于中心的 X 偏移
+  const offsetY = spec.posYRatio - 0.5; // 相对于中心的 Y 偏移
+  const centerX = width / 2 + offsetX * shortSide;
+  const centerY = canvasHeight / 2 + offsetY * shortSide;
+
+  // 使用 ref 存储回调和位置，避免依赖变化导致拖拽中断
+  const posRef = useRef({ x: spec.posXRatio, y: spec.posYRatio });
+  const callbackRef = useRef(onPositionChange);
+  const sizeRef = useRef({ width, height: canvasHeight });
+  posRef.current = { x: spec.posXRatio, y: spec.posYRatio };
+  callbackRef.current = onPositionChange;
+  sizeRef.current = { width, height: canvasHeight };
 
   useEffect(() => {
-    if (!draggable || !canvasRef.current || !onPositionChange) return;
+    if (!draggable || !canvasRef.current) return;
     const canvas = canvasRef.current;
-    let dragging = false;
+    const watermark = canvas.querySelector('[data-watermark]') as HTMLElement | null;
+    if (!watermark) return;
+
     let offsetX = 0;
     let offsetY = 0;
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (!dragging) return;
+      event.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      const nextX = clamp((event.clientX - rect.left - offsetX) / width);
-      const nextY = clamp((event.clientY - rect.top - offsetY) / width);
-      onPositionChange(nextX, nextY);
+      const { width: w, height: h } = sizeRef.current;
+      const nextX = clamp((event.clientX - rect.left - offsetX) / w);
+      const nextY = clamp((event.clientY - rect.top - offsetY) / h);
+      callbackRef.current?.(nextX, nextY);
     };
 
-    const handlePointerUp = () => {
-      dragging = false;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
+    const handlePointerUp = (event: PointerEvent) => {
+      watermark.releasePointerCapture(event.pointerId);
+      watermark.removeEventListener('pointermove', handlePointerMove);
+      watermark.removeEventListener('pointerup', handlePointerUp);
+      watermark.style.cursor = 'grab';
     };
 
     const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target || !target.closest('[data-watermark]')) return;
-      dragging = true;
+      event.preventDefault();
+      watermark.setPointerCapture(event.pointerId);
+      watermark.style.cursor = 'grabbing';
       const rect = canvas.getBoundingClientRect();
-      const currentCenterX = spec.posXRatio * width;
-      const currentCenterY = spec.posYRatio * width;
-      offsetX = event.clientX - rect.left - currentCenterX;
-      offsetY = event.clientY - rect.top - currentCenterY;
-      window.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerup', handlePointerUp);
+      const { width: w, height: h } = sizeRef.current;
+      offsetX = event.clientX - rect.left - posRef.current.x * w;
+      offsetY = event.clientY - rect.top - posRef.current.y * h;
+      watermark.addEventListener('pointermove', handlePointerMove);
+      watermark.addEventListener('pointerup', handlePointerUp);
     };
 
-    canvas.addEventListener('pointerdown', handlePointerDown);
+    watermark.addEventListener('pointerdown', handlePointerDown);
     return () => {
-      canvas.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
+      watermark.removeEventListener('pointerdown', handlePointerDown);
+      watermark.removeEventListener('pointermove', handlePointerMove);
+      watermark.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [draggable, onPositionChange, spec.posXRatio, spec.posYRatio, width]);
+  }, [draggable]);
 
   return (
     <div
@@ -525,40 +546,39 @@ function WatermarkPreview(props: {
         style={{
           left: centerX,
           top: centerY,
+          transform: 'translate(-50%, -50%)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: gap,
+          padding: draggable ? 12 : 0,
+          margin: draggable ? -12 : 0,
           opacity: spec.opacity,
           color: spec.color || '#fff',
           fontFamily,
           fontSize,
           pointerEvents: draggable ? 'auto' : 'none',
           cursor: draggable ? 'grab' : 'default',
+          userSelect: draggable ? 'none' : undefined,
+          WebkitUserSelect: draggable ? 'none' : undefined,
+          touchAction: 'none',
         }}
       >
-        <span
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            transform: 'translate(-50%, -50%)',
-            whiteSpace: 'nowrap',
-            lineHeight: 1,
-          }}
-        >
-          {spec.text}
-        </span>
         {spec.iconEnabled && spec.iconImageRef ? (
           <img
             src={spec.iconImageRef}
             alt="watermark icon"
+            draggable={false}
             style={{
-              position: 'absolute',
               width: iconSize,
               height: iconSize,
-              left: -(textWidth / 2 + gap + iconSize),
-              top: -textHeight / 2,
               objectFit: 'contain',
+              flexShrink: 0,
             }}
           />
         ) : null}
+        <span style={{ whiteSpace: 'nowrap', lineHeight: 1 }}>
+          {spec.text}
+        </span>
       </div>
     </div>
   );

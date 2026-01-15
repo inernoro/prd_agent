@@ -30,7 +30,8 @@ public class WatermarkRenderer
         if (inputBytes.Length == 0) return (inputBytes, inputMime);
         if (!spec.Enabled || string.IsNullOrWhiteSpace(spec.Text)) return (inputBytes, inputMime);
 
-        using var image = Image.Load<Rgba32>(inputBytes, out IImageFormat format);
+        var format = Image.DetectFormat(inputBytes);
+        using var image = Image.Load<Rgba32>(inputBytes);
         var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(spec, image.Width);
         var fontResolved = _fontRegistry.ResolveFont(spec.FontKey, fontSize);
         var font = fontResolved.Font;
@@ -75,7 +76,7 @@ public class WatermarkRenderer
                         var gap = textHeight / 4d;
                         var iconLeft = (float)(textLeft - gap - targetHeight);
                         var iconTop = textTop;
-                        image.Mutate(ctx => ctx.DrawImage(icon, new PointF(iconLeft, iconTop), 1f));
+                        image.Mutate(ctx => ctx.DrawImage(icon, new Point((int)iconLeft, (int)iconTop), 1f));
                     }
                 }
             }

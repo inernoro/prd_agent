@@ -55,10 +55,10 @@ public class WatermarkFontRegistry
         }
 
         var family = GetOrLoadFamily(def);
-        if (family != null)
+        if (family is { } familyValue)
         {
-            var font = family.CreateFont((float)fontSizePx, FontStyle.Regular);
-            return new WatermarkResolvedFont(font, false, null, def.FontKey, family.Name);
+            var font = familyValue.CreateFont((float)fontSizePx, FontStyle.Regular);
+            return new WatermarkResolvedFont(font, false, null, def.FontKey, familyValue.Name);
         }
 
         if (def.FontKey != DefaultFontKey)

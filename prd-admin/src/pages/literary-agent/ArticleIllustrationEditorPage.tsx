@@ -2,6 +2,7 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
+import { WatermarkSettingsPanel } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
   createImageGenRun,
@@ -2249,203 +2250,216 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 系统提示词查看对话框 */}
+      {/* 系统提示词与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
         onOpenChange={setPromptPreviewOpen}
-        title="系统提示词"
-        description="查看所有提示词模板"
-        maxWidth={1200}
+        title="配置管理"
+        description="系统提示词与水印设置"
+        maxWidth={1400}
         content={
-          <div className="p-2">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-                系统提示词
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-2">
+            {/* 左侧：系统提示词 */}
+            <div className="min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  系统提示词
+                </div>
+                <Button
+                  size="xs"
+                  variant="primary"
+                  onClick={() => {
+                    handleCreatePrompt();
+                    setPromptPreviewOpen(false);
+                  }}
+                >
+                  <Plus size={12} />
+                  新建
+                </Button>
               </div>
-              <Button 
-                size="xs" 
-                variant="primary" 
-                onClick={() => {
-                  handleCreatePrompt();
-                  setPromptPreviewOpen(false);
-                }}
-              >
-                <Plus size={12} />
-                新建
-              </Button>
-            </div>
-            {allPrompts.length === 0 ? (
-              <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                还没有提示词模板，点击上方「新建」创建第一个模板
-              </div>
-            ) : (
-              <div className="max-h-[520px] overflow-auto pr-1">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {allPrompts.map((prompt) => (
-                    <Card key={prompt.id} className="p-0 overflow-hidden">
-                      <div className="group relative flex flex-col h-full">
-                        {/* 上栏：标题区 */}
-                        <div className="p-2 pb-1 flex-shrink-0">
-                          <style>{`
-                            .modal-prompt-marquee{position:relative;overflow:hidden;white-space:nowrap;min-width:0;width:100%}
-                            .modal-prompt-marquee__track{display:flex;align-items:center;gap:16px;width:max-content;will-change:transform}
-                            .modal-prompt-marquee__track--animate{animation:modal-prompt-scroll 12s linear infinite}
-                            .modal-prompt-marquee__track--static{animation:none;width:100%}
-                            .modal-prompt-marquee__item{display:inline-block;white-space:nowrap}
-                            @keyframes modal-prompt-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-                            @media (prefers-reduced-motion: reduce){.modal-prompt-marquee__track--animate{animation:none}}
-                          `}</style>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                              <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
-                              <div className="modal-prompt-marquee flex-1">
-                                <div className={`modal-prompt-marquee__track ${prompt.title.length > 20 ? 'modal-prompt-marquee__track--animate' : 'modal-prompt-marquee__track--static'}`}>
-                                  <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                                    {prompt.title}
-                                  </span>
-                                  {prompt.title.length > 20 && (
+              {allPrompts.length === 0 ? (
+                <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                  还没有提示词模板，点击上方「新建」创建第一个模板
+                </div>
+              ) : (
+                <div className="max-h-[520px] overflow-auto pr-1">
+                  <div className="grid grid-cols-1 gap-3">
+                    {allPrompts.map((prompt) => (
+                      <Card key={prompt.id} className="p-0 overflow-hidden">
+                        <div className="group relative flex flex-col h-full">
+                          {/* 上栏：标题区 */}
+                          <div className="p-2 pb-1 flex-shrink-0">
+                            <style>{`
+                              .modal-prompt-marquee{position:relative;overflow:hidden;white-space:nowrap;min-width:0;width:100%}
+                              .modal-prompt-marquee__track{display:flex;align-items:center;gap:16px;width:max-content;will-change:transform}
+                              .modal-prompt-marquee__track--animate{animation:modal-prompt-scroll 12s linear infinite}
+                              .modal-prompt-marquee__track--static{animation:none;width:100%}
+                              .modal-prompt-marquee__item{display:inline-block;white-space:nowrap}
+                              @keyframes modal-prompt-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+                              @media (prefers-reduced-motion: reduce){.modal-prompt-marquee__track--animate{animation:none}}
+                            `}</style>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
+                                <div className="modal-prompt-marquee flex-1">
+                                  <div className={`modal-prompt-marquee__track ${prompt.title.length > 20 ? 'modal-prompt-marquee__track--animate' : 'modal-prompt-marquee__track--static'}`}>
                                     <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
                                       {prompt.title}
                                     </span>
-                                  )}
+                                    {prompt.title.length > 20 && (
+                                      <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                        {prompt.title}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                            
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              {/* 分类标签 */}
-                              {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
-                                <span
-                                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                  style={{
-                                    background: 'rgba(168, 85, 247, 0.12)',
-                                    color: 'rgba(168, 85, 247, 0.95)',
-                                    border: '1px solid rgba(168, 85, 247, 0.28)',
-                                  }}
-                                  title="全局共享（所有场景可用）"
-                                >
-                                  全局
-                                </span>
-                              ) : prompt.scenarioType === 'article-illustration' ? (
-                                <span
-                                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                  style={{
-                                    background: 'rgba(34, 197, 94, 0.12)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
-                                    border: '1px solid rgba(34, 197, 94, 0.28)',
-                                  }}
-                                  title="文章配图专用"
-                                >
-                                  文章配图
-                                </span>
-                              ) : null}
-                              
-                              {/* 当前选中标签 */}
-                              {selectedPrompt?.id === prompt.id && (
-                                <span
-                                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                  style={{
-                                    background: 'var(--accent-primary)',
-                                    color: 'white',
-                                  }}
-                                >
-                                  当前
-                                </span>
-                              )}
+
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {/* 分类标签 */}
+                                {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      background: 'rgba(168, 85, 247, 0.12)',
+                                      color: 'rgba(168, 85, 247, 0.95)',
+                                      border: '1px solid rgba(168, 85, 247, 0.28)',
+                                    }}
+                                    title="全局共享（所有场景可用）"
+                                  >
+                                    全局
+                                  </span>
+                                ) : prompt.scenarioType === 'article-illustration' ? (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      background: 'rgba(34, 197, 94, 0.12)',
+                                      color: 'rgba(34, 197, 94, 0.95)',
+                                      border: '1px solid rgba(34, 197, 94, 0.28)',
+                                    }}
+                                    title="文章配图专用"
+                                  >
+                                    文章配图
+                                  </span>
+                                ) : null}
+
+                                {/* 当前选中标签 */}
+                                {selectedPrompt?.id === prompt.id && (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      background: 'var(--accent-primary)',
+                                      color: 'white',
+                                    }}
+                                  >
+                                    当前
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        {/* 中栏：内容预览区 */}
-                        <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
-                          <div
-                            className="h-full overflow-auto border rounded-[6px]"
-                            style={{
-                              borderColor: 'var(--border-subtle)',
-                              background: 'rgba(255,255,255,0.02)',
-                              minHeight: '120px',
-                              maxHeight: '160px',
-                            }}
-                          >
-                            <style>{`
-                              .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
-                              .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
-                              .modal-prompt-md h1 { font-size: 13px; }
-                              .modal-prompt-md h2 { font-size: 12px; }
-                              .modal-prompt-md h3 { font-size: 11px; }
-                              .modal-prompt-md p { margin: 4px 0; }
-                              .modal-prompt-md ul,.modal-prompt-md ol { margin: 4px 0; padding-left: 16px; }
-                              .modal-prompt-md li { margin: 2px 0; }
-                              .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                              .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
-                              .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
-                            `}</style>
-                            <div className="modal-prompt-md">
-                              {prompt.content ? (
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                  {prompt.content}
-                                </ReactMarkdown>
+                          {/* 中栏：内容预览区 */}
+                          <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                            <div
+                              className="h-full overflow-auto border rounded-[6px]"
+                              style={{
+                                borderColor: 'var(--border-subtle)',
+                                background: 'rgba(255,255,255,0.02)',
+                                minHeight: '120px',
+                                maxHeight: '160px',
+                              }}
+                            >
+                              <style>{`
+                                .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
+                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
+                                .modal-prompt-md h1 { font-size: 13px; }
+                                .modal-prompt-md h2 { font-size: 12px; }
+                                .modal-prompt-md h3 { font-size: 11px; }
+                                .modal-prompt-md p { margin: 4px 0; }
+                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 4px 0; padding-left: 16px; }
+                                .modal-prompt-md li { margin: 2px 0; }
+                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+                                .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                              `}</style>
+                              <div className="modal-prompt-md">
+                                {prompt.content ? (
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {prompt.content}
+                                  </ReactMarkdown>
+                                ) : (
+                                  <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 下栏：操作按钮区 */}
+                          <div className="px-2 pb-2 pt-1 flex-shrink-0">
+                            <div className="flex gap-1.5 justify-end">
+                              {selectedPrompt?.id !== prompt.id ? (
+                                <Button
+                                  size="xs"
+                                  variant="primary"
+                                  onClick={() => {
+                                    setSelectedPrompt(prompt);
+                                    setPromptPreviewOpen(false);
+                                  }}
+                                >
+                                  <Check size={12} />
+                                  选择
+                                </Button>
                               ) : (
-                                <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
+                                <Button
+                                  size="xs"
+                                  variant="secondary"
+                                  disabled
+                                >
+                                  <Check size={12} />
+                                  已选
+                                </Button>
                               )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 下栏：操作按钮区 */}
-                        <div className="px-2 pb-2 pt-1 flex-shrink-0">
-                          <div className="flex gap-1.5 justify-end">
-                            {selectedPrompt?.id !== prompt.id ? (
-                              <Button
-                                size="xs"
-                                variant="primary"
-                                onClick={() => {
-                                  setSelectedPrompt(prompt);
-                                  setPromptPreviewOpen(false);
-                                }}
-                              >
-                                <Check size={12} />
-                                选择
-                              </Button>
-                            ) : (
                               <Button
                                 size="xs"
                                 variant="secondary"
-                                disabled
+                                onClick={() => {
+                                  handleEditPrompt(prompt);
+                                  setPromptPreviewOpen(false);
+                                }}
                               >
-                                <Check size={12} />
-                                已选
+                                <Edit2 size={12} />
+                                编辑
                               </Button>
-                            )}
-                            <Button
-                              size="xs"
-                              variant="secondary"
-                              onClick={() => {
-                                handleEditPrompt(prompt);
-                                setPromptPreviewOpen(false);
-                              }}
-                            >
-                              <Edit2 size={12} />
-                              编辑
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="danger"
-                              onClick={() => {
-                                void handleDeletePrompt(prompt);
-                              }}
-                            >
-                              <Trash2 size={12} />
-                              删除
-                            </Button>
+                              <Button
+                                size="xs"
+                                variant="danger"
+                                onClick={() => {
+                                  void handleDeletePrompt(prompt);
+                                }}
+                              >
+                                <Trash2 size={12} />
+                                删除
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </Card>
-                  ))}
+                      </Card>
+                    ))}
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {/* 右侧：水印设置 */}
+            <div className="min-h-0 flex flex-col border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                水印设置
               </div>
-            )}
+              <div className="flex-1 min-h-0 overflow-auto">
+                <WatermarkSettingsPanel />
+              </div>
+            </div>
           </div>
         }
       />

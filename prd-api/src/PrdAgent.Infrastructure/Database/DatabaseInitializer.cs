@@ -114,7 +114,7 @@ public class DatabaseInitializer
                 Id = await _idGenerator.GenerateIdAsync("config"),
                 Key = def.Key,
                 Name = def.Name,
-                Permissions = def.Permissions.Distinct(StringComparer.Ordinal).ToList(),
+                Permissions = (def.Permissions ?? new List<string>()).Distinct(StringComparer.Ordinal).ToList(),
                 IsBuiltIn = true,
                 UpdatedAt = DateTime.UtcNow,
                 UpdatedBy = "system"
