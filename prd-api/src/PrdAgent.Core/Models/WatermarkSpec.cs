@@ -24,9 +24,17 @@ public class WatermarkSpec
 
     public string? IconImageRef { get; set; }
 
+    public bool BorderEnabled { get; set; }
+
+    public bool BackgroundEnabled { get; set; }
+
     public int BaseCanvasWidth { get; set; }
 
     public string? ModelKey { get; set; }
 
     public string? Color { get; set; }
+
+    public string? TextColor { get; set; }
+
+    public string? BackgroundColor { get; set; }
 }

@@ -71,6 +71,14 @@ public static class WatermarkSpecValidator
         {
             return (false, "color 必须为 #RRGGBB 或 #RRGGBBAA");
         }
+        if (!string.IsNullOrWhiteSpace(spec.TextColor) && !HexColorRegex.IsMatch(spec.TextColor))
+        {
+            return (false, "textColor 必须为 #RRGGBB 或 #RRGGBBAA");
+        }
+        if (!string.IsNullOrWhiteSpace(spec.BackgroundColor) && !HexColorRegex.IsMatch(spec.BackgroundColor))
+        {
+            return (false, "backgroundColor 必须为 #RRGGBB 或 #RRGGBBAA");
+        }
 
         return (true, null);
     }

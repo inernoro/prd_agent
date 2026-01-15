@@ -61,6 +61,7 @@ public static class BsonClassMapRegistration
             RegisterOpenPlatformRequestLog();
             RegisterSystemRole();
             RegisterUserPreferences();
+            RegisterWatermarkFontAsset();
             RegisterWatermarkSettings();
 
             _registered = true;
@@ -572,12 +573,37 @@ public static class BsonClassMapRegistration
                 cm.MapMember(x => x.OffsetY).SetElementName("offsetY");
                 cm.MapMember(x => x.IconEnabled).SetElementName("iconEnabled");
                 cm.MapMember(x => x.IconImageRef).SetElementName("iconImageRef");
+                cm.MapMember(x => x.BorderEnabled).SetElementName("borderEnabled");
+                cm.MapMember(x => x.BackgroundEnabled).SetElementName("backgroundEnabled");
                 cm.MapMember(x => x.BaseCanvasWidth).SetElementName("baseCanvasWidth");
                 cm.MapMember(x => x.ModelKey).SetElementName("modelKey");
                 cm.MapMember(x => x.Color).SetElementName("color");
+                cm.MapMember(x => x.TextColor).SetElementName("textColor");
+                cm.MapMember(x => x.BackgroundColor).SetElementName("backgroundColor");
                 cm.SetIgnoreExtraElements(true);
             });
         }
+    }
+
+    private static void RegisterWatermarkFontAsset()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(WatermarkFontAsset))) return;
+        BsonClassMap.RegisterClassMap<WatermarkFontAsset>(cm =>
+        {
+            cm.AutoMap();
+            cm.SetIgnoreExtraElements(true);
+            cm.MapMember(x => x.OwnerUserId).SetElementName("ownerUserId");
+            cm.MapMember(x => x.FontKey).SetElementName("fontKey");
+            cm.MapMember(x => x.DisplayName).SetElementName("displayName");
+            cm.MapMember(x => x.FontFamily).SetElementName("fontFamily");
+            cm.MapMember(x => x.Sha256).SetElementName("sha256");
+            cm.MapMember(x => x.Mime).SetElementName("mime");
+            cm.MapMember(x => x.SizeBytes).SetElementName("sizeBytes");
+            cm.MapMember(x => x.Url).SetElementName("url");
+            cm.MapMember(x => x.FileName).SetElementName("fileName");
+            cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
+            cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+        });
     }
 
     private static void RegisterParsedPrd()

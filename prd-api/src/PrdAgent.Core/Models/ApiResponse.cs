@@ -38,6 +38,8 @@ public class ApiError
 /// </summary>
 public static class ErrorCodes
 {
+    public const string NOT_FOUND = "NOT_FOUND";
+
     // 文档相关
     public const string INVALID_FORMAT = "INVALID_FORMAT";
     public const string CONTENT_EMPTY = "CONTENT_EMPTY";
@@ -81,4 +83,3 @@ public static class ErrorCodes
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
 }
-

@@ -149,6 +149,8 @@ import type {
   GetModelSizesContract,
   GetWatermarkContract,
   GetWatermarkFontsContract,
+  UploadWatermarkFontContract,
+  DeleteWatermarkFontContract,
   PutWatermarkContract,
 } from '@/services/contracts/watermark';
 import { useAuthStore } from '@/stores/authStore';
@@ -187,7 +189,14 @@ import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLM
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal } from '@/services/real/llmLogs';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
-import { getModelSizesReal, getWatermarkFontsReal, getWatermarkReal, putWatermarkReal } from '@/services/real/watermark';
+import {
+  deleteWatermarkFontReal,
+  getModelSizesReal,
+  getWatermarkFontsReal,
+  getWatermarkReal,
+  putWatermarkReal,
+  uploadWatermarkFontReal,
+} from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
   createModelLabExperimentReal,
@@ -552,4 +561,6 @@ export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderRea
 export const getWatermark: GetWatermarkContract = withAuth(getWatermarkReal);
 export const putWatermark: PutWatermarkContract = withAuth(putWatermarkReal);
 export const getWatermarkFonts: GetWatermarkFontsContract = withAuth(getWatermarkFontsReal);
+export const uploadWatermarkFont: UploadWatermarkFontContract = withAuth(uploadWatermarkFontReal);
+export const deleteWatermarkFont: DeleteWatermarkFontContract = withAuth(deleteWatermarkFontReal);
 export const getModelSizes: GetModelSizesContract = withAuth(getModelSizesReal);

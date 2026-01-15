@@ -47,22 +47,45 @@ public class WatermarkRenderer
 
         var gap = textHeight / 4d;
         var iconWidth = spec.IconEnabled ? textHeight + gap : 0d;
-        var watermarkWidth = textWidth + iconWidth;
-        var watermarkHeight = textHeight;
+        var padding = (spec.BackgroundEnabled || spec.BorderEnabled) ? textHeight * 0.3d : 0d;
+        var watermarkWidth = textWidth + iconWidth + padding * 2d;
+        var watermarkHeight = textHeight + padding * 2d;
         var (watermarkLeft, watermarkTop) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(
             spec,
             image.Width,
             image.Height,
             watermarkWidth,
             watermarkHeight);
-        var textLeft = (float)(watermarkLeft + iconWidth);
-        var textTop = (float)watermarkTop;
+        var textLeft = (float)(watermarkLeft + iconWidth + padding);
+        var textTop = (float)(watermarkTop + padding);
 
-        var color = ResolveColor(spec, spec.Opacity);
+        var textColor = ResolveColorHex(spec.TextColor ?? spec.Color, spec.Opacity);
+        var borderColor = ResolveColorHex(spec.TextColor ?? spec.Color, spec.Opacity);
+        var backgroundColor = ResolveColorHex(spec.BackgroundColor, spec.Opacity, fallback: Color.FromRgba(0, 0, 0, (byte)Math.Round(0.4 * 255)));
 
         image.Mutate(ctx =>
         {
-            ctx.DrawText(spec.Text, font, color, new PointF(textLeft, textTop));
+            if (spec.BackgroundEnabled)
+            {
+                var backgroundRect = new RectangleF(
+                    (float)watermarkLeft,
+                    (float)watermarkTop,
+                    (float)watermarkWidth,
+                    (float)watermarkHeight);
+                ctx.Fill(backgroundColor, backgroundRect);
+            }
+
+            if (spec.BorderEnabled)
+            {
+                var borderRect = new RectangleF(
+                    (float)watermarkLeft,
+                    (float)watermarkTop,
+                    (float)watermarkWidth,
+                    (float)watermarkHeight);
+                ctx.Draw(borderColor, 2f, borderRect);
+            }
+
+            ctx.DrawText(spec.Text, font, textColor, new PointF(textLeft, textTop));
         });
 
         if (spec.IconEnabled && !string.IsNullOrWhiteSpace(spec.IconImageRef))
@@ -82,8 +105,8 @@ public class WatermarkRenderer
                             Mode = ResizeMode.Stretch
                         }));
                         icon.Mutate(i => i.Opacity((float)spec.Opacity));
-                        var iconLeft = (float)watermarkLeft;
-                        var iconTop = (float)watermarkTop;
+                        var iconLeft = (float)(watermarkLeft + padding);
+                        var iconTop = (float)(watermarkTop + padding);
                         image.Mutate(ctx => ctx.DrawImage(icon, new Point((int)iconLeft, (int)iconTop), 1f));
                     }
                 }
@@ -99,11 +122,14 @@ public class WatermarkRenderer
         return (ms.ToArray(), format.DefaultMimeType ?? inputMime);
     }
 
-    private static Color ResolveColor(WatermarkSpec spec, double opacity)
+    private static Color ResolveColorHex(string? hexInput, double opacity, Color? fallback = null)
     {
         var alpha = (byte)Math.Clamp((int)Math.Round(opacity * 255), 0, 255);
-        if (string.IsNullOrWhiteSpace(spec.Color)) return Color.FromRgba(255, 255, 255, alpha);
-        var hex = spec.Color.Trim();
+        if (string.IsNullOrWhiteSpace(hexInput))
+        {
+            return fallback ?? Color.FromRgba(255, 255, 255, alpha);
+        }
+        var hex = hexInput.Trim();
         if (hex.StartsWith('#')) hex = hex[1..];
         if (hex.Length == 6)
         {
@@ -121,7 +147,7 @@ public class WatermarkRenderer
             var combined = (byte)Math.Clamp((int)Math.Round(a * opacity), 0, 255);
             return Color.FromRgba(r, g, b, combined);
         }
-        return Color.FromRgba(255, 255, 255, alpha);
+        return fallback ?? Color.FromRgba(255, 255, 255, alpha);
     }
 
     private async Task<byte[]?> TryLoadIconBytesAsync(string iconRef, CancellationToken ct)

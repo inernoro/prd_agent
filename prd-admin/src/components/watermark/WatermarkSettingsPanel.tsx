@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { getModelSizes, getWatermark, getWatermarkFonts, putWatermark } from '@/services';
+import { deleteWatermarkFont, getModelSizes, getWatermark, getWatermarkFonts, putWatermark, uploadWatermarkFont } from '@/services';
 import type { ModelSizeInfo, WatermarkFontInfo, WatermarkSpec, WatermarkSettings } from '@/services/contracts/watermark';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X } from 'lucide-react';
+import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, PaintBucket, Type, Droplet } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 // 从尺寸列表中筛选出4个有代表性的预览尺寸（排除1:1，因为已有演示画布）
@@ -46,9 +49,13 @@ const buildDefaultSpec = (fontKey: string): WatermarkSpec => ({
   offsetY: 24,
   iconEnabled: false,
   iconImageRef: null,
+  borderEnabled: false,
+  backgroundEnabled: false,
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
   modelKey: 'default',
   color: '#FFFFFF',
+  textColor: '#FFFFFF',
+  backgroundColor: '#000000',
 });
 
 const normalizeSpec = (spec: WatermarkSpec): WatermarkSpec => ({
@@ -57,6 +64,10 @@ const normalizeSpec = (spec: WatermarkSpec): WatermarkSpec => ({
   anchor: spec.anchor ?? 'bottom-right',
   offsetX: Number.isFinite(spec.offsetX) ? spec.offsetX : 24,
   offsetY: Number.isFinite(spec.offsetY) ? spec.offsetY : 24,
+  borderEnabled: Boolean(spec.borderEnabled),
+  backgroundEnabled: Boolean(spec.backgroundEnabled),
+  textColor: spec.textColor ?? spec.color ?? '#FFFFFF',
+  backgroundColor: spec.backgroundColor ?? '#000000',
 });
 
 const anchorList: WatermarkAnchor[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
@@ -142,6 +153,8 @@ export function WatermarkSettingsPanel() {
   const [settings, setSettings] = useState<WatermarkSettings | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [draftSpec, setDraftSpec] = useState<WatermarkSpec | null>(null);
+  const [fontUploading, setFontUploading] = useState(false);
+  const [fontDeletingKey, setFontDeletingKey] = useState<string | null>(null);
 
   useFontFace(fonts);
 
@@ -185,6 +198,79 @@ export function WatermarkSettingsPanel() {
       }
     },
     []
+  );
+
+  const refreshFonts = useCallback(async () => {
+    const res = await getWatermarkFonts();
+    if (res?.success) {
+      setFonts(res.data || []);
+    }
+    return res;
+  }, []);
+
+  const handleFontUpload = useCallback(
+    async (file: File) => {
+      if (fontUploading) return;
+      setFontUploading(true);
+      try {
+        const res = await uploadWatermarkFont({ file });
+        if (!res?.success) {
+          toast.error('字体上传失败', res?.error?.message || '上传失败');
+          return;
+        }
+        toast.success('字体已上传', res.data?.displayName || '上传成功');
+        await refreshFonts();
+        setDraftSpec((prev) => (prev ? { ...prev, fontKey: res.data.fontKey } : prev));
+      } finally {
+        setFontUploading(false);
+      }
+    },
+    [fontUploading, refreshFonts]
+  );
+
+  const handleFontDelete = useCallback(
+    async (font: WatermarkFontInfo) => {
+      if (fontDeletingKey) return;
+      const confirmFirst = await systemDialog.confirm({
+        title: '确认删除字体',
+        message: `确定删除字体「${font.displayName}」吗？`,
+        tone: 'danger',
+        confirmText: '删除',
+        cancelText: '取消',
+      });
+      if (!confirmFirst) return;
+      const confirmSecond = await systemDialog.confirm({
+        title: '再次确认',
+        message: '该操作不可撤销，确定继续吗？',
+        tone: 'danger',
+        confirmText: '确认删除',
+        cancelText: '取消',
+      });
+      if (!confirmSecond) return;
+
+      setFontDeletingKey(font.fontKey);
+      try {
+        const res = await deleteWatermarkFont({ fontKey: font.fontKey });
+        if (!res?.success) {
+          toast.error('删除字体失败', res?.error?.message || '删除失败');
+          return;
+        }
+        toast.success('字体已删除', font.displayName);
+        const updated = await refreshFonts();
+        if (updated?.success) {
+          const nextFonts = updated.data || [];
+          setDraftSpec((prev) => {
+            if (!prev) return prev;
+            if (prev.fontKey !== font.fontKey) return prev;
+            const fallback = nextFonts[0]?.fontKey || prev.fontKey;
+            return { ...prev, fontKey: fallback };
+          });
+        }
+      } finally {
+        setFontDeletingKey(null);
+      }
+    },
+    [fontDeletingKey, refreshFonts]
   );
 
   const toggleEnabled = async () => {
@@ -292,8 +378,12 @@ export function WatermarkSettingsPanel() {
           <WatermarkEditor
             spec={draftSpec}
             fonts={fonts}
+            fontUploading={fontUploading}
+            fontDeletingKey={fontDeletingKey}
             onChange={setDraftSpec}
             onCancel={() => setEditorOpen(false)}
+            onUploadFont={handleFontUpload}
+            onDeleteFont={handleFontDelete}
             onSave={async () => {
               if (!draftSpec) return;
               await saveSpec(draftSpec);
@@ -309,14 +399,19 @@ export function WatermarkSettingsPanel() {
 function WatermarkEditor(props: {
   spec: WatermarkSpec;
   fonts: WatermarkFontInfo[];
+  fontUploading: boolean;
+  fontDeletingKey: string | null;
   onChange: (spec: WatermarkSpec) => void;
+  onUploadFont: (file: File) => void;
+  onDeleteFont: (font: WatermarkFontInfo) => void;
   onCancel: () => void;
   onSave: () => void;
 }) {
-  const { spec, fonts, onChange, onCancel, onSave } = props;
+  const { spec, fonts, fontUploading, fontDeletingKey, onChange, onUploadFont, onDeleteFont, onCancel, onSave } = props;
   const [sizes, setSizes] = useState<ModelSizeInfo[]>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadingSizes, setLoadingSizes] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewSizes = useMemo(() => selectPreviewSizes(sizes), [sizes]);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
@@ -390,15 +485,35 @@ function WatermarkEditor(props: {
 
           <div>
             <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>字体</div>
-            <select
-              value={spec.fontKey}
-              onChange={(e) => updateSpec({ fontKey: e.target.value })}
-              className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
-            >
-              {fonts.map((font) => (
-                <option key={font.fontKey} value={font.fontKey}>{font.displayName}</option>
-              ))}
-            </select>
+            <div className="mt-2 flex items-center gap-2">
+              <FontSelect
+                value={spec.fontKey}
+                fonts={fonts}
+                deletingKey={fontDeletingKey}
+                onChange={(fontKey) => updateSpec({ fontKey })}
+                onDelete={onDeleteFont}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".ttf,.otf,.woff,.woff2"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  if (file) onUploadFont(file);
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+              />
+              <Button
+                size="sm"
+                className="shrink-0"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={fontUploading}
+              >
+                <UploadCloud size={14} />
+                {fontUploading ? '上传中...' : '上传字体'}
+              </Button>
+            </div>
           </div>
 
           <div>
@@ -459,10 +574,11 @@ function WatermarkEditor(props: {
           </div>
 
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>水印图标</div>
-            <div className="mt-2 flex items-center gap-2">
-              <label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label
+                className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
                 style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                title="上传图标"
               >
                 <UploadCloud size={14} />
                 上传图标
@@ -478,10 +594,71 @@ function WatermarkEditor(props: {
                   variant="secondary"
                   size="xs"
                   onClick={() => updateSpec({ iconEnabled: false, iconImageRef: null })}
+                  title="移除图标"
                 >
                   移除
                 </Button>
               ) : null}
+              <button
+                type="button"
+                className="h-9 w-9 rounded-[10px] inline-flex items-center justify-center"
+                style={{
+                  background: spec.borderEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: spec.borderEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                title="是否边框"
+                onClick={() => updateSpec({ borderEnabled: !spec.borderEnabled })}
+              >
+                <Square size={16} />
+              </button>
+              <button
+                type="button"
+                className="h-9 w-9 rounded-[10px] inline-flex items-center justify-center"
+                style={{
+                  background: spec.backgroundEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: spec.backgroundEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                title="填充背景"
+                onClick={() => updateSpec({ backgroundEnabled: !spec.backgroundEnabled })}
+              >
+                <PaintBucket size={16} />
+              </button>
+              <label
+                className="relative h-9 w-9 rounded-[10px] inline-flex items-center justify-center cursor-pointer"
+                style={{
+                  background: spec.textColor || spec.color || '#ffffff',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: 'rgba(0,0,0,0.65)',
+                }}
+                title="前景色（字体）"
+              >
+                <Type size={14} />
+                <input
+                  type="color"
+                  value={(spec.textColor || spec.color || '#ffffff') as string}
+                  className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
+                  onChange={(e) => updateSpec({ textColor: e.target.value })}
+                />
+              </label>
+              <label
+                className="relative h-9 w-9 rounded-[10px] inline-flex items-center justify-center cursor-pointer"
+                style={{
+                  background: spec.backgroundColor || '#000000',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: 'rgba(255,255,255,0.85)',
+                }}
+                title="背景色"
+              >
+                <Droplet size={14} />
+                <input
+                  type="color"
+                  value={(spec.backgroundColor || '#000000') as string}
+                  className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
+                  onChange={(e) => updateSpec({ backgroundColor: e.target.value })}
+                />
+              </label>
             </div>
           </div>
         </div>
@@ -553,6 +730,97 @@ function WatermarkEditor(props: {
   );
 }
 
+function FontSelect(props: {
+  value: string;
+  fonts: WatermarkFontInfo[];
+  deletingKey: string | null;
+  onChange: (fontKey: string) => void;
+  onDelete: (font: WatermarkFontInfo) => void;
+}) {
+  const { value, fonts, deletingKey, onChange, onDelete } = props;
+  const [open, setOpen] = useState(false);
+  const current = fonts.find((font) => font.fontKey === value);
+
+  return (
+    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          className="relative flex-1 rounded-[12px] px-3 py-2 text-sm outline-none prd-field text-left"
+        >
+          <span style={{ color: 'var(--text-primary)' }}>
+            {current?.displayName || value || '请选择字体'}
+          </span>
+          <ChevronDown
+            size={16}
+            className="absolute right-3 top-1/2 -translate-y-1/2"
+            style={{ color: 'var(--text-muted)' }}
+          />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="z-50 rounded-[14px] overflow-hidden"
+          style={{
+            background: 'rgba(15, 15, 18, 1)',
+            border: '1px solid var(--border-default)',
+            boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+            minWidth: 240,
+          }}
+          sideOffset={8}
+          align="start"
+        >
+          <div className="max-h-[240px] overflow-auto p-1">
+            {fonts.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                暂无字体
+              </div>
+            ) : (
+              fonts.map((font) => {
+                const canDelete = font.fontKey.startsWith('custom-');
+                return (
+                  <div
+                    key={font.fontKey}
+                    className="flex items-center gap-2 px-3 py-2 rounded-[8px] hover:bg-white/8"
+                  >
+                    <button
+                      type="button"
+                      className="flex-1 text-left text-sm"
+                      style={{ color: 'var(--text-primary)' }}
+                      onClick={() => {
+                        onChange(font.fontKey);
+                        setOpen(false);
+                      }}
+                    >
+                      {font.displayName}
+                    </button>
+                    {canDelete ? (
+                      <button
+                        type="button"
+                        className="h-7 w-7 rounded-[8px] inline-flex items-center justify-center"
+                        style={{ color: 'rgba(239,68,68,0.9)', background: 'rgba(239,68,68,0.12)' }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onDelete(font);
+                        }}
+                        disabled={deletingKey === font.fontKey}
+                        title="删除字体"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
 function WatermarkPreview(props: {
   spec: WatermarkSpec;
   font: WatermarkFontInfo | null | undefined;
@@ -590,6 +858,9 @@ function WatermarkPreview(props: {
   const fontSize = spec.fontSizePx * previewScale;
   const iconSize = fontSize;
   const gap = fontSize / 4;
+  const decorationPadding = spec.backgroundEnabled || spec.borderEnabled ? Math.round(fontSize * 0.3) : 0;
+  const textColor = spec.textColor || spec.color || '#ffffff';
+  const backgroundColor = spec.backgroundColor || '#000000';
 
   const watermarkRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -599,8 +870,8 @@ function WatermarkPreview(props: {
   const [measureTick, setMeasureTick] = useState(0);
 
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
-  const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0);
-  const estimatedHeight = Math.max(fontSize, iconSize);
+  const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0) + decorationPadding * 2;
+  const estimatedHeight = Math.max(fontSize, iconSize) + decorationPadding * 2;
   const measuredWidth = watermarkSize.width || estimatedWidth;
   const measuredHeight = watermarkSize.height || estimatedHeight;
 
@@ -672,8 +943,8 @@ function WatermarkPreview(props: {
       const iconRect = iconRef.current?.getBoundingClientRect();
       const iconWidth = iconRect?.width ?? 0;
       const iconHeight = iconRect?.height ?? 0;
-      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0);
-      const combinedHeight = Math.max(textRect.height, iconHeight);
+      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0) + decorationPadding * 2;
+      const combinedHeight = Math.max(textRect.height, iconHeight) + decorationPadding * 2;
       setWatermarkSize((prev) => {
         if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
           return prev;
@@ -694,7 +965,7 @@ function WatermarkPreview(props: {
       void document.fonts.ready.then(() => updateSize());
     }
     if (document.fonts?.load) {
-      void document.fonts.load(`${fontSize}px ${fontFamily}`).then(() => updateSize());
+      void document.fonts.load(`${fontSize}px ${fontFamily}`).then(() => updateSize()).catch(() => undefined);
     }
 
     const raf = window.requestAnimationFrame(() => updateSize());
@@ -707,7 +978,18 @@ function WatermarkPreview(props: {
       window.clearTimeout(timeout2);
       observer?.disconnect();
     };
-  }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight, measureTick]);
+  }, [
+    spec.text,
+    spec.iconEnabled,
+    spec.iconImageRef,
+    spec.backgroundEnabled,
+    spec.borderEnabled,
+    fontFamily,
+    fontSize,
+    width,
+    canvasHeight,
+    measureTick,
+  ]);
 
   useEffect(() => {
     if (!draggable || !canvasRef.current) return;
@@ -864,9 +1146,13 @@ function WatermarkPreview(props: {
             display: 'flex',
             alignItems: 'center',
             gap: gap,
-            color: spec.color || '#fff',
+            color: textColor,
             fontFamily,
             fontSize,
+            padding: decorationPadding,
+            background: spec.backgroundEnabled ? backgroundColor : 'transparent',
+            border: spec.borderEnabled ? `1px solid ${textColor}` : '1px solid transparent',
+            borderRadius: spec.backgroundEnabled || spec.borderEnabled ? 8 : 0,
           }}
         >
           {spec.iconEnabled && spec.iconImageRef ? (
