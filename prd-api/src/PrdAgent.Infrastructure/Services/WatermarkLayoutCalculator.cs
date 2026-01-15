@@ -6,8 +6,9 @@ public static class WatermarkLayoutCalculator
 {
     public static (double centerX, double centerY) CalculateTextCenter(WatermarkSpec spec, int targetWidth, int targetHeight)
     {
-        var x = spec.PosXRatio * targetWidth;
-        var y = spec.PosYRatio * targetHeight;
+        var shortSide = Math.Min(targetWidth, targetHeight);
+        var x = targetWidth / 2d + (spec.PosXRatio - 0.5d) * shortSide;
+        var y = targetHeight / 2d + (spec.PosYRatio - 0.5d) * shortSide;
         return (x, y);
     }
 

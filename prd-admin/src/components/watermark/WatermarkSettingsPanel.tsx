@@ -318,17 +318,6 @@ function WatermarkEditor(props: {
                 <option key={size} value={size}>{size}px</option>
               ))}
             </select>
-            <label className="mt-2 flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={spec.scaleWithImage ?? false}
-                onChange={(e) => updateSpec({ scaleWithImage: e.target.checked })}
-                className="w-4 h-4 rounded accent-[#d6b26a]"
-              />
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                按图片尺寸自适应缩放
-              </span>
-            </label>
           </div>
 
           <div>
@@ -415,7 +404,6 @@ function WatermarkEditor(props: {
                   font={currentFont}
                   size={previewWidth}
                   height={previewHeight}
-                  actualWidth={size.width}
                   previewImage={previewImage}
                 />
               </div>
@@ -438,21 +426,16 @@ function WatermarkEditor(props: {
   );
 }
 
-// 自适应缩放基准宽度（fontSizePx 是基于此宽度设计的）
-const BASE_IMAGE_WIDTH = 1024;
-
 function WatermarkPreview(props: {
   spec: WatermarkSpec;
   font: WatermarkFontInfo | null | undefined;
   size: number;
   height?: number;
-  /** 实际图片宽度（用于自适应字体缩放） */
-  actualWidth?: number;
   previewImage?: string | null;
   draggable?: boolean;
   onPositionChange?: (x: number, y: number) => void;
 }) {
-  const { spec, font, size, height, actualWidth, previewImage, draggable, onPositionChange } = props;
+  const { spec, font, size, height, previewImage, draggable, onPositionChange } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const width = size;
@@ -463,9 +446,7 @@ function WatermarkPreview(props: {
   const baseSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
   const shortSide = Math.min(width, canvasHeight);
   const previewScale = shortSide / baseSize;
-  // 自适应字体缩放：根据实际图片宽度相对于基准宽度的比例
-  const imageScale = spec.scaleWithImage && actualWidth ? actualWidth / BASE_IMAGE_WIDTH : 1;
-  const fontSize = spec.fontSizePx * previewScale * imageScale;
+  const fontSize = spec.fontSizePx * previewScale;
   const iconSize = fontSize;
   const gap = fontSize / 4;
 

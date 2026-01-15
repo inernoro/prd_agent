@@ -13,8 +13,6 @@ export type WatermarkSpec = {
   baseCanvasWidth: number;
   modelKey?: string | null;
   color?: string | null;
-  /** 是否根据图片尺寸自适应缩放字体大小 */
-  scaleWithImage?: boolean;
 };
 
 export type WatermarkSettings = {
