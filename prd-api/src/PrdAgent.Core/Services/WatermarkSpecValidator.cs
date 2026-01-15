@@ -12,6 +12,14 @@ public static class WatermarkSpecValidator
     public const int MaxCanvasWidth = 4096;
 
     private static readonly Regex HexColorRegex = new("^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$", RegexOptions.Compiled);
+    private static readonly HashSet<string> AllowedPositionModes = new(StringComparer.OrdinalIgnoreCase) { "pixel", "ratio" };
+    private static readonly HashSet<string> AllowedAnchors = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "top-left",
+        "top-right",
+        "bottom-left",
+        "bottom-right"
+    };
 
     public static (bool ok, string? message) Validate(WatermarkSpec spec, IReadOnlyCollection<string> allowedFontKeys)
     {
@@ -28,13 +36,28 @@ public static class WatermarkSpecValidator
         {
             return (false, "opacity 必须在 0-1 之间");
         }
-        if (!double.IsFinite(spec.PosXRatio) || spec.PosXRatio < 0 || spec.PosXRatio > 1)
+        if (string.IsNullOrWhiteSpace(spec.PositionMode) || !AllowedPositionModes.Contains(spec.PositionMode))
         {
-            return (false, "posXRatio 必须在 0-1 之间");
+            return (false, "positionMode 必须为 pixel 或 ratio");
         }
-        if (!double.IsFinite(spec.PosYRatio) || spec.PosYRatio < 0 || spec.PosYRatio > 1)
+        if (string.IsNullOrWhiteSpace(spec.Anchor) || !AllowedAnchors.Contains(spec.Anchor))
         {
-            return (false, "posYRatio 必须在 0-1 之间");
+            return (false, "anchor 必须为 top-left/top-right/bottom-left/bottom-right");
+        }
+        if (!double.IsFinite(spec.OffsetX) || spec.OffsetX < 0)
+        {
+            return (false, "offsetX 必须为非负数");
+        }
+        if (!double.IsFinite(spec.OffsetY) || spec.OffsetY < 0)
+        {
+            return (false, "offsetY 必须为非负数");
+        }
+        if (spec.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase))
+        {
+            if (spec.OffsetX > 1 || spec.OffsetY > 1)
+            {
+                return (false, "按比例时 offsetX/offsetY 必须在 0-1 之间");
+            }
         }
         if (spec.BaseCanvasWidth < MinCanvasWidth || spec.BaseCanvasWidth > MaxCanvasWidth)
         {

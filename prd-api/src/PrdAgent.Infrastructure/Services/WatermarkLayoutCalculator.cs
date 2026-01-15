@@ -4,12 +4,39 @@ namespace PrdAgent.Infrastructure.Services;
 
 public static class WatermarkLayoutCalculator
 {
-    public static (double centerX, double centerY) CalculateTextCenter(WatermarkSpec spec, int targetWidth, int targetHeight)
+    public static (double left, double top) CalculateWatermarkTopLeft(
+        WatermarkSpec spec,
+        int targetWidth,
+        int targetHeight,
+        double watermarkWidth,
+        double watermarkHeight)
     {
-        var shortSide = Math.Min(targetWidth, targetHeight);
-        var x = targetWidth / 2d + (spec.PosXRatio - 0.5d) * shortSide;
-        var y = targetHeight / 2d + (spec.PosYRatio - 0.5d) * shortSide;
-        return (x, y);
+        var offsetX = spec.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase)
+            ? spec.OffsetX * targetWidth
+            : spec.OffsetX;
+        var offsetY = spec.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase)
+            ? spec.OffsetY * targetHeight
+            : spec.OffsetY;
+
+        var left = spec.Anchor switch
+        {
+            "top-left" => offsetX,
+            "top-right" => targetWidth - watermarkWidth - offsetX,
+            "bottom-left" => offsetX,
+            _ => targetWidth - watermarkWidth - offsetX
+        };
+
+        var top = spec.Anchor switch
+        {
+            "top-left" => offsetY,
+            "top-right" => offsetY,
+            "bottom-left" => targetHeight - watermarkHeight - offsetY,
+            _ => targetHeight - watermarkHeight - offsetY
+        };
+
+        left = Math.Clamp(left, 0d, Math.Max(0d, targetWidth - watermarkWidth));
+        top = Math.Clamp(top, 0d, Math.Max(0d, targetHeight - watermarkHeight));
+        return (left, top);
     }
 
     public static double CalculateScaledFontSize(WatermarkSpec spec, int targetWidth)

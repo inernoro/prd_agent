@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -18,7 +18,21 @@ const selectPreviewSizes = (sizes: ModelSizeInfo[]): ModelSizeInfo[] => {
   return [0, 1, 2, 3].map((i) => sorted[Math.round(i * step)]);
 };
 
-const clamp = (value: number, min = 0, max = 1) => Math.min(Math.max(value, min), max);
+const clampPixel = (value: number, min = 0, max = 0) => Math.min(Math.max(value, min), max);
+
+type WatermarkAnchor = WatermarkSpec['anchor'];
+
+const anchorLabelMap: Record<WatermarkAnchor, string> = {
+  'top-left': '左上',
+  'top-right': '右上',
+  'bottom-left': '左下',
+  'bottom-right': '右下',
+};
+
+const modeLabelMap: Record<WatermarkSpec['positionMode'], string> = {
+  pixel: '按像素',
+  ratio: '按比例',
+};
 
 const buildDefaultSpec = (fontKey: string): WatermarkSpec => ({
   enabled: false,
@@ -26,14 +40,84 @@ const buildDefaultSpec = (fontKey: string): WatermarkSpec => ({
   fontKey,
   fontSizePx: 28,
   opacity: 0.6,
-  posXRatio: 0.8,
-  posYRatio: 0.8,
+  positionMode: 'pixel',
+  anchor: 'bottom-right',
+  offsetX: 24,
+  offsetY: 24,
   iconEnabled: false,
   iconImageRef: null,
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
   modelKey: 'default',
   color: '#FFFFFF',
 });
+
+const normalizeSpec = (spec: WatermarkSpec): WatermarkSpec => ({
+  ...spec,
+  positionMode: spec.positionMode ?? 'pixel',
+  anchor: spec.anchor ?? 'bottom-right',
+  offsetX: Number.isFinite(spec.offsetX) ? spec.offsetX : 24,
+  offsetY: Number.isFinite(spec.offsetY) ? spec.offsetY : 24,
+});
+
+const anchorList: WatermarkAnchor[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+const getOverlapArea = (
+  rect: { x: number; y: number; width: number; height: number },
+  target: { x: number; y: number; width: number; height: number }
+) => {
+  const left = Math.max(rect.x, target.x);
+  const right = Math.min(rect.x + rect.width, target.x + target.width);
+  const top = Math.max(rect.y, target.y);
+  const bottom = Math.min(rect.y + rect.height, target.y + target.height);
+  const overlapWidth = Math.max(0, right - left);
+  const overlapHeight = Math.max(0, bottom - top);
+  return overlapWidth * overlapHeight;
+};
+
+const getDominantAnchor = (
+  rect: { x: number; y: number; width: number; height: number },
+  canvasWidth: number,
+  canvasHeight: number,
+  fallback: WatermarkAnchor
+) => {
+  const halfWidth = canvasWidth / 2;
+  const halfHeight = canvasHeight / 2;
+  const quadrants: Record<WatermarkAnchor, { x: number; y: number; width: number; height: number }> = {
+    'top-left': { x: 0, y: 0, width: halfWidth, height: halfHeight },
+    'top-right': { x: halfWidth, y: 0, width: halfWidth, height: halfHeight },
+    'bottom-left': { x: 0, y: halfHeight, width: halfWidth, height: halfHeight },
+    'bottom-right': { x: halfWidth, y: halfHeight, width: halfWidth, height: halfHeight },
+  };
+  let best = fallback;
+  let bestArea = -1;
+  for (const anchor of anchorList) {
+    const area = getOverlapArea(rect, quadrants[anchor]);
+    if (area > bestArea) {
+      bestArea = area;
+      best = anchor;
+    }
+  }
+  return best;
+};
+
+const computeOffsetsFromAnchor = (
+  anchor: WatermarkAnchor,
+  rect: { x: number; y: number; width: number; height: number },
+  canvasWidth: number,
+  canvasHeight: number
+) => {
+  switch (anchor) {
+    case 'top-left':
+      return { x: rect.x, y: rect.y };
+    case 'top-right':
+      return { x: canvasWidth - (rect.x + rect.width), y: rect.y };
+    case 'bottom-left':
+      return { x: rect.x, y: canvasHeight - (rect.y + rect.height) };
+    case 'bottom-right':
+    default:
+      return { x: canvasWidth - (rect.x + rect.width), y: canvasHeight - (rect.y + rect.height) };
+  }
+};
 
 function useFontFace(fonts: WatermarkFontInfo[]) {
   useEffect(() => {
@@ -71,7 +155,7 @@ export function WatermarkSettingsPanel() {
         setFonts(fontRes.data || []);
       }
       if (wmRes?.success) {
-        setSettings(wmRes.data || null);
+        setSettings(wmRes.data ? { ...wmRes.data, spec: normalizeSpec(wmRes.data.spec) } : null);
       } else if (fontRes?.success) {
         const defaultFont = fontRes.data?.[0]?.fontKey || 'dejavu-sans';
         setSettings({ enabled: false, spec: buildDefaultSpec(defaultFont) });
@@ -183,7 +267,11 @@ export function WatermarkSettingsPanel() {
           </div>
           <div className="flex items-center justify-between">
             <span>位置</span>
-            <span style={{ color: 'var(--text-primary)' }}>{spec.posXRatio.toFixed(2)}, {spec.posYRatio.toFixed(2)}</span>
+            <span style={{ color: 'var(--text-primary)' }}>
+              {anchorLabelMap[spec.anchor]} · {modeLabelMap[spec.positionMode]}
+              ({spec.offsetX.toFixed(spec.positionMode === 'ratio' ? 2 : 0)},
+              {spec.offsetY.toFixed(spec.positionMode === 'ratio' ? 2 : 0)})
+            </span>
           </div>
           <div className="flex items-center justify-between">
             <span>图标</span>
@@ -232,6 +320,7 @@ function WatermarkEditor(props: {
   const previewSizes = useMemo(() => selectPreviewSizes(sizes), [sizes]);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
+  const baseCanvasSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
 
   useEffect(() => {
     if (!spec.modelKey) return;
@@ -273,14 +362,17 @@ function WatermarkEditor(props: {
       <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) 280px' }}>
         <div className="rounded-[16px] p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>1:1 演示画布</div>
-          <WatermarkPreview
-            spec={spec}
-            font={currentFont}
-            size={spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE}
-            previewImage={previewImage}
-            draggable
-            onPositionChange={(x, y) => updateSpec({ posXRatio: x, posYRatio: y })}
-          />
+          <div className="flex items-center justify-center">
+            <WatermarkPreview
+              spec={spec}
+              font={currentFont}
+              size={spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE}
+              previewImage={previewImage}
+              draggable
+              showCrosshair
+              onPositionChange={(next) => updateSpec(next)}
+            />
+          </div>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -334,6 +426,34 @@ function WatermarkEditor(props: {
             <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
               {Math.round(spec.opacity * 100)}%
             </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>定位方式</div>
+            <select
+              value={spec.positionMode}
+              onChange={(e) => {
+                const nextMode = e.target.value as WatermarkSpec['positionMode'];
+                if (nextMode === spec.positionMode) return;
+                if (nextMode === 'ratio') {
+                  updateSpec({
+                    positionMode: nextMode,
+                    offsetX: spec.offsetX / baseCanvasSize,
+                    offsetY: spec.offsetY / baseCanvasSize,
+                  });
+                } else {
+                  updateSpec({
+                    positionMode: nextMode,
+                    offsetX: spec.offsetX * baseCanvasSize,
+                    offsetY: spec.offsetY * baseCanvasSize,
+                  });
+                }
+              }}
+              className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
+            >
+              <option value="pixel">按像素</option>
+              <option value="ratio">按比例</option>
+            </select>
           </div>
 
           <div>
@@ -433,9 +553,10 @@ function WatermarkPreview(props: {
   height?: number;
   previewImage?: string | null;
   draggable?: boolean;
-  onPositionChange?: (x: number, y: number) => void;
+  showCrosshair?: boolean;
+  onPositionChange?: (next: Pick<WatermarkSpec, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
-  const { spec, font, size, height, previewImage, draggable, onPositionChange } = props;
+  const { spec, font, size, height, previewImage, draggable, showCrosshair, onPositionChange } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const width = size;
@@ -450,20 +571,72 @@ function WatermarkPreview(props: {
   const iconSize = fontSize;
   const gap = fontSize / 4;
 
-  // 水印位置：基于画布宽高计算，保持比例一致
-  // posXRatio/posYRatio 范围 0~1，0.5 表示中心
-  const offsetX = spec.posXRatio - 0.5; // 相对于中心的 X 偏移
-  const offsetY = spec.posYRatio - 0.5; // 相对于中心的 Y 偏移
-  const centerX = width / 2 + offsetX * width;
-  const centerY = canvasHeight / 2 + offsetY * canvasHeight;
+  const watermarkRef = useRef<HTMLDivElement | null>(null);
+  const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
+
+  const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
+  const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0);
+  const estimatedHeight = Math.max(fontSize, iconSize);
+  const measuredWidth = watermarkSize.width || estimatedWidth;
+  const measuredHeight = watermarkSize.height || estimatedHeight;
+
+  const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
+  const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
+  const maxX = Math.max(width - measuredWidth, 0);
+  const maxY = Math.max(canvasHeight - measuredHeight, 0);
+
+  let positionX = 0;
+  let positionY = 0;
+  switch (spec.anchor) {
+    case 'top-left':
+      positionX = offsetX;
+      positionY = offsetY;
+      break;
+    case 'top-right':
+      positionX = width - measuredWidth - offsetX;
+      positionY = offsetY;
+      break;
+    case 'bottom-left':
+      positionX = offsetX;
+      positionY = canvasHeight - measuredHeight - offsetY;
+      break;
+    case 'bottom-right':
+    default:
+      positionX = width - measuredWidth - offsetX;
+      positionY = canvasHeight - measuredHeight - offsetY;
+      break;
+  }
+
+  positionX = clampPixel(positionX, 0, maxX);
+  positionY = clampPixel(positionY, 0, maxY);
+  const watermarkRect = { x: positionX, y: positionY, width: measuredWidth, height: measuredHeight };
+  const activeAnchor = getDominantAnchor(watermarkRect, width, canvasHeight, spec.anchor);
 
   // 使用 ref 存储回调和位置，避免依赖变化导致拖拽中断
-  const posRef = useRef({ x: spec.posXRatio, y: spec.posYRatio });
+  const posRef = useRef({ x: positionX, y: positionY });
+  const watermarkSizeRef = useRef({ width: measuredWidth, height: measuredHeight });
   const callbackRef = useRef(onPositionChange);
   const sizeRef = useRef({ width, height: canvasHeight });
-  posRef.current = { x: spec.posXRatio, y: spec.posYRatio };
+  const modeRef = useRef(spec.positionMode);
+  const anchorRef = useRef(spec.anchor);
+  posRef.current = { x: positionX, y: positionY };
+  watermarkSizeRef.current = { width: measuredWidth, height: measuredHeight };
   callbackRef.current = onPositionChange;
   sizeRef.current = { width, height: canvasHeight };
+  modeRef.current = spec.positionMode;
+  anchorRef.current = spec.anchor;
+
+  useLayoutEffect(() => {
+    if (!watermarkRef.current) return;
+    const rect = watermarkRef.current.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    setWatermarkSize((prev) => {
+      if (Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5) {
+        return prev;
+      }
+      return { width: rect.width, height: rect.height };
+    });
+  }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight]);
 
   useEffect(() => {
     if (!draggable || !canvasRef.current) return;
@@ -471,16 +644,24 @@ function WatermarkPreview(props: {
     const watermark = canvas.querySelector('[data-watermark]') as HTMLElement | null;
     if (!watermark) return;
 
-    let offsetX = 0;
-    let offsetY = 0;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
 
     const handlePointerMove = (event: PointerEvent) => {
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const { width: w, height: h } = sizeRef.current;
-      const nextX = clamp((event.clientX - rect.left - offsetX) / w);
-      const nextY = clamp((event.clientY - rect.top - offsetY) / h);
-      callbackRef.current?.(nextX, nextY);
+      const { width: wmW, height: wmH } = watermarkSizeRef.current;
+      const maxX = Math.max(w - wmW, 0);
+      const maxY = Math.max(h - wmH, 0);
+      const nextX = clampPixel(event.clientX - rect.left - dragOffsetX, 0, maxX);
+      const nextY = clampPixel(event.clientY - rect.top - dragOffsetY, 0, maxY);
+      const nextRect = { x: nextX, y: nextY, width: wmW, height: wmH };
+      const nextAnchor = getDominantAnchor(nextRect, w, h, anchorRef.current);
+      const offsets = computeOffsetsFromAnchor(nextAnchor, nextRect, w, h);
+      const storeX = modeRef.current === 'ratio' ? offsets.x / w : offsets.x;
+      const storeY = modeRef.current === 'ratio' ? offsets.y / h : offsets.y;
+      callbackRef.current?.({ anchor: nextAnchor, offsetX: storeX, offsetY: storeY });
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -495,9 +676,8 @@ function WatermarkPreview(props: {
       watermark.setPointerCapture(event.pointerId);
       watermark.style.cursor = 'grabbing';
       const rect = canvas.getBoundingClientRect();
-      const { width: w, height: h } = sizeRef.current;
-      offsetX = event.clientX - rect.left - posRef.current.x * w;
-      offsetY = event.clientY - rect.top - posRef.current.y * h;
+      dragOffsetX = event.clientX - rect.left - posRef.current.x;
+      dragOffsetY = event.clientY - rect.top - posRef.current.y;
       watermark.addEventListener('pointermove', handlePointerMove);
       watermark.addEventListener('pointerup', handlePointerUp);
     };
@@ -521,13 +701,36 @@ function WatermarkPreview(props: {
         border: '1px dashed rgba(255,255,255,0.12)',
       }}
     >
+      {showCrosshair ? (
+        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
+          <div className="absolute left-1/2 top-0 h-full w-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+          <div className="absolute top-1/2 left-0 w-full h-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+          <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
+            {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as WatermarkAnchor[]).map((anchor) => (
+              <div
+                key={anchor}
+                className="flex items-center justify-center"
+                style={{
+                  background: activeAnchor === anchor ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  border: '1px solid rgba(255,255,255,0.04)',
+                }}
+              >
+                <span style={{ color: 'var(--text-primary)', opacity: 0.2, fontSize: 12 }}>
+                  {anchorLabelMap[anchor]}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div
         data-watermark
+        ref={watermarkRef}
         className="absolute"
         style={{
-          left: centerX,
-          top: centerY,
-          transform: 'translate(-50%, -50%)',
+          left: positionX,
+          top: positionY,
+          transform: 'translate(0, 0)',
           display: 'flex',
           alignItems: 'center',
           gap: gap,
@@ -537,6 +740,7 @@ function WatermarkPreview(props: {
           color: spec.color || '#fff',
           fontFamily,
           fontSize,
+          zIndex: 1,
           pointerEvents: draggable ? 'auto' : 'none',
           cursor: draggable ? 'grab' : 'default',
           userSelect: draggable ? 'none' : undefined,
