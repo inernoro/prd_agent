@@ -5,6 +5,7 @@ import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Dialog } from '@/components/ui/Dialog';
+import { WatermarkSettingsPanel } from '@/components/watermark/WatermarkSettingsPanel';
 import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts, listLiteraryPrompts, createLiteraryPrompt, updateLiteraryPrompt, deleteLiteraryPrompt } from '@/services';
 import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contracts/systemPrompts';
@@ -1224,9 +1225,14 @@ export default function PromptStagesPage() {
       {showSystemPrompts && (
         <div
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-          style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
+          style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px' }}
         >
-          <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+          <div className="min-h-0 flex flex-col">
+            <div
+              className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
+              style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
+            >
+              <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
               <div className="shrink-0">
@@ -1301,7 +1307,7 @@ export default function PromptStagesPage() {
             </div>
           </Card>
 
-          <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+              <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-3">
@@ -1492,6 +1498,12 @@ export default function PromptStagesPage() {
               </div>
             )}
           </Card>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex flex-col">
+            <WatermarkSettingsPanel />
+          </div>
         </div>
       )}
 
@@ -1645,5 +1657,3 @@ export default function PromptStagesPage() {
     </div>
   );
 }
-
-

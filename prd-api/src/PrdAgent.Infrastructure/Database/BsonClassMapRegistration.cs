@@ -61,6 +61,7 @@ public static class BsonClassMapRegistration
             RegisterOpenPlatformRequestLog();
             RegisterSystemRole();
             RegisterUserPreferences();
+            RegisterWatermarkSettings();
 
             _registered = true;
         }
@@ -535,6 +536,46 @@ public static class BsonClassMapRegistration
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
+    }
+
+    private static void RegisterWatermarkSettings()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(WatermarkSettings))) return;
+
+        BsonClassMap.RegisterClassMap<WatermarkSettings>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.MapMember(x => x.OwnerUserId).SetElementName("ownerUserId");
+            cm.MapMember(x => x.Enabled).SetElementName("enabled");
+            cm.MapMember(x => x.Spec).SetElementName("spec");
+            cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
+            cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+            cm.SetIgnoreExtraElements(true);
+        });
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(WatermarkSpec)))
+        {
+            BsonClassMap.RegisterClassMap<WatermarkSpec>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapMember(x => x.Enabled).SetElementName("enabled");
+                cm.MapMember(x => x.Text).SetElementName("text");
+                cm.MapMember(x => x.FontKey).SetElementName("fontKey");
+                cm.MapMember(x => x.FontSizePx).SetElementName("fontSizePx");
+                cm.MapMember(x => x.Opacity).SetElementName("opacity");
+                cm.MapMember(x => x.PosXRatio).SetElementName("posXRatio");
+                cm.MapMember(x => x.PosYRatio).SetElementName("posYRatio");
+                cm.MapMember(x => x.IconEnabled).SetElementName("iconEnabled");
+                cm.MapMember(x => x.IconImageRef).SetElementName("iconImageRef");
+                cm.MapMember(x => x.BaseCanvasWidth).SetElementName("baseCanvasWidth");
+                cm.MapMember(x => x.ModelKey).SetElementName("modelKey");
+                cm.MapMember(x => x.Color).SetElementName("color");
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
     }
 
     private static void RegisterParsedPrd()
