@@ -371,6 +371,7 @@ function WatermarkEditor(props: {
               draggable
               showCrosshair
               showDistances
+              distancePlacement="outside"
               onPositionChange={(next) => updateSpec(next)}
             />
           </div>
@@ -527,6 +528,7 @@ function WatermarkEditor(props: {
                   height={previewHeight}
                   previewImage={previewImage}
                   showDistances
+                  distancePlacement="inside"
                 />
               </div>
             );
@@ -557,9 +559,21 @@ function WatermarkPreview(props: {
   draggable?: boolean;
   showCrosshair?: boolean;
   showDistances?: boolean;
+  distancePlacement?: 'inside' | 'outside';
   onPositionChange?: (next: Pick<WatermarkSpec, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
-  const { spec, font, size, height, previewImage, draggable, showCrosshair, showDistances, onPositionChange } = props;
+  const {
+    spec,
+    font,
+    size,
+    height,
+    previewImage,
+    draggable,
+    showCrosshair,
+    showDistances,
+    distancePlacement = 'outside',
+    onPositionChange,
+  } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const width = size;
@@ -579,6 +593,7 @@ function WatermarkPreview(props: {
   const textRef = useRef<HTMLSpanElement | null>(null);
   const iconRef = useRef<HTMLImageElement | null>(null);
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
+  const [measureTick, setMeasureTick] = useState(0);
 
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
   const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0);
@@ -672,18 +687,24 @@ function WatermarkPreview(props: {
       observer.observe(target);
     }
 
-    const fontReady = document.fonts?.ready;
-    if (fontReady) {
-      void fontReady.then(() => updateSize());
+    if (document.fonts?.ready) {
+      void document.fonts.ready.then(() => updateSize());
+    }
+    if (document.fonts?.load) {
+      void document.fonts.load(`${fontSize}px ${fontFamily}`).then(() => updateSize());
     }
 
     const raf = window.requestAnimationFrame(() => updateSize());
+    const timeout = window.setTimeout(() => updateSize(), 0);
+    const timeout2 = window.setTimeout(() => updateSize(), 120);
 
     return () => {
       window.cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+      window.clearTimeout(timeout2);
       observer?.disconnect();
     };
-  }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight]);
+  }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight, measureTick]);
 
   useEffect(() => {
     if (!draggable || !canvasRef.current) return;
@@ -737,6 +758,22 @@ function WatermarkPreview(props: {
     };
   }, [draggable]);
 
+  const distanceWrapperStyle = distancePlacement === 'outside'
+    ? { inset: -18 }
+    : { inset: 6 };
+  const topLabelClass = distancePlacement === 'outside'
+    ? 'absolute left-1/2 top-0 -translate-x-1/2 text-[11px] font-semibold'
+    : 'absolute left-1/2 top-2 -translate-x-1/2 text-[11px] font-semibold';
+  const bottomLabelClass = distancePlacement === 'outside'
+    ? 'absolute left-1/2 bottom-0 -translate-x-1/2 text-[11px] font-semibold'
+    : 'absolute left-1/2 bottom-2 -translate-x-1/2 text-[11px] font-semibold';
+  const leftLabelClass = distancePlacement === 'outside'
+    ? 'absolute left-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold'
+    : 'absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold';
+  const rightLabelClass = distancePlacement === 'outside'
+    ? 'absolute right-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold'
+    : 'absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold';
+
   return (
     <div
       ref={canvasRef}
@@ -746,7 +783,7 @@ function WatermarkPreview(props: {
         height: canvasHeight,
         background: previewImage ? `url(${previewImage}) center/cover no-repeat` : 'rgba(255,255,255,0.04)',
         border: '1px dashed rgba(255,255,255,0.12)',
-        overflow: showDistances ? 'visible' : 'hidden',
+        overflow: showDistances && distancePlacement === 'outside' ? 'visible' : 'hidden',
       }}
     >
       {showCrosshair ? (
@@ -772,27 +809,27 @@ function WatermarkPreview(props: {
         </div>
       ) : null}
       {showDistances ? (
-        <div className="absolute pointer-events-none" style={{ zIndex: 2, inset: -18 }}>
+        <div className="absolute pointer-events-none" style={{ zIndex: 2, ...distanceWrapperStyle }}>
           <div
-            className="absolute left-1/2 top-0 -translate-x-1/2 text-[11px] font-semibold"
+            className={topLabelClass}
             style={{ color: activeSides.top ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
           >
             {distanceLabels.top}px
           </div>
           <div
-            className="absolute right-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold"
+            className={rightLabelClass}
             style={{ color: activeSides.right ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
           >
             {distanceLabels.right}px
           </div>
           <div
-            className="absolute left-1/2 bottom-0 -translate-x-1/2 text-[11px] font-semibold"
+            className={bottomLabelClass}
             style={{ color: activeSides.bottom ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
           >
             {distanceLabels.bottom}px
           </div>
           <div
-            className="absolute left-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold"
+            className={leftLabelClass}
             style={{ color: activeSides.left ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
           >
             {distanceLabels.left}px
@@ -835,6 +872,7 @@ function WatermarkPreview(props: {
               alt="watermark icon"
               draggable={false}
               ref={iconRef}
+              onLoad={() => setMeasureTick((value) => value + 1)}
               style={{
                 width: iconSize,
                 height: iconSize,
