@@ -58,17 +58,21 @@ const buildDefaultSpec = (fontKey: string): WatermarkSpec => ({
   backgroundColor: '#000000',
 });
 
-const normalizeSpec = (spec: WatermarkSpec): WatermarkSpec => ({
-  ...spec,
-  positionMode: spec.positionMode ?? 'pixel',
-  anchor: spec.anchor ?? 'bottom-right',
-  offsetX: Number.isFinite(spec.offsetX) ? spec.offsetX : 24,
-  offsetY: Number.isFinite(spec.offsetY) ? spec.offsetY : 24,
-  borderEnabled: Boolean(spec.borderEnabled),
-  backgroundEnabled: Boolean(spec.backgroundEnabled),
-  textColor: spec.textColor ?? spec.color ?? '#FFFFFF',
-  backgroundColor: spec.backgroundColor ?? '#000000',
-});
+const normalizeSpec = (spec: WatermarkSpec): WatermarkSpec => {
+  const resolvedTextColor = spec.textColor ?? spec.color ?? '#FFFFFF';
+  return {
+    ...spec,
+    positionMode: spec.positionMode ?? 'pixel',
+    anchor: spec.anchor ?? 'bottom-right',
+    offsetX: Number.isFinite(spec.offsetX) ? spec.offsetX : 24,
+    offsetY: Number.isFinite(spec.offsetY) ? spec.offsetY : 24,
+    borderEnabled: Boolean(spec.borderEnabled),
+    backgroundEnabled: Boolean(spec.backgroundEnabled),
+    textColor: resolvedTextColor,
+    color: resolvedTextColor,
+    backgroundColor: spec.backgroundColor ?? '#000000',
+  };
+};
 
 const anchorList: WatermarkAnchor[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
@@ -664,7 +668,7 @@ function WatermarkEditor(props: {
                   type="color"
                   value={(spec.textColor || spec.color || '#ffffff') as string}
                   className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
-                  onChange={(e) => updateSpec({ textColor: e.target.value })}
+                  onChange={(e) => updateSpec({ textColor: e.target.value, color: e.target.value })}
                 />
               </label>
               <label
@@ -897,19 +901,66 @@ function WatermarkPreview(props: {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
   const iconRef = useRef<HTMLImageElement | null>(null);
+  const lastMeasuredSizeRef = useRef({ width: 0, height: 0 });
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
   const [measureTick, setMeasureTick] = useState(0);
+  const [measuredSignature, setMeasuredSignature] = useState('');
+  const [fontReady, setFontReady] = useState(false);
+  const measureSignature = useMemo(
+    () =>
+      [
+        spec.text,
+        spec.iconEnabled ? '1' : '0',
+        spec.iconImageRef ?? '',
+        spec.backgroundEnabled ? '1' : '0',
+        spec.borderEnabled ? '1' : '0',
+        fontFamily,
+        fontSize.toFixed(2),
+      ].join('|'),
+    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, fontFamily, fontSize]
+  );
+
+  useLayoutEffect(() => {
+    setWatermarkSize({ width: 0, height: 0 });
+    setMeasuredSignature('');
+    setFontReady(false);
+  }, [measureSignature]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!document.fonts?.load) {
+      setFontReady(true);
+      return undefined;
+    }
+    setFontReady(false);
+    void document.fonts
+      .load(`${fontSize}px "${fontFamily}"`)
+      .then(() => {
+        if (!cancelled) setFontReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setFontReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fontFamily, fontSize, measureSignature]);
 
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
   const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0) + decorationPadding * 2;
   const estimatedHeight = Math.max(fontSize, iconSize) + decorationPadding * 2;
   const measuredWidth = watermarkSize.width || estimatedWidth;
   const measuredHeight = watermarkSize.height || estimatedHeight;
+  const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
+  const pendingMeasure = measuredSignature !== measureSignature;
+  const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
+  const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
+  const hideUntilMeasured = !fontReady || measuredSignature !== measureSignature;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
-  const maxX = Math.max(width - measuredWidth, 0);
-  const maxY = Math.max(canvasHeight - measuredHeight, 0);
+  const maxX = Math.max(width - effectiveWidth, 0);
+  const maxY = Math.max(canvasHeight - effectiveHeight, 0);
 
   let positionX = 0;
   let positionY = 0;
@@ -919,23 +970,23 @@ function WatermarkPreview(props: {
       positionY = offsetY;
       break;
     case 'top-right':
-      positionX = width - measuredWidth - offsetX;
+      positionX = width - effectiveWidth - offsetX;
       positionY = offsetY;
       break;
     case 'bottom-left':
       positionX = offsetX;
-      positionY = canvasHeight - measuredHeight - offsetY;
+      positionY = canvasHeight - effectiveHeight - offsetY;
       break;
     case 'bottom-right':
     default:
-      positionX = width - measuredWidth - offsetX;
-      positionY = canvasHeight - measuredHeight - offsetY;
+      positionX = width - effectiveWidth - offsetX;
+      positionY = canvasHeight - effectiveHeight - offsetY;
       break;
   }
 
   positionX = clampPixel(positionX, 0, maxX);
   positionY = clampPixel(positionY, 0, maxY);
-  const watermarkRect = { x: positionX, y: positionY, width: measuredWidth, height: measuredHeight };
+  const watermarkRect = { x: positionX, y: positionY, width: effectiveWidth, height: effectiveHeight };
   const activeAnchor = getDominantAnchor(watermarkRect, width, canvasHeight, spec.anchor);
   const distanceLabels = {
     top: Math.round(watermarkRect.y),
@@ -982,6 +1033,10 @@ function WatermarkPreview(props: {
         }
         return { width: combinedWidth, height: combinedHeight };
       });
+      lastMeasuredSizeRef.current = { width: combinedWidth, height: combinedHeight };
+      if (fontReady) {
+        setMeasuredSignature(measureSignature);
+      }
     };
 
     updateSize();
@@ -996,7 +1051,7 @@ function WatermarkPreview(props: {
       void document.fonts.ready.then(() => updateSize());
     }
     if (document.fonts?.load) {
-      void document.fonts.load(`${fontSize}px ${fontFamily}`).then(() => updateSize()).catch(() => undefined);
+      void document.fonts.load(`${fontSize}px "${fontFamily}"`).then(() => updateSize()).catch(() => undefined);
     }
 
     const raf = window.requestAnimationFrame(() => updateSize());
@@ -1020,6 +1075,7 @@ function WatermarkPreview(props: {
     width,
     canvasHeight,
     measureTick,
+    fontReady,
   ]);
 
   useEffect(() => {
@@ -1162,6 +1218,7 @@ function WatermarkPreview(props: {
           transform: 'translate(0, 0)',
           opacity: spec.opacity,
           zIndex: 1,
+          visibility: hideUntilMeasured ? 'hidden' : 'visible',
           pointerEvents: draggable ? 'auto' : 'none',
           cursor: draggable ? 'grab' : 'default',
           userSelect: draggable ? 'none' : undefined,

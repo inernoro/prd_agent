@@ -534,22 +534,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         await updateMarkerStatus(markerIndex, {
                           status: 'parsed',
                           draftText: planItem.prompt,
+                          planItem: {
+                            prompt: planItem.prompt,
+                            count: planItem.count,
+                            size: planItem.size,
+                          },
                         });
-                        
-                        // 保存 planItem 到后端（需要扩展 API）
-                        try {
-                          await updateArticleMarker({
-                            workspaceId,
-                            markerIndex,
-                            planItem: {
-                              prompt: planItem.prompt,
-                              count: planItem.count,
-                              size: planItem.size,
-                            },
-                          });
-                        } catch (error) {
-                          console.error('Failed to save planItem:', error);
-                        }
                       } else {
                         setMarkerRunItems((prev) =>
                           prev.map((x) =>
@@ -643,6 +633,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             : x
                         )
                       );
+                      await updateMarkerStatus(markerIndex, {
+                        status: 'parsed',
+                        draftText: planItem.prompt,
+                        planItem: {
+                          prompt: planItem.prompt,
+                          count: planItem.count,
+                          size: planItem.size,
+                        },
+                      });
                     } else {
                       setMarkerRunItems((p) =>
                         p.map((x) =>
@@ -699,6 +698,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             : x
                         )
                       );
+                      await updateMarkerStatus(markerIndex, {
+                        status: 'parsed',
+                        draftText: planItem.prompt,
+                        planItem: {
+                          prompt: planItem.prompt,
+                          count: planItem.count,
+                          size: planItem.size,
+                        },
+                      });
                     } else {
                       setMarkerRunItems((p) =>
                         p.map((x) =>
@@ -844,6 +852,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
   const runSingleMarker = async (markerIndex: number) => {
+    if (isStreamingRef.current) {
+      await systemDialog.alert('标记正在生成中，请稍后再试');
+      return;
+    }
     if (!imageGenModel) {
       await systemDialog.alert(imageGenModelError || '未选择生图模型');
       return;
@@ -889,7 +901,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'parsed', planItem: first } : x))
     );
-    await updateMarkerStatus(markerIndex, { status: 'parsed', draftText: plannedPrompt }); // 保存
+    await updateMarkerStatus(markerIndex, {
+      status: 'parsed',
+      draftText: plannedPrompt,
+      planItem: {
+        prompt: first.prompt,
+        count: first.count,
+        size: first.size,
+      },
+    }); // 保存
 
     // 2) 创建 run（传入 workspaceId，后端会自动保存到 COS）
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'running' } : x)));
@@ -1035,12 +1055,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     status?: string;
     runId?: string;
     errorMessage?: string;
+    planItem?: { prompt: string; count?: number; size?: string };
   }) => {
     try {
+      const planItem = updates.planItem
+        ? {
+            prompt: updates.planItem.prompt,
+            count: updates.planItem.count ?? 1,
+            size: updates.planItem.size,
+          }
+        : undefined;
       await updateArticleMarker({
         workspaceId,
         markerIndex,
         ...updates,
+        planItem,
       });
     } catch (error) {
       console.error('Failed to update marker status:', error);
@@ -1372,7 +1401,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       label: '一键生图',
       action: handleBatchGenerate,
       icon: Sparkles,
-      disabled: !imageGenModel || markerRunItems.length === 0,
+      disabled: !imageGenModel || generating,
       show: phase === 2 && markerRunItems.filter(x => x.status === 'done').length === 0, // MarkersGenerated
     },
     {

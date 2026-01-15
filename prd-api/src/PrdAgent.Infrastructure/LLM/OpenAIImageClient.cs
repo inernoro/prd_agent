@@ -1203,6 +1203,7 @@ public class OpenAIImageClient
 
     private static bool IsSafeExternalImageUri(Uri uri)
     {
+        if (IsStubAssetUri(uri)) return true;
         if (!string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase)) return false;
         if (string.IsNullOrWhiteSpace(uri.Host)) return false;
 
@@ -1215,6 +1216,13 @@ public class OpenAIImageClient
         }
 
         return true;
+    }
+
+    private static bool IsStubAssetUri(Uri uri)
+    {
+        if (!uri.AbsolutePath.StartsWith("/api/v1/stub/assets/", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        return IPAddress.TryParse(uri.Host, out var ip) && IPAddress.IsLoopback(ip);
     }
 
     private static bool IsPrivateOrLocalIp(IPAddress ip)

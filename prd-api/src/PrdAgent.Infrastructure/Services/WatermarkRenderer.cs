@@ -59,8 +59,9 @@ public class WatermarkRenderer
         var textLeft = (float)(watermarkLeft + iconWidth + padding);
         var textTop = (float)(watermarkTop + padding);
 
-        var textColor = ResolveColorHex(spec.TextColor ?? spec.Color, spec.Opacity);
-        var borderColor = ResolveColorHex(spec.TextColor ?? spec.Color, spec.Opacity);
+        var textColorValue = !string.IsNullOrWhiteSpace(spec.TextColor) ? spec.TextColor : spec.Color;
+        var textColor = ResolveColorHex(textColorValue, spec.Opacity);
+        var borderColor = ResolveColorHex(textColorValue, spec.Opacity);
         var backgroundColor = ResolveColorHex(spec.BackgroundColor, spec.Opacity, fallback: Color.FromRgba(0, 0, 0, (byte)Math.Round(0.4 * 255)));
 
         image.Mutate(ctx =>

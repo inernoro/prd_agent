@@ -86,6 +86,14 @@ public class WatermarkController : ControllerBase
 
         var spec = request.Spec;
         spec.FontKey = _fontRegistry.NormalizeFontKey(spec.FontKey);
+        if (string.IsNullOrWhiteSpace(spec.TextColor) && !string.IsNullOrWhiteSpace(spec.Color))
+        {
+            spec.TextColor = spec.Color;
+        }
+        if (string.IsNullOrWhiteSpace(spec.Color) && !string.IsNullOrWhiteSpace(spec.TextColor))
+        {
+            spec.Color = spec.TextColor;
+        }
         var allowedFontKeys = await GetAllowedFontKeysAsync(userId, ct);
         var (ok, message) = WatermarkSpecValidator.Validate(spec, allowedFontKeys);
         if (!ok)
