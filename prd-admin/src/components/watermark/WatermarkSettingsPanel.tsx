@@ -629,14 +629,38 @@ function WatermarkPreview(props: {
 
   useLayoutEffect(() => {
     if (!contentRef.current) return;
-    const rect = contentRef.current.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    setWatermarkSize((prev) => {
-      if (Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5) {
-        return prev;
-      }
-      return { width: rect.width, height: rect.height };
-    });
+    const target = contentRef.current;
+
+    const updateSize = () => {
+      const rect = target.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      setWatermarkSize((prev) => {
+        if (Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5) {
+          return prev;
+        }
+        return { width: rect.width, height: rect.height };
+      });
+    };
+
+    updateSize();
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateSize());
+      observer.observe(target);
+    }
+
+    const fontReady = document.fonts?.ready;
+    if (fontReady) {
+      void fontReady.then(() => updateSize());
+    }
+
+    const raf = window.requestAnimationFrame(() => updateSize());
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
   }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight]);
 
   useEffect(() => {
