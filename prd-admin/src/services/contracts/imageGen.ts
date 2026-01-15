@@ -72,6 +72,7 @@ export type ImageGenSizeCapsItem = {
   modelId?: string | null;
   platformId?: string | null;
   modelName?: string | null;
+  allowedSizes?: string[];
   allowedCount: number;
   updatedAt: string;
 };
@@ -179,4 +180,3 @@ export type StreamImageGenRunWithRetryContract = (args: {
   /** 最大重连次数；默认 10（含首次连接） */
   maxAttempts?: number;
 }) => Promise<ApiResponse<true>>;
-

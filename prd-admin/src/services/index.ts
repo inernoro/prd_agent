@@ -13,6 +13,11 @@ import type {
   UpdateUserAuthzContract,
 } from '@/services/contracts/authz';
 import type {
+  GetAdminNotificationsContract,
+  HandleAdminNotificationContract,
+  HandleAllAdminNotificationsContract,
+} from '@/services/contracts/notifications';
+import type {
   GetUsersContract,
   GenerateInviteCodesContract,
   CreateAdminUserContract,
@@ -292,6 +297,11 @@ import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
 import { getUserPreferencesReal, updateNavOrderReal } from '@/services/real/userPreferences';
+import {
+  getAdminNotificationsReal,
+  handleAdminNotificationReal,
+  handleAllAdminNotificationsReal,
+} from '@/services/real/notifications';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -314,6 +324,9 @@ export const deleteSystemRole: DeleteSystemRoleContract = withAuth(deleteSystemR
 export const resetBuiltInSystemRoles: ResetBuiltInSystemRolesContract = withAuth(resetBuiltInSystemRolesReal);
 export const getUserAuthz: GetUserAuthzContract = withAuth(getUserAuthzReal);
 export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthzReal);
+export const getAdminNotifications: GetAdminNotificationsContract = withAuth(getAdminNotificationsReal);
+export const handleAdminNotification: HandleAdminNotificationContract = withAuth(handleAdminNotificationReal);
+export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
 export const createUser: CreateAdminUserContract = withAuth(createUserReal);
@@ -535,6 +548,7 @@ export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService
 
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
 export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
+
 export const getWatermark: GetWatermarkContract = withAuth(getWatermarkReal);
 export const putWatermark: PutWatermarkContract = withAuth(putWatermarkReal);
 export const getWatermarkFonts: GetWatermarkFontsContract = withAuth(getWatermarkFontsReal);

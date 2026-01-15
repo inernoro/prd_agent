@@ -44,6 +44,7 @@ public class MongoDbContext
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
+    public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     /// <summary>
     /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
     /// </summary>

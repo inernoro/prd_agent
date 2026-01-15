@@ -36,6 +36,11 @@ public sealed class AdminPermissionMiddleware
             return AdminPermissionCatalog.AdminAccess;
         }
 
+        if (path.StartsWith("/api/v1/admin/notifications", StringComparison.OrdinalIgnoreCase))
+        {
+            return AdminPermissionCatalog.AdminAccess;
+        }
+
         // 权限管理本身（最敏感）
         if (path.StartsWith("/api/v1/admin/authz", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("/api/v1/admin/system-roles", StringComparison.OrdinalIgnoreCase) ||
@@ -183,4 +188,3 @@ public sealed class AdminPermissionMiddleware
         await _next(context);
     }
 }
-
