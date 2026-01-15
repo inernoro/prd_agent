@@ -393,8 +393,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 支持常见图片扩展
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif" };
+        // 支持常见图片/字体扩展
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2" };
         foreach (var ext in exts)
         {
             // 1) 新规则（domain/type）
@@ -420,8 +420,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 由于 ext 可能未知，这里按常见图片扩展逐个尝试删除（不存在视为成功）
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif" };
+        // 由于 ext 可能未知，这里按常见图片/字体扩展逐个尝试删除（不存在视为成功）
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2" };
         foreach (var ext in exts)
         {
             try
@@ -608,6 +608,10 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "image/jpeg" or "image/jpg" => "jpg",
             "image/webp" => "webp",
             "image/gif" => "gif",
+            "font/ttf" or "application/x-font-ttf" or "application/font-sfnt" => "ttf",
+            "font/otf" or "application/x-font-opentype" => "otf",
+            "font/woff" or "application/font-woff" => "woff",
+            "font/woff2" or "application/font-woff2" => "woff2",
             _ => "png"
         };
     }
@@ -619,6 +623,10 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "jpg" or "jpeg" => "image/jpeg",
             "webp" => "image/webp",
             "gif" => "image/gif",
+            "ttf" => "font/ttf",
+            "otf" => "font/otf",
+            "woff" => "font/woff",
+            "woff2" => "font/woff2",
             _ => "image/png"
         };
     }
@@ -902,5 +910,4 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return null;
     }
 }
-
 

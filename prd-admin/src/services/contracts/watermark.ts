@@ -12,9 +12,13 @@ export type WatermarkSpec = {
   offsetY: number;
   iconEnabled: boolean;
   iconImageRef?: string | null;
+  borderEnabled?: boolean;
+  backgroundEnabled?: boolean;
   baseCanvasWidth: number;
   modelKey?: string | null;
   color?: string | null;
+  textColor?: string | null;
+  backgroundColor?: string | null;
 };
 
 export type WatermarkSettings = {
@@ -44,3 +48,5 @@ export type GetWatermarkContract = () => Promise<ApiResponse<WatermarkSettings>>
 export type PutWatermarkContract = (input: { spec: WatermarkSpec }) => Promise<ApiResponse<WatermarkSettings>>;
 export type GetWatermarkFontsContract = () => Promise<ApiResponse<WatermarkFontInfo[]>>;
 export type GetModelSizesContract = (input: { modelKey: string }) => Promise<ApiResponse<{ modelKey: string; sizes: ModelSizeInfo[] }>>;
+export type UploadWatermarkFontContract = (input: { file: File; displayName?: string }) => Promise<ApiResponse<WatermarkFontInfo>>;
+export type DeleteWatermarkFontContract = (input: { fontKey: string }) => Promise<ApiResponse<{ deleted: boolean }>>;

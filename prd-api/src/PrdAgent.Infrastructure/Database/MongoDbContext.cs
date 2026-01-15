@@ -89,6 +89,7 @@ public class MongoDbContext
     public IMongoCollection<ModelTestStub> ModelTestStubs => _database.GetCollection<ModelTestStub>("model_test_stubs");
     public IMongoCollection<SystemRole> SystemRoles => _database.GetCollection<SystemRole>("system_roles");
     public IMongoCollection<UserPreferences> UserPreferences => _database.GetCollection<UserPreferences>("user_preferences");
+    public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkSettings> WatermarkSettings => _database.GetCollection<WatermarkSettings>("watermark_settings");
 
     private void CreateIndexes()
@@ -606,6 +607,18 @@ public class MongoDbContext
         }
         LLMAppCallers.Indexes.CreateOne(new CreateIndexModel<LLMAppCaller>(
             Builders<LLMAppCaller>.IndexKeys.Descending(x => x.LastCalledAt)));
+
+        // WatermarkFontAssets：同一用户 + fontKey 唯一
+        try
+        {
+            WatermarkFontAssets.Indexes.CreateOne(new CreateIndexModel<WatermarkFontAsset>(
+                Builders<WatermarkFontAsset>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.FontKey),
+                new CreateIndexOptions { Unique = true, Name = "uniq_watermark_font_owner_key" }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // WatermarkSettings：同一用户唯一
         try

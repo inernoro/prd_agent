@@ -17,6 +17,7 @@ public static class AppDomainPaths
     public const string DomainImageGen = "imagegen";
     public const string DomainUploads = "uploads";
     public const string DomainLlmLogs = "llmlogs";
+    public const string DomainWatermark = "watermark";
 
     // types（全小写）
     public const string TypeImg = "img";
@@ -24,15 +25,16 @@ public static class AppDomainPaths
     public const string TypeLog = "log";
     public const string TypeDoc = "doc";
     public const string TypeMeta = "meta";
+    public const string TypeFont = "font";
 
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
-        DomainImageMaster, DomainImageGen, DomainUploads, DomainLlmLogs,
+        DomainImageMaster, DomainImageGen, DomainUploads, DomainLlmLogs, DomainWatermark,
     };
 
     private static readonly HashSet<string> TypeAllow = new(StringComparer.Ordinal)
     {
-        TypeImg, TypeBin, TypeLog, TypeDoc, TypeMeta,
+        TypeImg, TypeBin, TypeLog, TypeDoc, TypeMeta, TypeFont,
     };
 
     private static readonly Regex SafeSeg = new("^[a-z0-9][a-z0-9_-]*$", RegexOptions.Compiled);
@@ -73,5 +75,4 @@ public static class AppDomainPaths
         return $"{d}/{t}/{sha}.{e}";
     }
 }
-
 
