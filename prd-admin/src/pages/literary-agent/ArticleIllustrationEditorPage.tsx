@@ -804,7 +804,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           String(it.assetUrl || it.url || '').trim() ||
           (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
 
-        if (url) {
+        if (url && it.status === 'done') {
           changed = true;
           patches.push({
             start: m.startPos,
@@ -875,7 +875,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) =>
         x.markerIndex === markerIndex
-          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null }
+          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null, base64: null, url: null, assetUrl: null }
           : x
       )
     );
@@ -915,7 +915,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }); // 保存
 
     // 2) 创建 run（传入 workspaceId，后端会自动保存到 COS）
-    setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'running' } : x)));
+    setMarkerRunItems((prev) =>
+      prev.map((x) =>
+        x.markerIndex === markerIndex ? { ...x, status: 'running', base64: null, url: null, assetUrl: null } : x
+      )
+    );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const created = await createImageGenRun({
       input: {
@@ -964,6 +968,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const o = obj as Record<string, unknown>;
         const t = String(o.type ?? '');
         if (t === 'imageDone') {
+          const evtRunId = String(o.runId ?? '').trim();
+          if (evtRunId && evtRunId !== runId) return;
           const b64 = (o.base64 as string | null | undefined) ?? null;
           const url = (o.url as string | null | undefined) ?? null;
           gotBase64 = b64;
