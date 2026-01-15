@@ -370,6 +370,8 @@ function WatermarkEditor(props: {
               previewImage={previewImage}
               draggable
               showCrosshair
+              showDistances
+              distancePlacement="outside"
               onPositionChange={(next) => updateSpec(next)}
             />
           </div>
@@ -519,13 +521,18 @@ function WatermarkEditor(props: {
             return (
               <div key={size.label} className="rounded-[12px] p-2" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
                 <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
-                <WatermarkPreview
-                  spec={spec}
-                  font={currentFont}
-                  size={previewWidth}
-                  height={previewHeight}
-                  previewImage={previewImage}
-                />
+                <div className="flex items-center justify-center">
+                  <WatermarkPreview
+                    spec={spec}
+                    font={currentFont}
+                    size={previewWidth}
+                    height={previewHeight}
+                    previewImage={previewImage}
+                    showDistances
+                    showCrosshair
+                    distancePlacement="inside"
+                  />
+                </div>
               </div>
             );
           })}
@@ -554,9 +561,22 @@ function WatermarkPreview(props: {
   previewImage?: string | null;
   draggable?: boolean;
   showCrosshair?: boolean;
+  showDistances?: boolean;
+  distancePlacement?: 'inside' | 'outside';
   onPositionChange?: (next: Pick<WatermarkSpec, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
-  const { spec, font, size, height, previewImage, draggable, showCrosshair, onPositionChange } = props;
+  const {
+    spec,
+    font,
+    size,
+    height,
+    previewImage,
+    draggable,
+    showCrosshair,
+    showDistances,
+    distancePlacement = 'outside',
+    onPositionChange,
+  } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const width = size;
@@ -572,7 +592,11 @@ function WatermarkPreview(props: {
   const gap = fontSize / 4;
 
   const watermarkRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLSpanElement | null>(null);
+  const iconRef = useRef<HTMLImageElement | null>(null);
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
+  const [measureTick, setMeasureTick] = useState(0);
 
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
   const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0);
@@ -611,6 +635,18 @@ function WatermarkPreview(props: {
   positionY = clampPixel(positionY, 0, maxY);
   const watermarkRect = { x: positionX, y: positionY, width: measuredWidth, height: measuredHeight };
   const activeAnchor = getDominantAnchor(watermarkRect, width, canvasHeight, spec.anchor);
+  const distanceLabels = {
+    top: Math.round(watermarkRect.y),
+    right: Math.round(Math.max(0, width - (watermarkRect.x + watermarkRect.width))),
+    bottom: Math.round(Math.max(0, canvasHeight - (watermarkRect.y + watermarkRect.height))),
+    left: Math.round(watermarkRect.x),
+  };
+  const activeSides = {
+    top: spec.anchor === 'top-left' || spec.anchor === 'top-right',
+    right: spec.anchor === 'top-right' || spec.anchor === 'bottom-right',
+    bottom: spec.anchor === 'bottom-left' || spec.anchor === 'bottom-right',
+    left: spec.anchor === 'top-left' || spec.anchor === 'bottom-left',
+  };
 
   // 使用 ref 存储回调和位置，避免依赖变化导致拖拽中断
   const posRef = useRef({ x: positionX, y: positionY });
@@ -627,16 +663,51 @@ function WatermarkPreview(props: {
   anchorRef.current = spec.anchor;
 
   useLayoutEffect(() => {
-    if (!watermarkRef.current) return;
-    const rect = watermarkRef.current.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    setWatermarkSize((prev) => {
-      if (Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5) {
-        return prev;
-      }
-      return { width: rect.width, height: rect.height };
-    });
-  }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight]);
+    if (!contentRef.current) return;
+    const target = contentRef.current;
+
+    const updateSize = () => {
+      const textRect = textRef.current?.getBoundingClientRect();
+      if (!textRect || !textRect.width || !textRect.height) return;
+      const iconRect = iconRef.current?.getBoundingClientRect();
+      const iconWidth = iconRect?.width ?? 0;
+      const iconHeight = iconRect?.height ?? 0;
+      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0);
+      const combinedHeight = Math.max(textRect.height, iconHeight);
+      setWatermarkSize((prev) => {
+        if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
+          return prev;
+        }
+        return { width: combinedWidth, height: combinedHeight };
+      });
+    };
+
+    updateSize();
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateSize());
+      observer.observe(target);
+    }
+
+    if (document.fonts?.ready) {
+      void document.fonts.ready.then(() => updateSize());
+    }
+    if (document.fonts?.load) {
+      void document.fonts.load(`${fontSize}px ${fontFamily}`).then(() => updateSize());
+    }
+
+    const raf = window.requestAnimationFrame(() => updateSize());
+    const timeout = window.setTimeout(() => updateSize(), 0);
+    const timeout2 = window.setTimeout(() => updateSize(), 120);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+      window.clearTimeout(timeout2);
+      observer?.disconnect();
+    };
+  }, [spec.text, spec.iconEnabled, spec.iconImageRef, fontFamily, fontSize, width, canvasHeight, measureTick]);
 
   useEffect(() => {
     if (!draggable || !canvasRef.current) return;
@@ -690,15 +761,32 @@ function WatermarkPreview(props: {
     };
   }, [draggable]);
 
+  const distanceWrapperStyle = distancePlacement === 'outside'
+    ? { inset: -18 }
+    : { inset: 6 };
+  const topLabelClass = distancePlacement === 'outside'
+    ? 'absolute left-1/2 top-0 -translate-x-1/2 text-[11px] font-semibold'
+    : 'absolute left-1/2 top-2 -translate-x-1/2 text-[11px] font-semibold';
+  const bottomLabelClass = distancePlacement === 'outside'
+    ? 'absolute left-1/2 bottom-0 -translate-x-1/2 text-[11px] font-semibold'
+    : 'absolute left-1/2 bottom-2 -translate-x-1/2 text-[11px] font-semibold';
+  const leftLabelClass = distancePlacement === 'outside'
+    ? 'absolute left-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold'
+    : 'absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold';
+  const rightLabelClass = distancePlacement === 'outside'
+    ? 'absolute right-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold'
+    : 'absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold';
+
   return (
     <div
       ref={canvasRef}
-      className="relative overflow-hidden rounded-[12px]"
+      className="relative"
       style={{
         width,
         height: canvasHeight,
         background: previewImage ? `url(${previewImage}) center/cover no-repeat` : 'rgba(255,255,255,0.04)',
         border: '1px dashed rgba(255,255,255,0.12)',
+        overflow: showDistances && distancePlacement === 'outside' ? 'visible' : 'hidden',
       }}
     >
       {showCrosshair ? (
@@ -723,6 +811,34 @@ function WatermarkPreview(props: {
           </div>
         </div>
       ) : null}
+      {showDistances ? (
+        <div className="absolute pointer-events-none" style={{ zIndex: 2, ...distanceWrapperStyle }}>
+          <div
+            className={topLabelClass}
+            style={{ color: activeSides.top ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
+            {distanceLabels.top}px
+          </div>
+          <div
+            className={rightLabelClass}
+            style={{ color: activeSides.right ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
+            {distanceLabels.right}px
+          </div>
+          <div
+            className={bottomLabelClass}
+            style={{ color: activeSides.bottom ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
+            {distanceLabels.bottom}px
+          </div>
+          <div
+            className={leftLabelClass}
+            style={{ color: activeSides.left ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
+            {distanceLabels.left}px
+          </div>
+        </div>
+      ) : null}
       <div
         data-watermark
         ref={watermarkRef}
@@ -731,39 +847,47 @@ function WatermarkPreview(props: {
           left: positionX,
           top: positionY,
           transform: 'translate(0, 0)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: gap,
-          padding: draggable ? 12 : 0,
-          margin: draggable ? -12 : 0,
           opacity: spec.opacity,
-          color: spec.color || '#fff',
-          fontFamily,
-          fontSize,
           zIndex: 1,
           pointerEvents: draggable ? 'auto' : 'none',
           cursor: draggable ? 'grab' : 'default',
           userSelect: draggable ? 'none' : undefined,
           WebkitUserSelect: draggable ? 'none' : undefined,
           touchAction: 'none',
+          padding: draggable ? 12 : 0,
+          margin: draggable ? -12 : 0,
         }}
       >
-        {spec.iconEnabled && spec.iconImageRef ? (
-          <img
-            src={spec.iconImageRef}
-            alt="watermark icon"
-            draggable={false}
-            style={{
-              width: iconSize,
-              height: iconSize,
-              objectFit: 'contain',
-              flexShrink: 0,
-            }}
-          />
-        ) : null}
-        <span style={{ whiteSpace: 'nowrap', lineHeight: 1 }}>
-          {spec.text}
-        </span>
+        <div
+          ref={contentRef}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: gap,
+            color: spec.color || '#fff',
+            fontFamily,
+            fontSize,
+          }}
+        >
+          {spec.iconEnabled && spec.iconImageRef ? (
+            <img
+              src={spec.iconImageRef}
+              alt="watermark icon"
+              draggable={false}
+              ref={iconRef}
+              onLoad={() => setMeasureTick((value) => value + 1)}
+              style={{
+                width: iconSize,
+                height: iconSize,
+                objectFit: 'contain',
+                flexShrink: 0,
+              }}
+            />
+          ) : null}
+          <span ref={textRef} style={{ whiteSpace: 'nowrap', lineHeight: 1 }}>
+            {spec.text}
+          </span>
+        </div>
       </div>
     </div>
   );
