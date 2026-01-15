@@ -576,6 +576,8 @@ function WatermarkPreview(props: {
 
   const watermarkRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLSpanElement | null>(null);
+  const iconRef = useRef<HTMLImageElement | null>(null);
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
 
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
@@ -621,6 +623,12 @@ function WatermarkPreview(props: {
     bottom: Math.round(Math.max(0, canvasHeight - (watermarkRect.y + watermarkRect.height))),
     left: Math.round(watermarkRect.x),
   };
+  const activeSides = {
+    top: spec.anchor === 'top-left' || spec.anchor === 'top-right',
+    right: spec.anchor === 'top-right' || spec.anchor === 'bottom-right',
+    bottom: spec.anchor === 'bottom-left' || spec.anchor === 'bottom-right',
+    left: spec.anchor === 'top-left' || spec.anchor === 'bottom-left',
+  };
 
   // 使用 ref 存储回调和位置，避免依赖变化导致拖拽中断
   const posRef = useRef({ x: positionX, y: positionY });
@@ -641,13 +649,18 @@ function WatermarkPreview(props: {
     const target = contentRef.current;
 
     const updateSize = () => {
-      const rect = target.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
+      const textRect = textRef.current?.getBoundingClientRect();
+      if (!textRect || !textRect.width || !textRect.height) return;
+      const iconRect = iconRef.current?.getBoundingClientRect();
+      const iconWidth = iconRect?.width ?? 0;
+      const iconHeight = iconRect?.height ?? 0;
+      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0);
+      const combinedHeight = Math.max(textRect.height, iconHeight);
       setWatermarkSize((prev) => {
-        if (Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5) {
+        if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
           return prev;
         }
-        return { width: rect.width, height: rect.height };
+        return { width: combinedWidth, height: combinedHeight };
       });
     };
 
@@ -727,12 +740,13 @@ function WatermarkPreview(props: {
   return (
     <div
       ref={canvasRef}
-      className="relative overflow-hidden rounded-[12px]"
+      className="relative rounded-[12px]"
       style={{
         width,
         height: canvasHeight,
         background: previewImage ? `url(${previewImage}) center/cover no-repeat` : 'rgba(255,255,255,0.04)',
         border: '1px dashed rgba(255,255,255,0.12)',
+        overflow: showDistances ? 'visible' : 'hidden',
       }}
     >
       {showCrosshair ? (
@@ -758,17 +772,29 @@ function WatermarkPreview(props: {
         </div>
       ) : null}
       {showDistances ? (
-        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }}>
-          <div className="absolute left-1/2 top-2 -translate-x-1/2 text-[11px] font-semibold text-[#FF5C77]">
+        <div className="absolute pointer-events-none" style={{ zIndex: 2, inset: -18 }}>
+          <div
+            className="absolute left-1/2 top-0 -translate-x-1/2 text-[11px] font-semibold"
+            style={{ color: activeSides.top ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
             {distanceLabels.top}px
           </div>
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-[#FF5C77]">
+          <div
+            className="absolute right-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold"
+            style={{ color: activeSides.right ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
             {distanceLabels.right}px
           </div>
-          <div className="absolute left-1/2 bottom-2 -translate-x-1/2 text-[11px] font-semibold text-[#FF5C77]">
+          <div
+            className="absolute left-1/2 bottom-0 -translate-x-1/2 text-[11px] font-semibold"
+            style={{ color: activeSides.bottom ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
             {distanceLabels.bottom}px
           </div>
-          <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-[#FF5C77]">
+          <div
+            className="absolute left-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold"
+            style={{ color: activeSides.left ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+          >
             {distanceLabels.left}px
           </div>
         </div>
@@ -808,6 +834,7 @@ function WatermarkPreview(props: {
               src={spec.iconImageRef}
               alt="watermark icon"
               draggable={false}
+              ref={iconRef}
               style={{
                 width: iconSize,
                 height: iconSize,
@@ -816,7 +843,7 @@ function WatermarkPreview(props: {
               }}
             />
           ) : null}
-          <span style={{ whiteSpace: 'nowrap', lineHeight: 1 }}>
+          <span ref={textRef} style={{ whiteSpace: 'nowrap', lineHeight: 1 }}>
             {spec.text}
           </span>
         </div>
