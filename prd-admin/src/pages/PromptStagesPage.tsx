@@ -1404,6 +1404,8 @@ export default function PromptStagesPage() {
               生效范围：仅 PRD 问答（会话问答 / 本章提问）。不影响 gaps/分析等需要 JSON 输出的内部任务。
             </div>
           </Card>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1498,8 +1500,6 @@ export default function PromptStagesPage() {
               </div>
             )}
           </Card>
-            </div>
-          </div>
 
           <div className="min-h-0 flex flex-col">
             <WatermarkSettingsPanel />

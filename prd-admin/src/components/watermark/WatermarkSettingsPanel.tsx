@@ -401,7 +401,7 @@ function WatermarkEditor(props: {
         </div>
 
         <div className="mt-4 grid gap-3" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-          {(loadingSizes ? Array.from({ length: 4 }) : previewSizes).map((size, idx) => {
+          {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
             if (!size) {
               return (
                 <div key={`placeholder-${idx}`} className="h-[120px] rounded-[12px]" style={{ background: 'rgba(255,255,255,0.06)' }} />
