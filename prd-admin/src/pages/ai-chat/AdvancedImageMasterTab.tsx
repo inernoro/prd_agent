@@ -11,6 +11,7 @@ import {
   deleteImageMasterWorkspaceAsset,
   createWorkspaceImageGenRun,
   getImageMasterWorkspaceDetail,
+  getImageGenSizeCaps,
   getModels,
   planImageGen,
   refreshImageMasterWorkspaceCover,
@@ -755,14 +756,15 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       setAllowedSizes([]);
       return;
     }
-    fetch('/api/v1/admin/image-gen/size-caps?includeFallback=true', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const caps = (data?.data ?? []).find((x: any) => x.modelId === modelId);
+    getImageGenSizeCaps({ includeFallback: true })
+      .then((res) => {
+        if (!res.success) {
+          setAllowedSizes([]);
+          return;
+        }
+        const caps = (res.data?.items ?? []).find((x) => x.modelId === modelId);
         const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
-        setAllowedSizes(sizes.map((s: string) => String(s).trim().toLowerCase()));
+        setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
       })
       .catch(() => setAllowedSizes([]));
   }, [effectiveModel?.id]);

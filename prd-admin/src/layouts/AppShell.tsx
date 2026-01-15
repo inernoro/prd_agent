@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog, User, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog, User, Settings, Bell, CheckCircle2, X } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
@@ -11,10 +11,24 @@ import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
+import { Dialog } from '@/components/ui/Dialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
-import { updateUserAvatar } from '@/services';
+import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
+import type { AdminNotificationItem } from '@/services/contracts/notifications';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string; perm?: string };
+
+const notificationTone = {
+  info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: '#93c5fd' },
+  warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: '#fdba74' },
+  error: { border: 'rgba(248, 113, 113, 0.45)', bg: 'rgba(248, 113, 113, 0.08)', text: '#fca5a5' },
+  success: { border: 'rgba(34, 197, 94, 0.45)', bg: 'rgba(34, 197, 94, 0.08)', text: '#86efac' },
+};
+
+function getNotificationTone(level?: string) {
+  const key = (level ?? '').toLowerCase() as keyof typeof notificationTone;
+  return notificationTone[key] ?? notificationTone.info;
+}
 
 export default function AppShell() {
   const navigate = useNavigate();
@@ -29,6 +43,10 @@ export default function AppShell() {
   const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -141,9 +159,124 @@ export default function AppShell() {
   const focusHideAside = fullBleedMain;
   const mainPadLeft = focusHideAside ? asideGap : asideWidth + asideGap * 2;
 
+  const activeNotifications = useMemo(() => notifications.filter((n) => n.status === 'open'), [notifications]);
+  const notificationCount = activeNotifications.length;
+  const toastNotification = useMemo(
+    () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),
+    [activeNotifications, dismissedToastIds]
+  );
+
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setNotificationsLoading(true);
+    try {
+      const res = await getAdminNotifications();
+      if (res.success) {
+        setNotifications(res.data.items ?? []);
+      }
+    } finally {
+      if (!opts?.silent) setNotificationsLoading(false);
+    }
+  }, []);
+
+  const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
+    const res = await handleAdminNotification(id);
+    if (res.success && actionUrl) {
+      navigate(actionUrl);
+    }
+    await loadNotifications({ silent: true });
+  }, [loadNotifications, navigate]);
+
+  const handleAllNotifications = useCallback(async () => {
+    const res = await handleAllAdminNotifications();
+    if (res.success) {
+      await loadNotifications({ silent: true });
+    }
+  }, [loadNotifications]);
+
+  const dismissToast = useCallback((id: string) => {
+    setDismissedToastIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!toastNotification) return;
+    const timer = window.setTimeout(() => {
+      dismissToast(toastNotification.id);
+    }, 12000);
+    return () => window.clearTimeout(timer);
+  }, [toastNotification, dismissToast]);
+
+  useEffect(() => {
+    if (!user?.userId) return;
+    void loadNotifications();
+    const timer = window.setInterval(() => {
+      void loadNotifications({ silent: true });
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, [loadNotifications, user?.userId]);
+
   return (
     <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
       <SystemDialogHost />
+      {toastNotification && (
+        <div
+          className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
+          style={{
+            background: 'rgba(18, 18, 22, 0.95)',
+            border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+            boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
+            backdropFilter: 'blur(18px)',
+          }}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className="mt-1 h-2.5 w-2.5 rounded-full"
+              style={{ background: getNotificationTone(toastNotification.level).text }}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {toastNotification.title}
+              </div>
+              {toastNotification.message && (
+                <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  {toastNotification.message}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-white/10"
+              onClick={() => dismissToast(toastNotification.id)}
+              aria-label="稍后提醒"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            {toastNotification.actionUrl && (
+              <button
+                type="button"
+                className="px-3 py-1.5 text-[12px] rounded-full"
+                style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+                onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+              >
+                {toastNotification.actionLabel || '去处理'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="px-3 py-1.5 text-[12px] rounded-full"
+              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+              onClick={() => handleNotification(toastNotification.id)}
+            >
+              标记已处理
+            </button>
+          </div>
+        </div>
+      )}
       {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
       <RecursiveGridBackdrop
         className="absolute inset-0"
@@ -357,6 +490,26 @@ export default function AppShell() {
                   <span className="text-[13px]">修改头像</span>
                 </DropdownMenu.Item>
 
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => {
+                    setNotificationDialogOpen(true);
+                    void loadNotifications({ silent: true });
+                  }}
+                >
+                  <Bell size={16} className="shrink-0" />
+                  <span className="text-[13px]">系统通知</span>
+                  {notificationCount > 0 && (
+                    <span
+                      className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
+                      style={{ background: 'rgba(214, 178, 106, 0.18)', color: 'var(--accent-gold)' }}
+                    >
+                      {notificationCount}
+                    </span>
+                  )}
+                </DropdownMenu.Item>
+
                 <DropdownMenu.Separator
                   className="h-px mx-2 my-1"
                   style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
@@ -503,6 +656,87 @@ export default function AppShell() {
                 avatarUrl: res.data?.avatarUrl ?? null
               });
             }}
+          />
+
+          <Dialog
+            open={notificationDialogOpen}
+            onOpenChange={setNotificationDialogOpen}
+            title="系统通知"
+            description="系统级通知与待处理事项"
+            maxWidth={620}
+            content={
+              <div className="flex h-full flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    {notificationsLoading ? '加载中...' : `未处理 ${notificationCount} 条`}
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px]"
+                    style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+                    onClick={() => handleAllNotifications()}
+                    disabled={notificationCount === 0}
+                  >
+                    <CheckCircle2 size={14} />
+                    一键处理
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-auto pr-2 space-y-3">
+                  {notificationCount === 0 && !notificationsLoading && (
+                    <div className="rounded-[14px] border border-dashed border-white/10 px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                      暂无待处理通知
+                    </div>
+                  )}
+                  {activeNotifications.map((item) => {
+                    const tone = getNotificationTone(item.level);
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-[16px] border px-4 py-3"
+                        style={{ borderColor: tone.border, background: tone.bg }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                              {item.title}
+                            </div>
+                            {item.message && (
+                              <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                                {item.message}
+                              </div>
+                            )}
+                            <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                              {new Date(item.createdAt).toLocaleString()}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            {item.actionUrl && (
+                              <button
+                                type="button"
+                                className="rounded-full px-3 py-1.5 text-[12px]"
+                                style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
+                                onClick={() => handleNotification(item.id, item.actionUrl)}
+                              >
+                                {item.actionLabel || '去处理'}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="rounded-full px-3 py-1.5 text-[12px]"
+                              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                              onClick={() => handleNotification(item.id)}
+                            >
+                              标记已处理
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            }
           />
         </aside>
 

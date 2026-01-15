@@ -190,6 +190,7 @@ public class AdminImageGenController : ControllerBase
                 x.ModelId,
                 x.PlatformId,
                 x.ModelName,
+                allowedSizes = x.AllowedSizes,
                 allowedCount = x.AllowedSizes.Count,
                 x.UpdatedAt
             })
@@ -1244,4 +1245,3 @@ public class ImageGenRunPlanItemInput
     public int Count { get; set; } = 1;
     public string? Size { get; set; }
 }
-
