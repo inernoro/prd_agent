@@ -235,6 +235,7 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
     () => specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null,
     [specs, activeSpecId]
   );
+  const currentFont = spec ? fontMap.get(spec.fontKey) : null;
 
   useEffect(() => {
     if (!onStatusChange) return;
@@ -764,30 +765,25 @@ function WatermarkEditor(props: {
           </label>
         </div>
 
-        <div className="flex flex-col gap-3">
-          <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>配置名称</div>
-            <input
-              value={spec.name}
-              onChange={(e) => updateSpec({ name: e.target.value })}
-              className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
-              placeholder="例如：默认水印"
-            />
-          </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: '90px minmax(0, 1fr)' }}>
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>配置名称</div>
+          <input
+            value={spec.name}
+            onChange={(e) => updateSpec({ name: e.target.value })}
+            className="w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
+            placeholder="例如：默认水印"
+          />
 
-          <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>水印文本</div>
-            <input
-              value={spec.text}
-              onChange={(e) => updateSpec({ text: e.target.value })}
-              className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
-              placeholder="请输入水印文案"
-            />
-          </div>
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>水印文本</div>
+          <input
+            value={spec.text}
+            onChange={(e) => updateSpec({ text: e.target.value })}
+            className="w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
+            placeholder="请输入水印文案"
+          />
 
-          <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>字体</div>
-            <div className="mt-2 flex items-center gap-2">
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>字体</div>
+          <div className="flex items-center gap-2">
               <FontSelect
                 value={spec.fontKey}
                 fonts={fonts}
@@ -817,13 +813,10 @@ function WatermarkEditor(props: {
                 {fontUploading ? '上传中...' : '上传字体'}
               </Button>
             </div>
-          </div>
 
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>字号</div>
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
-            </div>
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>字号</div>
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
             <input
               type="range"
               min={12}
@@ -831,12 +824,12 @@ function WatermarkEditor(props: {
               step={2}
               value={spec.fontSizePx}
               onChange={(e) => updateSpec({ fontSizePx: Number(e.target.value) })}
-              className="mt-2 w-full"
+              className="w-full"
             />
           </div>
 
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>透明度</div>
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>透明度</div>
             <input
               type="range"
               min={0}
@@ -844,15 +837,15 @@ function WatermarkEditor(props: {
               step={0.05}
               value={spec.opacity}
               onChange={(e) => updateSpec({ opacity: Number(e.target.value) })}
-              className="mt-2 w-full"
+              className="w-full"
             />
             <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
               {Math.round(spec.opacity * 100)}%
             </div>
           </div>
 
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>定位方式</div>
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>定位方式</div>
             <select
               value={spec.positionMode}
               onChange={(e) => {
@@ -872,15 +865,15 @@ function WatermarkEditor(props: {
                   });
                 }
               }}
-              className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
+              className="w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
             >
               <option value="pixel">按像素</option>
               <option value="ratio">按比例</option>
             </select>
           </div>
 
-          <div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>装饰</div>
+          <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
                 <label
                   className="h-10 w-10 rounded-[10px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
@@ -971,7 +964,6 @@ function WatermarkEditor(props: {
                   onChange={(e) => updateSpec({ backgroundColor: e.target.value })}
                 />
               </label>
-            </div>
           </div>
         </div>
       </div>

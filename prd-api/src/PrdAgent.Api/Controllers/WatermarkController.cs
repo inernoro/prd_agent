@@ -558,7 +558,7 @@ public class WatermarkController : ControllerBase
             var dir = AppDomainPaths.LocalDir(domain, type);
             Directory.CreateDirectory(dir);
             var path = Path.Combine(dir, fileName);
-            await System.IO.File.WriteAllBytesAsync(path, bytes, ct);
+            await File.WriteAllBytesAsync(path, bytes, ct);
             return;
         }
 
