@@ -630,9 +630,9 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
           }
         }}
         title="水印编辑"
-        maxWidth={980}
+        maxWidth={920}
         contentClassName="overflow-hidden !p-4"
-        contentStyle={{ maxHeight: '72vh', height: '72vh' }}
+        contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={draftSpec ? (
           <WatermarkEditor
             spec={draftSpec}
@@ -748,18 +748,18 @@ function WatermarkEditor(props: {
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-3">
-      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: '170px minmax(0, 1fr) 300px' }}>
+      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: '160px minmax(0, 1fr) 320px' }}>
         {/* 左侧: 多尺寸预览 */}
         <div
-          className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2 self-start"
+          className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2 h-full"
           style={{
-            background: 'var(--bg-card)',
+            background: 'rgba(255,255,255,0.03)',
             border: '1px solid var(--border-subtle)',
             boxShadow: 'inset -1px 0 0 var(--border-subtle)',
           }}
         >
           <div className="text-[10px] font-semibold px-0.5" style={{ color: 'var(--text-muted)' }}>多尺寸预览</div>
-          <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
+          <div className="flex-1 flex flex-col gap-2 overflow-y-auto overflow-x-hidden pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
             {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
               if (!size) {
                 return (
@@ -788,6 +788,7 @@ function WatermarkEditor(props: {
                       previewImage={previewImage}
                       showDistances
                       showCrosshair
+                      showQuadrantLabels={false}
                       distancePlacement="inside"
                     />
                   </div>
@@ -804,7 +805,11 @@ function WatermarkEditor(props: {
         >
           <div
             className="rounded-[8px] flex items-center justify-center overflow-visible p-3 w-fit h-fit"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+            style={{
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)',
+              border: '1px solid rgba(125,211,252,0.25)',
+              boxShadow: '0 0 0 1px rgba(125,211,252,0.08) inset, 0 8px 24px rgba(0,0,0,0.35)',
+            }}
           >
             <WatermarkPreview
               spec={spec}
@@ -822,7 +827,7 @@ function WatermarkEditor(props: {
 
         {/* 右侧: 配置表单 */}
         <div
-          className="flex flex-col gap-3 overflow-y-auto rounded-[10px] p-2 self-start"
+          className="flex flex-col gap-3 overflow-y-auto rounded-[10px] p-2 h-full"
           style={{
             background: 'var(--bg-card)',
             border: '1px solid var(--border-subtle)',
@@ -1232,6 +1237,7 @@ function WatermarkPreview(props: {
   showCrosshair?: boolean;
   showDistances?: boolean;
   distancePlacement?: 'inside' | 'outside';
+  showQuadrantLabels?: boolean;
   onPositionChange?: (next: Pick<WatermarkSpec, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
   const {
@@ -1244,6 +1250,7 @@ function WatermarkPreview(props: {
     showCrosshair,
     showDistances,
     distancePlacement = 'outside',
+    showQuadrantLabels = true,
     onPositionChange,
   } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -1538,9 +1545,11 @@ function WatermarkPreview(props: {
                   border: '1px solid rgba(255,255,255,0.04)',
                 }}
               >
-                <span style={{ color: 'var(--text-primary)', opacity: 0.2, fontSize: 12 }}>
-                  {anchorLabelMap[anchor]}
-                </span>
+                {showQuadrantLabels ? (
+                  <span style={{ color: 'var(--text-primary)', opacity: 0.2, fontSize: 12 }}>
+                    {anchorLabelMap[anchor]}
+                  </span>
+                ) : null}
               </div>
             ))}
           </div>
