@@ -1,0 +1,35 @@
+# 专门用于编译后台代码的 Docker 镜像
+# 使用方式：
+#   docker build -f Dockerfile.build -t prdagent-build --target build --output ./output .
+#   产物将输出到 ./output 目录
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+
+WORKDIR /src
+
+# 先拷贝项目文件以利用 Docker 缓存层
+COPY ["PrdAgent.sln", "."]
+COPY ["src/PrdAgent.Api/PrdAgent.Api.csproj", "src/PrdAgent.Api/"]
+COPY ["src/PrdAgent.Core/PrdAgent.Core.csproj", "src/PrdAgent.Core/"]
+COPY ["src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "src/PrdAgent.Infrastructure/"]
+
+# 如果有测试项目，也拷贝
+COPY ["tests/PrdAgent.Tests/PrdAgent.Tests.csproj", "tests/PrdAgent.Tests/"] 2>/dev/null || true
+
+# 恢复依赖（利用缓存）
+RUN dotnet restore PrdAgent.sln
+
+# 拷贝所有源码
+COPY . .
+
+# 编译解决方案
+RUN dotnet build PrdAgent.sln -c Release --no-restore
+
+# 运行测试（可选）
+# RUN dotnet test PrdAgent.sln -c Release --no-build --verbosity normal
+
+# 发布 API 项目
+WORKDIR "/src/src/PrdAgent.Api"
+RUN dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
+
+# 编译产物在 /app/publish 目录中
+# 使用 --output 参数将产物导出到宿主机

@@ -1,6 +1,8 @@
 import type { ApiResponse } from '@/types/api';
 
 export type WatermarkSpec = {
+  id: string;
+  name: string;
   enabled: boolean;
   text: string;
   fontKey: string;
@@ -25,6 +27,8 @@ export type WatermarkSettings = {
   id?: string;
   ownerUserId?: string;
   enabled: boolean;
+  activeSpecId?: string;
+  specs?: WatermarkSpec[];
   spec: WatermarkSpec;
   createdAt?: string;
   updatedAt?: string;
@@ -45,7 +49,12 @@ export type ModelSizeInfo = {
 };
 
 export type GetWatermarkContract = () => Promise<ApiResponse<WatermarkSettings>>;
-export type PutWatermarkContract = (input: { spec: WatermarkSpec }) => Promise<ApiResponse<WatermarkSettings>>;
+export type PutWatermarkContract = (input: {
+  enabled?: boolean;
+  activeSpecId?: string;
+  specs?: WatermarkSpec[];
+  spec?: WatermarkSpec;
+}) => Promise<ApiResponse<WatermarkSettings>>;
 export type GetWatermarkFontsContract = () => Promise<ApiResponse<WatermarkFontInfo[]>>;
 export type GetModelSizesContract = (input: { modelKey: string }) => Promise<ApiResponse<{ modelKey: string; sizes: ModelSizeInfo[] }>>;
 export type UploadWatermarkFontContract = (input: { file: File; displayName?: string }) => Promise<ApiResponse<WatermarkFontInfo>>;

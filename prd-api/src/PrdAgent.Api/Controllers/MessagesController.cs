@@ -147,7 +147,7 @@ public class MessagesController : ControllerBase
         try
         {
             await foreach (var streamEvent in _chatService.SendMessageAsync(
-                sessionId,
+                sessionId!,
                 request.Content,
                 resendOfMessageId: null,
                 promptKey: request.PromptKey,

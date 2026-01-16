@@ -402,7 +402,7 @@ public class ChatService : IChatService
                                 {
                                     System.Diagnostics.Debug.WriteLine($"[ChatService] 首次广播 delta: blockId={bt.BlockId}, blockKind={bt.BlockKind}, contentLength={bt.Content?.Length}");
                                 }
-                                _groupMessageStreamHub.PublishDelta(gidForSeq, messageId, bt.Content, bt.BlockId, isFirstDelta);
+                                _groupMessageStreamHub.PublishDelta(gidForSeq, messageId, bt.Content!, bt.BlockId, isFirstDelta);
                                 isFirstDelta = false; // 后续 delta 不再标记为 first
                             }
                             else if (bt.Type == "blockEnd" && !string.IsNullOrEmpty(bt.BlockId))

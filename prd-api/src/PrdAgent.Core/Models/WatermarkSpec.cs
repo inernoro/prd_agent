@@ -2,6 +2,10 @@ namespace PrdAgent.Core.Models;
 
 public class WatermarkSpec
 {
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = "默认水印";
+
     public bool Enabled { get; set; }
 
     public string Text { get; set; } = string.Empty;
