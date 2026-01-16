@@ -235,7 +235,6 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
     () => specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null,
     [specs, activeSpecId]
   );
-  const currentFont = spec ? fontMap.get(spec.fontKey) : null;
 
   useEffect(() => {
     if (!onStatusChange) return;
@@ -631,10 +630,9 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
           }
         }}
         title="水印编辑"
-        description="配置文本、字体、位置与多尺寸预览"
-        maxWidth={980}
-        contentClassName="overflow-hidden"
-        contentStyle={{ maxHeight: '85vh' }}
+        maxWidth={1320}
+        contentClassName="overflow-hidden !p-4"
+        contentStyle={{ maxHeight: '90vh', height: '90vh' }}
         content={draftSpec ? (
           <WatermarkEditor
             spec={draftSpec}
@@ -642,7 +640,6 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
             fontUploading={fontUploading}
             fontDeletingKey={fontDeletingKey}
             onChange={setDraftSpec}
-            onCancel={handleEditorCancel}
             onUploadFont={handleFontUpload}
             onDeleteFont={handleFontDelete}
             onSave={async () => {
@@ -667,10 +664,9 @@ function WatermarkEditor(props: {
   onChange: (spec: WatermarkSpec) => void;
   onUploadFont: (file: File) => void;
   onDeleteFont: (font: WatermarkFontInfo) => void;
-  onCancel: () => void;
   onSave: () => void;
 }) {
-  const { spec, fonts, fontUploading, fontDeletingKey, onChange, onUploadFont, onDeleteFont, onCancel, onSave } = props;
+  const { spec, fonts, fontUploading, fontDeletingKey, onChange, onUploadFont, onDeleteFont, onSave } = props;
   const [sizes, setSizes] = useState<ModelSizeInfo[]>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadingSizes, setLoadingSizes] = useState(false);
@@ -731,58 +727,107 @@ function WatermarkEditor(props: {
   }, [currentFont?.fontFamily, spec.fontSizePx]);
 
   return (
-    <div className="flex flex-col gap-4 h-full overflow-y-auto pr-1">
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) 280px' }}>
-        <div
-          className="rounded-[16px] p-4 relative"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
-        >
-          <div className="flex items-center justify-center">
-            <WatermarkPreview
-              spec={spec}
-              font={currentFont}
-              size={spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE}
-              previewImage={previewImage}
-              draggable
-              showCrosshair
-              showDistances
-              distancePlacement="outside"
-              onPositionChange={(next) => updateSpec(next)}
-            />
+    <div className="flex flex-col h-full overflow-hidden -mt-3">
+      <div className="grid gap-1 flex-1 overflow-hidden" style={{ gridTemplateColumns: '140px minmax(0, 1fr) 300px' }}>
+        {/* 左侧: 多尺寸预览 */}
+        <div className="flex flex-col gap-1 overflow-hidden">
+          <div className="text-[10px] font-semibold px-0.5" style={{ color: 'var(--text-muted)' }}>多尺寸预览</div>
+          <div className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
+            {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
+              if (!size) {
+                return (
+                  <div
+                    key={`placeholder-${idx}`}
+                    className="h-[75px] rounded-[6px]"
+                    style={{ background: 'rgba(255,255,255,0.04)' }}
+                  />
+                );
+              }
+              const previewWidth = 118;
+              const previewHeight = Math.round((size.height / size.width) * previewWidth);
+              return (
+                <div
+                  key={size.label}
+                  className="rounded-[6px] p-0.5"
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}
+                >
+                  <div className="text-[9px] mb-0.5 px-0.5" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
+                  <div className="flex items-center justify-center">
+                    <WatermarkPreview
+                      spec={spec}
+                      font={currentFont}
+                      size={previewWidth}
+                      height={previewHeight}
+                      previewImage={previewImage}
+                      showDistances
+                      showCrosshair
+                      distancePlacement="inside"
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <label
-            className="absolute bottom-3 right-3 inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
-            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-          >
-            <ImageIcon size={14} />
-            上传底图
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => handlePreviewUpload(e.target.files?.[0] ?? null)}
-            />
-          </label>
         </div>
 
-        <div className="grid gap-3" style={{ gridTemplateColumns: '90px minmax(0, 1fr)' }}>
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>配置名称</div>
+        {/* 中间: 主预览画布 */}
+        <div
+          className="rounded-[8px] relative flex items-center justify-center overflow-visible p-2"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+        >
+          <WatermarkPreview
+            spec={spec}
+            font={currentFont}
+            size={spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE}
+            previewImage={previewImage}
+            draggable
+            showCrosshair
+            showDistances
+            distancePlacement="outside"
+            onPositionChange={(next) => updateSpec(next)}
+          />
+        </div>
+
+        {/* 右侧: 配置表单 */}
+        <div className="flex flex-col gap-2 overflow-y-auto pr-0.5">
+          <div className="flex items-center gap-1.5 pb-1" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            <label
+              className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded-[8px] cursor-pointer"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            >
+              <ImageIcon size={12} />
+              上传底图
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handlePreviewUpload(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <Button variant="primary" size="sm" onClick={onSave} className="flex-1 !text-[11px] !px-2 !py-1.5">
+              <Check size={12} />
+              保存
+            </Button>
+          </div>
+
+          <div className="grid gap-1.5" style={{ gridTemplateColumns: '70px minmax(0, 1fr)' }}>
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>配置名称</div>
           <input
             value={spec.name}
             onChange={(e) => updateSpec({ name: e.target.value })}
-            className="w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
+            className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
             placeholder="例如：默认水印"
           />
 
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>水印文本</div>
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
           <input
             value={spec.text}
             onChange={(e) => updateSpec({ text: e.target.value })}
-            className="w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
+            className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
             placeholder="请输入水印文案"
           />
 
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>字体</div>
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字体</div>
           <div className="flex items-center gap-2">
               <FontSelect
                 value={spec.fontKey}
@@ -814,8 +859,8 @@ function WatermarkEditor(props: {
               </Button>
             </div>
 
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>字号</div>
-          <div className="flex flex-col gap-2">
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字号</div>
+          <div className="flex flex-col gap-1">
             <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
             <input
               type="range"
@@ -828,8 +873,9 @@ function WatermarkEditor(props: {
             />
           </div>
 
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>透明度</div>
-          <div>
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>透明度</div>
+          <div className="flex flex-col gap-1">
+            <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.opacity * 100)}%</div>
             <input
               type="range"
               min={0}
@@ -839,17 +885,13 @@ function WatermarkEditor(props: {
               onChange={(e) => updateSpec({ opacity: Number(e.target.value) })}
               className="w-full"
             />
-            <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              {Math.round(spec.opacity * 100)}%
-            </div>
           </div>
 
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>定位方式</div>
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>定位方式</div>
           <div>
-            <select
+            <PositionModeSwitch
               value={spec.positionMode}
-              onChange={(e) => {
-                const nextMode = e.target.value as WatermarkSpec['positionMode'];
+              onChange={(nextMode) => {
                 if (nextMode === spec.positionMode) return;
                 if (nextMode === 'ratio') {
                   updateSpec({
@@ -865,25 +907,21 @@ function WatermarkEditor(props: {
                   });
                 }
               }}
-              className="w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
-            >
-              <option value="pixel">按像素</option>
-              <option value="ratio">按比例</option>
-            </select>
+            />
           </div>
 
-          <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>装饰</div>
-          <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
+          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>装饰</div>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+              <div className="relative shrink-0">
                 <label
-                  className="h-10 w-10 rounded-[10px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                  className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
                   style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   title="上传图标"
                 >
                   {spec.iconEnabled && spec.iconImageRef ? (
                     <img src={spec.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
                   ) : (
-                    <UploadCloud size={16} />
+                    <UploadCloud size={15} />
                   )}
                   <input
                     type="file"
@@ -895,18 +933,18 @@ function WatermarkEditor(props: {
                 {spec.iconEnabled && spec.iconImageRef ? (
                   <button
                     type="button"
-                    className="absolute -top-2 -right-2 h-5 w-5 rounded-full inline-flex items-center justify-center"
+                    className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full inline-flex items-center justify-center"
                     style={{ background: 'rgba(15,15,18,0.9)', border: '1px solid rgba(255,255,255,0.15)', color: 'var(--text-primary)' }}
                     onClick={() => updateSpec({ iconEnabled: false, iconImageRef: null })}
                     title="移除图标"
                   >
-                    <X size={12} />
+                    <X size={10} />
                   </button>
                 ) : null}
               </div>
               <button
                 type="button"
-                className="h-9 w-9 rounded-[10px] inline-flex items-center justify-center"
+                className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center shrink-0"
                 style={{
                   background: spec.borderEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.12)',
@@ -915,11 +953,11 @@ function WatermarkEditor(props: {
                 title="是否边框"
                 onClick={() => updateSpec({ borderEnabled: !spec.borderEnabled })}
               >
-                <Square size={16} />
+                <Square size={15} />
               </button>
               <button
                 type="button"
-                className="h-9 w-9 rounded-[10px] inline-flex items-center justify-center"
+                className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center shrink-0"
                 style={{
                   background: spec.backgroundEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.12)',
@@ -928,10 +966,10 @@ function WatermarkEditor(props: {
                 title="填充背景"
                 onClick={() => updateSpec({ backgroundEnabled: !spec.backgroundEnabled })}
               >
-                <PaintBucket size={16} />
+                <PaintBucket size={15} />
               </button>
               <label
-                className="relative h-9 w-9 rounded-[10px] inline-flex items-center justify-center cursor-pointer"
+                className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
                 style={{
                   background: spec.textColor || spec.color || '#ffffff',
                   border: '1px solid rgba(255,255,255,0.2)',
@@ -948,7 +986,7 @@ function WatermarkEditor(props: {
                 />
               </label>
               <label
-                className="relative h-9 w-9 rounded-[10px] inline-flex items-center justify-center cursor-pointer"
+                className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
                 style={{
                   background: spec.backgroundColor || '#000000',
                   border: '1px solid rgba(255,255,255,0.2)',
@@ -965,64 +1003,85 @@ function WatermarkEditor(props: {
                 />
               </label>
           </div>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+function PositionModeSwitch(props: {
+  value: 'pixel' | 'ratio';
+  onChange: (value: 'pixel' | 'ratio') => void;
+}) {
+  const { value, onChange } = props;
+  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
+  const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
 
-      <div>
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>多尺寸同步预览</div>
-        </div>
+  useEffect(() => {
+    const activeButton = buttonsRef.current.get(value);
+    if (activeButton) {
+      const container = activeButton.parentElement;
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const buttonRect = activeButton.getBoundingClientRect();
+        setIndicatorStyle({
+          left: buttonRect.left - containerRect.left,
+          width: buttonRect.width,
+        });
+      }
+    }
+  }, [value]);
 
-        <div className="mt-4 flex gap-3 overflow-x-auto pb-2">
-          {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
-            if (!size) {
-              return (
-                <div
-                  key={`placeholder-${idx}`}
-                  className="h-[110px] min-w-[150px] rounded-[12px]"
-                  style={{ background: 'rgba(255,255,255,0.06)' }}
-                />
-              );
-            }
-            const previewWidth = 140;
-            const previewHeight = Math.round((size.height / size.width) * previewWidth);
-            return (
-              <div
-                key={size.label}
-                className="rounded-[12px] p-2 min-w-[150px]"
-                style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}
-              >
-                <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
-                <div className="flex items-center justify-center">
-                  <WatermarkPreview
-                    spec={spec}
-                    font={currentFont}
-                    size={previewWidth}
-                    height={previewHeight}
-                    previewImage={previewImage}
-                    showDistances
-                    showCrosshair
-                    distancePlacement="inside"
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+  return (
+    <div
+      className="relative inline-flex items-center gap-1 p-1 rounded-[10px]"
+      style={{
+        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+      }}
+    >
+      {/* 滑动指示器 */}
+      <div
+        className="absolute rounded-[7px] h-[26px] pointer-events-none"
+        style={{
+          left: indicatorStyle.left,
+          width: indicatorStyle.width,
+          transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.18)',
+          boxShadow: '0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+        }}
+      />
 
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="secondary" size="sm" onClick={onCancel}>
-          <X size={14} />
-          取消
-        </Button>
-        <Button variant="primary" size="sm" onClick={onSave}>
-          <Check size={14} />
-          保存
-        </Button>
-      </div>
+      {(['pixel', 'ratio'] as const).map((mode) => {
+        const isActive = mode === value;
+        return (
+          <button
+            key={mode}
+            ref={(el) => {
+              if (el) {
+                buttonsRef.current.set(mode, el);
+              } else {
+                buttonsRef.current.delete(mode);
+              }
+            }}
+            type="button"
+            onClick={() => onChange(mode)}
+            className="relative px-4 h-[26px] text-[12px] font-semibold transition-colors duration-200"
+            style={{
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+              zIndex: 1,
+            }}
+          >
+            {mode === 'pixel' ? '按像素' : '按比例'}
+          </button>
+        );
+      })}
     </div>
   );
 }

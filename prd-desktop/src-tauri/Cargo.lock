@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "prd-agent-desktop"
-version = "1.2.6"
+version = "1.6.0"
 dependencies = [
  "futures",
  "lazy_static",
