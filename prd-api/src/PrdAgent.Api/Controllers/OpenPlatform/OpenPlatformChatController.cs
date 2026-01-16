@@ -386,10 +386,6 @@ public class OpenPlatformChatController : ControllerBase
 
         var userMessageContent = lastUserMessage.Content;
 
-        int? inputTokens = null;
-        int? outputTokens = null;
-        string? errorCode = null;
-
         // 根据 stream 参数决定响应模式
         if (request.Stream)
         {

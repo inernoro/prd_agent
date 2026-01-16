@@ -235,7 +235,6 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
     () => specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null,
     [specs, activeSpecId]
   );
-  const currentFont = spec ? fontMap.get(spec.fontKey) : null;
 
   useEffect(() => {
     if (!onStatusChange) return;

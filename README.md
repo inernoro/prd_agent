@@ -128,9 +128,30 @@ Expected dev ports:
 
 #### Backend API
 
+**Manual build (requires .NET 8 SDK):**
+
 ```powershell
 cd prd-api/src/PrdAgent.Api
 dotnet watch run
+```
+
+**Build using Docker (no .NET SDK required):**
+
+适用于没有安装 .NET SDK 的服务器环境：
+
+```powershell
+# Windows
+.\scripts\build-server-docker.ps1
+
+# Linux/macOS
+./scripts/build-server-docker.sh
+```
+
+产物输出到 `prd-api/output/` 目录。可直接运行：
+
+```powershell
+cd prd-api/output
+dotnet PrdAgent.Api.dll
 ```
 
 #### Admin console
