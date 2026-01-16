@@ -12,8 +12,8 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { deleteWatermarkFont, getModelSizes, getWatermark, getWatermarkFonts, putWatermark, uploadWatermarkFont } from '@/services';
-import type { ModelSizeInfo, WatermarkFontInfo, WatermarkSpec } from '@/services/contracts/watermark';
+import { deleteWatermarkFont, getWatermark, getWatermarkFonts, putWatermark, uploadWatermarkFont } from '@/services';
+import type { WatermarkFontInfo, WatermarkSpec } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { useAuthStore } from '@/stores/authStore';
@@ -26,17 +26,6 @@ const createSpecId = () => {
   }
   return `wm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
-// 从尺寸列表中筛选出4个有代表性的预览尺寸（排除1:1，因为已有演示画布）
-const selectPreviewSizes = (sizes: ModelSizeInfo[]): ModelSizeInfo[] => {
-  // 排除 1:1 比例（已在画布中展示）
-  const filtered = sizes.filter((s) => Math.abs(s.ratio - 1) > 0.05);
-  if (filtered.length <= 4) return filtered;
-  // 按比例排序后均匀选取4个
-  const sorted = [...filtered].sort((a, b) => a.ratio - b.ratio);
-  const step = (sorted.length - 1) / 3;
-  return [0, 1, 2, 3].map((i) => sorted[Math.round(i * step)]);
-};
-
 const clampPixel = (value: number, min = 0, max = 0) => Math.min(Math.max(value, min), max);
 
 type WatermarkAnchor = WatermarkSpec['anchor'];
@@ -748,27 +737,14 @@ function WatermarkEditor(props: {
   onSave: () => void;
 }) {
   const { spec, fonts, fontUploading, fontDeletingKey, onChange, onUploadFont, onDeleteFont, onSave } = props;
-  const [sizes, setSizes] = useState<ModelSizeInfo[]>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [loadingSizes, setLoadingSizes] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainPreviewRef = useRef<HTMLDivElement | null>(null);
   const [mainPreviewSize, setMainPreviewSize] = useState(spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
   const [fontLoading, setFontLoading] = useState(false);
-  const previewSizes = useMemo(() => selectPreviewSizes(sizes), [sizes]);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
   const baseCanvasSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
-
-  useEffect(() => {
-    if (!spec.modelKey) return;
-    setLoadingSizes(true);
-    void getModelSizes({ modelKey: spec.modelKey }).then((res) => {
-      if (res?.success) {
-        setSizes(res.data?.sizes || []);
-      }
-    }).finally(() => setLoadingSizes(false));
-  }, [spec.modelKey]);
 
   useEffect(() => {
     const container = mainPreviewRef.current;
@@ -829,57 +805,8 @@ function WatermarkEditor(props: {
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-3">
-      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: '160px minmax(0, 1fr) 320px' }}>
-        {/* 左侧: 多尺寸预览 */}
-        <div
-          className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2 h-full"
-          style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid var(--border-subtle)',
-            boxShadow: 'inset -1px 0 0 var(--border-subtle)',
-          }}
-        >
-          <div className="text-[10px] font-semibold px-0.5" style={{ color: 'var(--text-muted)' }}>多尺寸预览</div>
-          <div className="flex-1 flex flex-col gap-2 overflow-y-auto overflow-x-hidden pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
-            {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
-              if (!size) {
-                return (
-                  <div
-                    key={`placeholder-${idx}`}
-                    className="h-[90px] rounded-[8px]"
-                    style={{ background: 'rgba(255,255,255,0.04)' }}
-                  />
-                );
-              }
-              const previewWidth = 132;
-              const previewHeight = Math.round((size.height / size.width) * previewWidth);
-              return (
-                <div
-                  key={size.label}
-                  className="rounded-[8px] p-1"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}
-                >
-                  <div className="text-[9px] mb-0.5 px-0.5" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
-                  <div className="flex items-center justify-center">
-                    <WatermarkPreview
-                      spec={spec}
-                      font={currentFont}
-                      size={previewWidth}
-                      height={previewHeight}
-                      previewImage={previewImage}
-                      showDistances
-                      showCrosshair
-                      showQuadrantLabels={false}
-                      distancePlacement="inside"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 中间: 主预览画布 */}
+      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+        {/* 左侧: 主预览画布 */}
         <div
           ref={mainPreviewRef}
           className="relative flex items-center justify-center overflow-visible self-center"
@@ -1402,7 +1329,7 @@ function WatermarkPreview(props: {
     };
   }, [fontFamily, fontSize, measureSignature]);
 
-  const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 0.6;
+  const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 1.0;
   const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0) + decorationPadding * 2;
   const estimatedHeight = Math.max(fontSize, iconSize) + decorationPadding * 2;
   const measuredWidth = watermarkSize.width || estimatedWidth;
