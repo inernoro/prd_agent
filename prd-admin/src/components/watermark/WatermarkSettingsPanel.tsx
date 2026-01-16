@@ -181,6 +181,8 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
   const [previewEpoch, setPreviewEpoch] = useState(0);
   const [previewError, setPreviewError] = useState(false);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
+  const [globalSpecId, setGlobalSpecId] = useState<string | null>(null);
+  const [overrideSpecId, setOverrideSpecId] = useState<string | null>(null);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
 
@@ -538,103 +540,143 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>点击启用后即为生图默认水印</div>
               </div>
             </div>
-            <div className="grid gap-2 flex-1 min-h-0 overflow-auto pr-1">
+            <div className="text-[11px] px-2 py-1 rounded-[8px]" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+              优先级：覆盖全部 &gt; 应用内设置 &gt; 设为全局（设置会影响其他生图入口）
+            </div>
+            <div className="grid gap-3 flex-1 min-h-0 overflow-auto pr-1">
               {specs.map((item, index) => {
                 const isActive = item.id === activeSpecId;
+                const isGlobal = item.id === globalSpecId;
+                const isOverride = item.id === overrideSpecId;
                 const fontLabel = fontMap.get(item.fontKey)?.displayName || item.fontKey;
                 return (
-                  <div
-                    key={item.id || `${item.text}-${index}`}
-                    className="rounded-[14px] p-3"
-                    style={{
-                      background: isActive ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255,255,255,0.04)',
-                      border: isActive ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {item.name || `水印配置 ${index + 1}`}
+                  <Card key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
+                    <div className="flex flex-col h-full">
+                      <div className="p-2 pb-1 flex-shrink-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                              {item.name || `水印配置 ${index + 1}`}
+                            </div>
+                            <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{item.text}</div>
+                          </div>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full"
+                            style={{
+                              background: isActive ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255,255,255,0.08)',
+                              color: isActive ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-secondary)',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                            }}
+                            onClick={() => handleActivate(item.id)}
+                            disabled={saving}
+                            title={isActive ? '当前启用' : '设为启用'}
+                          >
+                            {isActive ? <CheckCircle2 size={12} /> : null}
+                            {isActive ? '已启用' : '启用'}
+                          </button>
                         </div>
-                        <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{item.text}</div>
                       </div>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full"
-                        style={{
-                          background: isActive ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255,255,255,0.08)',
-                          color: isActive ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-secondary)',
-                          border: '1px solid rgba(255,255,255,0.12)',
-                        }}
-                        onClick={() => handleActivate(item.id)}
-                        disabled={saving}
-                        title={isActive ? '当前启用' : '设为启用'}
-                      >
-                        {isActive ? <CheckCircle2 size={12} /> : null}
-                        {isActive ? '已启用' : '启用'}
-                      </button>
+
+                      <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                        <div
+                          className="h-full overflow-auto border rounded-[6px]"
+                          style={{
+                            borderColor: 'var(--border-subtle)',
+                            background: 'rgba(255,255,255,0.02)',
+                            minHeight: '120px',
+                            maxHeight: '160px',
+                          }}
+                        >
+                          <div className="text-[11px] grid gap-2 grid-cols-2 p-2" style={{ color: 'var(--text-muted)' }}>
+                            <div className="flex items-center justify-between gap-4">
+                              <span>字体</span>
+                              <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4">
+                              <span>字号</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4">
+                              <span>位置</span>
+                              <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>
+                                {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4">
+                              <span>图标</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '未启用'}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4">
+                              <span>透明度</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                        <div className="flex flex-wrap gap-1.5 justify-end">
+                          {isActive ? (
+                            <Button size="xs" variant="secondary" disabled>
+                              <Check size={12} />
+                              已选
+                            </Button>
+                          ) : (
+                            <Button size="xs" variant="primary" onClick={() => handleActivate(item.id)} disabled={saving}>
+                              <Check size={12} />
+                              选择
+                            </Button>
+                          )}
+                          <Button
+                            size="xs"
+                            variant={isGlobal ? 'primary' : 'secondary'}
+                            onClick={() => {
+                              setGlobalSpecId(item.id);
+                              toast.success('已设为全局水印');
+                            }}
+                          >
+                            <Check size={12} />
+                            设为全局
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant={isOverride ? 'primary' : 'secondary'}
+                            onClick={() => {
+                              setOverrideSpecId(item.id);
+                              toast.success('已设置为覆盖全部');
+                            }}
+                          >
+                            <Check size={12} />
+                            覆盖全部
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="secondary"
+                            onClick={() => {
+                              setDraftSnapshot(null);
+                              setDraftSpec({ ...item });
+                              setEditorOpen(true);
+                            }}
+                          >
+                            <Pencil size={12} />
+                            编辑
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="danger"
+                            onClick={() => {
+                              void handleDeleteSpec(item);
+                            }}
+                            disabled={saving || specs.length <= 1}
+                          >
+                            <Trash2 size={12} />
+                            删除
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt-3 grid gap-2 text-[11px] grid-cols-2" style={{ color: 'var(--text-muted)' }}>
-                      <div className="flex items-center justify-between gap-4">
-                        <span>字体</span>
-                        <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span>字号</span>
-                        <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span>位置</span>
-                        <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>
-                          {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span>图标</span>
-                        <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '未启用'}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span>透明度</span>
-                        <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex justify-end gap-1.5">
-                      {isActive ? (
-                        <Button size="xs" variant="secondary" disabled>
-                          <Check size={12} />
-                          已选
-                        </Button>
-                      ) : (
-                        <Button size="xs" variant="primary" onClick={() => handleActivate(item.id)} disabled={saving}>
-                          <Check size={12} />
-                          选择
-                        </Button>
-                      )}
-                      <Button
-                        size="xs"
-                        variant="secondary"
-                        onClick={() => {
-                          setDraftSnapshot(null);
-                          setDraftSpec({ ...item });
-                          setEditorOpen(true);
-                        }}
-                      >
-                        <Pencil size={12} />
-                        编辑
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="danger"
-                        onClick={() => {
-                          void handleDeleteSpec(item);
-                        }}
-                        disabled={saving || specs.length <= 1}
-                      >
-                        <Trash2 size={12} />
-                        删除
-                      </Button>
-                    </div>
-                  </div>
+                  </Card>
                 );
               })}
             </div>
