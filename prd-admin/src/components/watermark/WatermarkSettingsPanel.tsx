@@ -568,7 +568,7 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
                         {isActive ? '已启用' : '启用'}
                       </button>
                     </div>
-                    <div className="mt-3 grid gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-3 grid gap-2 text-[11px] grid-cols-2" style={{ color: 'var(--text-muted)' }}>
                       <div className="flex items-center justify-between gap-4">
                         <span>字体</span>
                         <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
@@ -576,10 +576,6 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
                       <div className="flex items-center justify-between gap-4">
                         <span>字号</span>
                         <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span>透明度</span>
-                        <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
                       </div>
                       <div className="flex items-center justify-between gap-4">
                         <span>位置</span>
@@ -590,6 +586,10 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
                       <div className="flex items-center justify-between gap-4">
                         <span>图标</span>
                         <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '未启用'}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span>透明度</span>
+                        <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
                       </div>
                     </div>
                   </div>
@@ -733,8 +733,10 @@ function WatermarkEditor(props: {
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto pr-1">
       <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) 280px' }}>
-        <div className="rounded-[16px] p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>1:1 演示画布</div>
+        <div
+          className="rounded-[16px] p-4 relative"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+        >
           <div className="flex items-center justify-center">
             <WatermarkPreview
               spec={spec}
@@ -748,6 +750,19 @@ function WatermarkEditor(props: {
               onPositionChange={(next) => updateSpec(next)}
             />
           </div>
+          <label
+            className="absolute bottom-3 right-3 inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
+            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+          >
+            <ImageIcon size={14} />
+            上传底图
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handlePreviewUpload(e.target.files?.[0] ?? null)}
+            />
+          </label>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -806,16 +821,19 @@ function WatermarkEditor(props: {
           </div>
 
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>字号</div>
-            <select
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>字号</div>
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
+            </div>
+            <input
+              type="range"
+              min={12}
+              max={64}
+              step={2}
               value={spec.fontSizePx}
               onChange={(e) => updateSpec({ fontSizePx: Number(e.target.value) })}
-              className="mt-2 w-full rounded-[12px] px-3 py-2 text-sm outline-none prd-field"
-            >
-              {[18, 22, 26, 28, 32, 36, 42, 48].map((size) => (
-                <option key={size} value={size}>{size}px</option>
-              ))}
-            </select>
+              className="mt-2 w-full"
+            />
           </div>
 
           <div>
@@ -864,30 +882,36 @@ function WatermarkEditor(props: {
 
           <div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <label
-                className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                title="上传图标"
-              >
-                <UploadCloud size={14} />
-                上传图标
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => void handleIconUpload(e.target.files?.[0] ?? null)}
-                />
-              </label>
-              {spec.iconEnabled && spec.iconImageRef ? (
-                <Button
-                  variant="secondary"
-                  size="xs"
-                  onClick={() => updateSpec({ iconEnabled: false, iconImageRef: null })}
-                  title="移除图标"
+              <div className="relative">
+                <label
+                  className="h-10 w-10 rounded-[10px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  title="上传图标"
                 >
-                  移除
-                </Button>
-              ) : null}
+                  {spec.iconEnabled && spec.iconImageRef ? (
+                    <img src={spec.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
+                  ) : (
+                    <UploadCloud size={16} />
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => void handleIconUpload(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+                {spec.iconEnabled && spec.iconImageRef ? (
+                  <button
+                    type="button"
+                    className="absolute -top-2 -right-2 h-5 w-5 rounded-full inline-flex items-center justify-center"
+                    style={{ background: 'rgba(15,15,18,0.9)', border: '1px solid rgba(255,255,255,0.15)', color: 'var(--text-primary)' }}
+                    onClick={() => updateSpec({ iconEnabled: false, iconImageRef: null })}
+                    title="移除图标"
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </div>
               <button
                 type="button"
                 className="h-9 w-9 rounded-[10px] inline-flex items-center justify-center"
@@ -957,22 +981,7 @@ function WatermarkEditor(props: {
 
       <div>
         <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>多尺寸同步预览</div>
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>按当前模型支持的尺寸展示（横向滑动）</div>
-          </div>
-          <label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
-            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-          >
-            <ImageIcon size={14} />
-            上传底图
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => handlePreviewUpload(e.target.files?.[0] ?? null)}
-            />
-          </label>
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>多尺寸同步预览</div>
         </div>
 
         <div className="mt-4 flex gap-3 overflow-x-auto pb-2">
