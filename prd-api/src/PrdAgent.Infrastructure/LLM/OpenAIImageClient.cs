@@ -1632,13 +1632,14 @@ public class OpenAIImageClient
             _logger.LogInformation("Watermark skipped: no settings for user {UserId}", userId);
             return null;
         }
-        if (!doc.Enabled || doc.Spec == null)
+        var spec = doc.Specs?.FirstOrDefault(x => string.Equals(x.Id, doc.ActiveSpecId, StringComparison.OrdinalIgnoreCase))
+            ?? doc.Spec;
+        if (!doc.Enabled || spec == null)
         {
             _logger.LogInformation("Watermark skipped: disabled or missing spec for user {UserId}", userId);
             return null;
         }
 
-        var spec = doc.Spec;
         spec.FontKey = _fontRegistry.NormalizeFontKey(spec.FontKey);
         spec.Enabled = doc.Enabled;
         var (ok, message) = WatermarkSpecValidator.Validate(spec, _fontRegistry.FontKeys);

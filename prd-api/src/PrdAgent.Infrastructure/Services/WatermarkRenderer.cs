@@ -133,6 +133,46 @@ public class WatermarkRenderer
         return (ms.ToArray(), format.DefaultMimeType ?? inputMime);
     }
 
+    public async Task<(byte[] bytes, string mime)> RenderPreviewAsync(WatermarkSpec spec, CancellationToken ct)
+    {
+        var baseSize = spec.BaseCanvasWidth > 0 ? spec.BaseCanvasWidth : 512;
+        using var canvas = new Image<Rgba32>(baseSize, baseSize);
+        canvas.Mutate(ctx => ctx.Fill(Color.FromRgba(18, 18, 22, 255)));
+
+        await using var ms = new MemoryStream();
+        canvas.SaveAsPng(ms);
+        var previewSpec = CloneSpec(spec);
+        previewSpec.Enabled = true;
+        return await ApplyAsync(ms.ToArray(), "image/png", previewSpec, ct);
+    }
+
+    private static WatermarkSpec CloneSpec(WatermarkSpec source)
+    {
+        return new WatermarkSpec
+        {
+            Id = source.Id,
+            Name = source.Name,
+            Enabled = source.Enabled,
+            Text = source.Text,
+            FontKey = source.FontKey,
+            FontSizePx = source.FontSizePx,
+            Opacity = source.Opacity,
+            PositionMode = source.PositionMode,
+            Anchor = source.Anchor,
+            OffsetX = source.OffsetX,
+            OffsetY = source.OffsetY,
+            IconEnabled = source.IconEnabled,
+            IconImageRef = source.IconImageRef,
+            BorderEnabled = source.BorderEnabled,
+            BackgroundEnabled = source.BackgroundEnabled,
+            BaseCanvasWidth = source.BaseCanvasWidth,
+            ModelKey = source.ModelKey,
+            Color = source.Color,
+            TextColor = source.TextColor,
+            BackgroundColor = source.BackgroundColor
+        };
+    }
+
     private static Color ResolveColorHex(string? hexInput, double opacity, Color? fallback = null)
     {
         var alpha = (byte)Math.Clamp((int)Math.Round(opacity * 255), 0, 255);
