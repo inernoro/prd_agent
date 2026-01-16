@@ -633,6 +633,8 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
         title="水印编辑"
         description="配置文本、字体、位置与多尺寸预览"
         maxWidth={980}
+        contentClassName="overflow-hidden"
+        contentStyle={{ maxHeight: '85vh' }}
         content={draftSpec ? (
           <WatermarkEditor
             spec={draftSpec}
@@ -729,7 +731,7 @@ function WatermarkEditor(props: {
   }, [currentFont?.fontFamily, spec.fontSizePx]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 h-full overflow-y-auto pr-1">
       <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) 280px' }}>
         <div className="rounded-[16px] p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>1:1 演示画布</div>
@@ -957,7 +959,7 @@ function WatermarkEditor(props: {
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>多尺寸同步预览</div>
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>按当前模型支持的尺寸展示（每行 4 个）</div>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>按当前模型支持的尺寸展示（横向滑动）</div>
           </div>
           <label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-[10px] cursor-pointer"
             style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
@@ -973,17 +975,25 @@ function WatermarkEditor(props: {
           </label>
         </div>
 
-        <div className="mt-4 grid gap-3" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+        <div className="mt-4 flex gap-3 overflow-x-auto pb-2">
           {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
             if (!size) {
               return (
-                <div key={`placeholder-${idx}`} className="h-[120px] rounded-[12px]" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                <div
+                  key={`placeholder-${idx}`}
+                  className="h-[110px] min-w-[150px] rounded-[12px]"
+                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                />
               );
             }
-            const previewWidth = 180;
+            const previewWidth = 140;
             const previewHeight = Math.round((size.height / size.width) * previewWidth);
             return (
-              <div key={size.label} className="rounded-[12px] p-2" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
+              <div
+                key={size.label}
+                className="rounded-[12px] p-2 min-w-[150px]"
+                style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}
+              >
                 <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
                 <div className="flex items-center justify-center">
                   <WatermarkPreview
