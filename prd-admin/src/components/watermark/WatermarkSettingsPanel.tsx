@@ -1242,7 +1242,7 @@ function WatermarkPreview(props: {
   const iconSize = fontSize;
   const gap = fontSize / 4;
   const decorationPadding = spec.backgroundEnabled || spec.borderEnabled ? Math.round(fontSize * 0.3) : 0;
-  const textColor = spec.textColor || spec.color || '#ffffff';
+  const textColor = spec.textColor || '#ffffff';
   const backgroundColor = spec.backgroundColor || '#000000';
 
   const watermarkRef = useRef<HTMLDivElement | null>(null);

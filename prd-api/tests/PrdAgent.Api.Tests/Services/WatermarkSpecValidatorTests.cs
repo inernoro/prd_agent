@@ -10,9 +10,8 @@ public class WatermarkSpecValidatorTests
     [Fact]
     public void Serialize_ShouldRoundTrip()
     {
-        var spec = new WatermarkSpec
+        var config = new WatermarkConfig
         {
-            Enabled = true,
             Text = "test",
             FontKey = "dejavu-sans",
             FontSizePx = 24,
@@ -22,27 +21,25 @@ public class WatermarkSpecValidatorTests
             OffsetY = 0.6,
             IconEnabled = false,
             BaseCanvasWidth = 320,
-            ModelKey = "default",
-            Color = "#FFFFFF"
+            TextColor = "#FFFFFF"
         };
 
-        var json = JsonSerializer.Serialize(spec);
-        var restored = JsonSerializer.Deserialize<WatermarkSpec>(json);
+        var json = JsonSerializer.Serialize(config);
+        var restored = JsonSerializer.Deserialize<WatermarkConfig>(json);
 
         Assert.NotNull(restored);
-        Assert.Equal(spec.Text, restored!.Text);
-        Assert.Equal(spec.FontKey, restored.FontKey);
-        Assert.Equal(spec.FontSizePx, restored.FontSizePx);
-        Assert.Equal(spec.OffsetX, restored.OffsetX);
-        Assert.Equal(spec.OffsetY, restored.OffsetY);
+        Assert.Equal(config.Text, restored!.Text);
+        Assert.Equal(config.FontKey, restored.FontKey);
+        Assert.Equal(config.FontSizePx, restored.FontSizePx);
+        Assert.Equal(config.OffsetX, restored.OffsetX);
+        Assert.Equal(config.OffsetY, restored.OffsetY);
     }
 
     [Fact]
     public void Validate_ShouldRejectInvalidOpacity()
     {
-        var spec = new WatermarkSpec
+        var config = new WatermarkConfig
         {
-            Enabled = true,
             Text = "test",
             FontKey = "dejavu-sans",
             FontSizePx = 24,
@@ -53,16 +50,15 @@ public class WatermarkSpecValidatorTests
             BaseCanvasWidth = 320
         };
 
-        var (ok, _) = WatermarkSpecValidator.Validate(spec, new[] { "dejavu-sans" });
+        var (ok, _) = WatermarkSpecValidator.Validate(config, new[] { "dejavu-sans" });
         Assert.False(ok);
     }
 
     [Fact]
     public void Validate_ShouldRejectInvalidFontKey()
     {
-        var spec = new WatermarkSpec
+        var config = new WatermarkConfig
         {
-            Enabled = true,
             Text = "test",
             FontKey = "missing-font",
             FontSizePx = 24,
@@ -73,7 +69,7 @@ public class WatermarkSpecValidatorTests
             BaseCanvasWidth = 320
         };
 
-        var (ok, _) = WatermarkSpecValidator.Validate(spec, new[] { "dejavu-sans" });
+        var (ok, _) = WatermarkSpecValidator.Validate(config, new[] { "dejavu-sans" });
         Assert.False(ok);
     }
 }

@@ -28,11 +28,10 @@ public class WatermarkRendererTests
         return (new WatermarkRenderer(registry, factory, new NullLogger<WatermarkRenderer>()), registry);
     }
 
-    private static WatermarkSpec BuildSpec(double x, double y)
+    private static WatermarkConfig BuildConfig(double x, double y)
     {
-        return new WatermarkSpec
+        return new WatermarkConfig
         {
-            Enabled = true,
             Text = "Test",
             FontKey = "dejavu-sans",
             FontSizePx = 24,
@@ -42,7 +41,7 @@ public class WatermarkRendererTests
             OffsetX = x,
             OffsetY = y,
             BaseCanvasWidth = 320,
-            Color = "#FFFFFF"
+            TextColor = "#FFFFFF"
         };
     }
 
@@ -51,15 +50,15 @@ public class WatermarkRendererTests
     {
         var (renderer, registry) = BuildRenderer();
         if (registry.TryResolveFontFile(registry.DefaultFontKey) == null) return;
-        var spec = BuildSpec(0.5, 0.5);
+        var config = BuildConfig(0.5, 0.5);
 
         using var image = new Image<Rgba32>(400, 400);
         await using var ms = new MemoryStream();
         await image.SaveAsPngAsync(ms);
         var bytes = ms.ToArray();
 
-        var first = await renderer.ApplyAsync(bytes, "image/png", spec, CancellationToken.None);
-        var second = await renderer.ApplyAsync(bytes, "image/png", spec, CancellationToken.None);
+        var first = await renderer.ApplyAsync(bytes, "image/png", config, CancellationToken.None);
+        var second = await renderer.ApplyAsync(bytes, "image/png", config, CancellationToken.None);
 
         var hash1 = SHA256.HashData(first.bytes);
         var hash2 = SHA256.HashData(second.bytes);
@@ -75,20 +74,20 @@ public class WatermarkRendererTests
     {
         var (renderer, registry) = BuildRenderer();
         if (registry.TryResolveFontFile(registry.DefaultFontKey) == null) return;
-        var spec = BuildSpec(x, y);
+        var config = BuildConfig(x, y);
 
         using var image = new Image<Rgba32>(width, height);
         await using var ms = new MemoryStream();
         await image.SaveAsPngAsync(ms);
         var bytes = ms.ToArray();
 
-        var result = await renderer.ApplyAsync(bytes, "image/png", spec, CancellationToken.None);
+        var result = await renderer.ApplyAsync(bytes, "image/png", config, CancellationToken.None);
         using var rendered = Image.Load<Rgba32>(result.bytes);
 
         var bounds = FindBounds(rendered);
         var centerX = (bounds.minX + bounds.maxX) / 2d;
         var centerY = (bounds.minY + bounds.maxY) / 2d;
-        var (expectedX, expectedY) = CalculateExpectedCenter(registry, spec, width, height);
+        var (expectedX, expectedY) = CalculateExpectedCenter(registry, config, width, height);
 
         Assert.InRange(Math.Abs(centerX - expectedX), 0, 2);
         Assert.InRange(Math.Abs(centerY - expectedY), 0, 2);
@@ -96,27 +95,27 @@ public class WatermarkRendererTests
 
     private static (double centerX, double centerY) CalculateExpectedCenter(
         WatermarkFontRegistry registry,
-        WatermarkSpec spec,
+        WatermarkConfig config,
         int width,
         int height)
     {
-        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(spec, width);
-        var font = registry.ResolveFont(spec.FontKey, fontSize).Font;
+        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(config, width);
+        var font = registry.ResolveFont(config.FontKey, fontSize).Font;
         var textOptions = new TextOptions(font)
         {
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top
         };
-        var textSize = TextMeasurer.MeasureSize(spec.Text, textOptions);
+        var textSize = TextMeasurer.MeasureSize(config.Text, textOptions);
         var textHeight = textSize.Height;
         var textWidth = textSize.Width;
 
         var gap = textHeight / 4d;
-        var iconWidth = spec.IconEnabled ? textHeight + gap : 0d;
-        var padding = (spec.BackgroundEnabled || spec.BorderEnabled) ? textHeight * 0.3d : 0d;
+        var iconWidth = config.IconEnabled ? textHeight + gap : 0d;
+        var padding = (config.BackgroundEnabled || config.BorderEnabled) ? textHeight * 0.3d : 0d;
         var watermarkWidth = textWidth + iconWidth + padding * 2d;
         var watermarkHeight = textHeight + padding * 2d;
-        var (left, top) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(spec, width, height, watermarkWidth, watermarkHeight);
+        var (left, top) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(config, width, height, watermarkWidth, watermarkHeight);
         var textLeft = left + iconWidth + padding;
         var textTop = top + padding;
         return (textLeft + textWidth / 2d, textTop + textHeight / 2d);

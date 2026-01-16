@@ -99,6 +99,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
+    setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
+  }, []);
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   
   // 文件上传相关状态
@@ -2601,7 +2604,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </Button>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={setWatermarkStatus} hideAddButton />
+                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={handleWatermarkStatusChange} hideAddButton />
               </div>
             </div>
           </div>
