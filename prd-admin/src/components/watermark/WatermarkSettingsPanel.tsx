@@ -630,9 +630,9 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
           }
         }}
         title="水印编辑"
-        maxWidth={1120}
+        maxWidth={980}
         contentClassName="overflow-hidden !p-4"
-        contentStyle={{ maxHeight: '80vh', height: '80vh' }}
+        contentStyle={{ maxHeight: '72vh', height: '72vh' }}
         content={draftSpec ? (
           <WatermarkEditor
             spec={draftSpec}
@@ -748,9 +748,16 @@ function WatermarkEditor(props: {
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-3">
-      <div className="grid gap-3 flex-1 overflow-hidden items-start" style={{ gridTemplateColumns: '180px minmax(0, 1fr) 340px' }}>
+      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: '170px minmax(0, 1fr) 300px' }}>
         {/* 左侧: 多尺寸预览 */}
-        <div className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div
+          className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2 self-start"
+          style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: 'inset -1px 0 0 var(--border-subtle)',
+          }}
+        >
           <div className="text-[10px] font-semibold px-0.5" style={{ color: 'var(--text-muted)' }}>多尺寸预览</div>
           <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
             {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
@@ -793,7 +800,7 @@ function WatermarkEditor(props: {
         {/* 中间: 主预览画布 */}
         <div
           ref={mainPreviewRef}
-          className="relative flex items-start justify-center overflow-visible self-start"
+          className="relative flex items-center justify-center overflow-visible self-center"
         >
           <div
             className="rounded-[8px] flex items-center justify-center overflow-visible p-3 w-fit h-fit"
@@ -814,7 +821,14 @@ function WatermarkEditor(props: {
         </div>
 
         {/* 右侧: 配置表单 */}
-        <div className="flex flex-col gap-3 overflow-y-auto rounded-[10px] p-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div
+          className="flex flex-col gap-3 overflow-y-auto rounded-[10px] p-2 self-start"
+          style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: 'inset 1px 0 0 var(--border-subtle)',
+          }}
+        >
           <div className="flex items-center gap-1.5 pb-1" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <label
               className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded-[8px] cursor-pointer"
