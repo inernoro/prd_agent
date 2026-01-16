@@ -98,7 +98,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
-  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -188,7 +188,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const res = await getWatermark();
       if (cancelled) return;
       if (res?.success) {
-        setWatermarkEnabled(Boolean(res.data?.enabled ?? res.data?.spec?.enabled));
+        const source = res.data;
+        const activeSpec = source?.specs?.find((item) => item.id === source?.activeSpecId) ?? source?.spec;
+        setWatermarkStatus({
+          enabled: Boolean(source?.enabled ?? activeSpec?.enabled),
+          name: activeSpec?.name || activeSpec?.text || null,
+        });
       }
     })();
     return () => {
@@ -1546,12 +1551,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
                 系统提示词
               </div>
-              {watermarkEnabled && (
+              {watermarkStatus.enabled && (
                 <div
-                  className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0"
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-semibold shrink-0"
                   style={{ background: 'rgba(245, 158, 11, 0.12)', color: 'rgba(245, 158, 11, 0.85)', border: '1px solid rgba(245, 158, 11, 0.28)' }}
                 >
-                  水印
+                  水印: {watermarkStatus.name || '默认水印'}
                 </div>
               )}
               
@@ -2582,7 +2587,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 水印设置
               </div>
               <div className="flex-1 min-h-0 overflow-auto">
-                <WatermarkSettingsPanel onStatusChange={setWatermarkEnabled} />
+                <WatermarkSettingsPanel onStatusChange={setWatermarkStatus} />
               </div>
             </div>
           </div>

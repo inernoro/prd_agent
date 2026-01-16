@@ -8,6 +8,10 @@ public class WatermarkSettings
 
     public bool Enabled { get; set; }
 
+    public List<WatermarkSpec> Specs { get; set; } = new();
+
+    public string? ActiveSpecId { get; set; }
+
     public WatermarkSpec Spec { get; set; } = new();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
