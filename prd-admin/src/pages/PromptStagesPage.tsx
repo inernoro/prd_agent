@@ -1502,7 +1502,7 @@ export default function PromptStagesPage() {
           </Card>
 
           <div className="min-h-0 flex flex-col">
-            <WatermarkSettingsPanel />
+            <WatermarkSettingsPanel appKey="literary-agent" columns={3} />
           </div>
         </div>
       )}

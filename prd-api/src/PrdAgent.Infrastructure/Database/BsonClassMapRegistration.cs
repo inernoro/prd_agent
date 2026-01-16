@@ -65,7 +65,7 @@ public static class BsonClassMapRegistration
             RegisterSystemRole();
             RegisterUserPreferences();
             RegisterWatermarkFontAsset();
-            RegisterWatermarkSettings();
+            RegisterWatermarkConfig();
 
             _registered = true;
         }
@@ -578,50 +578,41 @@ public static class BsonClassMapRegistration
         });
     }
 
-    private static void RegisterWatermarkSettings()
+    private static void RegisterWatermarkConfig()
     {
-        if (BsonClassMap.IsClassMapRegistered(typeof(WatermarkSettings))) return;
+        if (BsonClassMap.IsClassMapRegistered(typeof(WatermarkConfig))) return;
 
-        BsonClassMap.RegisterClassMap<WatermarkSettings>(cm =>
+        BsonClassMap.RegisterClassMap<WatermarkConfig>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
-            cm.MapMember(x => x.OwnerUserId).SetElementName("ownerUserId");
-            cm.MapMember(x => x.Enabled).SetElementName("enabled");
-            cm.MapMember(x => x.Spec).SetElementName("spec");
+            // PreviewUrl 是运行时计算字段，不存储
+            var previewProp = typeof(WatermarkConfig).GetProperty(nameof(WatermarkConfig.PreviewUrl));
+            if (previewProp != null) cm.UnmapMember(previewProp);
+            cm.MapMember(x => x.UserId).SetElementName("userId");
+            cm.MapMember(x => x.Name).SetElementName("name");
+            cm.MapMember(x => x.AppKeys).SetElementName("appKeys");
+            cm.MapMember(x => x.Text).SetElementName("text");
+            cm.MapMember(x => x.FontKey).SetElementName("fontKey");
+            cm.MapMember(x => x.FontSizePx).SetElementName("fontSizePx");
+            cm.MapMember(x => x.Opacity).SetElementName("opacity");
+            cm.MapMember(x => x.PositionMode).SetElementName("positionMode");
+            cm.MapMember(x => x.Anchor).SetElementName("anchor");
+            cm.MapMember(x => x.OffsetX).SetElementName("offsetX");
+            cm.MapMember(x => x.OffsetY).SetElementName("offsetY");
+            cm.MapMember(x => x.IconEnabled).SetElementName("iconEnabled");
+            cm.MapMember(x => x.IconImageRef).SetElementName("iconImageRef");
+            cm.MapMember(x => x.BorderEnabled).SetElementName("borderEnabled");
+            cm.MapMember(x => x.BackgroundEnabled).SetElementName("backgroundEnabled");
+            cm.MapMember(x => x.BaseCanvasWidth).SetElementName("baseCanvasWidth");
+            cm.MapMember(x => x.TextColor).SetElementName("textColor");
+            cm.MapMember(x => x.BackgroundColor).SetElementName("backgroundColor");
             cm.MapMember(x => x.CreatedAt).SetElementName("createdAt");
             cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
             cm.SetIgnoreExtraElements(true);
         });
-
-        if (!BsonClassMap.IsClassMapRegistered(typeof(WatermarkSpec)))
-        {
-            BsonClassMap.RegisterClassMap<WatermarkSpec>(cm =>
-            {
-                cm.AutoMap();
-                cm.MapMember(x => x.Enabled).SetElementName("enabled");
-                cm.MapMember(x => x.Text).SetElementName("text");
-                cm.MapMember(x => x.FontKey).SetElementName("fontKey");
-                cm.MapMember(x => x.FontSizePx).SetElementName("fontSizePx");
-                cm.MapMember(x => x.Opacity).SetElementName("opacity");
-                cm.MapMember(x => x.PositionMode).SetElementName("positionMode");
-                cm.MapMember(x => x.Anchor).SetElementName("anchor");
-                cm.MapMember(x => x.OffsetX).SetElementName("offsetX");
-                cm.MapMember(x => x.OffsetY).SetElementName("offsetY");
-                cm.MapMember(x => x.IconEnabled).SetElementName("iconEnabled");
-                cm.MapMember(x => x.IconImageRef).SetElementName("iconImageRef");
-                cm.MapMember(x => x.BorderEnabled).SetElementName("borderEnabled");
-                cm.MapMember(x => x.BackgroundEnabled).SetElementName("backgroundEnabled");
-                cm.MapMember(x => x.BaseCanvasWidth).SetElementName("baseCanvasWidth");
-                cm.MapMember(x => x.ModelKey).SetElementName("modelKey");
-                cm.MapMember(x => x.Color).SetElementName("color");
-                cm.MapMember(x => x.TextColor).SetElementName("textColor");
-                cm.MapMember(x => x.BackgroundColor).SetElementName("backgroundColor");
-                cm.SetIgnoreExtraElements(true);
-            });
-        }
     }
 
     private static void RegisterWatermarkFontAsset()

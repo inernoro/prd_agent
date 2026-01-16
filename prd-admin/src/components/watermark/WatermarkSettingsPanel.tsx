@@ -7,19 +7,30 @@ import {
   useMemo,
   useRef,
   useState,
+  type ForwardedRef,
 } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { deleteWatermarkFont, getWatermark, getWatermarkFonts, putWatermark, uploadWatermarkFont } from '@/services';
-import type { WatermarkFontInfo, WatermarkSpec } from '@/services/contracts/watermark';
+import {
+  deleteWatermarkFont,
+  getWatermarks,
+  getWatermarkFonts,
+  createWatermark,
+  updateWatermark,
+  deleteWatermark,
+  bindWatermarkApp,
+  uploadWatermarkFont,
+  uploadWatermarkIcon,
+} from '@/services';
+import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { useAuthStore } from '@/stores/authStore';
 import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, PaintBucket, Type, Droplet, Plus, CheckCircle2 } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
+const watermarkSizeCache = new Map<string, { width: number; height: number }>();
 const createSpecId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -28,7 +39,7 @@ const createSpecId = () => {
 };
 const clampPixel = (value: number, min = 0, max = 0) => Math.min(Math.max(value, min), max);
 
-type WatermarkAnchor = WatermarkSpec['anchor'];
+type WatermarkAnchor = WatermarkConfig['anchor'];
 
 const anchorLabelMap: Record<WatermarkAnchor, string> = {
   'top-left': '左上',
@@ -37,15 +48,15 @@ const anchorLabelMap: Record<WatermarkAnchor, string> = {
   'bottom-right': '右下',
 };
 
-const modeLabelMap: Record<WatermarkSpec['positionMode'], string> = {
-  pixel: '按像素',
-  ratio: '按比例',
+const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
+  pixel: '像素',
+  ratio: '比例',
 };
 
-const buildDefaultSpec = (fontKey: string): WatermarkSpec => ({
+const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   id: createSpecId(),
   name: '默认水印',
-  enabled: false,
+  appKeys: [],
   text: '米多AI生成',
   fontKey,
   fontSizePx: 28,
@@ -59,28 +70,25 @@ const buildDefaultSpec = (fontKey: string): WatermarkSpec => ({
   borderEnabled: false,
   backgroundEnabled: false,
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
-  modelKey: 'default',
-  color: '#FFFFFF',
   textColor: '#FFFFFF',
   backgroundColor: '#000000',
 });
 
-const normalizeSpec = (spec: WatermarkSpec, enabled: boolean, fallbackName: string): WatermarkSpec => {
-  const resolvedTextColor = spec.textColor ?? spec.color ?? '#FFFFFF';
+const normalizeConfig = (config: WatermarkConfig, fallbackName: string): WatermarkConfig => {
+  const resolvedTextColor = config.textColor ?? '#FFFFFF';
   return {
-    ...spec,
-    id: spec.id || createSpecId(),
-    name: spec.name?.trim() || fallbackName,
-    enabled,
-    positionMode: spec.positionMode ?? 'pixel',
-    anchor: spec.anchor ?? 'bottom-right',
-    offsetX: Number.isFinite(spec.offsetX) ? spec.offsetX : 24,
-    offsetY: Number.isFinite(spec.offsetY) ? spec.offsetY : 24,
-    borderEnabled: Boolean(spec.borderEnabled),
-    backgroundEnabled: Boolean(spec.backgroundEnabled),
+    ...config,
+    id: config.id || createSpecId(),
+    name: config.name?.trim() || fallbackName,
+    appKeys: config.appKeys ?? [],
+    positionMode: config.positionMode ?? 'pixel',
+    anchor: config.anchor ?? 'bottom-right',
+    offsetX: Number.isFinite(config.offsetX) ? config.offsetX : 24,
+    offsetY: Number.isFinite(config.offsetY) ? config.offsetY : 24,
+    borderEnabled: Boolean(config.borderEnabled),
+    backgroundEnabled: Boolean(config.backgroundEnabled),
     textColor: resolvedTextColor,
-    color: resolvedTextColor,
-    backgroundColor: spec.backgroundColor ?? '#000000',
+    backgroundColor: config.backgroundColor ?? '#000000',
   };
 };
 
@@ -158,40 +166,46 @@ function useFontFace(font: WatermarkFontInfo | null | undefined, enabled: boolea
   }, [enabled, font]);
 }
 
-type WatermarkStatus = { enabled: boolean; activeId?: string; activeName?: string };
+type WatermarkStatus = { hasActiveConfig: boolean; activeId?: string; activeName?: string };
 export type WatermarkSettingsPanelHandle = { addSpec: () => void };
+type WatermarkSettingsPanelProps = {
+  /** 当前应用的 appKey，用于绑定/解绑水印 */
+  appKey: string;
+  onStatusChange?: (status: WatermarkStatus) => void;
+  hideAddButton?: boolean;
+  columns?: number;
+};
 
-export const WatermarkSettingsPanel = forwardRef<
-  WatermarkSettingsPanelHandle,
-  { onStatusChange?: (status: WatermarkStatus) => void; hideAddButton?: boolean }
->(function WatermarkSettingsPanel(props, ref) {
-  const { onStatusChange, hideAddButton = false } = props;
+export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel(
+  props: WatermarkSettingsPanelProps,
+  ref: ForwardedRef<WatermarkSettingsPanelHandle>
+) {
+  const { appKey, onStatusChange, hideAddButton = false, columns = 1 } = props;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fonts, setFonts] = useState<WatermarkFontInfo[]>([]);
-  const [specs, setSpecs] = useState<WatermarkSpec[]>([]);
-  const [activeSpecId, setActiveSpecId] = useState<string | null>(null);
-  const [enabled, setEnabled] = useState(false);
+  const [configs, setConfigs] = useState<WatermarkConfig[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [draftSpec, setDraftSpec] = useState<WatermarkSpec | null>(null);
+  const [draftConfig, setDraftConfig] = useState<WatermarkConfig | null>(null);
+  const [isNewConfig, setIsNewConfig] = useState(false);
   const [fontUploading, setFontUploading] = useState(false);
+  const [iconUploading, setIconUploading] = useState(false);
   const [fontDeletingKey, setFontDeletingKey] = useState<string | null>(null);
-  const [draftSnapshot, setDraftSnapshot] = useState<{
-    specs: WatermarkSpec[];
-    activeSpecId: string | null;
-  } | null>(null);
   const [previewEpoch, setPreviewEpoch] = useState(0);
-  const [previewError, setPreviewError] = useState(false);
-  const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
-  const [globalSpecId, setGlobalSpecId] = useState<string | null>(null);
-  const [overrideSpecId, setOverrideSpecId] = useState<string | null>(null);
+  const [previewErrorById, setPreviewErrorById] = useState<Record<string, boolean>>({});
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
+
+  // 找到当前 appKey 绑定的水印配置
+  const activeConfig = useMemo(
+    () => configs.find((c) => c.appKeys?.includes(appKey)) ?? null,
+    [configs, appKey]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [wmRes, fontRes] = await Promise.all([getWatermark(), getWatermarkFonts()]);
+      const [wmRes, fontRes] = await Promise.all([getWatermarks(), getWatermarkFonts()]);
       const nextFonts = fontRes?.success ? fontRes.data || [] : [];
       if (nextFonts.length > 0) {
         setFonts(nextFonts);
@@ -199,32 +213,19 @@ export const WatermarkSettingsPanel = forwardRef<
       const fallbackFont = nextFonts[0]?.fontKey || 'default';
 
       if (wmRes?.success) {
-        const source = wmRes.data;
-        const sourceSpecs = source?.specs && source.specs.length > 0
-          ? source.specs
-          : source?.spec
-            ? [source.spec]
-            : [buildDefaultSpec(fallbackFont)];
-        const nextEnabled = Boolean(source?.enabled ?? sourceSpecs[0]?.enabled);
-        const normalizedSpecs = sourceSpecs.map((item, index) =>
-          normalizeSpec(
+        const sourceConfigs = wmRes.data || [];
+        const normalizedConfigs = sourceConfigs.map((item, index) =>
+          normalizeConfig(
             {
               ...item,
               fontKey: item.fontKey || fallbackFont,
             },
-            nextEnabled,
             item.name || `水印配置 ${index + 1}`,
           )
         );
-        const nextActiveId = source?.activeSpecId || normalizedSpecs[0]?.id || null;
-        setSpecs(normalizedSpecs);
-        setActiveSpecId(nextActiveId);
-        setEnabled(nextEnabled);
-      } else if (nextFonts.length > 0) {
-        const defaultSpec = buildDefaultSpec(fallbackFont);
-        setSpecs([defaultSpec]);
-        setActiveSpecId(defaultSpec.id);
-        setEnabled(defaultSpec.enabled);
+        setConfigs(normalizedConfigs);
+      } else {
+        setConfigs([]);
       }
     } finally {
       setLoading(false);
@@ -235,156 +236,125 @@ export const WatermarkSettingsPanel = forwardRef<
     void load();
   }, [load]);
 
-
-  const spec = useMemo(
-    () => specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null,
-    [specs, activeSpecId]
-  );
-
   useEffect(() => {
     if (!onStatusChange) return;
-    onStatusChange({ enabled, activeId: spec?.id, activeName: spec?.name });
-  }, [onStatusChange, enabled, spec?.id, spec?.name]);
+    onStatusChange({
+      hasActiveConfig: activeConfig !== null,
+      activeId: activeConfig?.id,
+      activeName: activeConfig?.name,
+    });
+  }, [onStatusChange, activeConfig]);
 
   useEffect(() => {
     if (fonts.length === 0) return;
     const fallback = fonts.find((font) => font.fontKey === 'default')?.fontKey || fonts[0].fontKey;
-    setSpecs((prev) =>
+    setConfigs((prev) =>
       prev.map((item) => (fontMap.has(item.fontKey) ? item : { ...item, fontKey: fallback }))
     );
   }, [fontMap, fonts]);
 
-  const saveSettings = useCallback(
-    async (nextSpecs: WatermarkSpec[], nextActiveId: string | null, nextEnabled: boolean) => {
+  const saveConfig = useCallback(
+    async (config: WatermarkConfig, isNew: boolean) => {
       setSaving(true);
       try {
-        const res = await putWatermark({
-          enabled: nextEnabled,
-          activeSpecId: nextActiveId ?? undefined,
-          specs: nextSpecs,
-        });
-        if (res?.success) {
-          const source = res.data;
-          const fallbackFont = fonts[0]?.fontKey || 'default';
-          const sourceSpecs = source?.specs && source.specs.length > 0
-            ? source.specs
-            : source?.spec
-              ? [source.spec]
-              : [buildDefaultSpec(fallbackFont)];
-          const nextEnabledValue = Boolean(source?.enabled ?? sourceSpecs[0]?.enabled);
-          const normalizedSpecs = sourceSpecs.map((item, index) =>
-            normalizeSpec(
-              {
-                ...item,
-                fontKey: item.fontKey || fallbackFont,
-              },
-              nextEnabledValue,
-              item.name || `水印配置 ${index + 1}`,
-            )
-          );
-          const nextActive = source?.activeSpecId || normalizedSpecs[0]?.id || null;
-          setSpecs(normalizedSpecs);
-          setActiveSpecId(nextActive);
-          setEnabled(nextEnabledValue);
-          setPreviewEpoch(Date.now());
+        if (isNew) {
+          const res = await createWatermark({
+            name: config.name,
+            text: config.text,
+            fontKey: config.fontKey,
+            fontSizePx: config.fontSizePx,
+            opacity: config.opacity,
+            positionMode: config.positionMode,
+            anchor: config.anchor,
+            offsetX: config.offsetX,
+            offsetY: config.offsetY,
+            iconEnabled: config.iconEnabled,
+            iconImageRef: config.iconImageRef,
+            borderEnabled: config.borderEnabled,
+            backgroundEnabled: config.backgroundEnabled,
+            baseCanvasWidth: config.baseCanvasWidth,
+            textColor: config.textColor,
+            backgroundColor: config.backgroundColor,
+          });
+          if (res?.success) {
+            await load();
+            setPreviewEpoch(Date.now());
+          }
+        } else {
+          const res = await updateWatermark({
+            id: config.id,
+            name: config.name,
+            text: config.text,
+            fontKey: config.fontKey,
+            fontSizePx: config.fontSizePx,
+            opacity: config.opacity,
+            positionMode: config.positionMode,
+            anchor: config.anchor,
+            offsetX: config.offsetX,
+            offsetY: config.offsetY,
+            iconEnabled: config.iconEnabled,
+            iconImageRef: config.iconImageRef,
+            borderEnabled: config.borderEnabled,
+            backgroundEnabled: config.backgroundEnabled,
+            baseCanvasWidth: config.baseCanvasWidth,
+            textColor: config.textColor,
+            backgroundColor: config.backgroundColor,
+          });
+          if (res?.success) {
+            await load();
+            setPreviewEpoch(Date.now());
+          }
         }
       } finally {
         setSaving(false);
       }
     },
-    [fonts]
+    [load]
   );
 
-  const saveSpec = useCallback(
-    async (next: WatermarkSpec) => {
-      const nextSpecs = specs.map((item) => (item.id === next.id ? next : item));
-      await saveSettings(nextSpecs, activeSpecId, enabled);
-    },
-    [activeSpecId, enabled, saveSettings, specs]
-  );
-
-  const previewRequestUrl = useMemo(() => {
-    if (!spec) return null;
-    return `/api/watermark/preview/${encodeURIComponent(spec.id)}.png`;
-  }, [spec]);
+  const buildPreviewUrl = useCallback((raw?: string | null) => {
+    const base = String(raw || '').trim();
+    if (!base) return null;
+    const separator = base.includes('?') ? '&' : '?';
+    return `${base}${separator}t=${previewEpoch}`;
+  }, [previewEpoch]);
 
   useEffect(() => {
-    if (!previewRequestUrl) {
-      setPreviewObjectUrl(null);
-      return;
-    }
-    const controller = new AbortController();
-    const token = useAuthStore.getState().token;
-    setPreviewError(false);
-
-    void fetch(previewRequestUrl, {
-      method: 'GET',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('preview fetch failed');
-        return res.blob();
-      })
-      .then((blob) => {
-        const nextUrl = URL.createObjectURL(blob);
-        setPreviewObjectUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return nextUrl;
-        });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setPreviewError(true);
-          setPreviewObjectUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return null;
-          });
-        }
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [previewEpoch, previewRequestUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
-    };
-  }, [previewObjectUrl]);
+    setPreviewErrorById({});
+  }, [previewEpoch, configs]);
 
   const handleActivate = async (id: string) => {
-    if (id === activeSpecId) return;
-    await saveSettings(specs, id, enabled);
+    if (activeConfig?.id === id) return;
+    setSaving(true);
+    try {
+      const res = await bindWatermarkApp({ id, appKey });
+      if (res?.success) {
+        await load();
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleAddSpec = () => {
-    const fallbackFont = fonts[0]?.fontKey || spec?.fontKey || 'default';
-    const base = spec ? { ...spec } : buildDefaultSpec(fallbackFont);
-    const newSpec = normalizeSpec(
+  const handleAddConfig = () => {
+    const fallbackFont = fonts[0]?.fontKey || activeConfig?.fontKey || 'default';
+    const base = buildDefaultConfig(fallbackFont);
+    const newConfig = normalizeConfig(
       {
         ...base,
         id: createSpecId(),
-        name: `水印配置 ${specs.length + 1}`,
+        name: `水印配置 ${configs.length + 1}`,
       },
-      enabled,
-      `水印配置 ${specs.length + 1}`
+      `水印配置 ${configs.length + 1}`
     );
-    setDraftSnapshot({ specs, activeSpecId });
-    setSpecs([...specs, newSpec]);
-    setActiveSpecId(newSpec.id);
-    setDraftSpec({ ...newSpec });
+    setDraftConfig({ ...newConfig });
+    setIsNewConfig(true);
     setEditorOpen(true);
   };
 
   const handleEditorCancel = () => {
-    if (draftSnapshot) {
-      setSpecs(draftSnapshot.specs);
-      setActiveSpecId(draftSnapshot.activeSpecId);
-    }
-    setDraftSnapshot(null);
-    setDraftSpec(null);
+    setDraftConfig(null);
+    setIsNewConfig(false);
     setEditorOpen(false);
   };
 
@@ -408,12 +378,30 @@ export const WatermarkSettingsPanel = forwardRef<
         }
         toast.success('字体已上传', res.data?.displayName || '上传成功');
         await refreshFonts();
-        setDraftSpec((prev) => (prev ? { ...prev, fontKey: res.data.fontKey } : prev));
+        setDraftConfig((prev) => (prev ? { ...prev, fontKey: res.data.fontKey } : prev));
       } finally {
         setFontUploading(false);
       }
     },
     [fontUploading, refreshFonts]
+  );
+
+  const handleIconUpload = useCallback(
+    async (file: File) => {
+      if (iconUploading) return null;
+      setIconUploading(true);
+      try {
+        const res = await uploadWatermarkIcon({ file });
+        if (!res?.success) {
+          toast.error('图标上传失败', res?.error?.message || '上传失败');
+          return null;
+        }
+        return res.data.url;
+      } finally {
+        setIconUploading(false);
+      }
+    },
+    [iconUploading]
   );
 
   const handleFontDelete = useCallback(
@@ -447,7 +435,7 @@ export const WatermarkSettingsPanel = forwardRef<
         const updated = await refreshFonts();
         if (updated?.success) {
           const nextFonts = updated.data || [];
-          setDraftSpec((prev) => {
+          setDraftConfig((prev) => {
             if (!prev) return prev;
             if (prev.fontKey !== font.fontKey) return prev;
             const fallback = nextFonts[0]?.fontKey || prev.fontKey;
@@ -461,13 +449,9 @@ export const WatermarkSettingsPanel = forwardRef<
     [fontDeletingKey, refreshFonts]
   );
 
-  const handleDeleteSpec = useCallback(
-    async (target: WatermarkSpec) => {
+  const handleDeleteConfig = useCallback(
+    async (target: WatermarkConfig) => {
       if (saving) return;
-      if (specs.length <= 1) {
-        toast.error('至少保留一个水印配置');
-        return;
-      }
       const confirmed = await systemDialog.confirm({
         title: '确认删除水印配置',
         message: `确定删除「${target.name || '水印配置'}」吗？`,
@@ -476,28 +460,29 @@ export const WatermarkSettingsPanel = forwardRef<
         cancelText: '取消',
       });
       if (!confirmed) return;
-      const nextSpecs = specs.filter((item) => item.id !== target.id);
-      const nextActiveId = target.id === activeSpecId ? nextSpecs[0]?.id ?? null : activeSpecId;
-      await saveSettings(nextSpecs, nextActiveId, enabled);
+      setSaving(true);
+      try {
+        const res = await deleteWatermark({ id: target.id });
+        if (res?.success) {
+          await load();
+        }
+      } finally {
+        setSaving(false);
+      }
     },
-    [activeSpecId, enabled, saveSettings, saving, specs]
+    [load, saving]
   );
-
-  const toggleEnabled = async () => {
-    if (!spec) return;
-    await saveSettings(specs, activeSpecId, !enabled);
-  };
 
   useImperativeHandle(ref, () => ({
     addSpec: () => {
-      void handleAddSpec();
+      void handleAddConfig();
     },
-  }), [handleAddSpec]);
+  }), [handleAddConfig]);
 
   if (loading) {
     return (
       <div className="p-4 min-h-[260px] flex items-center justify-center rounded-[16px]" style={{ background: 'var(--bg-card)' }}>
-        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>水印配置加载中...</div>
+        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
       </div>
     );
   }
@@ -506,186 +491,156 @@ export const WatermarkSettingsPanel = forwardRef<
     <div className="min-h-0 h-full flex flex-col gap-3 overflow-hidden">
       {!hideAddButton ? (
         <div className="flex items-center justify-end">
-          <Button variant="secondary" size="xs" onClick={handleAddSpec} disabled={saving}>
+          <Button variant="secondary" size="xs" onClick={handleAddConfig} disabled={saving}>
             <Plus size={14} />
             新增配置
           </Button>
         </div>
       ) : null}
 
-      {specs.length > 0 ? (
+      {configs.length > 0 ? (
         <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
-            <div className="text-[11px] px-2 py-1 rounded-[8px]" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
-              优先级：覆盖全部 &gt; 应用内设置 &gt; 设为全局（设置会影响其他生图入口）
-            </div>
-            <div className="grid gap-3 flex-1 min-h-0 overflow-auto pr-1 content-start">
-              {specs.map((item, index) => {
-                const isActive = item.id === activeSpecId;
-                const isGlobal = item.id === globalSpecId;
-                const isOverride = item.id === overrideSpecId;
-                const fontLabel = fontMap.get(item.fontKey)?.displayName || item.fontKey;
-                return (
-                  <Card key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
-                    <div className="flex flex-col h-full">
-                      <div className="p-2 pb-1 flex-shrink-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                              {item.name || `水印配置 ${index + 1}`}
-                            </div>
-                            <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{item.text}</div>
+          <div
+            className="grid gap-3 flex-1 min-h-0 overflow-auto pr-1 content-start"
+            style={{ gridTemplateColumns: columns > 1 ? `repeat(${columns}, minmax(0, 1fr))` : '1fr' }}
+          >
+            {configs.map((item, index) => {
+              const isActive = item.appKeys?.includes(appKey);
+              const fontLabel = fontMap.get(item.fontKey)?.displayName || item.fontKey;
+              const previewUrl = buildPreviewUrl(item.previewUrl);
+              const previewError = Boolean(previewErrorById[item.id]);
+              return (
+                <Card key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
+                  <div className="flex flex-col h-full">
+                    <div className="p-2 pb-1 flex-shrink-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {item.name || `Watermark ${index + 1}`}
                           </div>
-                          <button
-                            type="button"
+                          <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{item.text}</div>
+                        </div>
+                        {isActive ? (
+                          <span
                             className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full"
                             style={{
-                              background: isActive ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255,255,255,0.08)',
-                              color: isActive ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-secondary)',
+                              background: 'rgba(245, 158, 11, 0.18)',
+                              color: 'rgba(245, 158, 11, 0.9)',
                               border: '1px solid rgba(255,255,255,0.12)',
                             }}
-                            onClick={() => handleActivate(item.id)}
-                            disabled={saving}
-                            title={isActive ? '当前启用' : '设为启用'}
                           >
-                            {isActive ? <CheckCircle2 size={12} /> : null}
-                            {isActive ? '已启用' : '启用'}
-                          </button>
-                        </div>
+                            <CheckCircle2 size={12} />
+                            激活
+                          </span>
+                        ) : null}
                       </div>
+                    </div>
 
-                      <div className="px-2 pb-1 overflow-hidden">
+                    <div className="px-2 pb-1 overflow-hidden">
+                      <div className="grid gap-2 min-h-0" style={{ gridTemplateColumns: 'minmax(0, 1fr) 140px' }}>
                         <div
-                          className={isActive ? 'grid gap-2 min-h-0' : undefined}
-                          style={isActive ? { gridTemplateColumns: 'minmax(0, 1fr) 140px' } : undefined}
+                          className="h-full overflow-auto border rounded-[6px]"
+                          style={{
+                            borderColor: 'var(--border-subtle)',
+                            background: 'rgba(255,255,255,0.02)',
+                            minHeight: '120px',
+                            maxHeight: '160px',
+                          }}
                         >
-                          <div
-                            className="h-full overflow-auto border rounded-[6px]"
-                            style={{
-                              borderColor: 'var(--border-subtle)',
-                              background: 'rgba(255,255,255,0.02)',
-                              minHeight: '120px',
-                              maxHeight: '160px',
-                            }}
-                          >
-                            <div className="text-[11px] grid gap-2 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
-                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                                <span>字体</span>
-                                <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
-                              </div>
-                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                                <span>字号</span>
-                                <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-                              </div>
-                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                                <span>位置</span>
-                                <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 200 }}>
-                                  {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
-                                </span>
-                              </div>
-                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                                <span>图标</span>
-                                <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '未启用'}</span>
-                              </div>
-                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                                <span>透明度</span>
-                                <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
-                              </div>
+                          <div className="text-[11px] grid gap-2 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
+                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                              <span>字体</span>
+                              <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
+                            </div>
+                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                              <span>大小</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
+                            </div>
+                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                              <span>位置</span>
+                              <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 200 }}>
+                                {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
+                              </span>
+                            </div>
+                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                              <span>图标</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '禁用'}</span>
+                            </div>
+                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                              <span>透明度</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
                             </div>
                           </div>
-                          {isActive ? (
-                            <div
-                              className="relative flex items-center justify-center border"
-                              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-                            >
-                              <span
-                                className="absolute text-xs font-semibold"
-                                style={{ color: 'rgba(255,255,255,0.45)' }}
-                              >
-                                预览
-                              </span>
-                              {previewObjectUrl && !previewError ? (
-                                <img
-                                  src={previewObjectUrl}
-                                  alt="水印预览"
-                                  className="w-full h-auto object-contain"
-                                  onError={() => setPreviewError(true)}
-                                />
-                              ) : (
-                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无预览</div>
-                              )}
-                            </div>
-                          ) : null}
                         </div>
-                      </div>
-
-                      <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                        <div className="flex flex-wrap gap-1.5 justify-end">
-                          {isActive ? (
-                            <Button size="xs" variant="secondary" disabled>
-                              <Check size={12} />
-                              已选
-                            </Button>
+                        <div
+                          className="relative flex items-center justify-center border"
+                          style={{
+                            borderColor: 'rgba(255,255,255,0.08)',
+                            background: previewUrl && !previewError
+                              ? 'linear-gradient(180deg, #E9D19C 0%, #D8B46B 100%)'
+                              : 'transparent',
+                          }}
+                        >
+                          {previewUrl && !previewError ? (
+                            <img
+                              src={previewUrl}
+                              alt="Preview"
+                              className="w-full h-auto object-contain"
+                              onError={() => setPreviewErrorById((prev) => ({ ...prev, [item.id]: true }))}
+                            />
                           ) : (
-                            <Button size="xs" variant="primary" onClick={() => handleActivate(item.id)} disabled={saving}>
-                              <Check size={12} />
-                              选择
-                            </Button>
+                            <div className="text-[11px]" style={{ color: 'rgba(233,209,156,0.7)' }}>无预览</div>
                           )}
-                          <Button
-                            size="xs"
-                            variant={isGlobal ? 'primary' : 'secondary'}
-                            onClick={() => {
-                              setGlobalSpecId(item.id);
-                              toast.success('已设为全局水印');
-                            }}
-                          >
-                            <Check size={12} />
-                            设为全局
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant={isOverride ? 'primary' : 'secondary'}
-                            onClick={() => {
-                              setOverrideSpecId(item.id);
-                              toast.success('已设置为覆盖全部');
-                            }}
-                          >
-                            <Check size={12} />
-                            覆盖全部
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="secondary"
-                            onClick={() => {
-                              setDraftSnapshot(null);
-                              setDraftSpec({ ...item });
-                              setEditorOpen(true);
-                            }}
-                          >
-                            <Pencil size={12} />
-                            编辑
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="danger"
-                            onClick={() => {
-                              void handleDeleteSpec(item);
-                            }}
-                            disabled={saving || specs.length <= 1}
-                          >
-                            <Trash2 size={12} />
-                            删除
-                          </Button>
                         </div>
                       </div>
                     </div>
-                  </Card>
-                );
-              })}
-            </div>
+
+                    <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <div className="flex flex-wrap gap-1.5 justify-end">
+                        {isActive ? (
+                          <Button size="xs" variant="secondary" disabled>
+                            <Check size={12} />
+                            已选择
+                          </Button>
+                        ) : (
+                          <Button size="xs" variant="primary" onClick={() => handleActivate(item.id)} disabled={saving}>
+                            <Check size={12} />
+                            选择
+                          </Button>
+                        )}
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          onClick={() => {
+                            setDraftConfig({ ...item });
+                            setIsNewConfig(false);
+                            setEditorOpen(true);
+                          }}
+                        >
+                          <Pencil size={12} />
+                          编辑
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="danger"
+                          onClick={() => {
+                            void handleDeleteConfig(item);
+                          }}
+                          disabled={saving}
+                        >
+                          <Trash2 size={12} />
+                          删除
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       ) : (
-        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无水印配置</div>
+        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无水印</div>
       )}
 
       <Dialog
@@ -697,24 +652,26 @@ export const WatermarkSettingsPanel = forwardRef<
             setEditorOpen(true);
           }
         }}
-        title="水印编辑"
+        title="水印编辑器"
         maxWidth={920}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
-        content={draftSpec ? (
+        content={draftConfig ? (
           <WatermarkEditor
-            spec={draftSpec}
+            config={draftConfig}
             fonts={fonts}
             fontUploading={fontUploading}
             fontDeletingKey={fontDeletingKey}
-            onChange={setDraftSpec}
+            iconUploading={iconUploading}
+            onChange={setDraftConfig}
             onUploadFont={handleFontUpload}
+            onUploadIcon={handleIconUpload}
             onDeleteFont={handleFontDelete}
             onSave={async () => {
-              if (!draftSpec) return;
-              await saveSpec(draftSpec);
-              setDraftSnapshot(null);
-              setDraftSpec(null);
+              if (!draftConfig) return;
+              await saveConfig(draftConfig, isNewConfig);
+              setDraftConfig(null);
+              setIsNewConfig(false);
               setEditorOpen(false);
             }}
           />
@@ -727,24 +684,26 @@ export const WatermarkSettingsPanel = forwardRef<
 WatermarkSettingsPanel.displayName = 'WatermarkSettingsPanel';
 
 function WatermarkEditor(props: {
-  spec: WatermarkSpec;
+  config: WatermarkConfig;
   fonts: WatermarkFontInfo[];
   fontUploading: boolean;
   fontDeletingKey: string | null;
-  onChange: (spec: WatermarkSpec) => void;
+  iconUploading: boolean;
+  onChange: (config: WatermarkConfig) => void;
   onUploadFont: (file: File) => void;
+  onUploadIcon: (file: File) => Promise<string | null>;
   onDeleteFont: (font: WatermarkFontInfo) => void;
   onSave: () => void;
 }) {
-  const { spec, fonts, fontUploading, fontDeletingKey, onChange, onUploadFont, onDeleteFont, onSave } = props;
+  const { config, fonts, fontUploading, fontDeletingKey, iconUploading, onChange, onUploadFont, onUploadIcon, onDeleteFont, onSave } = props;
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainPreviewRef = useRef<HTMLDivElement | null>(null);
-  const [mainPreviewSize, setMainPreviewSize] = useState(spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
+  const [mainPreviewSize, setMainPreviewSize] = useState(config.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
   const [fontLoading, setFontLoading] = useState(false);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
-  const baseCanvasSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
+  const baseCanvasSize = config.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
 
   useEffect(() => {
     const container = mainPreviewRef.current;
@@ -752,7 +711,7 @@ function WatermarkEditor(props: {
     const observer = new ResizeObserver(([entry]) => {
       const width = entry.contentRect.width;
       const height = entry.contentRect.height;
-      const baseSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
+      const baseSize = config.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
       const paddingAllowance = 24;
       const nextSize = Math.max(
         280,
@@ -762,20 +721,17 @@ function WatermarkEditor(props: {
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [spec.baseCanvasWidth]);
+  }, [config.baseCanvasWidth]);
 
-  const updateSpec = (patch: Partial<WatermarkSpec>) => {
-    onChange({ ...spec, ...patch });
+  const updateConfig = (patch: Partial<WatermarkConfig>) => {
+    onChange({ ...config, ...patch });
   };
 
   const handleIconUpload = async (file: File | null) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      updateSpec({ iconEnabled: true, iconImageRef: dataUrl });
-    };
-    reader.readAsDataURL(file);
+    const url = await onUploadIcon(file);
+    if (!url) return;
+    updateConfig({ iconEnabled: true, iconImageRef: url });
   };
 
   const handlePreviewUpload = (file: File | null) => {
@@ -787,7 +743,7 @@ function WatermarkEditor(props: {
     reader.readAsDataURL(file);
   };
 
-  const currentFont = fontMap.get(spec.fontKey);
+  const currentFont = fontMap.get(config.fontKey);
   useFontFace(currentFont ?? null, true);
 
   useEffect(() => {
@@ -796,12 +752,12 @@ function WatermarkEditor(props: {
       return;
     }
     setFontLoading(true);
-    const fontSize = Math.max(12, Math.round(spec.fontSizePx));
+    const fontSize = Math.max(12, Math.round(config.fontSizePx));
     document.fonts
       .load(`${fontSize}px "${currentFont.fontFamily}"`)
       .then(() => setFontLoading(false))
       .catch(() => setFontLoading(false));
-  }, [currentFont?.fontFamily, spec.fontSizePx]);
+  }, [currentFont?.fontFamily, config.fontSizePx]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-3">
@@ -820,7 +776,7 @@ function WatermarkEditor(props: {
             }}
           >
             <WatermarkPreview
-              spec={spec}
+              spec={config}
               font={currentFont}
               size={mainPreviewSize}
               previewImage={previewImage}
@@ -828,7 +784,7 @@ function WatermarkEditor(props: {
               showCrosshair
               showDistances
               distancePlacement="outside"
-              onPositionChange={(next) => updateSpec(next)}
+              onPositionChange={(next) => updateConfig(next)}
             />
           </div>
         </div>
@@ -846,28 +802,28 @@ function WatermarkEditor(props: {
             <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>配置名称</div>
               <input
-                value={spec.name}
-                onChange={(e) => updateSpec({ name: e.target.value })}
-                className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
+                value={config.name}
+                onChange={(e) => updateConfig({ name: e.target.value })}
+                className="w-full h-9 rounded-[8px] px-3 text-sm outline-none prd-field"
                 placeholder="例如：默认水印"
               />
 
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
               <input
-                value={spec.text}
-                onChange={(e) => updateSpec({ text: e.target.value })}
-                className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
+                value={config.text}
+                onChange={(e) => updateConfig({ text: e.target.value })}
+                className="w-full h-9 rounded-[8px] px-3 text-sm outline-none prd-field"
                 placeholder="请输入水印文案"
               />
 
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字体</div>
               <div className="flex items-center gap-2">
                 <FontSelect
-                  value={spec.fontKey}
+                  value={config.fontKey}
                   fonts={fonts}
                   deletingKey={fontDeletingKey}
                   loading={fontLoading}
-                  onChange={(fontKey) => updateSpec({ fontKey })}
+                  onChange={(fontKey) => updateConfig({ fontKey })}
                   onDelete={onDeleteFont}
                 />
                 <input
@@ -883,39 +839,38 @@ function WatermarkEditor(props: {
                 />
                 <Button
                   size="sm"
-                  className="shrink-0"
+                  className="shrink-0 !h-9 !w-9 !px-0"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={fontUploading}
                 >
                   <UploadCloud size={14} />
-                  {fontUploading ? '上传中...' : '上传字体'}
                 </Button>
               </div>
 
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字号</div>
               <div className="flex flex-col gap-1">
-                <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
+                <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(config.fontSizePx)}px</div>
                 <input
                   type="range"
                   min={12}
                   max={64}
                   step={2}
-                  value={spec.fontSizePx}
-                  onChange={(e) => updateSpec({ fontSizePx: Number(e.target.value) })}
+                  value={config.fontSizePx}
+                  onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
                   className="w-full"
                 />
               </div>
 
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>透明度</div>
               <div className="flex flex-col gap-1">
-                <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.opacity * 100)}%</div>
+                <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(config.opacity * 100)}%</div>
                 <input
                   type="range"
                   min={0}
                   max={1}
                   step={0.05}
-                  value={spec.opacity}
-                  onChange={(e) => updateSpec({ opacity: Number(e.target.value) })}
+                  value={config.opacity}
+                  onChange={(e) => updateConfig({ opacity: Number(e.target.value) })}
                   className="w-full"
                 />
               </div>
@@ -923,20 +878,20 @@ function WatermarkEditor(props: {
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>定位方式</div>
               <div>
                 <PositionModeSwitch
-                  value={spec.positionMode}
+                  value={config.positionMode}
                   onChange={(nextMode) => {
-                    if (nextMode === spec.positionMode) return;
+                    if (nextMode === config.positionMode) return;
                     if (nextMode === 'ratio') {
-                      updateSpec({
+                      updateConfig({
                         positionMode: nextMode,
-                        offsetX: spec.offsetX / baseCanvasSize,
-                        offsetY: spec.offsetY / baseCanvasSize,
+                        offsetX: config.offsetX / baseCanvasSize,
+                        offsetY: config.offsetY / baseCanvasSize,
                       });
                     } else {
-                      updateSpec({
+                      updateConfig({
                         positionMode: nextMode,
-                        offsetX: spec.offsetX * baseCanvasSize,
-                        offsetY: spec.offsetY * baseCanvasSize,
+                        offsetX: config.offsetX * baseCanvasSize,
+                        offsetY: config.offsetY * baseCanvasSize,
                       });
                     }
                   }}
@@ -948,11 +903,17 @@ function WatermarkEditor(props: {
                 <div className="relative shrink-0">
                   <label
                     className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
-                    style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'var(--text-primary)',
+                      opacity: iconUploading ? 0.6 : 1,
+                      pointerEvents: iconUploading ? 'none' : 'auto',
+                    }}
                     title="上传图标"
                   >
-                    {spec.iconEnabled && spec.iconImageRef ? (
-                      <img src={spec.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
+                    {config.iconEnabled && config.iconImageRef ? (
+                      <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
                     ) : (
                       <UploadCloud size={15} />
                     )}
@@ -963,12 +924,12 @@ function WatermarkEditor(props: {
                       onChange={(e) => void handleIconUpload(e.target.files?.[0] ?? null)}
                     />
                   </label>
-                  {spec.iconEnabled && spec.iconImageRef ? (
+                  {config.iconEnabled && config.iconImageRef ? (
                     <button
                       type="button"
                       className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full inline-flex items-center justify-center"
                       style={{ background: 'rgba(15,15,18,0.9)', border: '1px solid rgba(255,255,255,0.15)', color: 'var(--text-primary)' }}
-                      onClick={() => updateSpec({ iconEnabled: false, iconImageRef: null })}
+                      onClick={() => updateConfig({ iconEnabled: false, iconImageRef: null })}
                       title="移除图标"
                     >
                       <X size={10} />
@@ -979,12 +940,12 @@ function WatermarkEditor(props: {
                   type="button"
                   className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center shrink-0"
                   style={{
-                    background: spec.borderEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                    background: config.borderEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
                     border: '1px solid rgba(255,255,255,0.12)',
-                    color: spec.borderEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
+                    color: config.borderEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
                   }}
                   title="是否边框"
-                  onClick={() => updateSpec({ borderEnabled: !spec.borderEnabled })}
+                  onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
                 >
                   <Square size={15} />
                 </button>
@@ -992,19 +953,19 @@ function WatermarkEditor(props: {
                   type="button"
                   className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center shrink-0"
                   style={{
-                    background: spec.backgroundEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                    background: config.backgroundEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
                     border: '1px solid rgba(255,255,255,0.12)',
-                    color: spec.backgroundEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
+                    color: config.backgroundEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
                   }}
                   title="填充背景"
-                  onClick={() => updateSpec({ backgroundEnabled: !spec.backgroundEnabled })}
+                  onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
                 >
                   <PaintBucket size={15} />
                 </button>
                 <label
                   className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
                   style={{
-                    background: spec.textColor || spec.color || '#ffffff',
+                    background: config.textColor || '#ffffff',
                     border: '1px solid rgba(255,255,255,0.2)',
                     color: 'rgba(0,0,0,0.65)',
                   }}
@@ -1013,15 +974,15 @@ function WatermarkEditor(props: {
                   <Type size={14} />
                   <input
                     type="color"
-                    value={(spec.textColor || spec.color || '#ffffff') as string}
+                    value={(config.textColor || '#ffffff') as string}
                     className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
-                    onChange={(e) => updateSpec({ textColor: e.target.value, color: e.target.value })}
+                    onChange={(e) => updateConfig({ textColor: e.target.value })}
                   />
                 </label>
                 <label
                   className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
                   style={{
-                    background: spec.backgroundColor || '#000000',
+                    background: config.backgroundColor || '#000000',
                     border: '1px solid rgba(255,255,255,0.2)',
                     color: 'rgba(255,255,255,0.85)',
                   }}
@@ -1030,9 +991,9 @@ function WatermarkEditor(props: {
                   <Droplet size={14} />
                   <input
                     type="color"
-                    value={(spec.backgroundColor || '#000000') as string}
+                    value={(config.backgroundColor || '#000000') as string}
                     className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
-                    onChange={(e) => updateSpec({ backgroundColor: e.target.value })}
+                    onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
                   />
                 </label>
               </div>
@@ -1041,7 +1002,7 @@ function WatermarkEditor(props: {
 
           <div className="flex items-center gap-1.5 pt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
             <label
-              className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded-[8px] cursor-pointer"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] h-9 rounded-[8px] cursor-pointer"
               style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
             >
               <ImageIcon size={12} />
@@ -1053,7 +1014,7 @@ function WatermarkEditor(props: {
                 onChange={(e) => handlePreviewUpload(e.target.files?.[0] ?? null)}
               />
             </label>
-            <Button variant="primary" size="sm" onClick={onSave} className="flex-1 !text-[11px] !px-2 !py-1.5">
+            <Button variant="primary" size="sm" onClick={onSave} className="flex-1 !text-[11px] !h-9 !px-2">
               <Check size={12} />
               保存
             </Button>
@@ -1089,7 +1050,7 @@ function PositionModeSwitch(props: {
 
   return (
     <div
-      className="relative inline-flex items-center gap-1 p-1 rounded-[10px]"
+      className="relative inline-flex items-center gap-1 p-1 h-9 rounded-[10px]"
       style={{
         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
         border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -1099,7 +1060,7 @@ function PositionModeSwitch(props: {
     >
       {/* 滑动指示器 */}
       <div
-        className="absolute rounded-[7px] h-[26px] pointer-events-none"
+        className="absolute rounded-[7px] h-7 pointer-events-none"
         style={{
           left: indicatorStyle.left,
           width: indicatorStyle.width,
@@ -1126,7 +1087,7 @@ function PositionModeSwitch(props: {
             }}
             type="button"
             onClick={() => onChange(mode)}
-            className="relative px-4 h-[26px] text-[12px] font-semibold transition-colors duration-200"
+            className="relative px-4 h-7 text-[12px] font-semibold transition-colors duration-200"
             style={{
               color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
               zIndex: 1,
@@ -1157,9 +1118,13 @@ function FontSelect(props: {
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          className="relative flex-1 rounded-[12px] px-3 py-2 text-sm outline-none prd-field text-left"
+          className="relative flex-1 h-9 rounded-[12px] px-3 text-sm outline-none prd-field text-left"
         >
-          <span style={{ color: 'var(--text-primary)' }}>
+          <span
+            className="block max-w-[9ch] truncate"
+            style={{ color: 'var(--text-primary)' }}
+            title={current?.displayName || value || '请选择字体'}
+          >
             {current?.displayName || value || '请选择字体'}
           </span>
           {loading ? (
@@ -1238,7 +1203,7 @@ function FontSelect(props: {
 }
 
 function WatermarkPreview(props: {
-  spec: WatermarkSpec;
+  spec: WatermarkConfig;
   font: WatermarkFontInfo | null | undefined;
   size: number;
   height?: number;
@@ -1248,7 +1213,7 @@ function WatermarkPreview(props: {
   showDistances?: boolean;
   distancePlacement?: 'inside' | 'outside';
   showQuadrantLabels?: boolean;
-  onPositionChange?: (next: Pick<WatermarkSpec, 'anchor' | 'offsetX' | 'offsetY'>) => void;
+  onPositionChange?: (next: Pick<WatermarkConfig, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
   const {
     spec,
@@ -1302,12 +1267,18 @@ function WatermarkPreview(props: {
       ].join('|'),
     [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, fontFamily, fontSize]
   );
+  const cachedSize = watermarkSizeCache.get(measureSignature);
 
   useLayoutEffect(() => {
-    setWatermarkSize({ width: 0, height: 0 });
-    setMeasuredSignature('');
+    if (cachedSize) {
+      setWatermarkSize(cachedSize);
+      setMeasuredSignature(measureSignature);
+    } else {
+      setWatermarkSize({ width: 0, height: 0 });
+      setMeasuredSignature('');
+    }
     setFontReady(false);
-  }, [measureSignature]);
+  }, [cachedSize, measureSignature]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1332,13 +1303,13 @@ function WatermarkPreview(props: {
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 1.0;
   const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0) + decorationPadding * 2;
   const estimatedHeight = Math.max(fontSize, iconSize) + decorationPadding * 2;
-  const measuredWidth = watermarkSize.width || estimatedWidth;
-  const measuredHeight = watermarkSize.height || estimatedHeight;
+  const measuredWidth = watermarkSize.width || cachedSize?.width || estimatedWidth;
+  const measuredHeight = watermarkSize.height || cachedSize?.height || estimatedHeight;
   const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
   const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
-  const hideUntilMeasured = !fontReady || measuredSignature !== measureSignature;
+  const hideUntilMeasured = (!fontReady && !cachedSize) || measuredSignature !== measureSignature;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
@@ -1416,6 +1387,7 @@ function WatermarkPreview(props: {
         }
         return { width: combinedWidth, height: combinedHeight };
       });
+      watermarkSizeCache.set(measureSignature, { width: combinedWidth, height: combinedHeight });
       lastMeasuredSizeRef.current = { width: combinedWidth, height: combinedHeight };
       if (fontReady) {
         setMeasuredSignature(measureSignature);

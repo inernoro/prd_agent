@@ -18,7 +18,7 @@ import {
   createLiteraryPrompt,
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
-  getWatermark,
+  getWatermarkByApp,
 } from '@/services';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -186,15 +186,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const res = await getWatermark();
+      const res = await getWatermarkByApp({ appKey: 'literary-agent' });
       if (cancelled) return;
-      if (res?.success) {
-        const source = res.data;
-        const activeSpec = source?.specs?.find((item) => item.id === source?.activeSpecId) ?? source?.spec;
+      if (res?.success && res.data) {
+        const config = res.data;
         setWatermarkStatus({
-          enabled: Boolean(source?.enabled ?? activeSpec?.enabled),
-          name: activeSpec?.name || activeSpec?.text || null,
+          enabled: true,
+          name: config.name || config.text || null,
         });
+      } else {
+        setWatermarkStatus({ enabled: false, name: null });
       }
     })();
     return () => {
@@ -2600,7 +2601,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </Button>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <WatermarkSettingsPanel ref={watermarkPanelRef} onStatusChange={setWatermarkStatus} hideAddButton />
+                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={setWatermarkStatus} hideAddButton />
               </div>
             </div>
           </div>

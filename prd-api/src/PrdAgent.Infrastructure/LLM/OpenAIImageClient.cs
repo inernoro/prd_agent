@@ -720,8 +720,9 @@ public class OpenAIImageClient
                 }
             }
 
-            var watermarkSpec = await TryGetWatermarkSpecAsync(ct);
-            _logger.LogInformation("ImageGen watermark spec resolved: {HasWatermark}", watermarkSpec != null);
+            // 使用 literary-agent 作为默认 appKey，用于图片生成时的水印绑定
+            var watermarkConfig = await TryGetWatermarkConfigAsync("literary-agent", ct);
+            _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
             var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)
             {
@@ -751,12 +752,12 @@ public class OpenAIImageClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                if (watermarkSpec != null)
+                if (watermarkConfig != null)
                 {
                     try
                     {
-                        _logger.LogInformation("Applying watermark to image index {Index}. FontKey={FontKey}", images[i].Index, watermarkSpec.FontKey);
-                        var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkSpec, ct);
+                        _logger.LogInformation("Applying watermark to image index {Index}. FontKey={FontKey}", images[i].Index, watermarkConfig.FontKey);
+                        var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
                         bytes = rendered.bytes;
                         outMime = rendered.mime;
                     }
@@ -1617,7 +1618,7 @@ public class OpenAIImageClient
         }
     }
 
-    private async Task<WatermarkSpec?> TryGetWatermarkSpecAsync(CancellationToken ct)
+    private async Task<WatermarkConfig?> TryGetWatermarkConfigAsync(string appKey, CancellationToken ct)
     {
         var userId = (_ctxAccessor?.Current?.UserId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(userId))
@@ -1626,31 +1627,32 @@ public class OpenAIImageClient
             return null;
         }
 
-        var doc = await _db.WatermarkSettings.Find(x => x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
-        if (doc == null)
+        if (string.IsNullOrWhiteSpace(appKey))
         {
-            _logger.LogInformation("Watermark skipped: no settings for user {UserId}", userId);
-            return null;
-        }
-        var spec = doc.Specs?.FirstOrDefault(x => string.Equals(x.Id, doc.ActiveSpecId, StringComparison.OrdinalIgnoreCase))
-            ?? doc.Spec;
-        if (!doc.Enabled || spec == null)
-        {
-            _logger.LogInformation("Watermark skipped: disabled or missing spec for user {UserId}", userId);
+            _logger.LogWarning("Watermark skipped: missing appKey.");
             return null;
         }
 
-        spec.FontKey = _fontRegistry.NormalizeFontKey(spec.FontKey);
-        spec.Enabled = doc.Enabled;
-        var (ok, message) = WatermarkSpecValidator.Validate(spec, _fontRegistry.FontKeys);
+        var config = await _db.WatermarkConfigs
+            .Find(x => x.UserId == userId && x.AppKeys.Contains(appKey))
+            .FirstOrDefaultAsync(ct);
+
+        if (config == null)
+        {
+            _logger.LogInformation("Watermark skipped: no config bound to app {AppKey} for user {UserId}", appKey, userId);
+            return null;
+        }
+
+        config.FontKey = _fontRegistry.NormalizeFontKey(config.FontKey);
+        var (ok, message) = WatermarkSpecValidator.Validate(config, _fontRegistry.FontKeys);
         if (!ok)
         {
-            _logger.LogWarning("Invalid watermark spec for user {UserId}: {Message}", userId, message);
+            _logger.LogWarning("Invalid watermark config for user {UserId}: {Message}", userId, message);
             return null;
         }
 
-        _logger.LogInformation("Watermark enabled for user {UserId}. FontKey={FontKey}", userId, spec.FontKey);
-        return spec;
+        _logger.LogInformation("Watermark enabled for user {UserId}, app {AppKey}. FontKey={FontKey}", userId, appKey, config.FontKey);
+        return config;
     }
 
     private static string? GetCurrentRequestedSizeForRetry(object reqObj, string? initImageBase64)

@@ -292,6 +292,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             },
             OnTokenValidated = async context =>
             {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("JwtAuth");
+                var requestPath = context.HttpContext.Request.Path.Value;
+                var requestMethod = context.HttpContext.Request.Method;
+                var clientIp = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
                 try
                 {
                     var principal = context.Principal;
@@ -308,6 +313,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                         !int.TryParse(tvStr, out var tv) ||
                         tv < 1)
                     {
+                        logger.LogWarning("[401] Token claims无效 - Path: {Path}, Method: {Method}, IP: {IP}, sub: {Sub}, clientType: {ClientType}, tv: {Tv}",
+                            requestPath, requestMethod, clientIp, sub ?? "null", clientType ?? "null", tvStr ?? "null");
                         context.Fail("Invalid auth session claims");
                         return;
                     }
@@ -316,17 +323,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     var currentTv = await authSessionService.GetTokenVersionAsync(sub, clientType);
                     if (currentTv != tv)
                     {
+                        logger.LogWarning("[401] Token版本不匹配(已被撤销) - Path: {Path}, Method: {Method}, IP: {IP}, UserId: {UserId}, ClientType: {ClientType}, TokenVersion: {Tv}, CurrentVersion: {CurrentTv}",
+                            requestPath, requestMethod, clientIp, sub, clientType, tv, currentTv);
                         context.Fail("Token revoked");
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
                     // 安全兜底：依赖服务异常时不直接放行
+                    logger.LogWarning(ex, "[401] Token验证异常 - Path: {Path}, Method: {Method}, IP: {IP}",
+                        requestPath, requestMethod, clientIp);
                     context.Fail("Token validation failed");
                 }
             },
             OnChallenge = async context =>
             {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("JwtAuth");
+                var requestPath = context.HttpContext.Request.Path.Value;
+                var requestMethod = context.HttpContext.Request.Method;
+                var clientIp = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                var authHeader = context.HttpContext.Request.Headers.Authorization.FirstOrDefault();
+                var hasToken = !string.IsNullOrWhiteSpace(authHeader);
+                var errorDesc = context.AuthenticateFailure?.Message ?? context.ErrorDescription ?? "No token provided";
+
+                logger.LogWarning("[401] JWT Challenge - Path: {Path}, Method: {Method}, IP: {IP}, HasToken: {HasToken}, Reason: {Reason}",
+                    requestPath, requestMethod, clientIp, hasToken, errorDesc);
+
                 // 跳过默认 challenge 响应（会覆盖 body）
                 context.HandleResponse();
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

@@ -90,7 +90,7 @@ public class MongoDbContext
     public IMongoCollection<SystemRole> SystemRoles => _database.GetCollection<SystemRole>("system_roles");
     public IMongoCollection<UserPreferences> UserPreferences => _database.GetCollection<UserPreferences>("user_preferences");
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
-    public IMongoCollection<WatermarkSettings> WatermarkSettings => _database.GetCollection<WatermarkSettings>("watermark_settings");
+    public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
 
     private void CreateIndexes()
     {
@@ -620,16 +620,12 @@ public class MongoDbContext
             // ignore
         }
 
-        // WatermarkSettings：同一用户唯一
-        try
-        {
-            WatermarkSettings.Indexes.CreateOne(new CreateIndexModel<WatermarkSettings>(
-                Builders<WatermarkSettings>.IndexKeys.Ascending(x => x.OwnerUserId),
-                new CreateIndexOptions { Unique = true, Name = "uniq_watermark_settings_owner" }));
-        }
-        catch (MongoCommandException ex) when (IsIndexConflict(ex))
-        {
-            // ignore
-        }
+        // WatermarkConfigs：按 userId + appKeys 查询
+        WatermarkConfigs.Indexes.CreateOne(new CreateIndexModel<WatermarkConfig>(
+            Builders<WatermarkConfig>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_watermark_configs_user_updated" }));
+        WatermarkConfigs.Indexes.CreateOne(new CreateIndexModel<WatermarkConfig>(
+            Builders<WatermarkConfig>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.AppKeys),
+            new CreateIndexOptions { Name = "idx_watermark_configs_user_appkeys" }));
     }
 }

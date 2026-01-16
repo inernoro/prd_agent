@@ -28,6 +28,10 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        var requestPath = Request.Path.Value;
+        var requestMethod = Request.Method;
+        var clientIp = Context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
         // 从 Authorization header 提取 API Key
         if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
@@ -53,6 +57,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
 
         if (string.IsNullOrWhiteSpace(apiKey) || !apiKey.StartsWith("sk-"))
         {
+            Logger.LogWarning("[401] API Key格式无效 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
+                requestPath, requestMethod, clientIp, apiKey?.Length > 10 ? apiKey[..10] + "..." : apiKey ?? "empty");
             return AuthenticateResult.Fail("Invalid API Key format");
         }
 
@@ -81,6 +87,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         var app = await _openPlatformService.GetAppByApiKeyAsync(apiKey);
         if (app == null)
         {
+            Logger.LogWarning("[401] API Key无效或未激活 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
+                requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
             return AuthenticateResult.Fail("Invalid or inactive API Key");
         }
 

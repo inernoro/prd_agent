@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Requests;
@@ -10,6 +11,8 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using SixLabors.Fonts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -37,9 +40,12 @@ public class WatermarkController : ControllerBase
         _logger = logger;
     }
 
-    [HttpGet("/api/user/watermark")]
-    [HttpGet("/api/v1/user/watermark")]
-    public async Task<IActionResult> GetWatermark(CancellationToken ct)
+    /// <summary>
+    /// 获取用户的所有水印配置列表
+    /// </summary>
+    [HttpGet("/api/watermarks")]
+    [HttpGet("/api/v1/watermarks")]
+    public async Task<IActionResult> GetWatermarks(CancellationToken ct)
     {
         var userId = GetUserId(User);
         if (string.IsNullOrWhiteSpace(userId))
@@ -47,31 +53,25 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var doc = await _db.WatermarkSettings.Find(x => x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
-        if (doc == null)
+        var configs = await _db.WatermarkConfigs
+            .Find(x => x.UserId == userId)
+            .SortByDescending(x => x.UpdatedAt)
+            .ToListAsync(ct);
+
+        foreach (var config in configs)
         {
-            var def = BuildDefaultSpec();
-            var settings = new WatermarkSettings
-            {
-                OwnerUserId = userId,
-                Enabled = def.Enabled,
-                ActiveSpecId = def.Id,
-                Specs = new List<WatermarkSpec> { def },
-                Spec = def,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-            return Ok(ApiResponse<WatermarkSettings>.Ok(settings));
+            config.PreviewUrl = BuildPreviewUrl(config.Id);
         }
 
-        EnsureSpecs(doc);
-
-        return Ok(ApiResponse<WatermarkSettings>.Ok(doc));
+        return Ok(ApiResponse<List<WatermarkConfig>>.Ok(configs));
     }
 
-    [HttpPut("/api/user/watermark")]
-    [HttpPut("/api/v1/user/watermark")]
-    public async Task<IActionResult> PutWatermark([FromBody] PutWatermarkRequest request, CancellationToken ct)
+    /// <summary>
+    /// 获取某应用关联的水印配置
+    /// </summary>
+    [HttpGet("/api/watermarks/app/{appKey}")]
+    [HttpGet("/api/v1/watermarks/app/{appKey}")]
+    public async Task<IActionResult> GetWatermarkByApp([FromRoute] string appKey, CancellationToken ct)
     {
         var userId = GetUserId(User);
         if (string.IsNullOrWhiteSpace(userId))
@@ -79,76 +79,251 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var incomingSpecs = request?.Specs?.Where(x => x != null).ToList();
-        if ((incomingSpecs == null || incomingSpecs.Count == 0) && request?.Spec != null)
+        if (string.IsNullOrWhiteSpace(appKey))
         {
-            incomingSpecs = new List<WatermarkSpec> { request.Spec };
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appKey 不能为空"));
         }
 
-        if (incomingSpecs == null || incomingSpecs.Count == 0)
+        var config = await _db.WatermarkConfigs
+            .Find(x => x.UserId == userId && x.AppKeys.Contains(appKey))
+            .FirstOrDefaultAsync(ct);
+
+        if (config != null)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "spec 不能为空"));
+            config.PreviewUrl = BuildPreviewUrl(config.Id);
         }
 
-        var enabled = request?.Enabled ?? request?.Spec?.Enabled ?? incomingSpecs[0].Enabled;
-        var activeSpecId = (request?.ActiveSpecId ?? request?.Spec?.Id ?? incomingSpecs[0].Id)?.Trim();
+        return Ok(ApiResponse<WatermarkConfig?>.Ok(config));
+    }
 
-        _logger.LogInformation("Watermark PUT start for user {UserId}. Enabled={Enabled}, TotalSpecs={TotalSpecs}", userId, enabled, incomingSpecs.Count);
+    /// <summary>
+    /// 创建新的水印配置
+    /// </summary>
+    [HttpPost("/api/watermarks")]
+    [HttpPost("/api/v1/watermarks")]
+    public async Task<IActionResult> CreateWatermark([FromBody] CreateWatermarkRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
 
         var allowedFontKeys = await GetAllowedFontKeysAsync(userId, ct);
+        var config = BuildConfigFromRequest(request, userId, allowedFontKeys);
 
-        foreach (var spec in incomingSpecs)
+        var (ok, message) = WatermarkSpecValidator.Validate(config, allowedFontKeys);
+        if (!ok)
         {
-            NormalizeSpec(spec, enabled);
-            var (ok, message) = WatermarkSpecValidator.Validate(spec, allowedFontKeys);
-            if (!ok)
-            {
-                _logger.LogWarning("Watermark PUT invalid spec for user {UserId}: {Message}", userId, message);
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message ?? "水印配置无效"));
-            }
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message ?? "水印配置无效"));
         }
 
-        var activeSpec = incomingSpecs.FirstOrDefault(x => string.Equals(x.Id, activeSpecId, StringComparison.OrdinalIgnoreCase))
-            ?? incomingSpecs[0];
-        activeSpecId = activeSpec.Id;
-
-        var now = DateTime.UtcNow;
-        var update = Builders<WatermarkSettings>.Update
-            .Set(x => x.OwnerUserId, userId)
-            .Set(x => x.Enabled, enabled)
-            .Set(x => x.Specs, incomingSpecs)
-            .Set(x => x.ActiveSpecId, activeSpecId)
-            .Set(x => x.Spec, activeSpec)
-            .Set(x => x.UpdatedAt, now)
-            .SetOnInsert(x => x.CreatedAt, now);
-
-        var options = new FindOneAndUpdateOptions<WatermarkSettings>
+        if (config.IconEnabled && !string.IsNullOrWhiteSpace(config.IconImageRef))
         {
-            IsUpsert = true,
-            ReturnDocument = ReturnDocument.After
-        };
+            var (iconOk, normalized) = await NormalizeIconRefAsync(config.IconImageRef, ct);
+            if (!iconOk || string.IsNullOrWhiteSpace(normalized))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "图标必须先上传到腾讯云"));
+            }
+            config.IconImageRef = normalized;
+        }
 
-        var saved = await _db.WatermarkSettings.FindOneAndUpdateAsync(
-            Builders<WatermarkSettings>.Filter.Eq(x => x.OwnerUserId, userId),
-            update,
-            options,
-            ct);
+        await _db.WatermarkConfigs.InsertOneAsync(config, cancellationToken: ct);
 
-        _logger.LogInformation("Watermark PUT saved for user {UserId}. Enabled={Enabled}, ActiveSpecId={ActiveSpecId}", userId, saved.Enabled, saved.ActiveSpecId);
+        _logger.LogInformation("Watermark created for user {UserId}. Id={Id}", userId, config.Id);
 
         try
         {
-            foreach (var spec in saved.Specs)
-            {
-                await RenderAndSavePreviewAsync(spec, ct).ConfigureAwait(false);
-            }
+            await RenderAndSavePreviewAsync(config, ct);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to render watermark preview for user {UserId}", userId);
+            _logger.LogWarning(ex, "Failed to render watermark preview for {Id}", config.Id);
         }
 
-        return Ok(ApiResponse<WatermarkSettings>.Ok(saved));
+        config.PreviewUrl = BuildPreviewUrl(config.Id);
+        return Ok(ApiResponse<WatermarkConfig>.Ok(config));
+    }
+
+    /// <summary>
+    /// 更新水印配置
+    /// </summary>
+    [HttpPut("/api/watermarks/{id}")]
+    [HttpPut("/api/v1/watermarks/{id}")]
+    public async Task<IActionResult> UpdateWatermark([FromRoute] string id, [FromBody] UpdateWatermarkRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var existing = await _db.WatermarkConfigs
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        if (existing == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "水印配置不存在"));
+        }
+
+        var allowedFontKeys = await GetAllowedFontKeysAsync(userId, ct);
+        ApplyUpdateToConfig(existing, request, allowedFontKeys);
+
+        var (ok, message) = WatermarkSpecValidator.Validate(existing, allowedFontKeys);
+        if (!ok)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message ?? "水印配置无效"));
+        }
+
+        if (existing.IconEnabled && !string.IsNullOrWhiteSpace(existing.IconImageRef))
+        {
+            var (iconOk, normalized) = await NormalizeIconRefAsync(existing.IconImageRef, ct);
+            if (!iconOk || string.IsNullOrWhiteSpace(normalized))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "图标必须先上传到腾讯云"));
+            }
+            existing.IconImageRef = normalized;
+        }
+
+        existing.UpdatedAt = DateTime.UtcNow;
+
+        await _db.WatermarkConfigs.ReplaceOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            existing,
+            cancellationToken: ct);
+
+        _logger.LogInformation("Watermark updated for user {UserId}. Id={Id}", userId, id);
+
+        try
+        {
+            await RenderAndSavePreviewAsync(existing, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to render watermark preview for {Id}", id);
+        }
+
+        existing.PreviewUrl = BuildPreviewUrl(existing.Id);
+        return Ok(ApiResponse<WatermarkConfig>.Ok(existing));
+    }
+
+    /// <summary>
+    /// 删除水印配置
+    /// </summary>
+    [HttpDelete("/api/watermarks/{id}")]
+    [HttpDelete("/api/v1/watermarks/{id}")]
+    public async Task<IActionResult> DeleteWatermark([FromRoute] string id, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var result = await _db.WatermarkConfigs.DeleteOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            ct);
+
+        if (result.DeletedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "水印配置不存在"));
+        }
+
+        _logger.LogInformation("Watermark deleted for user {UserId}. Id={Id}", userId, id);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 绑定应用到水印（同时解绑该用户其他水印的该应用）
+    /// </summary>
+    [HttpPost("/api/watermarks/{id}/bind/{appKey}")]
+    [HttpPost("/api/v1/watermarks/{id}/bind/{appKey}")]
+    public async Task<IActionResult> BindApp([FromRoute] string id, [FromRoute] string appKey, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        if (string.IsNullOrWhiteSpace(appKey))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appKey 不能为空"));
+        }
+
+        var target = await _db.WatermarkConfigs
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        if (target == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "水印配置不存在"));
+        }
+
+        // 先从该用户所有水印中移除这个 appKey
+        await _db.WatermarkConfigs.UpdateManyAsync(
+            x => x.UserId == userId && x.AppKeys.Contains(appKey),
+            Builders<WatermarkConfig>.Update.Pull(x => x.AppKeys, appKey),
+            cancellationToken: ct);
+
+        // 再添加到目标水印
+        if (!target.AppKeys.Contains(appKey))
+        {
+            await _db.WatermarkConfigs.UpdateOneAsync(
+                x => x.Id == id && x.UserId == userId,
+                Builders<WatermarkConfig>.Update
+                    .AddToSet(x => x.AppKeys, appKey)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+
+        _logger.LogInformation("App {AppKey} bound to watermark {Id} for user {UserId}", appKey, id, userId);
+
+        var updated = await _db.WatermarkConfigs
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        if (updated != null)
+        {
+            updated.PreviewUrl = BuildPreviewUrl(updated.Id);
+        }
+
+        return Ok(ApiResponse<WatermarkConfig?>.Ok(updated));
+    }
+
+    /// <summary>
+    /// 解绑应用
+    /// </summary>
+    [HttpDelete("/api/watermarks/{id}/unbind/{appKey}")]
+    [HttpDelete("/api/v1/watermarks/{id}/unbind/{appKey}")]
+    public async Task<IActionResult> UnbindApp([FromRoute] string id, [FromRoute] string appKey, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        if (string.IsNullOrWhiteSpace(appKey))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appKey 不能为空"));
+        }
+
+        var result = await _db.WatermarkConfigs.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<WatermarkConfig>.Update
+                .Pull(x => x.AppKeys, appKey)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "水印配置不存在"));
+        }
+
+        _logger.LogInformation("App {AppKey} unbound from watermark {Id} for user {UserId}", appKey, id, userId);
+        return Ok(ApiResponse<object>.Ok(new { unbound = true }));
     }
 
     [HttpGet("/api/watermark/preview/{watermarkId}.png")]
@@ -161,15 +336,11 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var doc = await _db.WatermarkSettings.Find(x => x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
-        if (doc == null)
-        {
-            return NotFound();
-        }
+        var config = await _db.WatermarkConfigs
+            .Find(x => x.Id == watermarkId && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
 
-        EnsureSpecs(doc);
-        var exists = doc.Specs.Any(x => string.Equals(x.Id, watermarkId, StringComparison.OrdinalIgnoreCase));
-        if (!exists)
+        if (config == null)
         {
             return NotFound();
         }
@@ -194,13 +365,7 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(fontKey =>
-        {
-            var localPath = _fontRegistry.TryResolveFontFile(fontKey);
-            return localPath == null
-                ? "https://i.pa.759800.com/watermark/font/default.ttf"
-                : $"/api/watermark/fonts/{Uri.EscapeDataString(fontKey)}/file";
-        });
+        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(_ => "https://i.pa.759800.com/watermark/font/default.ttf");
         var assets = await _db.WatermarkFontAssets
             .Find(Builders<WatermarkFontAsset>.Filter.Empty)
             .SortByDescending(x => x.UpdatedAt)
@@ -214,6 +379,65 @@ public class WatermarkController : ControllerBase
         }).ToList();
 
         return Ok(ApiResponse<IReadOnlyList<WatermarkFontInfo>>.Ok(defaultFonts.Concat(customFonts).ToList()));
+    }
+
+    [HttpPost("/api/watermark/icons")]
+    [HttpPost("/api/v1/watermark/icons")]
+    [RequestSizeLimit(MaxIconUploadBytes)]
+    public async Task<IActionResult> UploadIcon([FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        if (_assetStorage is not TencentCosStorage)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
+        }
+
+        if (file == null || file.Length <= 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 不能为空"));
+        }
+
+        if (file.Length > MaxIconUploadBytes)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "文件过大"));
+        }
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        if (bytes.Length == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 内容为空"));
+        }
+
+        IImageFormat? format;
+        try
+        {
+            format = Image.DetectFormat(bytes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Invalid watermark icon upload.");
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图标解析失败"));
+        }
+
+        if (format == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图标格式不支持"));
+        }
+
+        var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+        return Ok(ApiResponse<object>.Ok(new { url = stored.Url }));
     }
 
     [AllowAnonymous]
@@ -396,6 +620,7 @@ public class WatermarkController : ControllerBase
         return _fontRegistry.DefaultFontKeys.Concat(customKeys).ToList();
     }
 
+    private const long MaxIconUploadBytes = 5 * 1024 * 1024;
     private const long MaxUploadBytes = 20 * 1024 * 1024;
 
     private static string ExtractExtension(string fileName)
@@ -447,85 +672,92 @@ public class WatermarkController : ControllerBase
         return $"custom-{userHash}-{sha}";
     }
 
-    private WatermarkSpec BuildDefaultSpec()
+    private WatermarkConfig BuildConfigFromRequest(CreateWatermarkRequest request, string userId, IReadOnlyCollection<string> allowedFontKeys)
     {
-        var fontKey = _fontRegistry.DefaultFontKeys.FirstOrDefault() ?? _fontRegistry.DefaultFontKey;
-        return new WatermarkSpec
+        var fontKey = _fontRegistry.NormalizeFontKey(request.FontKey ?? "default");
+        var textColor = request.TextColor ?? "#FFFFFF";
+
+        return new WatermarkConfig
         {
-            Enabled = false,
-            Name = "默认水印",
-            Text = "米多AI生成",
+            UserId = userId,
+            Name = string.IsNullOrWhiteSpace(request.Name) ? "默认水印" : request.Name.Trim(),
+            AppKeys = new List<string>(),
+            Text = request.Text ?? "米多AI生成",
             FontKey = fontKey,
-            FontSizePx = 28,
-            Opacity = 0.6,
-            PositionMode = "pixel",
-            Anchor = "bottom-right",
-            OffsetX = 24,
-            OffsetY = 24,
-            IconEnabled = false,
-            IconImageRef = null,
-            BorderEnabled = false,
-            BackgroundEnabled = false,
-            BaseCanvasWidth = 320,
-            ModelKey = "default",
-            Color = "#FFFFFF",
-            TextColor = "#FFFFFF",
-            BackgroundColor = "#000000"
+            FontSizePx = request.FontSizePx ?? 28,
+            Opacity = request.Opacity ?? 0.6,
+            PositionMode = request.PositionMode ?? "pixel",
+            Anchor = request.Anchor ?? "bottom-right",
+            OffsetX = request.OffsetX ?? 24,
+            OffsetY = request.OffsetY ?? 24,
+            IconEnabled = request.IconEnabled ?? false,
+            IconImageRef = request.IconImageRef,
+            BorderEnabled = request.BorderEnabled ?? false,
+            BackgroundEnabled = request.BackgroundEnabled ?? false,
+            BaseCanvasWidth = request.BaseCanvasWidth ?? 320,
+            TextColor = textColor,
+            BackgroundColor = request.BackgroundColor ?? "#000000",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
         };
     }
 
-    private void EnsureSpecs(WatermarkSettings settings)
+    private void ApplyUpdateToConfig(WatermarkConfig config, UpdateWatermarkRequest request, IReadOnlyCollection<string> allowedFontKeys)
     {
-        if (settings.Specs == null || settings.Specs.Count == 0)
-        {
-            if (settings.Spec != null)
-            {
-                NormalizeSpec(settings.Spec, settings.Enabled);
-                settings.Specs = new List<WatermarkSpec> { settings.Spec };
-            }
-            else
-            {
-                var def = BuildDefaultSpec();
-                settings.Specs = new List<WatermarkSpec> { def };
-                settings.Spec = def;
-                settings.Enabled = def.Enabled;
-            }
-        }
-
-        foreach (var spec in settings.Specs)
-        {
-            NormalizeSpec(spec, settings.Enabled);
-        }
-
-        var activeSpec = settings.Specs.FirstOrDefault(x => string.Equals(x.Id, settings.ActiveSpecId, StringComparison.OrdinalIgnoreCase))
-            ?? settings.Specs.FirstOrDefault();
-        if (activeSpec == null)
-        {
-            return;
-        }
-        settings.ActiveSpecId = activeSpec.Id;
-        settings.Spec = activeSpec;
+        if (request.Name != null) config.Name = request.Name.Trim();
+        if (request.Text != null) config.Text = request.Text;
+        if (request.FontKey != null) config.FontKey = _fontRegistry.NormalizeFontKey(request.FontKey);
+        if (request.FontSizePx.HasValue) config.FontSizePx = request.FontSizePx.Value;
+        if (request.Opacity.HasValue) config.Opacity = request.Opacity.Value;
+        if (request.PositionMode != null) config.PositionMode = request.PositionMode;
+        if (request.Anchor != null) config.Anchor = request.Anchor;
+        if (request.OffsetX.HasValue) config.OffsetX = request.OffsetX.Value;
+        if (request.OffsetY.HasValue) config.OffsetY = request.OffsetY.Value;
+        if (request.IconEnabled.HasValue) config.IconEnabled = request.IconEnabled.Value;
+        if (request.IconImageRef != null) config.IconImageRef = request.IconImageRef;
+        if (request.BorderEnabled.HasValue) config.BorderEnabled = request.BorderEnabled.Value;
+        if (request.BackgroundEnabled.HasValue) config.BackgroundEnabled = request.BackgroundEnabled.Value;
+        if (request.BaseCanvasWidth.HasValue) config.BaseCanvasWidth = request.BaseCanvasWidth.Value;
+        if (request.TextColor != null) config.TextColor = request.TextColor;
+        if (request.BackgroundColor != null) config.BackgroundColor = request.BackgroundColor;
     }
 
-    private void NormalizeSpec(WatermarkSpec spec, bool enabled)
+    private async Task<(bool ok, string? normalized)> NormalizeIconRefAsync(string iconRef, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(spec.Id))
+        if (string.IsNullOrWhiteSpace(iconRef)) return (true, iconRef);
+        if (!TryDecodeDataUrlOrBase64(iconRef, out var mime, out var bytes)) return (true, iconRef);
+        if (_assetStorage is not TencentCosStorage) return (false, null);
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+        return (true, stored.Url);
+    }
+
+    private static bool TryDecodeDataUrlOrBase64(string raw, out string mime, out byte[] bytes)
+    {
+        mime = "application/octet-stream";
+        bytes = Array.Empty<byte>();
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s)) return false;
+
+        if (s.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
-            spec.Id = Guid.NewGuid().ToString("N");
+            var comma = s.IndexOf(',');
+            if (comma < 0) return false;
+            var header = s.Substring(5, comma - 5);
+            var payload = s[(comma + 1)..];
+            var semi = header.IndexOf(';');
+            var ct = semi >= 0 ? header[..semi] : header;
+            if (!string.IsNullOrWhiteSpace(ct)) mime = ct.Trim();
+            s = payload.Trim();
         }
-        if (string.IsNullOrWhiteSpace(spec.Name))
+
+        try
         {
-            spec.Name = "水印配置";
+            bytes = Convert.FromBase64String(s);
+            return bytes.Length > 0;
         }
-        spec.Enabled = enabled;
-        spec.FontKey = _fontRegistry.NormalizeFontKey(spec.FontKey);
-        if (string.IsNullOrWhiteSpace(spec.TextColor) && !string.IsNullOrWhiteSpace(spec.Color))
+        catch
         {
-            spec.TextColor = spec.Color;
-        }
-        if (string.IsNullOrWhiteSpace(spec.Color) && !string.IsNullOrWhiteSpace(spec.TextColor))
-        {
-            spec.Color = spec.TextColor;
+            return false;
         }
     }
 
@@ -534,11 +766,11 @@ public class WatermarkController : ControllerBase
         return $"preview.{watermarkId}.png";
     }
 
-    private async Task RenderAndSavePreviewAsync(WatermarkSpec spec, CancellationToken ct)
+    private async Task RenderAndSavePreviewAsync(WatermarkConfig config, CancellationToken ct)
     {
-        var (bytes, mime) = await _watermarkRenderer.RenderPreviewAsync(spec, ct);
+        var (bytes, mime) = await _watermarkRenderer.RenderPreviewAsync(config, ct);
         if (bytes.Length == 0) return;
-        await SavePreviewAsync(BuildPreviewFileName(spec.Id), bytes, string.IsNullOrWhiteSpace(mime) ? "image/png" : mime, ct);
+        await SavePreviewAsync(BuildPreviewFileName(config.Id), bytes, string.IsNullOrWhiteSpace(mime) ? "image/png" : mime, ct);
     }
 
     private async Task SavePreviewAsync(string fileName, byte[] bytes, string mime, CancellationToken ct)
@@ -562,8 +794,26 @@ public class WatermarkController : ControllerBase
             return;
         }
 
-        _logger.LogWarning("Watermark preview storage fallback: asset storage does not support fixed name.");
-        await _assetStorage.SaveAsync(bytes, mime, ct, domain, type);
+        _logger.LogWarning("Watermark preview storage skipped: asset storage does not support fixed name.");
+    }
+
+    private string? BuildPreviewUrl(string watermarkId)
+    {
+        if (string.IsNullOrWhiteSpace(watermarkId)) return null;
+        var fileName = BuildPreviewFileName(watermarkId);
+        var domain = AppDomainPaths.DomainWatermark;
+        var type = AppDomainPaths.TypeImg;
+        var key = $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{fileName}";
+
+        if (_assetStorage is TencentCosStorage cosStorage)
+        {
+            return cosStorage.BuildPublicUrl(key);
+        }
+
+        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var pathBase = Request.PathBase.HasValue ? Request.PathBase.Value : string.Empty;
+        var escapedId = Uri.EscapeDataString(watermarkId);
+        return $"{baseUrl}{pathBase}/api/watermark/preview/{escapedId}.png";
     }
 
     private async Task<(byte[]? bytes, string? mime)> TryReadPreviewAsync(string fileName, CancellationToken ct)

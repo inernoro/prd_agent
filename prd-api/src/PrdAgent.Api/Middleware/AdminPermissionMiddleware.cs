@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -14,11 +15,13 @@ namespace PrdAgent.Api.Middleware;
 public sealed class AdminPermissionMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly ILogger<AdminPermissionMiddleware> _logger;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public AdminPermissionMiddleware(RequestDelegate next)
+    public AdminPermissionMiddleware(RequestDelegate next, ILogger<AdminPermissionMiddleware> logger)
     {
         _next = next;
+        _logger = logger;
     }
 
     private static bool IsRoot(HttpContext ctx)
@@ -154,6 +157,12 @@ public sealed class AdminPermissionMiddleware
         // 管理后台默认还要求已登录（Controller 侧也有 [Authorize]，这里做个保险兜底）
         if (context.User?.Identity?.IsAuthenticated != true)
         {
+            var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
+            var hasToken = !string.IsNullOrWhiteSpace(authHeader);
+            _logger.LogWarning("[401] 管理后台未登录访问 - Path: {Path}, Method: {Method}, IP: {IP}, HasToken: {HasToken}, RequiredPermission: {Permission}",
+                path, context.Request.Method, clientIp, hasToken, required);
+
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.ContentType = "application/json; charset=utf-8";
             var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
@@ -178,6 +187,10 @@ public sealed class AdminPermissionMiddleware
 
         if (!has)
         {
+            var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogWarning("[403] 管理后台权限不足 - Path: {Path}, Method: {Method}, IP: {IP}, UserId: {UserId}, RequiredPermission: {Required}, UserPermissions: [{Permissions}]",
+                path, context.Request.Method, clientIp, userId, required, string.Join(", ", perms));
+
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             context.Response.ContentType = "application/json; charset=utf-8";
             var payload = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限");

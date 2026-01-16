@@ -25,15 +25,15 @@ public class WatermarkRenderer
         _logger = logger;
     }
 
-    public async Task<(byte[] bytes, string mime)> ApplyAsync(byte[] inputBytes, string inputMime, WatermarkSpec spec, CancellationToken ct)
+    public async Task<(byte[] bytes, string mime)> ApplyAsync(byte[] inputBytes, string inputMime, WatermarkConfig config, CancellationToken ct)
     {
         if (inputBytes.Length == 0) return (inputBytes, inputMime);
-        if (!spec.Enabled || string.IsNullOrWhiteSpace(spec.Text)) return (inputBytes, inputMime);
+        if (string.IsNullOrWhiteSpace(config.Text)) return (inputBytes, inputMime);
 
         var format = Image.DetectFormat(inputBytes);
         using var image = Image.Load<Rgba32>(inputBytes);
-        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(spec, image.Width);
-        var fontResolved = _fontRegistry.ResolveFont(spec.FontKey, fontSize);
+        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(config, image.Width);
+        var fontResolved = _fontRegistry.ResolveFont(config.FontKey, fontSize);
         var font = fontResolved.Font;
 
         var textOptions = new TextOptions(font)
@@ -41,17 +41,17 @@ public class WatermarkRenderer
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top
         };
-        var textSize = TextMeasurer.MeasureSize(spec.Text, textOptions);
+        var textSize = TextMeasurer.MeasureSize(config.Text, textOptions);
         var textHeight = textSize.Height;
         var textWidth = textSize.Width;
 
         var gap = textHeight / 4d;
-        var iconWidth = spec.IconEnabled ? textHeight + gap : 0d;
-        var padding = (spec.BackgroundEnabled || spec.BorderEnabled) ? textHeight * 0.3d : 0d;
+        var iconWidth = config.IconEnabled ? textHeight + gap : 0d;
+        var padding = (config.BackgroundEnabled || config.BorderEnabled) ? textHeight * 0.3d : 0d;
         var watermarkWidth = textWidth + iconWidth + padding * 2d;
         var watermarkHeight = textHeight + padding * 2d;
         var (watermarkLeft, watermarkTop) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(
-            spec,
+            config,
             image.Width,
             image.Height,
             watermarkWidth,
@@ -59,14 +59,13 @@ public class WatermarkRenderer
         var textLeft = (float)(watermarkLeft + iconWidth + padding);
         var textTop = (float)(watermarkTop + padding);
 
-        var textColorValue = !string.IsNullOrWhiteSpace(spec.TextColor) ? spec.TextColor : spec.Color;
-        var textColor = ResolveColorHex(textColorValue, spec.Opacity);
-        var borderColor = ResolveColorHex(textColorValue, spec.Opacity);
-        var backgroundColor = ResolveColorHex(spec.BackgroundColor, spec.Opacity, fallback: Color.FromRgba(0, 0, 0, (byte)Math.Round(0.4 * 255)));
+        var textColor = ResolveColorHex(config.TextColor, config.Opacity);
+        var borderColor = ResolveColorHex(config.TextColor, config.Opacity);
+        var backgroundColor = ResolveColorHex(config.BackgroundColor, config.Opacity, fallback: Color.FromRgba(0, 0, 0, (byte)Math.Round(0.4 * 255)));
 
         image.Mutate(ctx =>
         {
-            if (spec.BackgroundEnabled)
+            if (config.BackgroundEnabled)
             {
                 var backgroundRect = new RectangleF(
                     (float)watermarkLeft,
@@ -76,7 +75,7 @@ public class WatermarkRenderer
                 ctx.Fill(backgroundColor, backgroundRect);
             }
 
-            if (spec.BorderEnabled)
+            if (config.BorderEnabled)
             {
                 var borderRect = new RectangleF(
                     (float)watermarkLeft,
@@ -86,14 +85,14 @@ public class WatermarkRenderer
                 ctx.Draw(borderColor, 2f, borderRect);
             }
 
-            ctx.DrawText(spec.Text, font, textColor, new PointF(textLeft, textTop));
+            ctx.DrawText(config.Text, font, textColor, new PointF(textLeft, textTop));
         });
 
-        if (spec.IconEnabled && !string.IsNullOrWhiteSpace(spec.IconImageRef))
+        if (config.IconEnabled && !string.IsNullOrWhiteSpace(config.IconImageRef))
         {
             try
             {
-                var iconBytes = await TryLoadIconBytesAsync(spec.IconImageRef, ct);
+                var iconBytes = await TryLoadIconBytesAsync(config.IconImageRef, ct);
                 if (iconBytes != null && iconBytes.Length > 0)
                 {
                     using var icon = Image.Load<Rgba32>(iconBytes);
@@ -114,7 +113,7 @@ public class WatermarkRenderer
                         }));
                         using var canvas = new Image<Rgba32>(targetSize, targetSize);
                         canvas.Mutate(ctx => ctx.DrawImage(resized, new Point(dx, dy), 1f));
-                        canvas.Mutate(ctx => ctx.Opacity((float)spec.Opacity));
+                        canvas.Mutate(ctx => ctx.Opacity((float)config.Opacity));
 
                         var iconLeft = (float)(watermarkLeft + padding);
                         var iconTop = (float)(watermarkTop + padding);
@@ -133,44 +132,15 @@ public class WatermarkRenderer
         return (ms.ToArray(), format.DefaultMimeType ?? inputMime);
     }
 
-    public async Task<(byte[] bytes, string mime)> RenderPreviewAsync(WatermarkSpec spec, CancellationToken ct)
+    public async Task<(byte[] bytes, string mime)> RenderPreviewAsync(WatermarkConfig config, CancellationToken ct)
     {
-        var baseSize = spec.BaseCanvasWidth > 0 ? spec.BaseCanvasWidth : 512;
+        var baseSize = config.BaseCanvasWidth > 0 ? config.BaseCanvasWidth : 512;
         using var canvas = new Image<Rgba32>(baseSize, baseSize);
         canvas.Mutate(ctx => ctx.Fill(Color.FromRgba(18, 18, 22, 255)));
 
         await using var ms = new MemoryStream();
         canvas.SaveAsPng(ms);
-        var previewSpec = CloneSpec(spec);
-        previewSpec.Enabled = true;
-        return await ApplyAsync(ms.ToArray(), "image/png", previewSpec, ct);
-    }
-
-    private static WatermarkSpec CloneSpec(WatermarkSpec source)
-    {
-        return new WatermarkSpec
-        {
-            Id = source.Id,
-            Name = source.Name,
-            Enabled = source.Enabled,
-            Text = source.Text,
-            FontKey = source.FontKey,
-            FontSizePx = source.FontSizePx,
-            Opacity = source.Opacity,
-            PositionMode = source.PositionMode,
-            Anchor = source.Anchor,
-            OffsetX = source.OffsetX,
-            OffsetY = source.OffsetY,
-            IconEnabled = source.IconEnabled,
-            IconImageRef = source.IconImageRef,
-            BorderEnabled = source.BorderEnabled,
-            BackgroundEnabled = source.BackgroundEnabled,
-            BaseCanvasWidth = source.BaseCanvasWidth,
-            ModelKey = source.ModelKey,
-            Color = source.Color,
-            TextColor = source.TextColor,
-            BackgroundColor = source.BackgroundColor
-        };
+        return await ApplyAsync(ms.ToArray(), "image/png", config, ct);
     }
 
     private static Color ResolveColorHex(string? hexInput, double opacity, Color? fallback = null)

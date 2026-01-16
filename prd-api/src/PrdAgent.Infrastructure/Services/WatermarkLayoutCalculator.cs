@@ -5,20 +5,20 @@ namespace PrdAgent.Infrastructure.Services;
 public static class WatermarkLayoutCalculator
 {
     public static (double left, double top) CalculateWatermarkTopLeft(
-        WatermarkSpec spec,
+        WatermarkConfig config,
         int targetWidth,
         int targetHeight,
         double watermarkWidth,
         double watermarkHeight)
     {
-        var offsetX = spec.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase)
-            ? spec.OffsetX * targetWidth
-            : spec.OffsetX;
-        var offsetY = spec.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase)
-            ? spec.OffsetY * targetHeight
-            : spec.OffsetY;
+        var offsetX = config.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase)
+            ? config.OffsetX * targetWidth
+            : config.OffsetX;
+        var offsetY = config.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase)
+            ? config.OffsetY * targetHeight
+            : config.OffsetY;
 
-        var left = spec.Anchor switch
+        var left = config.Anchor switch
         {
             "top-left" => offsetX,
             "top-right" => targetWidth - watermarkWidth - offsetX,
@@ -26,7 +26,7 @@ public static class WatermarkLayoutCalculator
             _ => targetWidth - watermarkWidth - offsetX
         };
 
-        var top = spec.Anchor switch
+        var top = config.Anchor switch
         {
             "top-left" => offsetY,
             "top-right" => offsetY,
@@ -39,10 +39,10 @@ public static class WatermarkLayoutCalculator
         return (left, top);
     }
 
-    public static double CalculateScaledFontSize(WatermarkSpec spec, int targetWidth)
+    public static double CalculateScaledFontSize(WatermarkConfig config, int targetWidth)
     {
-        var scale = spec.BaseCanvasWidth > 0 ? targetWidth / (double)spec.BaseCanvasWidth : 1d;
+        var scale = config.BaseCanvasWidth > 0 ? targetWidth / (double)config.BaseCanvasWidth : 1d;
         if (!double.IsFinite(scale) || scale <= 0) scale = 1d;
-        return Math.Max(1d, spec.FontSizePx * scale);
+        return Math.Max(1d, config.FontSizePx * scale);
     }
 }

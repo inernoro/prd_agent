@@ -147,11 +147,17 @@ import type { ISchedulerConfigService } from '@/services/contracts/schedulerConf
 import type { GetUserPreferencesContract, UpdateNavOrderContract } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
-  GetWatermarkContract,
+  GetWatermarksContract,
+  GetWatermarkByAppContract,
+  CreateWatermarkContract,
+  UpdateWatermarkContract,
+  DeleteWatermarkContract,
+  BindWatermarkAppContract,
+  UnbindWatermarkAppContract,
   GetWatermarkFontsContract,
   UploadWatermarkFontContract,
   DeleteWatermarkFontContract,
-  PutWatermarkContract,
+  UploadWatermarkIconContract,
 } from '@/services/contracts/watermark';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
@@ -193,9 +199,15 @@ import {
   deleteWatermarkFontReal,
   getModelSizesReal,
   getWatermarkFontsReal,
-  getWatermarkReal,
-  putWatermarkReal,
+  getWatermarksReal,
+  getWatermarkByAppReal,
+  createWatermarkReal,
+  updateWatermarkReal,
+  deleteWatermarkReal,
+  bindWatermarkAppReal,
+  unbindWatermarkAppReal,
   uploadWatermarkFontReal,
+  uploadWatermarkIconReal,
 } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
@@ -558,9 +570,15 @@ export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
 export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
 
-export const getWatermark: GetWatermarkContract = withAuth(getWatermarkReal);
-export const putWatermark: PutWatermarkContract = withAuth(putWatermarkReal);
+export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
+export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);
+export const createWatermark: CreateWatermarkContract = withAuth(createWatermarkReal);
+export const updateWatermark: UpdateWatermarkContract = withAuth(updateWatermarkReal);
+export const deleteWatermark: DeleteWatermarkContract = withAuth(deleteWatermarkReal);
+export const bindWatermarkApp: BindWatermarkAppContract = withAuth(bindWatermarkAppReal);
+export const unbindWatermarkApp: UnbindWatermarkAppContract = withAuth(unbindWatermarkAppReal);
 export const getWatermarkFonts: GetWatermarkFontsContract = withAuth(getWatermarkFontsReal);
 export const uploadWatermarkFont: UploadWatermarkFontContract = withAuth(uploadWatermarkFontReal);
+export const uploadWatermarkIcon: UploadWatermarkIconContract = withAuth(uploadWatermarkIconReal);
 export const deleteWatermarkFont: DeleteWatermarkFontContract = withAuth(deleteWatermarkFontReal);
 export const getModelSizes: GetModelSizesContract = withAuth(getModelSizesReal);

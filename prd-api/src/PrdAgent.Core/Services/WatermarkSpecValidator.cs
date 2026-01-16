@@ -21,61 +21,57 @@ public static class WatermarkSpecValidator
         "bottom-right"
     };
 
-    public static (bool ok, string? message) Validate(WatermarkSpec spec, IReadOnlyCollection<string> allowedFontKeys)
+    public static (bool ok, string? message) Validate(WatermarkConfig config, IReadOnlyCollection<string> allowedFontKeys)
     {
-        if (spec == null) return (false, "spec 不能为空");
-        if (string.IsNullOrWhiteSpace(spec.Text)) return (false, "text 不能为空");
-        if (spec.Text.Length > MaxTextChars) return (false, $"text 过长（最多 {MaxTextChars} 字符）");
-        if (string.IsNullOrWhiteSpace(spec.FontKey)) return (false, "fontKey 不能为空");
-        if (allowedFontKeys.Count > 0 && !allowedFontKeys.Contains(spec.FontKey)) return (false, "fontKey 非法");
-        if (!double.IsFinite(spec.FontSizePx) || spec.FontSizePx < MinFontSizePx || spec.FontSizePx > MaxFontSizePx)
+        if (config == null) return (false, "config 不能为空");
+        if (string.IsNullOrWhiteSpace(config.Text)) return (false, "text 不能为空");
+        if (config.Text.Length > MaxTextChars) return (false, $"text 过长（最多 {MaxTextChars} 字符）");
+        if (string.IsNullOrWhiteSpace(config.FontKey)) return (false, "fontKey 不能为空");
+        if (allowedFontKeys.Count > 0 && !allowedFontKeys.Contains(config.FontKey)) return (false, "fontKey 非法");
+        if (!double.IsFinite(config.FontSizePx) || config.FontSizePx < MinFontSizePx || config.FontSizePx > MaxFontSizePx)
         {
             return (false, $"fontSizePx 必须在 {MinFontSizePx}-{MaxFontSizePx} 范围内");
         }
-        if (!double.IsFinite(spec.Opacity) || spec.Opacity < 0 || spec.Opacity > 1)
+        if (!double.IsFinite(config.Opacity) || config.Opacity < 0 || config.Opacity > 1)
         {
             return (false, "opacity 必须在 0-1 之间");
         }
-        if (string.IsNullOrWhiteSpace(spec.PositionMode) || !AllowedPositionModes.Contains(spec.PositionMode))
+        if (string.IsNullOrWhiteSpace(config.PositionMode) || !AllowedPositionModes.Contains(config.PositionMode))
         {
             return (false, "positionMode 必须为 pixel 或 ratio");
         }
-        if (string.IsNullOrWhiteSpace(spec.Anchor) || !AllowedAnchors.Contains(spec.Anchor))
+        if (string.IsNullOrWhiteSpace(config.Anchor) || !AllowedAnchors.Contains(config.Anchor))
         {
             return (false, "anchor 必须为 top-left/top-right/bottom-left/bottom-right");
         }
-        if (!double.IsFinite(spec.OffsetX) || spec.OffsetX < 0)
+        if (!double.IsFinite(config.OffsetX) || config.OffsetX < 0)
         {
             return (false, "offsetX 必须为非负数");
         }
-        if (!double.IsFinite(spec.OffsetY) || spec.OffsetY < 0)
+        if (!double.IsFinite(config.OffsetY) || config.OffsetY < 0)
         {
             return (false, "offsetY 必须为非负数");
         }
-        if (spec.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase))
+        if (config.PositionMode.Equals("ratio", StringComparison.OrdinalIgnoreCase))
         {
-            if (spec.OffsetX > 1 || spec.OffsetY > 1)
+            if (config.OffsetX > 1 || config.OffsetY > 1)
             {
                 return (false, "按比例时 offsetX/offsetY 必须在 0-1 之间");
             }
         }
-        if (spec.BaseCanvasWidth < MinCanvasWidth || spec.BaseCanvasWidth > MaxCanvasWidth)
+        if (config.BaseCanvasWidth < MinCanvasWidth || config.BaseCanvasWidth > MaxCanvasWidth)
         {
             return (false, $"baseCanvasWidth 必须在 {MinCanvasWidth}-{MaxCanvasWidth} 范围内");
         }
-        if (spec.IconEnabled && string.IsNullOrWhiteSpace(spec.IconImageRef))
+        if (config.IconEnabled && string.IsNullOrWhiteSpace(config.IconImageRef))
         {
             return (false, "启用图标时必须提供 iconImageRef");
         }
-        if (!string.IsNullOrWhiteSpace(spec.Color) && !HexColorRegex.IsMatch(spec.Color))
-        {
-            return (false, "color 必须为 #RRGGBB 或 #RRGGBBAA");
-        }
-        if (!string.IsNullOrWhiteSpace(spec.TextColor) && !HexColorRegex.IsMatch(spec.TextColor))
+        if (!string.IsNullOrWhiteSpace(config.TextColor) && !HexColorRegex.IsMatch(config.TextColor))
         {
             return (false, "textColor 必须为 #RRGGBB 或 #RRGGBBAA");
         }
-        if (!string.IsNullOrWhiteSpace(spec.BackgroundColor) && !HexColorRegex.IsMatch(spec.BackgroundColor))
+        if (!string.IsNullOrWhiteSpace(config.BackgroundColor) && !HexColorRegex.IsMatch(config.BackgroundColor))
         {
             return (false, "backgroundColor 必须为 #RRGGBB 或 #RRGGBBAA");
         }
