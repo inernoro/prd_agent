@@ -335,7 +335,7 @@ public class AuthController : ControllerBase
             return Ok(ApiResponse<LoginResponse>.Ok(responseRoot));
         }
 
-        var user = await _userService.GetByIdAsync(request.UserId);
+        var user = await _userService.GetByIdAsync(request.UserId!);
         if (user == null || user.Status == UserStatus.Disabled)
         {
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "账号无效"));

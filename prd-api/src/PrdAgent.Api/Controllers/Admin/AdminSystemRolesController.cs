@@ -61,7 +61,7 @@ public sealed class AdminSystemRolesController : ControllerBase
         if (existed != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "角色 key 已存在"));
 
-        var perms = (req.Permissions ?? new List<string>())
+        var perms = (req?.Permissions ?? new List<string>())
             .Select(x => (x ?? string.Empty).Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.Ordinal)
