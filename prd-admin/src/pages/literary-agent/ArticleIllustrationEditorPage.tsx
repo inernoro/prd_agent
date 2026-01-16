@@ -2386,11 +2386,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         onOpenChange={setPromptPreviewOpen}
         title="配置管理"
         description="系统提示词与水印设置"
-        maxWidth={1400}
+        maxWidth={960}
+        contentClassName="overflow-hidden !p-4"
+        contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-2">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-2 h-full min-h-0">
             {/* 左侧：系统提示词 */}
-            <div className="min-h-0 flex flex-col">
+            <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   系统提示词
@@ -2412,7 +2414,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   还没有提示词模板，点击上方「新建」创建第一个模板
                 </div>
               ) : (
-                <div className="max-h-[520px] overflow-auto pr-1">
+                <div className="flex-1 min-h-0 overflow-auto pr-1">
                   <div className="grid grid-cols-1 gap-3">
                     {allPrompts.map((prompt) => (
                       <Card key={prompt.id} className="p-0 overflow-hidden">
@@ -2582,11 +2584,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </div>
 
             {/* 右侧：水印设置 */}
-            <div className="min-h-0 flex flex-col border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
+            <div className="min-h-0 flex flex-col h-full border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
               <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                 水印设置
               </div>
-              <div className="flex-1 min-h-0 overflow-auto">
+              <div className="flex-1 min-h-0 overflow-hidden">
                 <WatermarkSettingsPanel onStatusChange={setWatermarkStatus} />
               </div>
             </div>
