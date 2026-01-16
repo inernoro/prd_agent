@@ -671,6 +671,8 @@ function WatermarkEditor(props: {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadingSizes, setLoadingSizes] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mainPreviewRef = useRef<HTMLDivElement | null>(null);
+  const [mainPreviewSize, setMainPreviewSize] = useState(spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
   const [fontLoading, setFontLoading] = useState(false);
   const previewSizes = useMemo(() => selectPreviewSizes(sizes), [sizes]);
 
@@ -686,6 +688,24 @@ function WatermarkEditor(props: {
       }
     }).finally(() => setLoadingSizes(false));
   }, [spec.modelKey]);
+
+  useEffect(() => {
+    const container = mainPreviewRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      const height = entry.contentRect.height;
+      const baseSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
+      const paddingAllowance = 24;
+      const nextSize = Math.max(
+        280,
+        Math.min(width - paddingAllowance, height - paddingAllowance, Math.round(baseSize * 0.92))
+      );
+      setMainPreviewSize(nextSize);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [spec.baseCanvasWidth]);
 
   const updateSpec = (patch: Partial<WatermarkSpec>) => {
     onChange({ ...spec, ...patch });
@@ -772,13 +792,14 @@ function WatermarkEditor(props: {
 
         {/* 中间: 主预览画布 */}
         <div
-          className="rounded-[8px] relative flex items-center justify-center overflow-visible p-2"
+          ref={mainPreviewRef}
+          className="rounded-[8px] relative flex items-center justify-center overflow-visible p-3"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
         >
           <WatermarkPreview
             spec={spec}
             font={currentFont}
-            size={spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE}
+            size={mainPreviewSize}
             previewImage={previewImage}
             draggable
             showCrosshair
