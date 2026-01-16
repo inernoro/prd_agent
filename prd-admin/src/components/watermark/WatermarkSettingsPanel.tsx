@@ -630,9 +630,9 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
           }
         }}
         title="水印编辑"
-        maxWidth={1320}
+        maxWidth={1120}
         contentClassName="overflow-hidden !p-4"
-        contentStyle={{ maxHeight: '90vh', height: '90vh' }}
+        contentStyle={{ maxHeight: '80vh', height: '80vh' }}
         content={draftSpec ? (
           <WatermarkEditor
             spec={draftSpec}
