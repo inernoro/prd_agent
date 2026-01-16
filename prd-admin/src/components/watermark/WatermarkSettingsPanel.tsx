@@ -728,27 +728,27 @@ function WatermarkEditor(props: {
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-3">
-      <div className="grid gap-1 flex-1 overflow-hidden" style={{ gridTemplateColumns: '140px minmax(0, 1fr) 300px' }}>
+      <div className="grid gap-3 flex-1 overflow-hidden" style={{ gridTemplateColumns: '180px minmax(0, 1fr) 340px' }}>
         {/* 左侧: 多尺寸预览 */}
-        <div className="flex flex-col gap-1 overflow-hidden">
+        <div className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div className="text-[10px] font-semibold px-0.5" style={{ color: 'var(--text-muted)' }}>多尺寸预览</div>
-          <div className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
+          <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
             {(loadingSizes ? Array.from<ModelSizeInfo | undefined>({ length: 4 }) : previewSizes).map((size, idx) => {
               if (!size) {
                 return (
                   <div
                     key={`placeholder-${idx}`}
-                    className="h-[75px] rounded-[6px]"
+                    className="h-[90px] rounded-[8px]"
                     style={{ background: 'rgba(255,255,255,0.04)' }}
                   />
                 );
               }
-              const previewWidth = 118;
+              const previewWidth = 132;
               const previewHeight = Math.round((size.height / size.width) * previewWidth);
               return (
                 <div
                   key={size.label}
-                  className="rounded-[6px] p-0.5"
+                  className="rounded-[8px] p-1"
                   style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}
                 >
                   <div className="text-[9px] mb-0.5 px-0.5" style={{ color: 'var(--text-muted)' }}>{size.label}</div>
@@ -789,7 +789,7 @@ function WatermarkEditor(props: {
         </div>
 
         {/* 右侧: 配置表单 */}
-        <div className="flex flex-col gap-2 overflow-y-auto pr-0.5">
+        <div className="flex flex-col gap-3 overflow-y-auto rounded-[10px] p-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center gap-1.5 pb-1" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <label
               className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded-[8px] cursor-pointer"
@@ -810,25 +810,25 @@ function WatermarkEditor(props: {
             </Button>
           </div>
 
-          <div className="grid gap-1.5" style={{ gridTemplateColumns: '70px minmax(0, 1fr)' }}>
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>配置名称</div>
-          <input
-            value={spec.name}
-            onChange={(e) => updateSpec({ name: e.target.value })}
-            className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
-            placeholder="例如：默认水印"
-          />
+          <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>配置名称</div>
+            <input
+              value={spec.name}
+              onChange={(e) => updateSpec({ name: e.target.value })}
+              className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
+              placeholder="例如：默认水印"
+            />
 
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
-          <input
-            value={spec.text}
-            onChange={(e) => updateSpec({ text: e.target.value })}
-            className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
-            placeholder="请输入水印文案"
-          />
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
+            <input
+              value={spec.text}
+              onChange={(e) => updateSpec({ text: e.target.value })}
+              className="w-full rounded-[8px] px-2 py-1 text-sm outline-none prd-field"
+              placeholder="请输入水印文案"
+            />
 
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字体</div>
-          <div className="flex items-center gap-2">
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字体</div>
+            <div className="flex items-center gap-2">
               <FontSelect
                 value={spec.fontKey}
                 fonts={fonts}
@@ -859,59 +859,59 @@ function WatermarkEditor(props: {
               </Button>
             </div>
 
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字号</div>
-          <div className="flex flex-col gap-1">
-            <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
-            <input
-              type="range"
-              min={12}
-              max={64}
-              step={2}
-              value={spec.fontSizePx}
-              onChange={(e) => updateSpec({ fontSizePx: Number(e.target.value) })}
-              className="w-full"
-            />
-          </div>
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字号</div>
+            <div className="flex flex-col gap-1">
+              <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.fontSizePx)}px</div>
+              <input
+                type="range"
+                min={12}
+                max={64}
+                step={2}
+                value={spec.fontSizePx}
+                onChange={(e) => updateSpec({ fontSizePx: Number(e.target.value) })}
+                className="w-full"
+              />
+            </div>
 
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>透明度</div>
-          <div className="flex flex-col gap-1">
-            <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.opacity * 100)}%</div>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={spec.opacity}
-              onChange={(e) => updateSpec({ opacity: Number(e.target.value) })}
-              className="w-full"
-            />
-          </div>
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>透明度</div>
+            <div className="flex flex-col gap-1">
+              <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(spec.opacity * 100)}%</div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={spec.opacity}
+                onChange={(e) => updateSpec({ opacity: Number(e.target.value) })}
+                className="w-full"
+              />
+            </div>
 
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>定位方式</div>
-          <div>
-            <PositionModeSwitch
-              value={spec.positionMode}
-              onChange={(nextMode) => {
-                if (nextMode === spec.positionMode) return;
-                if (nextMode === 'ratio') {
-                  updateSpec({
-                    positionMode: nextMode,
-                    offsetX: spec.offsetX / baseCanvasSize,
-                    offsetY: spec.offsetY / baseCanvasSize,
-                  });
-                } else {
-                  updateSpec({
-                    positionMode: nextMode,
-                    offsetX: spec.offsetX * baseCanvasSize,
-                    offsetY: spec.offsetY * baseCanvasSize,
-                  });
-                }
-              }}
-            />
-          </div>
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>定位方式</div>
+            <div>
+              <PositionModeSwitch
+                value={spec.positionMode}
+                onChange={(nextMode) => {
+                  if (nextMode === spec.positionMode) return;
+                  if (nextMode === 'ratio') {
+                    updateSpec({
+                      positionMode: nextMode,
+                      offsetX: spec.offsetX / baseCanvasSize,
+                      offsetY: spec.offsetY / baseCanvasSize,
+                    });
+                  } else {
+                    updateSpec({
+                      positionMode: nextMode,
+                      offsetX: spec.offsetX * baseCanvasSize,
+                      offsetY: spec.offsetY * baseCanvasSize,
+                    });
+                  }
+                }}
+              />
+            </div>
 
-          <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>装饰</div>
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+            <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>装饰</div>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
               <div className="relative shrink-0">
                 <label
                   className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
@@ -1002,7 +1002,7 @@ function WatermarkEditor(props: {
                   onChange={(e) => updateSpec({ backgroundColor: e.target.value })}
                 />
               </label>
-          </div>
+            </div>
           </div>
         </div>
       </div>
