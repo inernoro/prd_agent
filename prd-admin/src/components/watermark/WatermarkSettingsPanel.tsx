@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -161,9 +161,13 @@ function useFontFace(font: WatermarkFontInfo | null | undefined, enabled: boolea
 }
 
 type WatermarkStatus = { enabled: boolean; activeId?: string; activeName?: string };
+export type WatermarkSettingsPanelHandle = { addSpec: () => void };
 
-export function WatermarkSettingsPanel(props: { onStatusChange?: (status: WatermarkStatus) => void } = {}) {
-  const { onStatusChange } = props;
+export const WatermarkSettingsPanel = forwardRef<
+  WatermarkSettingsPanelHandle,
+  { onStatusChange?: (status: WatermarkStatus) => void; hideAddButton?: boolean }
+>(function WatermarkSettingsPanel(props, ref) {
+  const { onStatusChange, hideAddButton = false } = props;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fonts, setFonts] = useState<WatermarkFontInfo[]>([]);
@@ -232,6 +236,7 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
   useEffect(() => {
     void load();
   }, [load]);
+
 
   const spec = useMemo(
     () => specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null,
@@ -485,65 +490,37 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
     await saveSettings(specs, activeSpecId, !enabled);
   };
 
+  useImperativeHandle(ref, () => ({
+    addSpec: () => {
+      void handleAddSpec();
+    },
+  }), [handleAddSpec]);
+
   if (loading) {
     return (
-      <Card className="p-4 min-h-[260px] flex items-center justify-center" variant="default">
+      <div className="p-4 min-h-[260px] flex items-center justify-center rounded-[16px]" style={{ background: 'var(--bg-card)' }}>
         <div className="text-sm" style={{ color: 'var(--text-muted)' }}>水印配置加载中...</div>
-      </Card>
+      </div>
     );
   }
 
   return (
-    <Card className="p-4 min-h-0 h-full flex flex-col gap-4 overflow-hidden" variant="default">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>水印配置</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>控制生图时的水印展示与样式</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="h-[26px] w-[46px] rounded-full relative transition-colors"
-            style={{
-              background: enabled ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.12)',
-              border: enabled ? '1px solid rgba(214, 178, 106, 0.5)' : '1px solid rgba(255,255,255,0.18)',
-            }}
-            onClick={toggleEnabled}
-            disabled={saving || !spec}
-            title={enabled ? '关闭水印' : '开启水印'}
-          >
-            <span
-              className="absolute top-[2px] transition-all"
-              style={{
-                left: enabled ? 24 : 2,
-                width: 20,
-                height: 20,
-                borderRadius: 10,
-                background: enabled ? '#1a1206' : 'rgba(255,255,255,0.9)',
-                boxShadow: enabled ? '0 2px 6px rgba(0,0,0,0.25)' : 'none',
-              }}
-            />
-          </button>
+    <div className="min-h-0 h-full flex flex-col gap-3 overflow-hidden">
+      {!hideAddButton ? (
+        <div className="flex items-center justify-end">
           <Button variant="secondary" size="xs" onClick={handleAddSpec} disabled={saving}>
             <Plus size={14} />
             新增配置
           </Button>
         </div>
-      </div>
+      ) : null}
 
       {specs.length > 0 ? (
-        <div className="grid gap-4 flex-1 min-h-0 overflow-hidden" style={{ gridTemplateColumns: 'minmax(0, 1fr) 240px' }}>
-          <div className="flex flex-col gap-3 min-h-0">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>水印列表</div>
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>点击启用后即为生图默认水印</div>
-              </div>
-            </div>
+        <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
             <div className="text-[11px] px-2 py-1 rounded-[8px]" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
               优先级：覆盖全部 &gt; 应用内设置 &gt; 设为全局（设置会影响其他生图入口）
             </div>
-            <div className="grid gap-3 flex-1 min-h-0 overflow-auto pr-1">
+            <div className="grid gap-3 flex-1 min-h-0 overflow-auto pr-1 content-start">
               {specs.map((item, index) => {
                 const isActive = item.id === activeSpecId;
                 const isGlobal = item.id === globalSpecId;
@@ -578,40 +555,68 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
                         </div>
                       </div>
 
-                      <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                      <div className="px-2 pb-1 overflow-hidden">
                         <div
-                          className="h-full overflow-auto border rounded-[6px]"
-                          style={{
-                            borderColor: 'var(--border-subtle)',
-                            background: 'rgba(255,255,255,0.02)',
-                            minHeight: '120px',
-                            maxHeight: '160px',
-                          }}
+                          className={isActive ? 'grid gap-2 min-h-0' : undefined}
+                          style={isActive ? { gridTemplateColumns: 'minmax(0, 1fr) 140px' } : undefined}
                         >
-                          <div className="text-[11px] grid gap-2 grid-cols-2 p-2" style={{ color: 'var(--text-muted)' }}>
-                            <div className="flex items-center justify-between gap-4">
-                              <span>字体</span>
-                              <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-4">
-                              <span>字号</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-4">
-                              <span>位置</span>
-                              <span className="text-right truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>
-                                {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-4">
-                              <span>图标</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '未启用'}</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-4">
-                              <span>透明度</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
+                          <div
+                            className="h-full overflow-auto border rounded-[6px]"
+                            style={{
+                              borderColor: 'var(--border-subtle)',
+                              background: 'rgba(255,255,255,0.02)',
+                              minHeight: '120px',
+                              maxHeight: '160px',
+                            }}
+                          >
+                            <div className="text-[11px] grid gap-2 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
+                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                                <span>字体</span>
+                                <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
+                              </div>
+                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                                <span>字号</span>
+                                <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
+                              </div>
+                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                                <span>位置</span>
+                                <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 200 }}>
+                                  {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
+                                </span>
+                              </div>
+                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                                <span>图标</span>
+                                <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '未启用'}</span>
+                              </div>
+                              <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                                <span>透明度</span>
+                                <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
+                              </div>
                             </div>
                           </div>
+                          {isActive ? (
+                            <div
+                              className="relative flex items-center justify-center border"
+                              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                            >
+                              <span
+                                className="absolute text-xs font-semibold"
+                                style={{ color: 'rgba(255,255,255,0.45)' }}
+                              >
+                                预览
+                              </span>
+                              {previewObjectUrl && !previewError ? (
+                                <img
+                                  src={previewObjectUrl}
+                                  alt="水印预览"
+                                  className="w-full h-auto object-contain"
+                                  onError={() => setPreviewError(true)}
+                                />
+                              ) : (
+                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无预览</div>
+                              )}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
 
@@ -680,26 +685,6 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
                 );
               })}
             </div>
-          </div>
-
-          <div className="rounded-[16px] p-3 flex flex-col gap-3 h-full" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card)' }}>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>水印预览</div>
-            <div className="flex-1 rounded-[12px] overflow-hidden flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.04)', minHeight: 220 }}>
-              {previewObjectUrl && !previewError ? (
-                <img
-                  src={previewObjectUrl}
-                  alt="水印预览"
-                  className="max-h-[220px] w-auto object-contain"
-                  onError={() => setPreviewError(true)}
-                />
-              ) : (
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无预览</div>
-              )}
-            </div>
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              预览图由后台渲染并保存为 preview.{spec?.id}.png
-            </div>
-          </div>
         </div>
       ) : (
         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无水印配置</div>
@@ -737,9 +722,11 @@ export function WatermarkSettingsPanel(props: { onStatusChange?: (status: Waterm
           />
         ) : null}
       />
-    </Card>
+    </div>
   );
-}
+});
+
+WatermarkSettingsPanel.displayName = 'WatermarkSettingsPanel';
 
 function WatermarkEditor(props: {
   spec: WatermarkSpec;

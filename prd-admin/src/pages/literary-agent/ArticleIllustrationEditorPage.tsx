@@ -2,7 +2,7 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
-import { WatermarkSettingsPanel } from '@/components/watermark/WatermarkSettingsPanel';
+import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
   createImageGenRun,
@@ -99,6 +99,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -2386,7 +2387,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         onOpenChange={setPromptPreviewOpen}
         title="配置管理"
         description="系统提示词与水印设置"
-        maxWidth={960}
+        maxWidth={1120}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={
@@ -2585,11 +2586,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 右侧：水印设置 */}
             <div className="min-h-0 flex flex-col h-full border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
-              <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                水印设置
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  水印设置
+                </div>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={() => watermarkPanelRef.current?.addSpec()}
+                >
+                  <Plus size={12} />
+                  新增配置
+                </Button>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <WatermarkSettingsPanel onStatusChange={setWatermarkStatus} />
+                <WatermarkSettingsPanel ref={watermarkPanelRef} onStatusChange={setWatermarkStatus} hideAddButton />
               </div>
             </div>
           </div>
