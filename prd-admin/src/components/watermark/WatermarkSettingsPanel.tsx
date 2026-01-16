@@ -748,7 +748,7 @@ function WatermarkEditor(props: {
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-3">
-      <div className="grid gap-3 flex-1 overflow-hidden" style={{ gridTemplateColumns: '180px minmax(0, 1fr) 340px' }}>
+      <div className="grid gap-3 flex-1 overflow-hidden items-start" style={{ gridTemplateColumns: '180px minmax(0, 1fr) 340px' }}>
         {/* 左侧: 多尺寸预览 */}
         <div className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div className="text-[10px] font-semibold px-0.5" style={{ color: 'var(--text-muted)' }}>多尺寸预览</div>
@@ -793,20 +793,24 @@ function WatermarkEditor(props: {
         {/* 中间: 主预览画布 */}
         <div
           ref={mainPreviewRef}
-          className="rounded-[8px] relative flex items-center justify-center overflow-visible p-3"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+          className="relative flex items-start justify-center overflow-visible self-start"
         >
-          <WatermarkPreview
-            spec={spec}
-            font={currentFont}
-            size={mainPreviewSize}
-            previewImage={previewImage}
-            draggable
-            showCrosshair
-            showDistances
-            distancePlacement="outside"
-            onPositionChange={(next) => updateSpec(next)}
-          />
+          <div
+            className="rounded-[8px] flex items-center justify-center overflow-visible p-3 w-fit h-fit"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+          >
+            <WatermarkPreview
+              spec={spec}
+              font={currentFont}
+              size={mainPreviewSize}
+              previewImage={previewImage}
+              draggable
+              showCrosshair
+              showDistances
+              distancePlacement="outside"
+              onPositionChange={(next) => updateSpec(next)}
+            />
+          </div>
         </div>
 
         {/* 右侧: 配置表单 */}
