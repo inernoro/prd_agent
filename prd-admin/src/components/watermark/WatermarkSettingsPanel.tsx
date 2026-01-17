@@ -48,6 +48,13 @@ const anchorLabelMap: Record<WatermarkAnchor, string> = {
   'bottom-right': '右下',
 };
 
+// appKey 到显示名称的映射
+const appKeyLabelMap: Record<string, string> = {
+  'literary-agent': '文学创作',
+  'visual-agent': '视觉创作',
+  'prd-agent': 'PRD Agent',
+};
+
 const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
   pixel: '像素',
   ratio: '比例',
@@ -490,7 +497,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   return (
     <div className="min-h-0 h-full flex flex-col gap-3 overflow-hidden">
       {!hideAddButton ? (
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end flex-shrink-0">
           <Button variant="secondary" size="xs" onClick={handleAddConfig} disabled={saving}>
             <Plus size={14} />
             新增配置
@@ -501,8 +508,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       {configs.length > 0 ? (
         <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
           <div
-            className="grid gap-3 flex-1 min-h-0 overflow-auto pr-1 content-start"
-            style={{ gridTemplateColumns: columns > 1 ? `repeat(${columns}, minmax(0, 1fr))` : '1fr' }}
+            className="grid gap-3 flex-1 min-h-0 overflow-auto overflow-x-hidden pr-1 content-start items-start"
+            style={{ 
+              gridTemplateColumns: columns > 1 ? `repeat(${columns}, minmax(0, 1fr))` : '1fr',
+              gridAutoRows: 'min-content'
+            }}
           >
             {configs.map((item, index) => {
               const isActive = item.appKeys?.includes(appKey);
@@ -511,14 +521,13 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
               const previewError = Boolean(previewErrorById[item.id]);
               return (
                 <Card key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
-                  <div className="flex flex-col h-full">
+                  <div className="flex flex-col">
                     <div className="p-2 pb-1 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
-                          <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{item.text}</div>
                         </div>
                         {isActive ? (
                           <span
@@ -534,12 +543,34 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           </span>
                         ) : null}
                       </div>
+                      {/* 授权应用提示 */}
+                      {item.appKeys && item.appKeys.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {item.appKeys.map((key) => (
+                            <span
+                              key={key}
+                              className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded"
+                              style={{
+                                background: 'rgba(99, 102, 241, 0.12)',
+                                color: 'rgba(99, 102, 241, 0.9)',
+                                border: '1px solid rgba(99, 102, 241, 0.2)',
+                              }}
+                            >
+                              {appKeyLabelMap[key] || key}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-1.5 text-[10px]" style={{ color: 'rgba(239, 68, 68, 0.7)' }}>
+                          未授权任何应用
+                        </div>
+                      )}
                     </div>
 
-                    <div className="px-2 pb-1 overflow-hidden">
-                      <div className="grid gap-2 min-h-0" style={{ gridTemplateColumns: 'minmax(0, 1fr) 140px' }}>
+                    <div className="px-2 pb-1 flex-shrink-0">
+                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 140px' }}>
                         <div
-                          className="h-full overflow-auto border rounded-[6px]"
+                          className="overflow-auto border rounded-[6px]"
                           style={{
                             borderColor: 'var(--border-subtle)',
                             background: 'rgba(255,255,255,0.02)',
@@ -579,6 +610,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             background: previewUrl && !previewError
                               ? 'linear-gradient(180deg, #E9D19C 0%, #D8B46B 100%)'
                               : 'transparent',
+                            minHeight: '120px',
+                            maxHeight: '160px',
                           }}
                         >
                           {previewUrl && !previewError ? (
@@ -598,12 +631,12 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                     <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                       <div className="flex flex-wrap gap-1.5 justify-end">
                         {isActive ? (
-                          <Button size="xs" variant="secondary" disabled>
+                          <Button size="xs" variant="primary" disabled>
                             <Check size={12} />
                             已选择
                           </Button>
                         ) : (
-                          <Button size="xs" variant="primary" onClick={() => handleActivate(item.id)} disabled={saving}>
+                          <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
                             <Check size={12} />
                             选择
                           </Button>

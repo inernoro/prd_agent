@@ -190,11 +190,14 @@ export function groupAppCallers(callers: any[]): AppGroup[] {
  */
 function getAppDisplayName(app: string): string {
   const names: Record<string, string> = {
-    'desktop': 'Desktop 桌面端',
+    desktop: 'Desktop 桌面端',
+    'prd-agent-desktop': 'Desktop 桌面端',
     'visual-agent': 'Visual Agent 视觉创作',
     'literary-agent': 'Literary Agent 文学创作',
     'open-platform': 'Open Platform 开放平台',
-    'admin': 'Admin 管理后台',
+    'open-platform-agent': 'Open Platform 开放平台',
+    admin: 'Admin 管理后台',
+    'prd-agent-web': 'Admin 管理后台',
   };
   return names[app] || app;
 }
@@ -299,16 +302,28 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
   
   // 应用主体
   const appSubject: Record<string, string> = {
-    'desktop': '桌面端',
+    desktop: '桌面端',
+    'prd-agent-desktop': '桌面端',
     'visual-agent': '视觉创作',
     'literary-agent': '文学创作',
     'open-platform': '开放平台',
-    'admin': '管理后台',
+    'open-platform-agent': '开放平台',
+    admin: '管理后台',
+    'prd-agent-web': '管理后台',
   };
   
   // 功能描述映射
   const descriptions: Record<string, Record<string, string>> = {
-    'desktop': {
+    desktop: {
+      'chat.sendmessage::chat': '用户发送聊天消息',
+      'chat.sendmessage::intent': '识别用户消息意图',
+      'chat::vision': '理解聊天中的图片',
+      'prd.analysis::chat': 'PRD 智能分析',
+      'prd.preview::chat': 'PRD 预览问答',
+      'gap.detection::chat': 'Gap 差异检测',
+      'gap.summarization::chat': 'Gap 差异总结',
+    },
+    'prd-agent-desktop': {
       'chat.sendmessage::chat': '用户发送聊天消息',
       'chat.sendmessage::intent': '识别用户消息意图',
       'chat::vision': '理解聊天中的图片',
@@ -332,7 +347,17 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
       'proxy::vision': 'API 视觉代理',
       'proxy::generation': 'API 生图代理',
     },
-    'admin': {
+    'open-platform-agent': {
+      'proxy::chat': 'API 对话代理',
+      'proxy::vision': 'API 视觉代理',
+      'proxy::generation': 'API 生图代理',
+    },
+    admin: {
+      'lab::chat': '实验室模型测试',
+      'lab::vision': '实验室视觉测试',
+      'lab::generation': '实验室生图测试',
+    },
+    'prd-agent-web': {
       'lab::chat': '实验室模型测试',
       'lab::vision': '实验室视觉测试',
       'lab::generation': '实验室生图测试',

@@ -40,6 +40,18 @@ public class SmartModelScheduler : ISmartModelScheduler
 
     public async Task<ILLMClient> GetClientAsync(string appCallerCode, string modelType, CancellationToken ct = default)
     {
+        return await GetClientAsync(appCallerCode, modelType, expectedModelCode: null, ct);
+    }
+
+    /// <summary>
+    /// 获取 LLM 客户端（支持指定期望的模型 Code）
+    /// </summary>
+    /// <param name="appCallerCode">应用调用者标识</param>
+    /// <param name="modelType">模型类型</param>
+    /// <param name="expectedModelCode">期望的模型 Code（用于匹配模型池）</param>
+    /// <param name="ct">取消令牌</param>
+    public async Task<ILLMClient> GetClientAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default)
+    {
         if (string.IsNullOrEmpty(appCallerCode))
         {
             throw new ArgumentException("必须提供应用标识 appCallerCode", nameof(appCallerCode));
@@ -62,8 +74,8 @@ public class SmartModelScheduler : ISmartModelScheduler
             requirement = await AddDefaultRequirementAsync(app, modelType, ct);
         }
 
-        // 获取绑定的模型分组（如果未配置则使用该类型的默认分组）
-        var group = await GetModelGroupAsync(requirement.ModelGroupId, modelType, ct);
+        // 获取绑定的模型分组（支持多模型池）
+        var group = await GetModelGroupFromRequirementAsync(requirement, modelType, expectedModelCode, ct);
 
         if (group == null || group.Models.Count == 0)
         {
@@ -206,31 +218,8 @@ public class SmartModelScheduler : ISmartModelScheduler
                 {
                     _logger.LogInformation("健康检查: {ModelId}", modelItem.ModelId);
 
-                    // 创建临时客户端进行探测
-                    var client = await CreateClientForModelAsync(modelItem, group.Id, ct);
-
-                    // 发送轻量探测请求
-                    var messages = new List<LLMMessage>();
-                    var hasResponse = false;
-
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(config.HealthCheckTimeoutSeconds));
-                    await foreach (var chunk in client.StreamGenerateAsync(
-                        config.HealthCheckPrompt,
-                        messages,
-                        enablePromptCache: false,
-                        cts.Token))
-                    {
-                        if (chunk.Type == "error")
-                        {
-                            _logger.LogWarning("健康检查失败: {ModelId}, 错误: {Error}", modelItem.ModelId, chunk.ErrorMessage);
-                            break;
-                        }
-
-                        hasResponse = true;
-                        break; // 只要有响应就算成功
-                    }
-
-                    if (hasResponse)
+                    var ok = await CheckModelsEndpointAsync(modelItem, group.Id, config, ct);
+                    if (ok)
                     {
                         // 探测成功，记录成功结果（会触发恢复逻辑）
                         await RecordCallResultAsync(group.Id, modelItem.ModelId, modelItem.PlatformId, true, null, ct);
@@ -242,6 +231,168 @@ public class SmartModelScheduler : ISmartModelScheduler
                 }
             }
         }
+    }
+
+    private async Task<bool> CheckModelsEndpointAsync(
+        ModelGroupItem modelItem,
+        string groupId,
+        ModelSchedulerConfig config,
+        CancellationToken ct)
+    {
+        var model = await _db.LLMModels.Find(m => m.Id == modelItem.ModelId).FirstOrDefaultAsync(ct);
+        if (model == null)
+        {
+            _logger.LogWarning("健康检查失败，模型不存在: {ModelId}", modelItem.ModelId);
+            return false;
+        }
+
+        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            _logger.LogWarning("健康检查失败，模型 API 配置不完整: {ModelId}", modelItem.ModelId);
+            return false;
+        }
+
+        var endpoint = OpenAICompatUrl.BuildEndpoint(apiUrl, "models");
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            _logger.LogWarning("健康检查失败，无效 models 接口: {ModelId}", modelItem.ModelId);
+            return false;
+        }
+
+        using var client = _httpClientFactory.CreateClient("LoggedHttpClient");
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, config.HealthCheckTimeoutSeconds));
+
+        var isAnthropic = string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase)
+                          || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase);
+        if (isAnthropic)
+        {
+            client.DefaultRequestHeaders.Remove("x-api-key");
+            client.DefaultRequestHeaders.Add("x-api-key", apiKey);
+            client.DefaultRequestHeaders.Remove("anthropic-version");
+            client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+        }
+        else
+        {
+            client.DefaultRequestHeaders.Remove("Authorization");
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+        }
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var startedAt = DateTime.UtcNow;
+        var (apiBase, path) = OpenAICompatUrl.SplitApiBaseAndPath(endpoint, client.BaseAddress);
+        var headers = new Dictionary<string, string>
+        {
+            ["content-type"] = "application/json"
+        };
+        if (isAnthropic)
+        {
+            headers["x-api-key"] = "***";
+            headers["anthropic-version"] = "2023-06-01";
+        }
+        else
+        {
+            headers["Authorization"] = "Bearer ***";
+        }
+
+        var logId = await _logWriter.StartAsync(new LlmLogStart(
+            RequestId: requestId,
+            Provider: platformType ?? "unknown",
+            Model: "(models)",
+            ApiBase: apiBase,
+            Path: path,
+            HttpMethod: "GET",
+            RequestHeadersRedacted: headers,
+            RequestBodyRedacted: "",
+            RequestBodyHash: null,
+            QuestionText: null,
+            SystemPromptChars: null,
+            SystemPromptHash: null,
+            SystemPromptText: null,
+            MessageCount: null,
+            GroupId: groupId,
+            SessionId: null,
+            UserId: null,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            UserPromptChars: null,
+            StartedAt: startedAt,
+            RequestType: "health-check",
+            RequestPurpose: "model-health-check",
+            PlatformId: platformId,
+            PlatformName: platformName), ct);
+
+        try
+        {
+            using var response = await client.GetAsync(endpoint, ct);
+            if (!string.IsNullOrWhiteSpace(logId))
+            {
+                _logWriter.MarkFirstByte(logId!, DateTime.UtcNow);
+            }
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (!string.IsNullOrWhiteSpace(logId))
+                {
+                    _logWriter.MarkError(
+                        logId!,
+                        $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}\n{body}",
+                        (int)response.StatusCode);
+                }
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(logId))
+            {
+                var endedAt = DateTime.UtcNow;
+                _logWriter.MarkDone(logId!, new LlmLogDone(
+                    StatusCode: (int)response.StatusCode,
+                    ResponseHeaders: ToHeaderDictionary(response),
+                    InputTokens: null,
+                    OutputTokens: null,
+                    CacheCreationInputTokens: null,
+                    CacheReadInputTokens: null,
+                    TokenUsageSource: "missing",
+                    ImageSuccessCount: null,
+                    AnswerText: null,
+                    AssembledTextChars: 0,
+                    AssembledTextHash: null,
+                    Status: "succeeded",
+                    EndedAt: endedAt,
+                    DurationMs: (long)Math.Max(0, (endedAt - startedAt).TotalMilliseconds)));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (!string.IsNullOrWhiteSpace(logId))
+            {
+                _logWriter.MarkError(logId!, ex.Message);
+            }
+            _logger.LogWarning(ex, "健康检查 /models 异常: {ModelId}", modelItem.ModelId);
+            return false;
+        }
+    }
+
+    private static Dictionary<string, string> ToHeaderDictionary(HttpResponseMessage response)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in response.Headers)
+        {
+            dict[h.Key] = string.Join(", ", h.Value);
+        }
+        if (response.Content != null)
+        {
+            foreach (var h in response.Content.Headers)
+            {
+                dict[h.Key] = string.Join(", ", h.Value);
+            }
+        }
+        return dict;
     }
 
     private async Task<AppModelRequirement> AddDefaultRequirementAsync(
@@ -258,7 +409,7 @@ public class SmartModelScheduler : ISmartModelScheduler
         {
             ModelType = modelType,
             Purpose = $"使用{modelType}类型模型",
-            ModelGroupId = defaultGroup?.Id, // 可能为null，后续会使用默认分组
+            ModelGroupIds = defaultGroup != null ? new List<string> { defaultGroup.Id } : new List<string>(),
             IsRequired = true
         };
 
@@ -270,6 +421,81 @@ public class SmartModelScheduler : ISmartModelScheduler
         _logger.LogInformation("为应用 {AppCode} 添加模型类型需求: {ModelType}", app.AppCode, modelType);
 
         return requirement;
+    }
+
+    /// <summary>
+    /// 从应用需求中获取模型分组（支持多模型池选择）
+    /// </summary>
+    private async Task<ModelGroup?> GetModelGroupFromRequirementAsync(
+        AppModelRequirement requirement,
+        string modelType,
+        string? expectedModelCode,
+        CancellationToken ct)
+    {
+        // 1. 如果指定了期望的模型 Code，优先按 Code 查找
+        if (!string.IsNullOrEmpty(expectedModelCode))
+        {
+            var groupByCode = await GetModelGroupByCodeAsync(expectedModelCode, modelType, ct);
+            if (groupByCode != null)
+            {
+                _logger.LogDebug("使用期望的模型 Code: {Code}, 分组: {GroupId}", expectedModelCode, groupByCode.Id);
+                return groupByCode;
+            }
+            _logger.LogWarning("未找到期望的模型 Code: {Code}，尝试使用绑定的模型池", expectedModelCode);
+        }
+
+        // 2. 从绑定的模型池中选择
+        if (requirement.ModelGroupIds.Count > 0)
+        {
+            // 获取所有绑定的模型池
+            var groups = await _db.ModelGroups
+                .Find(g => requirement.ModelGroupIds.Contains(g.Id))
+                .ToListAsync(ct);
+
+            if (groups.Count > 0)
+            {
+                // 如果只有一个模型池，直接返回
+                if (groups.Count == 1)
+                {
+                    return groups[0];
+                }
+
+                // 多个模型池时，随机选择一个（用于负载均衡）
+                var random = new Random();
+                var selected = groups[random.Next(groups.Count)];
+                _logger.LogDebug("从 {Count} 个模型池中随机选择: {GroupId}", groups.Count, selected.Id);
+                return selected;
+            }
+        }
+
+        // 3. 使用该类型的默认分组
+        return await _db.ModelGroups
+            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// 按 Code 查找模型池（按优先级选择最高优先级的）
+    /// </summary>
+    private async Task<ModelGroup?> GetModelGroupByCodeAsync(string code, string modelType, CancellationToken ct)
+    {
+        // 查找匹配 Code 的所有模型池，按优先级排序
+        var groups = await _db.ModelGroups
+            .Find(g => g.Code == code && g.ModelType == modelType)
+            .SortBy(g => g.Priority)
+            .ToListAsync(ct);
+
+        if (groups.Count == 0)
+        {
+            // 如果指定类型没有，尝试查找任意类型
+            groups = await _db.ModelGroups
+                .Find(g => g.Code == code)
+                .SortBy(g => g.Priority)
+                .ToListAsync(ct);
+        }
+
+        // 返回优先级最高（Priority 值最小）的模型池
+        return groups.FirstOrDefault();
     }
 
     private async Task<ModelGroup?> GetModelGroupAsync(string? groupId, string modelType, CancellationToken ct)

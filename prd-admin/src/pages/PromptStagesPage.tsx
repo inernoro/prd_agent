@@ -11,7 +11,7 @@ import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contracts/systemPrompts';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
-import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket, FileText, BookOpen } from 'lucide-react';
+import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket, FileText, BookOpen, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function safeIdempotencyKey() {
@@ -222,6 +222,7 @@ export default function PromptStagesPage() {
     isSystem: boolean;
   }>>([]);
   const [literaryScenarioFilter, setLiteraryScenarioFilter] = useState<string | null>('article-illustration');
+  const [literaryCurrentId, setLiteraryCurrentId] = useState<string | null>(null);
   const [literaryEditingId, setLiteraryEditingId] = useState<string | null>(null);
   const [literaryEditingTitle, setLiteraryEditingTitle] = useState('');
   const [literaryEditingContent, setLiteraryEditingContent] = useState('');
@@ -1418,7 +1419,7 @@ export default function PromptStagesPage() {
             </div>
           )}
 
-          <Card className="p-5">
+          <Card className="p-5 flex-shrink-0">
             <div className="flex items-center justify-between gap-3 mb-4">
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>文学创作提示词</div>
@@ -1443,7 +1444,7 @@ export default function PromptStagesPage() {
                   <RefreshCw size={16} />
                   刷新
                 </Button>
-                <Button variant="primary" size="sm" onClick={() => setLiteraryCreating(true)} disabled={literaryLoading}>
+                <Button variant="secondary" size="sm" onClick={() => setLiteraryCreating(true)} disabled={literaryLoading}>
                   <Plus size={16} />
                   新建
                 </Button>
@@ -1480,6 +1481,17 @@ export default function PromptStagesPage() {
                     {prompt.content}
                   </div>
                   <div className="flex items-center gap-2 mt-3">
+                    {literaryCurrentId === prompt.id ? (
+                      <Button size="xs" variant="primary" disabled>
+                        <Check size={12} />
+                        已选
+                      </Button>
+                    ) : (
+                      <Button size="xs" variant="secondary" onClick={() => setLiteraryCurrentId(prompt.id)} disabled={literaryLoading}>
+                        <Check size={12} />
+                        选择
+                      </Button>
+                    )}
                     <Button variant="secondary" size="xs" onClick={() => { setLiteraryEditingId(prompt.id); setLiteraryEditingTitle(prompt.title); setLiteraryEditingContent(prompt.content); }} disabled={literaryLoading}>
                       编辑
                     </Button>
@@ -1501,7 +1513,7 @@ export default function PromptStagesPage() {
             )}
           </Card>
 
-          <div className="min-h-0 flex flex-col">
+          <div className="min-h-0 flex-1 flex flex-col">
             <WatermarkSettingsPanel appKey="literary-agent" columns={3} />
           </div>
         </div>

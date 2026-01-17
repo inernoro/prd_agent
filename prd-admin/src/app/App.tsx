@@ -135,7 +135,7 @@ export default function App() {
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="admin.agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="llm-logs" element={<RequirePermission perm="admin.logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="admin.data.read"><DataManagePage /></RequirePermission>} />
-        <Route path="open-platform" element={<RequirePermission perm="admin.openPlatform.manage"><OpenPlatformPage /></RequirePermission>} />
+        <Route path="open-platform" element={<RequirePermission perm="admin.open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
         <Route path="prompts" element={<RequirePermission perm="admin.settings.write"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="admin.assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="admin.models.read"><LabPage /></RequirePermission>} />

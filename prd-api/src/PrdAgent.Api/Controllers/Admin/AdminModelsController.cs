@@ -238,7 +238,7 @@ public class AdminModelsController : ControllerBase
         }
 
         // 获取API配置（可能需要从平台继承）
-        var (apiUrl, apiKey) = await ResolveApiConfig(model);
+        var (apiUrl, apiKey, platformType) = await ResolveApiConfig(model);
         if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey))
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_CONFIG", "API配置不完整"));
@@ -249,22 +249,23 @@ public class AdminModelsController : ControllerBase
         {
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromMilliseconds(Math.Min(model.Timeout, 30000));
-            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+            var endpoint = GetModelsEndpoint(apiUrl);
+            var isAnthropic = string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase)
+                              || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase);
 
-            var requestBody = new
+            if (isAnthropic)
             {
-                model = model.ModelName,
-                messages = new[]
-                {
-                    new { role = "user", content = "Hi" }
-                },
-                max_tokens = 10,
-                stream = false
-            };
+                client.DefaultRequestHeaders.Remove("x-api-key");
+                client.DefaultRequestHeaders.Add("x-api-key", apiKey);
+                client.DefaultRequestHeaders.Remove("anthropic-version");
+                client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+            }
+            else
+            {
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+            }
 
-            var response = await client.PostAsJsonAsync(
-                GetChatEndpoint(apiUrl), 
-                requestBody);
+            var response = await client.GetAsync(endpoint);
             
             var duration = (int)(DateTime.UtcNow - startTime).TotalMilliseconds;
 
@@ -637,29 +638,36 @@ public class AdminModelsController : ControllerBase
         }));
     }
 
-    private async Task<(string? apiUrl, string? apiKey)> ResolveApiConfig(LLMModel model)
+    private async Task<(string? apiUrl, string? apiKey, string? platformType)> ResolveApiConfig(LLMModel model)
     {
         string? apiUrl = model.ApiUrl;
         string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted);
+        string? platformType = null;
 
-        // 如果模型没有配置，从平台继承
-        if (model.PlatformId != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
+        if (model.PlatformId != null)
         {
             var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync();
             if (platform != null)
             {
                 apiUrl ??= platform.ApiUrl;
                 apiKey ??= DecryptApiKey(platform.ApiKeyEncrypted);
+                platformType ??= platform.PlatformType;
             }
         }
 
-        return (apiUrl, apiKey);
+        return (apiUrl, apiKey, platformType);
     }
 
     private string GetChatEndpoint(string apiUrl)
     {
         // 统一按配置规则拼接（/、#、默认）
         return PrdAgent.Infrastructure.LLM.OpenAICompatUrl.BuildEndpoint(apiUrl, "chat/completions");
+    }
+
+    private string GetModelsEndpoint(string apiUrl)
+    {
+        // 统一按配置规则拼接（/、#、默认）
+        return PrdAgent.Infrastructure.LLM.OpenAICompatUrl.BuildEndpoint(apiUrl, "models");
     }
 
     private object MapModelResponse(LLMModel m, Dictionary<string, string> platformMap) => new
@@ -938,4 +946,3 @@ public class BatchModelInfo
     public string? DisplayName { get; set; }
     public string? Group { get; set; }
 }
-

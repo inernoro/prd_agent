@@ -506,9 +506,31 @@ public class RequestResponseLoggingMiddleware
             var ua = context.Request.Headers.UserAgent.ToString();
 
             var clientType = context.Request.Headers["X-Client"].ToString();
+            if (string.IsNullOrWhiteSpace(clientType))
+            {
+                clientType = context.User?.FindFirst("clientType")?.Value ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(clientType))
+                {
+                    var authType = context.User?.FindFirst("authType")?.Value ?? string.Empty;
+                    if (authType.Equals("apikey", StringComparison.OrdinalIgnoreCase) ||
+                        authType.Equals("apikey-test", StringComparison.OrdinalIgnoreCase))
+                    {
+                        clientType = "open-platform";
+                    }
+                }
+            }
             if (string.IsNullOrWhiteSpace(clientType)) clientType = "unknown";
             var clientId = context.Request.Headers["X-Client-Id"].ToString();
             if (string.IsNullOrWhiteSpace(clientId)) clientId = null;
+            var appId = context.User?.FindFirst("appId")?.Value;
+            if (string.IsNullOrWhiteSpace(appId)) appId = null;
+            var appName = context.User?.FindFirst("appName")?.Value;
+            if (string.IsNullOrWhiteSpace(appName))
+            {
+                appName = context.Request.Headers["X-App-Name"].ToString();
+            }
+            if (string.IsNullOrWhiteSpace(appName)) appName = null;
+            if (appId != null && appName == null) appName = "unknown";
 
             var routeSessionId = context.Request.RouteValues.TryGetValue("sessionId", out var sid) ? sid?.ToString() : null;
             var routeGroupId = context.Request.RouteValues.TryGetValue("groupId", out var gid) ? gid?.ToString() : null;
@@ -548,6 +570,8 @@ public class RequestResponseLoggingMiddleware
                 UserAgent = ua,
                 ClientType = clientType,
                 ClientId = clientId,
+                AppId = appId,
+                AppName = appName,
                 RequestBody = requestBody,
                 RequestBodyTruncated = truncated,
                 Curl = curl,
@@ -692,4 +716,3 @@ public static class RequestResponseLoggingMiddlewareExtensions
         return builder.UseMiddleware<RequestResponseLoggingMiddleware>();
     }
 }
-

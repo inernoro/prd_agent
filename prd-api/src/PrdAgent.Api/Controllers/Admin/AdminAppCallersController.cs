@@ -205,6 +205,74 @@ public class AdminAppCallersController : ControllerBase
             message = "扫描功能将在日志增强后实现"
         })));
     }
+
+    /// <summary>
+    /// 获取应用绑定的模型池列表
+    /// </summary>
+    [HttpGet("{id}/bound-pools")]
+    public async Task<IActionResult> GetBoundModelPools(string id)
+    {
+        var app = await _db.LLMAppCallers.Find(a => a.Id == id).FirstOrDefaultAsync();
+
+        if (app == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("APP_CALLER_NOT_FOUND", "应用不存在"));
+        }
+
+        // 收集所有绑定的模型池 ID
+        var groupIds = app.ModelRequirements
+            .SelectMany(r => r.ModelGroupIds)
+            .Where(id => !string.IsNullOrEmpty(id))
+            .Distinct()
+            .ToList();
+
+        if (groupIds.Count == 0)
+        {
+            return Ok(ApiResponse<List<ModelGroup>>.Ok(new List<ModelGroup>()));
+        }
+
+        // 查询模型池详情
+        var groups = await _db.ModelGroups
+            .Find(g => groupIds.Contains(g.Id))
+            .SortBy(g => g.Priority)
+            .ToListAsync();
+
+        return Ok(ApiResponse<List<ModelGroup>>.Ok(groups));
+    }
+
+    /// <summary>
+    /// 更新应用的模型需求绑定（支持多模型池）
+    /// </summary>
+    [HttpPut("{id}/requirements/{modelType}/bindings")]
+    public async Task<IActionResult> UpdateRequirementBindings(
+        string id,
+        string modelType,
+        [FromBody] UpdateBindingsRequest request)
+    {
+        var app = await _db.LLMAppCallers.Find(a => a.Id == id).FirstOrDefaultAsync();
+
+        if (app == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("APP_CALLER_NOT_FOUND", "应用不存在"));
+        }
+
+        var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
+        if (requirement == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("REQUIREMENT_NOT_FOUND", $"未找到 {modelType} 类型的模型需求"));
+        }
+
+        // 更新绑定的模型池 ID 列表
+        requirement.ModelGroupIds = request.ModelGroupIds ?? new List<string>();
+
+        app.UpdatedAt = DateTime.UtcNow;
+        await _db.LLMAppCallers.ReplaceOneAsync(a => a.Id == id, app);
+
+        _logger.LogInformation("更新应用 {AppCode} 的 {ModelType} 模型绑定: {GroupIds}",
+            app.AppCode, modelType, string.Join(",", requirement.ModelGroupIds));
+
+        return Ok(ApiResponse<LLMAppCaller>.Ok(app));
+    }
 }
 
 public class CreateAppCallerRequest
@@ -220,4 +288,10 @@ public class UpdateAppCallerRequest
     public string? DisplayName { get; set; }
     public string? Description { get; set; }
     public List<AppModelRequirement>? ModelRequirements { get; set; }
+}
+
+public class UpdateBindingsRequest
+{
+    /// <summary>绑定的模型池 ID 列表</summary>
+    public List<string>? ModelGroupIds { get; set; }
 }

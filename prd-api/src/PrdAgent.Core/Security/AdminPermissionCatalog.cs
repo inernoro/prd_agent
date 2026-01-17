@@ -22,7 +22,7 @@ public static class AdminPermissionCatalog
 
     public const string LogsRead = "admin.logs.read";
 
-    public const string OpenPlatformManage = "admin.openPlatform.manage";
+    public const string OpenPlatformManage = "admin.open-platform.manage";
 
     public const string DataRead = "admin.data.read";
     public const string DataWrite = "admin.data.write";
@@ -76,4 +76,3 @@ public static class AdminPermissionCatalog
 }
 
 public sealed record AdminPermissionDef(string Key, string Name, string? Description);
-

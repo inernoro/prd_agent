@@ -9,7 +9,6 @@ import type { IModelGroupsService } from '../contracts/modelGroups';
 import { useAuthStore } from '@/stores/authStore';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-const CODE_SENTINEL = '[prd_group_code]';
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().token;
@@ -31,36 +30,18 @@ async function readApiJson<T>(res: Response): Promise<ApiResponse<T>> {
   }
 }
 
-function splitCodeAndDescription(raw: string | null | undefined): { code: string; description: string } {
-  const s = String(raw ?? '');
-  const idx = s.indexOf(CODE_SENTINEL);
-  if (idx !== 0) return { code: '', description: s };
-  const rest = s.slice(CODE_SENTINEL.length);
-  const nl = rest.indexOf('\n');
-  if (nl < 0) return { code: rest.trim(), description: '' };
-  return { code: rest.slice(0, nl).trim(), description: rest.slice(nl + 1) };
-}
-
-function joinCodeAndDescription(args: { code?: string; description?: string | null }): string | undefined {
-  const code = String(args.code ?? '').trim();
-  const desc = String(args.description ?? '').trim();
-  if (!code) return desc || undefined;
-  if (!desc) return `${CODE_SENTINEL}${code}`;
-  return `${CODE_SENTINEL}${code}\n${desc}`;
-}
-
 function mapGroupFromApi(g: any): ModelGroup {
-  const { code, description } = splitCodeAndDescription(g?.description);
   const modelType = String(g?.modelType ?? '').trim();
   const isDefaultForType = !!g?.isDefaultForType;
   return {
     ...g,
     modelType,
     isDefaultForType,
+    // code 和 priority 直接从后端获取
+    code: g?.code || '',
+    priority: g?.priority ?? 50,
     // 兼容字段
-    code: code || '',
     isSystemGroup: isDefaultForType,
-    description,
   } as ModelGroup;
 }
 
@@ -98,9 +79,11 @@ export class ModelGroupsService implements IModelGroupsService {
   ): Promise<ApiResponse<ModelGroup>> {
     const payload = {
       name: String(request.name ?? '').trim(),
+      code: String(request.code ?? '').trim(),
+      priority: request.priority ?? 50,
       modelType: String(request.modelType ?? '').trim(),
       isDefaultForType: !!request.isDefaultForType,
-      description: joinCodeAndDescription({ code: request.code, description: request.description }),
+      description: request.description ?? undefined,
     };
     const res = await fetch(`${API_BASE}/admin/model-groups`, {
       method: 'POST',
@@ -124,9 +107,9 @@ export class ModelGroupsService implements IModelGroupsService {
   ): Promise<ApiResponse<ModelGroup>> {
     const payload: Record<string, unknown> = {};
     if (request.name !== undefined) payload.name = String(request.name ?? '').trim();
-    if (request.description !== undefined || request.code !== undefined) {
-      payload.description = joinCodeAndDescription({ code: request.code, description: request.description });
-    }
+    if (request.code !== undefined) payload.code = String(request.code ?? '').trim();
+    if (request.priority !== undefined) payload.priority = request.priority;
+    if (request.description !== undefined) payload.description = request.description;
     if (request.models !== undefined) payload.models = request.models;
     if (request.isDefaultForType !== undefined) payload.isDefaultForType = !!request.isDefaultForType;
 

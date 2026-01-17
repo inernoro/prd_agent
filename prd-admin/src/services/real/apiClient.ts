@@ -15,6 +15,19 @@ function getApiBaseUrl() {
   return raw.trim().replace(/\/+$/, '');
 }
 
+function resolveAdminAppName(): string | null {
+  if (typeof window === 'undefined') return null;
+  const raw = window.location.hash ? window.location.hash.replace(/^#/, '') : window.location.pathname;
+  const path = (raw || '').split('?')[0] || '';
+  if (path.startsWith('/ai-chat')) return 'prd-agent-desktop';
+  if (path.startsWith('/visual-agent-fullscreen') || path.startsWith('/visual-agent')) return 'visual-agent';
+  if (path.startsWith('/literary-agent')) return 'literary-agent';
+  if (path.startsWith('/open-platform')) return 'open-platform-agent';
+  if (path.startsWith('/laboratory') || path.startsWith('/lab')) return 'lab-agent';
+  if (path.startsWith('/system-logs')) return 'prd-agent-web';
+  return 'prd-agent-web';
+}
+
 async function tryParseJson(text: string): Promise<unknown> {
   if (!text) return null;
   try {
@@ -172,7 +185,10 @@ async function apiRequestInner<T>(
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    'X-Client': 'admin',
   };
+  const appName = resolveAdminAppName();
+  if (appName) headers['X-App-Name'] = appName;
   if (options?.headers) {
     for (const [k, v] of Object.entries(options.headers)) {
       if (typeof v === 'string') headers[k] = v;
@@ -285,5 +301,3 @@ async function apiRequestInner<T>(
   // 兼容非 ApiResponse 结构（如直接返回 data）
   return ok(json as T);
 }
-
-

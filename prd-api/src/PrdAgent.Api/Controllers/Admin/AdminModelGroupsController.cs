@@ -37,6 +37,27 @@ public class AdminModelGroupsController : ControllerBase
         var groups = await _db.ModelGroups
             .Find(filter)
             .SortByDescending(g => g.IsDefaultForType)
+            .ThenBy(g => g.Priority)
+            .ThenBy(g => g.CreatedAt)
+            .ToListAsync();
+
+        return Ok(ApiResponse<List<ModelGroup>>.Ok(groups));
+    }
+
+    /// <summary>
+    /// 按 Code 查询模型池列表（按优先级排序）
+    /// </summary>
+    [HttpGet("by-code/{code}")]
+    public async Task<IActionResult> GetModelGroupsByCode(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_CODE", "Code 不能为空"));
+        }
+
+        var groups = await _db.ModelGroups
+            .Find(g => g.Code == code)
+            .SortBy(g => g.Priority)
             .ThenBy(g => g.CreatedAt)
             .ToListAsync();
 
@@ -90,6 +111,8 @@ public class AdminModelGroupsController : ControllerBase
         {
             Id = Guid.NewGuid().ToString("N"),
             Name = request.Name,
+            Code = request.Code ?? string.Empty,
+            Priority = request.Priority ?? 50,
             ModelType = request.ModelType,
             IsDefaultForType = request.IsDefaultForType,
             Description = request.Description,
@@ -100,8 +123,8 @@ public class AdminModelGroupsController : ControllerBase
 
         await _db.ModelGroups.InsertOneAsync(group);
 
-        _logger.LogInformation("创建模型分组: {GroupId}, 名称: {Name}, 类型: {ModelType}",
-            group.Id, group.Name, group.ModelType);
+        _logger.LogInformation("创建模型分组: {GroupId}, 名称: {Name}, Code: {Code}, 优先级: {Priority}, 类型: {ModelType}",
+            group.Id, group.Name, group.Code, group.Priority, group.ModelType);
 
         return Ok(ApiResponse<ModelGroup>.Ok(group));
     }
@@ -123,6 +146,18 @@ public class AdminModelGroupsController : ControllerBase
         if (!string.IsNullOrEmpty(request.Name))
         {
             group.Name = request.Name;
+        }
+
+        // 更新 Code（允许更新）
+        if (request.Code != null)
+        {
+            group.Code = request.Code;
+        }
+
+        // 更新 Priority
+        if (request.Priority.HasValue)
+        {
+            group.Priority = request.Priority.Value;
         }
 
         if (request.Description != null)
@@ -181,7 +216,7 @@ public class AdminModelGroupsController : ControllerBase
 
         // 检查是否有应用正在使用该分组
         var appsUsingGroup = await _db.LLMAppCallers
-            .Find(a => a.ModelRequirements.Any(r => r.ModelGroupId == id))
+            .Find(a => a.ModelRequirements.Any(r => r.ModelGroupIds.Contains(id)))
             .CountDocumentsAsync();
 
         if (appsUsingGroup > 0)
@@ -202,6 +237,10 @@ public class AdminModelGroupsController : ControllerBase
 public class CreateModelGroupRequest
 {
     public string Name { get; set; } = string.Empty;
+    /// <summary>对外暴露的模型名字（允许重复）</summary>
+    public string? Code { get; set; }
+    /// <summary>优先级（数字越小优先级越高，默认50）</summary>
+    public int? Priority { get; set; }
     public string ModelType { get; set; } = string.Empty;
     public bool IsDefaultForType { get; set; } = false;
     public string? Description { get; set; }
@@ -210,6 +249,10 @@ public class CreateModelGroupRequest
 public class UpdateModelGroupRequest
 {
     public string? Name { get; set; }
+    /// <summary>对外暴露的模型名字（允许重复）</summary>
+    public string? Code { get; set; }
+    /// <summary>优先级（数字越小优先级越高）</summary>
+    public int? Priority { get; set; }
     public string? Description { get; set; }
     public List<ModelGroupItem>? Models { get; set; }
     public bool? IsDefaultForType { get; set; }

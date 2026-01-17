@@ -5,27 +5,33 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class ModelGroup
 {
-    /// <summary>分组ID</summary>
+    /// <summary>分组ID（UUID，唯一标识）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    
+
     /// <summary>分组名称（如：默认对话分组、快速意图分组）</summary>
     public string Name { get; set; } = string.Empty;
-    
+
+    /// <summary>对外暴露的模型名字（允许重复，用于匹配调用方期望的模型）</summary>
+    public string Code { get; set; } = string.Empty;
+
+    /// <summary>优先级（数字越小优先级越高，默认50）</summary>
+    public int Priority { get; set; } = 50;
+
     /// <summary>模型类型（chat/intent/vision/image-gen等）</summary>
     public string ModelType { get; set; } = string.Empty;
-    
+
     /// <summary>是否为该类型的默认分组</summary>
     public bool IsDefaultForType { get; set; } = false;
-    
+
     /// <summary>分组中的模型列表（按优先级排序）</summary>
     public List<ModelGroupItem> Models { get; set; } = new();
-    
+
     /// <summary>分组描述</summary>
     public string? Description { get; set; }
-    
+
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    
+
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

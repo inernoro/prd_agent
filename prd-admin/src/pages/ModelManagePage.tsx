@@ -749,7 +749,7 @@ export default function ModelManagePage() {
         }
         setPlatformCheckMsg(
           r.data.success
-            ? `检测成功：${candidate.modelName}（${r.data.duration}ms）`
+            ? `检测成功：/models（${r.data.duration}ms）`
             : `检测失败：${r.data.error || '连接失败'}`
         );
         return;

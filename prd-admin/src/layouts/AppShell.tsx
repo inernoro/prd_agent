@@ -141,7 +141,7 @@ export default function AppShell() {
       { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置', perm: 'admin.assets.read' },
       { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} />, description: 'LLM 请求与系统日志', perm: 'admin.logs.read' },
       { key: '/data', label: '数据管理', icon: <Database size={18} />, description: '数据概览、清理与迁移', perm: 'admin.data.read' },
-      { key: '/open-platform', label: '开放平台', icon: <Plug size={18} />, description: 'API 应用与调用日志', perm: 'admin.openPlatform.manage' },
+      { key: '/open-platform', label: '开放平台', icon: <Plug size={18} />, description: 'API 应用与调用日志', perm: 'admin.open-platform.manage' },
       { key: '/authz', label: '权限管理', icon: <UserCog size={18} />, description: '系统角色与用户权限', perm: 'admin.authz.manage' },
       { key: '/lab', label: '实验室', icon: <FlaskConical size={18} />, description: '模型测试与实验功能', perm: 'admin.models.read' },
     ],

@@ -71,6 +71,11 @@ public class ImageGenRun
     public string? Purpose { get; set; }
 
     /// <summary>
+    /// 应用标识（如 "visual_agent", "literary_agent"）。用于水印等功能的隔离。
+    /// </summary>
+    public string? AppKey { get; set; }
+
+    /// <summary>
     /// 可选：若该 run 由 ImageMaster Workspace 触发，则绑定 workspaceId。
     /// </summary>
     public string? WorkspaceId { get; set; }

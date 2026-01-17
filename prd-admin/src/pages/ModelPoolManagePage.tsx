@@ -18,7 +18,6 @@ import {
   Database,
   Edit,
   Plus,
-  RefreshCw,
   Search,
   Trash2,
 } from 'lucide-react';
@@ -62,6 +61,7 @@ export function ModelPoolManagePage() {
   const [poolForm, setPoolForm] = useState({
     name: '',
     code: '',
+    priority: 50,
     modelType: 'chat',
     isDefaultForType: false,
     description: '',
@@ -98,6 +98,7 @@ export function ModelPoolManagePage() {
     setPoolForm({
       name: '',
       code: '',
+      priority: 50,
       modelType: 'chat',
       isDefaultForType: false,
       description: '',
@@ -111,6 +112,7 @@ export function ModelPoolManagePage() {
     setPoolForm({
       name: pool.name,
       code: pool.code || '',
+      priority: pool.priority ?? 50,
       modelType: pool.modelType || 'chat',
       isDefaultForType: pool.isDefaultForType || false,
       description: pool.description || '',
@@ -153,6 +155,8 @@ export function ModelPoolManagePage() {
       if (editingPool) {
         await updateModelGroup(editingPool.id, {
           name: poolForm.name,
+          code: poolForm.code,
+          priority: poolForm.priority,
           description: poolForm.description,
           models: poolForm.models,
         });
@@ -160,6 +164,7 @@ export function ModelPoolManagePage() {
         await createModelGroup({
           name: poolForm.name,
           code: poolForm.code,
+          priority: poolForm.priority,
           modelType: poolForm.modelType,
           isDefaultForType: poolForm.isDefaultForType,
           description: poolForm.description,
@@ -214,10 +219,21 @@ export function ModelPoolManagePage() {
         icon={<Database size={16} />}
         actions={
           <>
-            <Button variant="secondary" size="sm" onClick={loadData} disabled={loading}>
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-              刷新
-            </Button>
+            <div className="relative max-w-md">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="搜索模型池..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            </div>
             <Button variant="primary" size="sm" onClick={handleAddPool}>
               <Plus size={14} />
               新建模型池
@@ -225,25 +241,6 @@ export function ModelPoolManagePage() {
           </>
         }
       />
-
-      {/* 搜索 */}
-      <Card className="p-4">
-        <div className="relative max-w-md">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-          <input
-            type="text"
-            placeholder="搜索模型池..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'var(--text-primary)',
-            }}
-          />
-        </div>
-      </Card>
 
       {/* 模型池列表 */}
       <div className="flex-1 min-h-0 overflow-auto">
@@ -278,7 +275,7 @@ export function ModelPoolManagePage() {
                             {pool.name}
                           </div>
                           <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                            {pool.code || pool.id} | {modelTypeLabel}
+                            {pool.code || pool.id} | {modelTypeLabel} | 优先级: {pool.priority ?? 50}
                             {pool.isDefaultForType && (
                               <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
                                 默认
@@ -402,7 +399,7 @@ export function ModelPoolManagePage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
                     模型类型
@@ -421,6 +418,27 @@ export function ModelPoolManagePage() {
                   </Select>
                 </div>
 
+                <div>
+                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                    优先级
+                  </label>
+                  <input
+                    type="number"
+                    value={poolForm.priority}
+                    onChange={(e) => setPoolForm({ ...poolForm, priority: parseInt(e.target.value) || 50 })}
+                    placeholder="50"
+                    min={1}
+                    max={100}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'var(--text-primary)',
+                    }}
+                    title="数字越小优先级越高"
+                  />
+                </div>
+
                 <div className="flex items-end">
                   <div className="flex items-center gap-2 h-10">
                     <input
@@ -432,7 +450,7 @@ export function ModelPoolManagePage() {
                       className="h-4 w-4 rounded"
                     />
                     <label htmlFor="isDefaultForType" className="text-[13px]" style={{ color: 'var(--text-secondary)', opacity: editingPool ? 0.6 : 1 }}>
-                      设为该类型的默认模型池
+                      设为默认
                     </label>
                   </div>
                 </div>

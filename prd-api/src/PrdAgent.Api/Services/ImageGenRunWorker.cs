@@ -254,7 +254,8 @@ public class ImageGenRunWorker : BackgroundService
                             platformId: run.PlatformId,
                             modelName: run.ModelId,
                             initImageBase64: initImageBase64,
-                            initImageProvided: initImageBase64 != null);
+                            initImageProvided: initImageBase64 != null,
+                            appKey: run.AppKey);
 
                         if (!res.Success || res.Data == null)
                         {

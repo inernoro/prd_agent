@@ -1254,7 +1254,8 @@ export default function LlmLogsPage() {
         <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>请求列表</div>
         </div>
-        <div className="divide-y divide-white/10">
+        <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+          <div className="divide-y divide-white/10">
           {loading ? (
             <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
           ) : items.length === 0 ? (
@@ -1511,6 +1512,7 @@ export default function LlmLogsPage() {
           <Button variant="secondary" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={loading || page >= totalPages}>
             下一页
           </Button>
+          </div>
         </div>
       </Card>
 
@@ -2223,4 +2225,3 @@ export default function LlmLogsPage() {
     </div>
   );
 }
-

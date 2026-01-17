@@ -4,6 +4,9 @@
 export interface AppModelRequirement {
   modelType: string;
   purpose: string;
+  /** 绑定的模型池ID列表（支持多个模型池） */
+  modelGroupIds: string[];
+  /** @deprecated 兼容旧字段，请使用 modelGroupIds */
   modelGroupId?: string;
   isRequired: boolean;
 }

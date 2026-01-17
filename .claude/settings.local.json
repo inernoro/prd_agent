@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(dotnet build:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(findstr:*)",
+      "Bash(npx tsc:*)",
+      "Bash(dotnet test:*)"
     ]
   }
 }

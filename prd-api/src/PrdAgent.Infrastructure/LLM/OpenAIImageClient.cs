@@ -68,7 +68,8 @@ public class OpenAIImageClient
         string? platformId = null,
         string? modelName = null,
         string? initImageBase64 = null,
-        bool initImageProvided = false)
+        bool initImageProvided = false,
+        string? appKey = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -720,8 +721,8 @@ public class OpenAIImageClient
                 }
             }
 
-            // 使用 literary-agent 作为默认 appKey，用于图片生成时的水印绑定
-            var watermarkConfig = await TryGetWatermarkConfigAsync("literary-agent", ct);
+            // 根据调用方传入的 appKey 查找水印配置（不传则不打水印）
+            var watermarkConfig = string.IsNullOrWhiteSpace(appKey) ? null : await TryGetWatermarkConfigAsync(appKey, ct);
             _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
             var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)

@@ -99,7 +99,7 @@ export default function AuthzPage() {
       { id: 'groups', title: '群组管理', hint: '协作群组与成员', readKey: 'admin.groups.read', writeKey: 'admin.groups.write', icon: <Users2 size={16} /> },
       { id: 'models', title: '模型管理', hint: '平台/模型/配置/调度', readKey: 'admin.models.read', writeKey: 'admin.models.write', icon: <Cpu size={16} /> },
       { id: 'logs', title: '日志', hint: '系统/LLM/API 请求日志', readKey: 'admin.logs.read', icon: <ScrollText size={16} /> },
-      { id: 'open', title: '开放平台', hint: 'App/调用方/日志', writeKey: 'admin.openPlatform.manage', writeLabel: '管', icon: <Plug size={16} /> },
+      { id: 'open', title: '开放平台', hint: 'App/调用方/日志', writeKey: 'admin.open-platform.manage', writeLabel: '管', icon: <Plug size={16} /> },
       { id: 'data', title: '数据管理', hint: '导入导出/清理', readKey: 'admin.data.read', writeKey: 'admin.data.write', icon: <Database size={16} /> },
       { id: 'assets', title: '资源管理', hint: '桌面资源/头像等', readKey: 'admin.assets.read', writeKey: 'admin.assets.write', icon: <Image size={16} /> },
       { id: 'settings', title: '系统设置/提示词', hint: 'settings/prompts', readKey: 'admin.settings.read', writeKey: 'admin.settings.write', icon: <Settings2 size={16} /> },
@@ -534,4 +534,3 @@ export default function AuthzPage() {
     </div>
   );
 }
-

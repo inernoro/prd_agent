@@ -118,6 +118,8 @@ public class AdminApiLogsController : ControllerBase
                 x.ErrorCode,
                 x.ClientType,
                 x.ClientId,
+                x.AppId,
+                x.AppName,
                 x.ClientIp,
                 x.UserAgent,
                 x.IsEventStream,
@@ -150,6 +152,8 @@ public class AdminApiLogsController : ControllerBase
             x.ErrorCode,
             x.ClientType,
             x.ClientId,
+            x.AppId,
+            x.AppName,
             x.ClientIp,
             userAgentPreview = Truncate(uaRe.Replace(x.UserAgent ?? string.Empty, " ").Trim(), 180),
             x.IsEventStream,
@@ -169,5 +173,4 @@ public class AdminApiLogsController : ControllerBase
         return Ok(ApiResponse<ApiRequestLog>.Ok(log));
     }
 }
-
 

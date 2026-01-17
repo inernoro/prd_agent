@@ -27,6 +27,10 @@ export interface ModelGroupItem {
 export interface ModelGroup {
   id: string;
   name: string;
+  /** 对外暴露的模型名字（允许重复，用于匹配调用方期望的模型） */
+  code: string;
+  /** 优先级（数字越小优先级越高，默认50） */
+  priority: number;
   /** 后端：模型类型（chat/intent/vision/image-gen/...） */
   modelType: string;
   /** 后端：是否为该类型默认分组 */
@@ -35,12 +39,7 @@ export interface ModelGroup {
   description?: string;
   createdAt: string;
   updatedAt: string;
-  /**
-   * 兼容字段（历史前端使用）：
-   * - 后端当前不直接存 code / isSystemGroup
-   * - 前端会用 description 编码/解码生成 code，并用 isDefaultForType 近似映射 isSystemGroup
-   */
-  code?: string;
+  /** 兼容字段：用 isDefaultForType 近似映射 */
   isSystemGroup?: boolean;
 }
 
@@ -49,13 +48,15 @@ export interface ModelGroup {
  */
 export interface CreateModelGroupRequest {
   name: string;
+  /** 对外暴露的模型名字（允许重复） */
+  code?: string;
+  /** 优先级（数字越小优先级越高，默认50） */
+  priority?: number;
   modelType: string;
   isDefaultForType?: boolean;
   description?: string;
-  /** 后端创建会初始化为空；保留兼容但不会被后端使用 */
+  /** 后端创建会初始化为空 */
   models?: ModelGroupItem[];
-  /** 兼容字段：仅前端用，用于写入 description 的编码 */
-  code?: string;
 }
 
 /**
@@ -63,11 +64,13 @@ export interface CreateModelGroupRequest {
  */
 export interface UpdateModelGroupRequest {
   name?: string;
+  /** 对外暴露的模型名字（允许重复） */
+  code?: string;
+  /** 优先级（数字越小优先级越高） */
+  priority?: number;
   description?: string;
   models?: ModelGroupItem[];
   isDefaultForType?: boolean;
-  /** 兼容字段：仅前端用，用于写入 description 的编码 */
-  code?: string;
 }
 
 /**

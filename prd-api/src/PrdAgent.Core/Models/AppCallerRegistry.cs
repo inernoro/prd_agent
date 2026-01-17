@@ -15,7 +15,7 @@ public static class AppCallerRegistry
 /// </summary>
 public static class Desktop
 {
-    public const string AppName = "Desktop";
+    public const string AppName = "PRD Agent Desktop";
     
     public static class Chat
     {
@@ -25,7 +25,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Chat"
         )]
-        public const string SendMessageChat = "desktop.chat.sendmessage::chat";
+        public const string SendMessageChat = "prd-agent-desktop.chat.sendmessage::chat";
         
         [AppCallerMetadata(
             "聊天发送消息-意图识别",
@@ -33,7 +33,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Intent },
             Category = "Chat"
         )]
-        public const string SendMessageIntent = "desktop.chat.sendmessage::intent";
+        public const string SendMessageIntent = "prd-agent-desktop.chat.sendmessage::intent";
         
         [AppCallerMetadata(
             "聊天-视觉理解",
@@ -41,7 +41,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Vision },
             Category = "Chat"
         )]
-        public const string ChatVision = "desktop.chat::vision";
+        public const string ChatVision = "prd-agent-desktop.chat::vision";
     }
     
     public static class PRD
@@ -52,7 +52,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Document"
         )]
-        public const string AnalysisChat = "desktop.prd.analysis::chat";
+        public const string AnalysisChat = "prd-agent-desktop.prd.analysis::chat";
         
         [AppCallerMetadata(
             "PRD预览问答-对话",
@@ -60,7 +60,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Document"
         )]
-        public const string PreviewChat = "desktop.prd.preview::chat";
+        public const string PreviewChat = "prd-agent-desktop.prd.preview::chat";
     }
     
     public static class Gap
@@ -71,7 +71,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Analysis"
         )]
-        public const string DetectionChat = "desktop.gap.detection::chat";
+        public const string DetectionChat = "prd-agent-desktop.gap.detection::chat";
         
         [AppCallerMetadata(
             "Gap总结-对话",
@@ -79,7 +79,7 @@ public static class Desktop
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Analysis"
         )]
-        public const string SummarizationChat = "desktop.gap.summarization::chat";
+        public const string SummarizationChat = "prd-agent-desktop.gap.summarization::chat";
     }
 }
     
@@ -88,7 +88,7 @@ public static class Desktop
 /// </summary>
 public static class VisualAgent
 {
-    public const string AppName = "VisualAgent";
+    public const string AppName = "Visual Agent";
     
     public static class Image
     {
@@ -123,7 +123,7 @@ public static class VisualAgent
 /// </summary>
 public static class LiteraryAgent
 {
-    public const string AppName = "LiteraryAgent";
+    public const string AppName = "Literary Agent";
     
     public static class Content
     {
@@ -161,7 +161,7 @@ public static class LiteraryAgent
 /// </summary>
 public static class OpenPlatform
 {
-    public const string AppName = "OpenPlatform";
+    public const string AppName = "Open Platform";
     
     public static class Proxy
     {
@@ -171,7 +171,7 @@ public static class OpenPlatform
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Proxy"
         )]
-        public const string Chat = "open-platform.proxy::chat";
+        public const string Chat = "open-platform-agent.proxy::chat";
         
         [AppCallerMetadata(
             "向量嵌入代理",
@@ -179,7 +179,7 @@ public static class OpenPlatform
             ModelTypes = new[] { ModelTypes.Embedding },
             Category = "Proxy"
         )]
-        public const string Embedding = "open-platform.proxy::embedding";
+        public const string Embedding = "open-platform-agent.proxy::embedding";
         
         [AppCallerMetadata(
             "重排序代理",
@@ -187,7 +187,7 @@ public static class OpenPlatform
             ModelTypes = new[] { ModelTypes.Rerank },
             Category = "Proxy"
         )]
-        public const string Rerank = "open-platform.proxy::rerank";
+        public const string Rerank = "open-platform-agent.proxy::rerank";
     }
 }
 
@@ -196,7 +196,7 @@ public static class OpenPlatform
 /// </summary>
 public static class Admin
 {
-    public const string AppName = "Admin";
+    public const string AppName = "PRD Agent Web";
     
     public static class Lab
     {
@@ -206,7 +206,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Testing"
         )]
-        public const string Chat = "admin.lab::chat";
+        public const string Chat = "prd-agent-web.lab::chat";
         
         [AppCallerMetadata(
             "实验室-视觉测试",
@@ -214,7 +214,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Vision },
             Category = "Testing"
         )]
-        public const string Vision = "admin.lab::vision";
+        public const string Vision = "prd-agent-web.lab::vision";
         
         [AppCallerMetadata(
             "实验室-生成测试",
@@ -222,7 +222,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.ImageGen },
             Category = "Testing"
         )]
-        public const string Generation = "admin.lab::generation";
+        public const string Generation = "prd-agent-web.lab::generation";
     }
 }
 }

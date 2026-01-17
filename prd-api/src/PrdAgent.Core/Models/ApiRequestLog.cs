@@ -49,6 +49,16 @@ public class ApiRequestLog
     public string? ClientId { get; set; }
 
     /// <summary>
+    /// 应用 id（Open Platform API Key）
+    /// </summary>
+    public string? AppId { get; set; }
+
+    /// <summary>
+    /// 应用名称（Open Platform API Key）
+    /// </summary>
+    public string? AppName { get; set; }
+
+    /// <summary>
     /// 请求体（JSON 文本，已剔除 prompt/messages/systemPrompt 等提示词字段）
     /// </summary>
     public string? RequestBody { get; set; }
@@ -62,5 +72,4 @@ public class ApiRequestLog
 
     public bool IsEventStream { get; set; }
 }
-
 

@@ -64,6 +64,8 @@ export function PrdPetalBreathingLoader({
   size = 92,
   fill = false,
   variant = 'gold',
+  paused = false,
+  grayscale = false,
   className,
   style,
 }: {
@@ -72,6 +74,10 @@ export function PrdPetalBreathingLoader({
   fill?: boolean;
   /** 主题色 */
   variant?: keyof typeof petalPalettes;
+  /** 为 true 时，动画暂停（静止状态） */
+  paused?: boolean;
+  /** 为 true 时，花瓣变成灰色 */
+  grayscale?: boolean;
   className?: string;
   style?: React.CSSProperties;
 }) {
@@ -108,6 +114,10 @@ export function PrdPetalBreathingLoader({
   transform: rotate(var(--prdPetalRot)) scale(1);
 }
 
+.prd-petal-breath__petal--paused {
+  animation-play-state: paused;
+}
+
 @keyframes prd-petal-breath {
   to {
     transform: rotate(var(--prdPetalRot)) scale(0.6);
@@ -133,7 +143,7 @@ export function PrdPetalBreathingLoader({
         return (
           <div
             key={c}
-            className="prd-petal-breath__petal"
+            className={`prd-petal-breath__petal${paused ? ' prd-petal-breath__petal--paused' : ''}`}
             style={
               {
                 // 关键：fill 模式不用 JS 测量，直接按容器百分比铺满（20 层 => 每层 +5%，最大 100%）
@@ -147,6 +157,7 @@ export function PrdPetalBreathingLoader({
                 background: c,
                 animationDelay: `${delayMs}ms`,
                 zIndex,
+                filter: grayscale ? 'grayscale(1) brightness(0.6)' : undefined,
                 ['--prdPetalI']: i,
                 ['--prdPetalRot']: `${rot}deg`,
               } as CSSVars

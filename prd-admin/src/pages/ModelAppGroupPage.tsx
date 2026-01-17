@@ -45,7 +45,13 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import { groupAppCallers, getFeatureDescription, getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
+import {
+  groupAppCallers,
+  getFeatureDescription,
+  getModelTypeDisplayName,
+  getModelTypeIcon,
+  normalizeModelType,
+} from '@/lib/appCallerUtils';
 import type { AppGroup } from '@/lib/appCallerUtils';
 
 const MODEL_TYPES = [
@@ -57,6 +63,18 @@ const MODEL_TYPES = [
   { value: 'long-context', label: '长上下文' },
   { value: 'embedding', label: '向量嵌入' },
   { value: 'rerank', label: '重排序' },
+];
+
+const MODEL_TYPE_FILTERS = [
+  { value: 'all', label: '全部类型' },
+  { value: 'chat', label: '对话模型' },
+  { value: 'vision', label: '视觉理解' },
+  { value: 'intent', label: '意图识别' },
+  { value: 'image-gen', label: '图像生成' },
+  { value: 'code', label: '代码生成' },
+  { value: 'long-context', label: '长上下文' },
+  { value: 'embedding', label: '向量嵌入' },
+  { value: 'rerank', label: '重排' },
 ];
 
 const HEALTH_STATUS_MAP = {
@@ -72,6 +90,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [modelTypeFilter, setModelTypeFilter] = useState('all');
   
   // 树形结构状态
   const [, setAppGroups] = useState<AppGroup[]>([]);
@@ -96,6 +115,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [availableOpen, setAvailableOpen] = useState(false);
   const [availablePlatformId, setAvailablePlatformId] = useState('');
 
+  // 模型池绑定弹窗
+  const [bindingDialogOpen, setBindingDialogOpen] = useState(false);
+  const [bindingTarget, setBindingTarget] = useState<{ appId: string; modelType: string; currentIds: string[] } | null>(null);
+  const [bindingSelectedIds, setBindingSelectedIds] = useState<string[]>([]);
+
   // 表单状态
   const [groupForm, setGroupForm] = useState({
     name: '',
@@ -109,7 +133,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [requirementForm, setRequirementForm] = useState({
     modelType: 'chat',
     purpose: '',
-    modelGroupId: '',
+    modelGroupIds: [] as string[],
     isRequired: true,
   });
 
@@ -191,7 +215,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     if (!app) return;
 
     const groupIds = app.modelRequirements
-      .map((r: AppModelRequirement) => r.modelGroupId)
+      .flatMap((r: AppModelRequirement) => r.modelGroupIds || [])
       .filter((id): id is string => !!id);
 
     const data: Record<string, ModelGroupMonitoringData> = {};
@@ -245,6 +269,59 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           consecutiveSuccesses: 0,
         } as ModelGroupItem,
       ];
+    });
+  };
+
+  // 打开模型池绑定弹窗
+  const openBindingDialog = (appId: string, modelType: string, currentIds: string[]) => {
+    setBindingTarget({ appId, modelType, currentIds });
+    setBindingSelectedIds([...currentIds]);
+    setBindingDialogOpen(true);
+  };
+
+  // 保存模型池绑定
+  const saveBindings = async () => {
+    if (!bindingTarget) return;
+    const { appId, modelType } = bindingTarget;
+
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+      const url = `${API_BASE}/admin/app-callers/${appId}/requirements/${modelType}/bindings`;
+
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ modelGroupIds: bindingSelectedIds }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+
+      toast.success('绑定成功');
+      setBindingDialogOpen(false);
+      await loadData();
+
+      // 刷新监控数据
+      if (selectedAppId) {
+        await loadMonitoringForApp(selectedAppId);
+      }
+    } catch (error) {
+      systemDialog.error('绑定失败', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  // 切换模型池选择
+  const toggleBindingPool = (groupId: string) => {
+    setBindingSelectedIds(prev => {
+      if (prev.includes(groupId)) {
+        return prev.filter(id => id !== groupId);
+      }
+      return [...prev, groupId];
     });
   };
 
@@ -391,7 +468,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     const newReq: AppModelRequirement = {
       modelType: requirementForm.modelType,
       purpose: requirementForm.purpose,
-      modelGroupId: requirementForm.modelGroupId || undefined,
+      modelGroupIds: requirementForm.modelGroupIds,
       isRequired: requirementForm.isRequired,
     };
 
@@ -543,15 +620,44 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   // 按应用聚合
   const groupedApps = groupAppCallers(appCallers);
   
-  // 过滤应用组
-  const filteredAppGroups = searchTerm
-    ? groupedApps.filter(g => 
-        g.appName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        g.app.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : groupedApps;
-  
-  // 当前选中的应用组
+  // ????????
+  const filteredAppGroups = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const byType = groupedApps
+      .map((group) => {
+        if (modelTypeFilter === 'all') return group;
+        const features = group.features
+          .map((feature) => ({
+            ...feature,
+            items: feature.items.filter(
+              (item) => normalizeModelType(item.parsed.modelType) === modelTypeFilter
+            ),
+          }))
+          .filter((feature) => feature.items.length > 0);
+        if (features.length === 0) return null;
+        return { ...group, features };
+      })
+      .filter(Boolean) as AppGroup[];
+
+    if (!normalizedSearch) return byType;
+    return byType.filter(
+      (group) =>
+        group.appName.toLowerCase().includes(normalizedSearch) ||
+        group.app.toLowerCase().includes(normalizedSearch)
+    );
+  }, [groupedApps, modelTypeFilter, searchTerm]);
+
+  useEffect(() => {
+    if (filteredAppGroups.length === 0) return;
+    const stillVisible = filteredAppGroups.some((group) =>
+      group.features.some((feature) => feature.items.some((item) => item.id === selectedAppId))
+    );
+    if (!stillVisible) {
+      const firstItem = filteredAppGroups[0].features[0]?.items[0];
+      setSelectedAppId(firstItem?.id ?? null);
+    }
+  }, [filteredAppGroups, selectedAppId]);
+
   const selectedAppGroup = selectedAppId 
     ? groupedApps.find(g => g.features.some(f => f.items.some(i => i.id === selectedAppId)))
     : null;
@@ -594,20 +700,39 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         {/* 左侧：应用列表 */}
         <Card className="flex flex-col min-h-0 p-0 overflow-hidden">
           <div className="p-4 border-b border-white/10">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-              <input
-                type="text"
-                placeholder="搜索应用..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-primary)',
-                }}
-              />
+            <div className="flex items-center gap-2">
+              <div className="w-[140px] shrink-0">
+                <Select
+                  value={modelTypeFilter}
+                  onChange={(e) => setModelTypeFilter(e.target.value)}
+                  className="h-9 rounded-[11px] text-[13px]"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  {MODEL_TYPE_FILTERS.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="relative flex-1">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="搜索应用..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </div>
             </div>
           </div>
 
@@ -747,8 +872,9 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       if (!app) return null;
                       
                       const req = app.modelRequirements[0]; // 每个功能项只有一个需求
-                      const group = req?.modelGroupId ? modelGroups.find((g) => g.id === req.modelGroupId) : undefined;
-                      const monitoring = req?.modelGroupId ? monitoringData[req.modelGroupId] : undefined;
+                      const boundGroupIds = req?.modelGroupIds || [];
+                      const group = boundGroupIds.length > 0 ? modelGroups.find((g) => boundGroupIds.includes(g.id)) : undefined;
+                      const monitoring = boundGroupIds.length > 0 ? monitoringData[boundGroupIds[0]] : undefined;
                       const ModelTypeIcon = getModelTypeIcon(featureItem.parsed.modelType);
                       const modelTypeLabel = getModelTypeDisplayName(featureItem.parsed.modelType);
                       const featureDescription = getFeatureDescription(featureItem.parsed);
@@ -811,8 +937,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                     // 已绑定专属模型池：直接打开模型编辑器
                                     openGroupModelsEditor(group);
                                   } else {
-                                    // 未绑定模型池：跳转到模型池管理页签创建
-                                    window.location.href = '/model-manage?tab=pools';
+                                    // 未绑定模型池：打开绑定对话框
+                                    openBindingDialog(
+                                      app.id,
+                                      req?.modelType || featureItem.parsed.modelType,
+                                      req?.modelGroupIds || []
+                                    );
                                   }
                                 }}
                               >
@@ -1081,19 +1211,40 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
               <div>
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  绑定模型池（可选）
+                  绑定模型池（可选，可多选）
                 </label>
-                <Select
-                  value={requirementForm.modelGroupId}
-                  onChange={(e) => setRequirementForm({ ...requirementForm, modelGroupId: e.target.value })}
+                <div
+                  className="rounded-[12px] p-2 max-h-[200px] overflow-auto"
+                  style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'var(--bg-input)' }}
                 >
-                  <option value="">使用默认模型池</option>
-                  {modelGroups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
+                  {modelGroups.filter(g => g.modelType === requirementForm.modelType).map((group) => (
+                    <label
+                      key={group.id}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-white/5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={requirementForm.modelGroupIds.includes(group.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setRequirementForm({ ...requirementForm, modelGroupIds: [...requirementForm.modelGroupIds, group.id] });
+                          } else {
+                            setRequirementForm({ ...requirementForm, modelGroupIds: requirementForm.modelGroupIds.filter(id => id !== group.id) });
+                          }
+                        }}
+                        className="h-4 w-4 rounded"
+                      />
+                      <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                        {group.name} {group.code ? `(${group.code})` : ''}
+                      </span>
+                    </label>
                   ))}
-                </Select>
+                  {modelGroups.filter(g => g.modelType === requirementForm.modelType).length === 0 && (
+                    <div className="text-[12px] py-2 text-center" style={{ color: 'var(--text-muted)' }}>
+                      暂无该类型的模型池
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1398,6 +1549,107 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleSaveConfig}>
                   保存
+                </Button>
+              </div>
+            </div>
+          }
+        />
+      )}
+
+      {/* 模型池绑定弹窗 */}
+      {bindingDialogOpen && bindingTarget && (
+        <Dialog
+          open={bindingDialogOpen}
+          onOpenChange={(open) => {
+            setBindingDialogOpen(open);
+            if (!open) {
+              setBindingTarget(null);
+              setBindingSelectedIds([]);
+            }
+          }}
+          title="绑定模型池"
+          description="选择要绑定的模型池（可多选）"
+          maxWidth={640}
+          content={
+            <div className="space-y-4">
+              <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                可用模型池（{modelGroups.filter(g => g.modelType === bindingTarget.modelType).length}）
+              </div>
+
+              <div
+                className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
+                style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
+              >
+                {modelGroups.filter(g => g.modelType === bindingTarget.modelType).length === 0 ? (
+                  <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    暂无可用模型池，请先在"模型池管理"中创建
+                    <div className="mt-4">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => window.location.href = '/model-manage?tab=pools'}
+                      >
+                        <Plus size={12} />
+                        新建模型池
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {modelGroups
+                      .filter(g => g.modelType === bindingTarget.modelType)
+                      .sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50))
+                      .map((g) => {
+                        const isSelected = bindingSelectedIds.includes(g.id);
+                        return (
+                          <div
+                            key={g.id}
+                            onClick={() => toggleBindingPool(g.id)}
+                            className="flex items-center justify-between gap-3 px-3 py-3 rounded-lg cursor-pointer transition-colors"
+                            style={{
+                              background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255,255,255,0.04)',
+                              border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid transparent',
+                            }}
+                          >
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleBindingPool(g.id)}
+                                className="h-4 w-4 rounded"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                  {g.name}
+                                </div>
+                                <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                  Code: {g.code || '-'} | 优先级: {g.priority ?? 50} | 模型数: {g.models?.length || 0}
+                                </div>
+                              </div>
+                            </div>
+                            {g.isDefaultForType && (
+                              <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
+                                默认
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                已选择 {bindingSelectedIds.length} 个模型池
+                {bindingSelectedIds.length > 1 && '（多个模型池时将随机选择）'}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setBindingDialogOpen(false)}>
+                  取消
+                </Button>
+                <Button variant="primary" size="sm" onClick={saveBindings}>
+                  确认绑定
                 </Button>
               </div>
             </div>

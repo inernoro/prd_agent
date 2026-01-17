@@ -4251,40 +4251,29 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                             <PrdPetalBreathingLoader fill className="absolute inset-0" />
                           </div>
                         ) : it.status === 'error' ? (
-                          <div
-                            className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
-                            style={{ color: 'rgba(255,255,255,0.82)', transform: overlayTransform, transformOrigin: 'center' }}
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <div className="text-[16px] font-extrabold" style={{ color: 'rgba(255,255,255,0.92)' }}>
-                              生成失败
-                            </div>
-                            <div className="text-[14px]" style={{ color: 'rgba(255,255,255,0.72)' }}>
-                              {String(it.errorMessage || '未知错误')}
-                            </div>
-                            <div className="flex items-center gap-2">
+                          <div className="absolute inset-0">
+                            {/* 灰色静止花瓣背景 */}
+                            <PrdPetalBreathingLoader fill paused grayscale className="absolute inset-0" />
+                            {/* 重试按钮覆盖层 */}
+                            <div
+                              className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+                              style={{ transform: overlayTransform, transformOrigin: 'center', zIndex: 200 }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <Button
                                 variant="secondary"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  // 使用当前 prompt 直接重试（引用图由用户当前多选决定）
+                                  // 使用当前 prompt 直接重试
                                   void sendText(it.prompt || '');
                                 }}
                               >
                                 重试
                               </Button>
-                              <Button
-                                variant="secondary"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // 仅选中生成器并聚焦输入，方便用户修改后再发
-                                  setSelectedKeys([it.key]);
-                                  focusQuickComposer();
-                                }}
-                              >
-                                修改提示词
-                              </Button>
+                              <div className="text-[11px] max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={it.errorMessage || '生成失败'}>
+                                {it.errorMessage || '生成失败'}
+                              </div>
                             </div>
                           </div>
                         ) : it.src ? (
@@ -4390,7 +4379,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                       <div className="w-full h-full flex items-center justify-center">
                         {it.status === 'error' ? (
                           <div
-                            className="w-full h-full rounded-[16px] relative flex flex-col items-center justify-center text-center"
+                            className="w-full h-full rounded-[16px] relative"
                             style={{
                               background: 'rgba(0,0,0,0.18)',
                               border: active ? '2px solid rgba(250,204,21,0.75)' : '1px solid rgba(255,255,255,0.12)',
@@ -4398,48 +4387,27 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                               overflow: 'hidden',
                             }}
                           >
+                            {/* 灰色静止花瓣背景 */}
+                            <PrdPetalBreathingLoader fill paused grayscale className="absolute inset-0" />
+                            {/* 重试按钮覆盖层 */}
                             <div
-                              className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
-                              style={{
-                                background: 'rgba(0,0,0,0.28)',
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'rgba(255,255,255,0.78)',
-                                transform: 'scale(var(--invZoom))',
-                                transformOrigin: 'right top',
-                              }}
-                              title="元素尺寸（画布占位）"
+                              className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+                              style={{ zIndex: 200 }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              {Math.round(w)} × {Math.round(h)}
-                            </div>
-                            <div
-                              className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 overflow-hidden"
-                            >
-                              <div
-                                className="font-extrabold"
-                                style={{
-                                  color: 'rgba(255,255,255,0.90)',
-                                  fontSize: `clamp(14px, ${Math.min(w, h) * 0.06}px, 24px)`,
-                                  lineHeight: 1.3,
-                                  flexShrink: 0,
+                              <Button
+                                variant="secondary"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // 使用当前 prompt 直接重试
+                                  void sendText(it.prompt || '');
                                 }}
                               >
-                                图片加载失败
-                              </div>
-                              <div
-                                style={{
-                                  color: 'rgba(255,255,255,0.70)',
-                                  fontSize: `clamp(10px, ${Math.min(w, h) * 0.045}px, 16px)`,
-                                  lineHeight: 1.4,
-                                  maxWidth: '100%',
-                                  overflow: 'hidden',
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 4,
-                                  WebkitBoxOrient: 'vertical',
-                                  wordBreak: 'break-word',
-                                  overflowWrap: 'anywhere',
-                                }}
-                              >
-                                {String(it.errorMessage || '图片不可用（可能已删除或地址失效）')}
+                                重试
+                              </Button>
+                              <div className="text-[11px] max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={it.errorMessage || '图片加载失败'}>
+                                {it.errorMessage || '图片加载失败'}
                               </div>
                             </div>
                           </div>

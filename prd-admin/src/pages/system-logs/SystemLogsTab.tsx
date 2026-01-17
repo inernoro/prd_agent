@@ -36,6 +36,28 @@ function fmtNum(v: number | null | undefined): string {
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
 }
 
+function buildMetaLabel(args: {
+  clientType: string | null;
+  clientId: string | null;
+  appId: string | null;
+  appName: string | null;
+}): string {
+  const clientType = (args.clientType ?? '').trim();
+  const showClientType = clientType.length > 0 && clientType.toLowerCase() !== 'unknown';
+  const parts: string[] = [];
+  if (showClientType) {
+    parts.push(args.clientId ? `${clientType}(${args.clientId})` : clientType);
+  } else if (args.clientId) {
+    parts.push(args.clientId);
+  }
+  if (args.appId || args.appName) {
+    const appName = (args.appName ?? '').trim();
+    parts.push(appName.length > 0 ? `app=${appName}` : 'app=unknown');
+  }
+  if (parts.length === 0) return '';
+  return ` · ${parts.join(' · ')}`;
+}
+
 function statusBadge(statusCode: number) {
   if (statusCode >= 200 && statusCode < 300) return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
   if (statusCode >= 400 && statusCode < 500) return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
@@ -62,11 +84,13 @@ export default function SystemLogsTab() {
   const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
   const [qPath, setQPath] = useState('');
   const [qRequestId, setQRequestId] = useState('');
+  const [qStatusCode, setQStatusCode] = useState('');
 
   const [metaClientTypes, setMetaClientTypes] = useState<string[]>([]);
   const [metaMethods, setMetaMethods] = useState<string[]>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
   const [qClientType, setQClientType] = useState('');
   const [qMethod, setQMethod] = useState('');
+  const commonStatusCodes = [200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504];
   const [excludeNoise, setExcludeNoise] = useState(true);
 
   const [detailOpen, setDetailOpen] = useState(false);
@@ -89,12 +113,15 @@ export default function SystemLogsTab() {
     if (opts?.resetPage) setPage(1);
     setLoading(true);
     try {
+      const statusCodeValue = qStatusCode.trim() ? Number(qStatusCode) : undefined;
+      const statusCode = Number.isFinite(statusCodeValue ?? NaN) ? statusCodeValue : undefined;
       const res = await getApiLogs({
         page: opts?.resetPage ? 1 : page,
         pageSize,
         userId: qUserId || undefined,
         path: qPath || undefined,
         requestId: qRequestId || undefined,
+        statusCode,
         clientType: qClientType || undefined,
         method: qMethod || undefined,
         excludeNoise: excludeNoise || undefined,
@@ -156,7 +183,7 @@ export default function SystemLogsTab() {
             刷新
           </Button>
         </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-6">
+        <div className="mt-3 grid gap-3 md:grid-cols-7">
           <div className="relative">
             <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -196,6 +223,17 @@ export default function SystemLogsTab() {
             <option value="">method（全部）</option>
             {metaMethods.map((m) => (
               <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <select
+            value={qStatusCode}
+            onChange={(e) => setQStatusCode(e.target.value)}
+            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+            style={inputStyle}
+          >
+            <option value="">status（全部）</option>
+            {commonStatusCodes.map((code) => (
+              <option key={code} value={code}>{code}</option>
             ))}
           </select>
           <select
@@ -240,6 +278,7 @@ export default function SystemLogsTab() {
                 setQRequestId('');
                 setQClientType('');
                 setQMethod('');
+                setQStatusCode('');
               }}
               disabled={loading}
             >
@@ -254,7 +293,7 @@ export default function SystemLogsTab() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-2">
+        <div className="mt-4 grid gap-2" style={{ maxHeight: '60vh', overflow: 'auto' }}>
           {loading && (
             <div className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
               <Loader2 size={16} className="animate-spin" />
@@ -279,7 +318,7 @@ export default function SystemLogsTab() {
                     {it.method} {it.path}
                   </span>
                   <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    {it.clientType ? ` · ${it.clientType}` : ''}{it.clientId ? `(${it.clientId})` : ''}
+                    {buildMetaLabel(it)}
                   </span>
                 </div>
                 <div className="text-[11px] flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
@@ -362,7 +401,7 @@ export default function SystemLogsTab() {
                   startedAt：{formatLocalTime(detail.startedAt)}
                 </div>
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  client：{detail.clientType || '—'}{detail.clientId ? `(${detail.clientId})` : ''}
+                  client：{detail.clientType || '—'}{detail.clientId ? `(${detail.clientId})` : ''} · app：{detail.appId || detail.appName ? (detail.appName || 'unknown') : '—'}{detail.appId ? `(${detail.appId})` : ''}
                 </div>
               </div>
 
@@ -398,5 +437,3 @@ export default function SystemLogsTab() {
     </div>
   );
 }
-
-

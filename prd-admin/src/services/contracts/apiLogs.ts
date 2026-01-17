@@ -38,6 +38,8 @@ export type ApiLogsListItem = {
   errorCode: string | null;
   clientType: string | null;
   clientId: string | null;
+  appId: string | null;
+  appName: string | null;
   clientIp: string | null;
   userAgentPreview: string | null;
   isEventStream: boolean;
@@ -81,6 +83,8 @@ export type ApiRequestLog = {
   userAgent: string | null;
   clientType: string | null;
   clientId: string | null;
+  appId: string | null;
+  appName: string | null;
   requestBody: string | null;
   requestBodyTruncated: boolean;
   curl: string | null;
@@ -92,5 +96,4 @@ export type GetApiLogsContract = (params?: ApiLogsListParams) => Promise<ApiResp
 export type GetApiLogDetailContract = (id: string) => Promise<ApiResponse<ApiRequestLog>>;
 
 export type GetApiLogsMetaContract = () => Promise<ApiResponse<ApiLogsMetaData>>;
-
 

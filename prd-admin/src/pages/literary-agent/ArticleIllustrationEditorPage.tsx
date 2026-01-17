@@ -1184,6 +1184,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setGenerating(true);
     try {
       await runSingleMarker(markerIndex);
+    } catch (error) {
+      console.error('Regenerate error:', error);
+      // 确保在任何错误情况下都设置状态为 error，使按钮立即可用
+      setMarkerRunItems((prev) =>
+        prev.map((x) =>
+          x.markerIndex === markerIndex
+            ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: error instanceof Error ? error.message : '生成失败' }
+            : x
+        )
+      );
     } finally {
       setGenerating(false);
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
@@ -2058,7 +2068,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     >
                       {showPlaceholder ? (
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <PrdPetalBreathingLoader size={140} />
+                          {/* 使用 fill 模式适应容器，内层正方形保持花瓣比例 */}
+                          <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
+                            <PrdPetalBreathingLoader fill />
+                          </div>
                         </div>
                       ) : null}
                       {canShow ? (

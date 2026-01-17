@@ -25,6 +25,11 @@ namespace PrdAgent.Api.Controllers.Admin;
 [Authorize]
 public class AdminImageMasterController : ControllerBase
 {
+    /// <summary>
+    /// 视觉创作 Agent 的应用标识（用于水印等功能的隔离）
+    /// </summary>
+    private const string AppKey = "visual_agent";
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -1272,6 +1277,7 @@ public class AdminImageMasterController : ControllerBase
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
                 Purpose = "imageMaster",
+                AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,
                 InitImageAssetSha256 = initSha,

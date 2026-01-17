@@ -52,15 +52,33 @@ public class AppModelRequirement
 {
     /// <summary>模型类型（chat/intent/vision/image-gen等）</summary>
     public string ModelType { get; set; } = string.Empty;
-    
+
     /// <summary>用途说明（如：理解用户意图、生成图片）</summary>
     public string Purpose { get; set; } = string.Empty;
-    
-    /// <summary>绑定的模型分组ID（null表示使用该类型的默认分组）</summary>
-    public string? ModelGroupId { get; set; }
-    
+
+    /// <summary>绑定的模型分组ID列表（支持多个模型池，空列表表示使用该类型的默认分组）</summary>
+    public List<string> ModelGroupIds { get; set; } = new();
+
     /// <summary>是否必需（false表示可选）</summary>
     public bool IsRequired { get; set; } = true;
+
+    /// <summary>
+    /// 兼容旧字段：单个模型分组ID（已废弃，请使用 ModelGroupIds）
+    /// 读取时：优先使用 ModelGroupIds，如果为空则从此字段迁移
+    /// 写入时：不再使用此字段
+    /// </summary>
+    [Obsolete("请使用 ModelGroupIds")]
+    public string? ModelGroupId
+    {
+        get => ModelGroupIds.Count > 0 ? ModelGroupIds[0] : null;
+        set
+        {
+            if (!string.IsNullOrEmpty(value) && !ModelGroupIds.Contains(value))
+            {
+                ModelGroupIds.Insert(0, value);
+            }
+        }
+    }
 }
 
 /// <summary>
