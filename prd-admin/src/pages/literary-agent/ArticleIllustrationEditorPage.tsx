@@ -1469,7 +1469,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       label: '一键生图',
       action: handleBatchGenerate,
       icon: Sparkles,
-      disabled: !imageGenModel || generating,
+      disabled: !imageGenModel || isBusy,
       show: phase === 2 && markerRunItems.filter(x => x.status === 'done').length === 0, // MarkersGenerated
     },
     {
@@ -1750,7 +1750,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 )}
                 <div className="prd-md">
                   <ReactMarkdown
-                    key={leftPreviewMarkdown.length}
+                    key="article-preview-main"
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeRaw]}
                     components={{
@@ -1775,14 +1775,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <div className="w-96 flex flex-col gap-4">
         {/* 顶部操作按钮 */}
         <Card>
-          <WorkflowProgressBar 
-            steps={phaseSteps} 
-            currentStep={phase} 
+          <WorkflowProgressBar
+            steps={phaseSteps}
+            currentStep={phase}
             onStepClick={handleStepClick}
-            disabled={generating}
+            disabled={isBusy}
             allCompleted={
-              phase === 2 && 
-              markerRunItems.length > 0 && 
+              phase === 2 &&
+              markerRunItems.length > 0 &&
               markerRunItems.every(x => x.status === 'done')
             }
           />
@@ -1791,10 +1791,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               variant="primary"
               className="w-full"
               onClick={() => void activeButton.action()}
-              disabled={generating || activeButton.disabled}
+              disabled={isBusy || activeButton.disabled}
             >
               <activeButton.icon size={16} />
-              {generating ? '生成中...' : activeButton.label}
+              {isBusy ? '生成中...' : activeButton.label}
             </Button>
           )}
         </Card>
@@ -1966,7 +1966,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const showPlaceholder = it.status === 'running' || it.status === 'parsing';
+                const showPlaceholder = it.status === 'running'; // 只在生图时显示呼吸动画，解析时不显示
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';

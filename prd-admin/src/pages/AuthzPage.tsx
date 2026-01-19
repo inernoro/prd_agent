@@ -262,15 +262,15 @@ export default function AuthzPage() {
                     className="w-full text-left rounded-[16px] transition-all duration-200 min-w-0 overflow-hidden hover:scale-[1.01]"
                     style={{
                       background: isActive
-                        ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-gold) 12%, var(--bg-input)) 0%, color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input)) 100%)'
+                        ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
                         : isBuiltIn
                           ? 'linear-gradient(180deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.03) 100%)'
                           : 'var(--bg-input)',
                       border: isActive
-                        ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)'
+                        ? '1px solid rgba(214, 178, 106, 0.40)'
                         : isBuiltIn
-                          ? '1px solid color-mix(in srgb, var(--accent-gold) 18%, var(--border-subtle))'
-                          : '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+                          ? '1px solid rgba(214, 178, 106, 0.18)'
+                          : '1px solid rgba(255, 255, 255, 0.08)',
                       boxShadow: isActive
                         ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                         : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',

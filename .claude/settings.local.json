@@ -9,7 +9,10 @@
       "Bash(cargo check:*)",
       "Bash(pnpm run build)",
       "Bash(ls:*)",
-      "Bash(cargo add:*)"
+      "Bash(cargo add:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(npm run typecheck:*)"
     ]
   }
 }

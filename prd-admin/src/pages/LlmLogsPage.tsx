@@ -171,7 +171,7 @@ function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
   if (tone === 'green') return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' };
   if (tone === 'blue') return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'rgba(59, 130, 246, 0.95)' };
   if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
-  if (tone === 'gold') return { background: 'color-mix(in srgb, var(--accent-gold) 18%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-gold) 35%, transparent)', color: 'var(--accent-gold-2)' };
+  if (tone === 'gold') return { background: 'rgba(214, 178, 106, 0.18)', border: '1px solid rgba(214, 178, 106, 0.35)', color: 'var(--accent-gold-2)' };
   return { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-muted)' };
 }
 

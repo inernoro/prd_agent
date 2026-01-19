@@ -753,11 +753,22 @@ public class OpenAIImageClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
+                // 原图字节（用于保存无水印版本）
+                var originalBytes = bytes;
+                var originalMime = outMime;
+
                 if (watermarkConfig != null)
                 {
                     try
                     {
                         _logger.LogInformation("Applying watermark to image index {Index}. FontKey={FontKey}", images[i].Index, watermarkConfig.FontKey);
+
+                        // 先保存原图（无水印），再应用水印保存水印版
+                        var originalStored = await _assetStorage.SaveAsync(originalBytes, originalMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
+                        images[i].OriginalUrl = originalStored.Url;
+                        images[i].OriginalSha256 = originalStored.Sha256;
+
+                        // 应用水印
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
                         bytes = rendered.bytes;
                         outMime = rendered.mime;
@@ -765,11 +776,21 @@ public class OpenAIImageClient
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Failed to apply watermark. Skipping watermark for this image.");
+                        // 水印失败时，原图 URL 与展示图相同
+                        images[i].OriginalUrl = null;
+                        images[i].OriginalSha256 = null;
                     }
                 }
                 var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
                 images[i].Url = stored.Url;
                 images[i].Base64 = null;
+
+                // 无水印配置时，原图与展示图相同
+                if (watermarkConfig == null)
+                {
+                    images[i].OriginalUrl = stored.Url;
+                    images[i].OriginalSha256 = stored.Sha256;
+                }
 
                 // 尺寸：优先使用本次请求最终 size（若解析失败则为 0）
                 var sizeStr = NormalizeSizeString(size);
@@ -1766,6 +1787,10 @@ public class ImageGenImage
     public string? Base64 { get; set; }
     public string? Url { get; set; }
     public string? RevisedPrompt { get; set; }
+    /// <summary>原图 URL（无水印）。用于作为参考图时避免水印叠加。</summary>
+    public string? OriginalUrl { get; set; }
+    /// <summary>原图 SHA256。用于参考图查询。</summary>
+    public string? OriginalSha256 { get; set; }
 }
 
 public class ImageGenResultMeta

@@ -23,6 +23,17 @@ public class ImageAsset
 
     /// <summary>文章配图场景：原始提示词标记文本(如"温馨的咖啡厅场景")</summary>
     public string? OriginalMarkerText { get; set; }
+
+    /// <summary>
+    /// 原图 URL（无水印）。用于作为参考图时避免水印叠加。
+    /// 若无水印配置则与 Url 相同或为空。
+    /// </summary>
+    public string? OriginalUrl { get; set; }
+
+    /// <summary>
+    /// 原图 SHA256。用于参考图查询时定位无水印版本。
+    /// </summary>
+    public string? OriginalSha256 { get; set; }
 }
 
 

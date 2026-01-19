@@ -293,14 +293,20 @@ public class ImageGenRunWorker : BackgroundService
                         var sizeAdjusted = meta?.SizeAdjusted ?? false;
                         var ratioAdjusted = meta?.RatioAdjusted ?? false;
 
+                        // 从生成结果中提取原图信息（无水印版）
+                        var originalUrl = first?.OriginalUrl;
+                        var originalSha256 = first?.OriginalSha256;
+
                         // ImageMaster：若绑定 workspace，则把结果落到资产（COS）并回填画布元素（避免断线/关闭导致丢失）
                         ImageAsset? persisted = null;
                         if (!string.IsNullOrWhiteSpace(run.WorkspaceId))
                         {
-                            persisted = await TryPersistToImageMasterAsync(run, curPrompt, reqSize, effSize, base64, url, assetStorage, ct);
+                            persisted = await TryPersistToImageMasterAsync(run, curPrompt, reqSize, effSize, base64, url, originalUrl, originalSha256, assetStorage, ct);
                             if (persisted != null)
                             {
                                 url = persisted.Url;
+                                originalUrl = persisted.OriginalUrl;
+                                originalSha256 = persisted.OriginalSha256;
                                 base64 = null;
                             }
                         }
@@ -322,8 +328,17 @@ public class ImageGenRunWorker : BackgroundService
                             platformId = run.PlatformId,
                             base64,
                             url,
+                            originalUrl,
+                            originalSha256,
                             revisedPrompt,
-                            asset = persisted == null ? null : new { id = persisted.Id, sha256 = persisted.Sha256, url = persisted.Url }
+                            asset = persisted == null ? null : new
+                            {
+                                id = persisted.Id,
+                                sha256 = persisted.Sha256,
+                                url = persisted.Url,
+                                originalUrl = persisted.OriginalUrl,
+                                originalSha256 = persisted.OriginalSha256
+                            }
                         }, ct);
                     }
                     finally
@@ -491,6 +506,8 @@ public class ImageGenRunWorker : BackgroundService
         string? effectiveSize,
         string? base64,
         string? url,
+        string? originalUrl,
+        string? originalSha256,
         IAssetStorage assetStorage,
         CancellationToken ct)
     {
@@ -539,8 +556,37 @@ public class ImageGenRunWorker : BackgroundService
 
         var stored = await assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
 
+        // 如果有原图（无水印版）且与展示图不同，需要把原图也保存到 DomainImageMaster 域
+        // 以便后续作为参考图时可以通过 sha256 找到
+        string? persistedOriginalUrl = null;
+        string? persistedOriginalSha256 = null;
+        if (!string.IsNullOrWhiteSpace(originalUrl) && !string.IsNullOrWhiteSpace(originalSha256)
+            && originalSha256 != stored.Sha256)
+        {
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+                using var resp = await http.GetAsync(originalUrl.Trim(), ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode)
+                {
+                    var origMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+                    var origBytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                    if (origBytes.Length > 0 && origBytes.LongLength <= 15 * 1024 * 1024)
+                    {
+                        var origStored = await assetStorage.SaveAsync(origBytes, origMime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                        persistedOriginalUrl = origStored.Url;
+                        persistedOriginalSha256 = origStored.Sha256;
+                    }
+                }
+            }
+            catch
+            {
+                // 原图保存失败不影响主流程，继续使用传入的 originalUrl/originalSha256
+            }
+        }
+
         ImageAsset asset;
-        // 允许“同图多次上传/同 sha 多条记录”：仅底层对象存储按 sha 去重
+        // 允许"同图多次上传/同 sha 多条记录"：仅底层对象存储按 sha 去重
         asset = new ImageAsset
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -551,7 +597,10 @@ public class ImageGenRunWorker : BackgroundService
             SizeBytes = stored.SizeBytes,
             Url = stored.Url,
             Prompt = (prompt ?? string.Empty).Trim(),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // 原图信息：优先使用持久化到 ImageMaster 域的版本，否则回退到传入的 URL
+            OriginalUrl = persistedOriginalUrl ?? originalUrl ?? stored.Url,
+            OriginalSha256 = persistedOriginalSha256 ?? originalSha256 ?? stored.Sha256
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
 

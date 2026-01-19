@@ -281,6 +281,7 @@ public class AdminLlmLogsController : ControllerBase
                 { "durationMs", "$DurationMs" },
                 { "inputTokens", "$InputTokens" },
                 { "outputTokens", "$OutputTokens" },
+                { "status", "$Status" },
                 // 首字延迟：FirstByteAt - StartedAt（单位 ms）；若缺失则为 null
                 { "ttfbMs", new BsonDocument("$cond", new BsonArray
                     {
@@ -302,6 +303,21 @@ public class AdminLlmLogsController : ControllerBase
                 { "avgTtfbMs", new BsonDocument("$avg", "$ttfbMs") },
                 { "totalInputTokens", new BsonDocument("$sum", new BsonDocument("$ifNull", new BsonArray { "$inputTokens", 0 })) },
                 { "totalOutputTokens", new BsonDocument("$sum", new BsonDocument("$ifNull", new BsonArray { "$outputTokens", 0 })) },
+                // 成功/失败计数（用于成功率计算）
+                { "successCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$status", "succeeded" }),
+                        1,
+                        0
+                    }))
+                },
+                { "failCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$status", "failed" }),
+                        1,
+                        0
+                    }))
+                },
             }),
             new BsonDocument("$project", new BsonDocument
             {
@@ -314,6 +330,8 @@ public class AdminLlmLogsController : ControllerBase
                 { "avgTtfbMs", new BsonDocument("$round", new BsonArray { "$avgTtfbMs", 0 }) },
                 { "totalInputTokens", 1 },
                 { "totalOutputTokens", 1 },
+                { "successCount", 1 },
+                { "failCount", 1 },
             }),
             new BsonDocument("$sort", new BsonDocument("requestCount", -1)),
         };
@@ -338,6 +356,8 @@ public class AdminLlmLogsController : ControllerBase
             d.TryGetValue("avgTtfbMs", out var avgTtfb);
             d.TryGetValue("totalInputTokens", out var tin);
             d.TryGetValue("totalOutputTokens", out var tout);
+            d.TryGetValue("successCount", out var sc);
+            d.TryGetValue("failCount", out var fc);
 
             return new
             {
@@ -348,6 +368,8 @@ public class AdminLlmLogsController : ControllerBase
                 avgTtfbMs = ToDotNet(avgTtfb),
                 totalInputTokens = ToDotNet(tin),
                 totalOutputTokens = ToDotNet(tout),
+                successCount = ToDotNet(sc),
+                failCount = ToDotNet(fc),
             };
         }).ToList();
 

@@ -410,6 +410,16 @@ export default function ImageGenPanel() {
       setBatchLog((p) => (p ? `${p}\n` : '') + `batchError: ${res.error?.message || '失败'}`);
       await stopBatch();
     }
+
+    // SSE 流结束后，检查是否有图片还在 running 状态
+    // 如果有，说明服务端没有返回最终状态，需要标记为 error
+    setImages((prev) =>
+      prev.map((x) =>
+        x.runId === runId && x.status === 'running'
+          ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
+          : x
+      )
+    );
   };
 
   return (

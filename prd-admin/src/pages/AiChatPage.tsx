@@ -1443,8 +1443,8 @@ export default function AiChatPage() {
                   <div
                     className="max-w-[85%] rounded-[14px] px-3.5 py-2.5 relative group"
                     style={{
-                      background: isUser ? 'color-mix(in srgb, var(--accent-gold) 22%, rgba(255,255,255,0.02))' : 'rgba(255,255,255,0.03)',
-                      border: isUser ? '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))' : '1px solid var(--border-subtle)',
+                      background: isUser ? 'rgba(214, 178, 106, 0.12)' : 'rgba(255,255,255,0.03)',
+                      border: isUser ? '1px solid rgba(214, 178, 106, 0.30)' : '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
                       wordBreak: 'break-word',
                     }}
@@ -1467,9 +1467,9 @@ export default function AiChatPage() {
                           type="button"
                           className="text-[10px] px-2 py-0.5 rounded-full hover:bg-white/5 transition-colors"
                           style={{
-                            border: '1px solid color-mix(in srgb, var(--accent-gold) 30%, var(--border-subtle))',
+                            border: '1px solid rgba(214, 178, 106, 0.30)',
                             color: 'var(--accent-gold)',
-                            background: 'color-mix(in srgb, var(--accent-gold) 10%, transparent)',
+                            background: 'rgba(214, 178, 106, 0.10)',
                           }}
                           onClick={() => {
                             const role = (m.viewRole || currentRole) as 'PM' | 'DEV' | 'QA';
@@ -1529,14 +1529,14 @@ export default function AiChatPage() {
                           .prd-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); padding: 2px 6px; border-radius: 6px; }
                           .prd-md pre { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px; overflow: auto; margin: 12px 0; }
                           .prd-md pre code { background: transparent; border: 0; padding: 0; }
-                          .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid color-mix(in srgb, var(--accent-gold) 40%, transparent); background: color-mix(in srgb, var(--accent-gold) 6%, transparent); color: var(--text-primary); border-radius: 10px; }
+                          .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(214, 178, 106, 0.40); background: rgba(214, 178, 106, 0.06); color: var(--text-primary); border-radius: 10px; }
                           .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
                           .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.12); margin: 16px 0; }
 
                           /* 流式输出“高级感”：高帧率灰度尾巴（未提交部分） */
                           .prd-md-stream-live { margin-top: 8px; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; color: var(--text-muted); opacity: 0.92; filter: saturate(0.55); }
                           .prd-md-stream-live-prefix { opacity: 0.55; }
-                          .prd-md-stream-live-last { background-image: linear-gradient(to right, currentColor 0%, currentColor 55%, color-mix(in srgb, currentColor 15%, transparent) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+                          .prd-md-stream-live-last { background-image: linear-gradient(to right, currentColor 0%, currentColor 55%, rgba(128, 128, 128, 0.15) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
                           .prd-md-stream-caret { display: inline-block; width: 0.6ch; height: 1em; margin-left: 2px; background: currentColor; border-radius: 2px; vertical-align: -2px; animation: prd-md-caret-blink 1s steps(1, end) infinite; opacity: 0.75; }
                           @keyframes prd-md-caret-blink { 50% { opacity: 0; } }
                           .prd-md-block-enter { animation: prd-md-block-in 160ms ease-out both; }
@@ -1628,14 +1628,14 @@ export default function AiChatPage() {
                     className="px-3 py-1.5 rounded-[10px] text-[12px] hover:bg-white/5 transition-all duration-200"
                     style={{
                       border: isSelected
-                        ? '1px solid color-mix(in srgb, var(--accent-gold) 60%, var(--border-subtle))'
+                        ? '1px solid rgba(214, 178, 106, 0.60)'
                         : isHighlighted
-                          ? '1px solid color-mix(in srgb, var(--accent-gold) 50%, var(--border-subtle))'
+                          ? '1px solid rgba(214, 178, 106, 0.50)'
                           : '1px solid var(--border-subtle)',
                       background: isSelected
-                        ? 'color-mix(in srgb, var(--accent-gold) 16%, transparent)'
+                        ? 'rgba(214, 178, 106, 0.16)'
                         : isHighlighted
-                          ? 'color-mix(in srgb, var(--accent-gold) 12%, transparent)'
+                          ? 'rgba(214, 178, 106, 0.12)'
                           : 'transparent',
                       color: isSelected || isHighlighted ? 'var(--accent-gold)' : 'var(--text-secondary)',
                     }}
@@ -1952,7 +1952,7 @@ export default function AiChatPage() {
           <DialogPrimitive.Content
             className="fixed right-0 top-0 z-[130] h-full w-[440px] max-w-[92vw] flex flex-col"
             style={{
-              background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+              background: 'rgba(30, 30, 32, 0.96)',
               borderLeft: '1px solid var(--border-default)',
               boxShadow: '-18px 0 60px rgba(0,0,0,0.45)',
             }}

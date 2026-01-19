@@ -177,6 +177,8 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
     ttfbWeight: number;
     totalInputTokens: number;
     totalOutputTokens: number;
+    successCount: number;
+    failCount: number;
   }>();
 
   for (const it of items) {
@@ -192,6 +194,8 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
         ttfbWeight: 0,
         totalInputTokens: 0,
         totalOutputTokens: 0,
+        successCount: 0,
+        failCount: 0,
       });
     }
     const cur = tmp.get(key)!;
@@ -212,6 +216,8 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
 
     cur.totalInputTokens += Math.max(0, Number(it.totalInputTokens ?? 0));
     cur.totalOutputTokens += Math.max(0, Number(it.totalOutputTokens ?? 0));
+    cur.successCount += Math.max(0, Number(it.successCount ?? 0));
+    cur.failCount += Math.max(0, Number(it.failCount ?? 0));
   }
 
   const out: Record<string, AggregatedModelStats> = {};
@@ -222,6 +228,8 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
       avgTtfbMs: v.ttfbWeight > 0 ? Math.round(v.ttfbWeightedSum / v.ttfbWeight) : null,
       totalInputTokens: v.totalInputTokens,
       totalOutputTokens: v.totalOutputTokens,
+      successCount: v.successCount,
+      failCount: v.failCount,
     };
   }
   return out;
@@ -1120,7 +1128,7 @@ export default function ModelManagePage() {
               style={{
                 left: platformCtxMenu.x,
                 top: platformCtxMenu.y,
-                background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+                background: 'rgba(30, 30, 32, 0.96)',
                 border: '1px solid var(--border-default)',
                 boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
               }}

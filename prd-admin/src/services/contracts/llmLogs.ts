@@ -50,6 +50,8 @@ export type LlmModelStatsItem = {
   avgTtfbMs?: number | null;
   totalInputTokens?: number | null;
   totalOutputTokens?: number | null;
+  successCount?: number | null;
+  failCount?: number | null;
 };
 
 export type LlmModelStatsData = {

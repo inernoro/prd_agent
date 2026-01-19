@@ -942,12 +942,12 @@ export default function PromptStagesPage() {
                   key={s.promptKey}
                   className="rounded-[16px] transition-all duration-200 min-w-0 overflow-hidden relative cursor-pointer hover:scale-[1.01]"
                   style={{
-                    background: active 
-                      ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-gold) 12%, var(--bg-input)) 0%, color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input)) 100%)'
+                    background: active
+                      ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
                       : 'var(--bg-input)',
-                    border: active 
-                      ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)' 
-                      : '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
+                    border: active
+                      ? '1px solid rgba(214, 178, 106, 0.40)'
+                      : '1px solid rgba(255, 255, 255, 0.08)',
                     boxShadow: active 
                       ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                       : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
@@ -1263,13 +1263,13 @@ export default function PromptStagesPage() {
                     key={r}
                     className="rounded-[16px] px-4 py-3.5 transition-all duration-200 min-w-0 overflow-hidden cursor-pointer hover:scale-[1.01]"
                     style={{
-                      background: active 
-                        ? 'linear-gradient(135deg, color-mix(in srgb, var(--accent-gold) 12%, var(--bg-input)) 0%, color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input)) 100%)'
+                      background: active
+                        ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
                         : 'var(--bg-input)',
-                      border: active 
-                        ? '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)' 
-                        : '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
-                      boxShadow: active 
+                      border: active
+                        ? '1px solid rgba(214, 178, 106, 0.40)'
+                        : '1px solid rgba(255, 255, 255, 0.08)',
+                      boxShadow: active
                         ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                         : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                     }}
@@ -1363,18 +1363,18 @@ export default function PromptStagesPage() {
                       disabled={sysLoading || sysSaving || !sysSettings}
                       className="flex-1 min-h-0 w-full rounded-[14px] px-3 py-2.5 text-[13px] outline-none resize-none transition-all duration-200 focus:ring-2 focus:ring-offset-0"
                       style={{
-                        border: '1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent)',
-                        background: 'linear-gradient(135deg, var(--bg-input) 0%, color-mix(in srgb, var(--bg-input) 98%, black) 100%)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        background: 'linear-gradient(135deg, var(--bg-input) 0%, rgba(20, 20, 22, 0.98) 100%)',
                         color: 'var(--text-primary)',
                         lineHeight: 1.6,
                         boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-gold) 40%, transparent)';
+                        e.currentTarget.style.borderColor = 'rgba(214, 178, 106, 0.40)';
                         e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(214, 178, 106, 0.2) inset, 0 0 0 2px rgba(214, 178, 106, 0.1)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--border-subtle) 60%, transparent)';
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
                         e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset';
                       }}
                     />

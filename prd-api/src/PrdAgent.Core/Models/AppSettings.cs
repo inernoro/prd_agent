@@ -61,6 +61,11 @@ public class AppSettings
     /// </summary>
     public DateTime? PermissionCatalogUpdatedAt { get; set; }
 
+    /// <summary>
+    /// 上一次的权限目录快照（JSON 序列化的权限 key 列表），用于比较变化。
+    /// </summary>
+    public List<string>? PermissionCatalogSnapshot { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

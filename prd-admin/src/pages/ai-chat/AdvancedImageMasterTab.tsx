@@ -5,6 +5,7 @@ import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
+import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   addImageMasterWorkspaceMessage,
@@ -13,6 +14,7 @@ import {
   getImageMasterWorkspaceDetail,
   getImageGenSizeCaps,
   getModels,
+  getWatermarkByApp,
   planImageGen,
   refreshImageMasterWorkspaceCover,
   saveImageMasterWorkspaceCanvas,
@@ -46,6 +48,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  Droplet,
   Eraser,
   Grid3X3,
   Hand,
@@ -83,6 +86,14 @@ type CanvasImageItem = {
   checkedAt?: number;
   assetId?: string;
   sha256?: string;
+  /** 原图 URL（无水印）。用于作为参考图时避免水印叠加。 */
+  originalSrc?: string;
+  /** 原图 SHA256。用于参考图查询。 */
+  originalSha256?: string;
+  /** 生成时使用的参考图 key（用于重试时恢复参考图） */
+  refImageKey?: string;
+  /** 生成时使用的参考图 originalSha256（用于重试时恢复参考图） */
+  refImageSha256?: string;
   /** 图片内容是否已持久化到后端资产（再由后端落本地或 COS）；避免刷新丢失 */
   syncStatus?: 'pending' | 'synced' | 'failed';
   syncError?: string | null;
@@ -689,8 +700,10 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
 type ImageGenRunStreamPayload = {
   type?: unknown;
   errorMessage?: unknown;
-  asset?: { id?: unknown; sha256?: unknown; url?: unknown } | null;
+  asset?: { id?: unknown; sha256?: unknown; url?: unknown; originalUrl?: unknown; originalSha256?: unknown } | null;
   url?: unknown;
+  originalUrl?: unknown;
+  originalSha256?: unknown;
 };
 
 function buildTemplate(name: string) {
@@ -735,6 +748,14 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
   const [modelPrefOpen, setModelPrefOpen] = useState(false);
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
+
+  // 水印配置
+  const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
+    setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
+  }, []);
+  const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
+  const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
   const enabledImageModels = useMemo(() => (models ?? []).filter((m) => m.enabled && m.isImageGen), [models]);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
@@ -769,6 +790,27 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       })
       .catch(() => setAllowedSizes([]));
   }, [effectiveModel?.id]);
+
+  // 初始化水印配置
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getWatermarkByApp({ appKey: 'visual-agent' });
+      if (cancelled) return;
+      if (res?.success && res.data) {
+        const config = res.data;
+        setWatermarkStatus({
+          enabled: true,
+          name: config.name || config.text || null,
+        });
+      } else {
+        setWatermarkStatus({ enabled: false, name: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [messages, setMessages] = useState<UiMsg[]>([
     {
@@ -2605,6 +2647,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     const refRect = refItem && typeof refItem.x === 'number' && typeof refItem.y === 'number'
       ? { x: refItem.x, y: refItem.y, w: refItem.w ?? 320, h: refItem.h ?? 220 }
       : undefined;
+    // 保存参考图信息，用于重试时恢复
+    const refImageKey = refItem?.key;
+    const refImageSha256 = refItem?.originalSha256 ?? refItem?.sha256;
 
     setCanvas((prev) => {
       const existingRects = prev
@@ -2646,6 +2691,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                 h: gh,
                 // 清空旧图，进入加载态（running）
                 src: '',
+                // 保存参考图信息，用于重试时恢复
+                refImageKey,
+                refImageSha256,
               }
             : x
         );
@@ -2664,6 +2712,9 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         h: genH,
         x: pos.x,
         y: pos.y,
+        // 保存参考图信息，用于重试时恢复
+        refImageKey,
+        refImageSha256,
       };
       focusKeyRef.current = { key, cx: pos.x + genW / 2, cy: pos.y + genH / 2, w: genW, h: genH, refRect };
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
@@ -2695,7 +2746,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     try {
       const refForInit = (primaryRef ?? selected) as CanvasImageItem | null;
       const initSrc = (refForInit?.src ?? '').trim();
-      const initSha = (refForInit?.sha256 ?? '').trim();
+      // 优先使用原图 SHA256（无水印），避免参考图重复叠加水印
+      const initSha = (refForInit?.originalSha256 ?? refForInit?.sha256 ?? '').trim();
       let initImageBase64: string | undefined;
       let initImageUrl: string | undefined;
       let initImageAssetSha256: string | undefined;
@@ -2704,7 +2756,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         // 本地粘贴/未持久化：直接传 dataURL
         initImageBase64 = initSrc;
       } else if (initSha && initSha.length === 64) {
-        // 已持久化资产：优先传 sha256，让服务端直接读文件（避免浏览器 CORS / 省流量）
+        // 已持久化资产：优先传原图 sha256，让服务端直接读文件（避免浏览器 CORS / 省流量 / 水印叠加）
         initImageAssetSha256 = initSha;
       } else if (initSrc) {
         // 若是自托管 file URL：解析 sha 后走 sha 逻辑（仍由服务端读取）
@@ -2863,7 +2915,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
 
       // 可选：订阅进度并实时替换（关闭页面也没关系，服务端会最终回填）
       const ac = new AbortController();
-      void streamImageGenRunWithRetry({
+      streamImageGenRunWithRetry({
         runId,
         signal: ac.signal,
         onEvent: (evt) => {
@@ -2880,9 +2932,18 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
           if (t === 'imageDone') {
             const assetRaw = o.asset ?? null;
             const asset = assetRaw
-              ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? '') }
+              ? {
+                  id: String(assetRaw.id ?? ''),
+                  sha256: String(assetRaw.sha256 ?? ''),
+                  url: String(assetRaw.url ?? ''),
+                  originalUrl: String(assetRaw.originalUrl ?? ''),
+                  originalSha256: String(assetRaw.originalSha256 ?? ''),
+                }
               : null;
             const u = String(asset?.url ?? o.url ?? '');
+            // 原图信息：优先用 asset（后端持久化的），否则用 SSE 顶层字段
+            const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
+            const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
             if (!u) return;
             setCanvas((prev) =>
               prev.map((x) =>
@@ -2892,8 +2953,10 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                       kind: 'image',
                       status: 'done',
                       src: u,
+                      originalSrc: originalU,
                       assetId: (asset?.id || '').trim() || x.assetId,
                       sha256: (asset?.sha256 || '').trim() || x.sha256,
+                      originalSha256: originalSha.trim() || x.originalSha256,
                       syncStatus: 'synced',
                       syncError: null,
                     }
@@ -2905,6 +2968,16 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
           }
         },
+      }).then(() => {
+        // SSE 流结束后，检查该图片是否还在 running 状态
+        // 如果是，说明服务端没有返回最终状态，需要标记为 error
+        setCanvas((prev) =>
+          prev.map((x) =>
+            x.key === key && x.status === 'running'
+              ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
+              : x
+          )
+        );
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
@@ -3084,6 +3157,37 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       primaryRef,
       seedSelectedKey,
       sizeOverride,
+    };
+    pendingJobsRef.current.push(job);
+    setPendingCount(pendingJobsRef.current.length);
+    drainGenQueue();
+  };
+
+  // 重试生成：使用保存的参考图信息
+  const retryGenerate = async (item: CanvasImageItem) => {
+    const prompt = String(item.prompt ?? '').trim();
+    if (!prompt) return;
+
+    // 从 canvas 中查找保存的参考图
+    let refImage: CanvasImageItem | null = null;
+    const refKey = item.refImageKey;
+    const refSha = item.refImageSha256;
+    if (refKey) {
+      refImage = canvasRef.current.find((x) => x.key === refKey) ?? null;
+    }
+    // 如果通过 key 找不到，尝试通过 sha256 查找（图片可能被重新加载）
+    if (!refImage && refSha) {
+      refImage = canvasRef.current.find((x) => (x.originalSha256 ?? x.sha256) === refSha) ?? null;
+    }
+
+    // 构建 job，与 sendText 类似但使用保存的参考图
+    const job: GenJob = {
+      id: `job_retry_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      displayText: prompt,
+      requestText: prompt,
+      primaryRef: refImage,
+      seedSelectedKey: item.key, // 使用当前失败项的 key 作为种子，这样会替换该项
+      sizeOverride: item.requestedSize ?? null,
     };
     pendingJobsRef.current.push(job);
     setPendingCount(pendingJobsRef.current.length);
@@ -4265,8 +4369,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                 variant="secondary"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  // 使用当前 prompt 直接重试
-                                  void sendText(it.prompt || '');
+                                  // 使用保存的参考图信息重试
+                                  void retryGenerate(it);
                                 }}
                               >
                                 重试
@@ -4400,8 +4504,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                 variant="secondary"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  // 使用当前 prompt 直接重试
-                                  void sendText(it.prompt || '');
+                                  // 使用保存的参考图信息重试
+                                  void retryGenerate(it);
                                 }}
                               >
                                 重试
@@ -5707,7 +5811,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                       style={{
                         // 用户气泡更克制：减少金色占比，让它更贴整体背景
                         background: isUser
-                          ? 'color-mix(in srgb, var(--accent-gold) 16%, rgba(255,255,255,0.02))'
+                          ? 'rgba(214, 178, 106, 0.12)'
                           : 'rgba(255,255,255,0.04)',
                         border: '1px solid var(--border-subtle)',
                         color: 'var(--text-primary)',
@@ -5737,7 +5841,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                 overflow: 'hidden',
                                 border: '1px solid var(--border-subtle)',
                                 // 与用户气泡（金色系）更协调：更亮、更“贴”背景
-                                background: 'color-mix(in srgb, var(--accent-gold) 14%, rgba(255,255,255,0.04))',
+                                background: 'rgba(214, 178, 106, 0.12)',
                               }}
                               title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
                               aria-label="预览参考图"
@@ -5788,7 +5892,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                 borderRadius: 4,
                                 overflow: 'hidden',
                                 border: '1px solid var(--border-subtle)',
-                                background: 'color-mix(in srgb, var(--accent-gold) 10%, rgba(255,255,255,0.04))',
+                                background: 'rgba(214, 178, 106, 0.10)',
                               }}
                               aria-label="尺寸"
                               title={`尺寸：${msgSize}`}
@@ -6351,7 +6455,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                         style={{
                           width: 360,
                           maxWidth: 'min(92vw, 360px)',
-                          background: 'color-mix(in srgb, var(--bg-elevated) 92%, black)',
+                          background: 'rgba(30, 30, 32, 0.96)',
                           border: '1px solid var(--border-default)',
                           boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
                         }}
@@ -6486,6 +6590,22 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
+
+                  {/* 水印设置按钮 */}
+                  <button
+                    type="button"
+                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
+                    style={{
+                      border: watermarkStatus.enabled ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(255,255,255,0.10)',
+                      background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255,255,255,0.04)',
+                      color: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.85)' : 'var(--text-secondary)',
+                    }}
+                    aria-label="水印设置"
+                    title={watermarkStatus.enabled ? `水印: ${watermarkStatus.name || '已启用'}` : '水印设置'}
+                    onClick={() => setWatermarkSettingsOpen(true)}
+                  >
+                    <Droplet size={16} />
+                  </button>
 
                   {(runningCount > 0 || pendingCount > 0) ? (
                     <div
@@ -6808,6 +6928,28 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         }
       />
       </Card>
+
+      {/* 水印设置对话框 */}
+      <Dialog
+        open={watermarkSettingsOpen}
+        onOpenChange={setWatermarkSettingsOpen}
+        title="水印设置"
+        content={
+          <div className="flex flex-col h-full min-h-0">
+            <div className="text-[12px] mb-3" style={{ color: 'var(--text-muted)' }}>
+              配置生成图片时自动叠加的水印。水印配置与"视觉创作"应用绑定。
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <WatermarkSettingsPanel
+                ref={watermarkPanelRef}
+                appKey="visual-agent"
+                onStatusChange={handleWatermarkStatusChange}
+                hideAddButton
+              />
+            </div>
+          </div>
+        }
+      />
     </div>
   );
 }
