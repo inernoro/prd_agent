@@ -1621,7 +1621,11 @@ public class OpenAIImageClient
 
     private async Task<WatermarkConfig?> TryGetWatermarkConfigAsync(string appKey, CancellationToken ct)
     {
+        _logger.LogInformation("[Watermark Debug] Starting watermark config lookup with appKey={AppKey}", appKey ?? "(null)");
+
         var userId = (_ctxAccessor?.Current?.UserId ?? string.Empty).Trim();
+        _logger.LogInformation("[Watermark Debug] Retrieved userId from context: {UserId}", userId);
+
         if (string.IsNullOrWhiteSpace(userId))
         {
             _logger.LogWarning("Watermark skipped: missing userId in LLM request context.");
@@ -1634,15 +1638,31 @@ public class OpenAIImageClient
             return null;
         }
 
+        _logger.LogInformation("[Watermark Debug] Querying database: UserId={UserId}, AppKey={AppKey}", userId, appKey);
+
+        // 先查询所有该用户的水印配置，用于诊断
+        var allConfigs = await _db.WatermarkConfigs
+            .Find(x => x.UserId == userId)
+            .ToListAsync(ct);
+
+        _logger.LogInformation("[Watermark Debug] Found {Count} watermark configs for user {UserId}", allConfigs.Count, userId);
+        foreach (var cfg in allConfigs)
+        {
+            var appKeysStr = cfg.AppKeys == null ? "null" : string.Join(", ", cfg.AppKeys);
+            _logger.LogInformation("[Watermark Debug] Config {ConfigId}: AppKeys=[{AppKeys}]", cfg.Id, appKeysStr);
+        }
+
         var config = await _db.WatermarkConfigs
             .Find(x => x.UserId == userId && x.AppKeys.Contains(appKey))
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
         {
-            _logger.LogInformation("Watermark skipped: no config bound to app {AppKey} for user {UserId}", appKey, userId);
+            _logger.LogWarning("[Watermark Debug] No matching config found! Query was: UserId={UserId} AND AppKeys contains '{AppKey}'", userId, appKey);
             return null;
         }
+
+        _logger.LogInformation("[Watermark Debug] Found matching config: {ConfigId}", config.Id);
 
         config.FontKey = _fontRegistry.NormalizeFontKey(config.FontKey);
         var (ok, message) = WatermarkSpecValidator.Validate(config, _fontRegistry.FontKeys);

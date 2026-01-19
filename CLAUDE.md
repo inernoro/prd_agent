@@ -12,16 +12,16 @@
    - 即使多个应用调用相同的底层服务，也要通过不同 Controller 入口
 
 2. **appKey 命名规范**
-   - 使用 `snake_case` 格式
+   - 使用 `kebab-case` 格式
    - 命名要清晰表达应用用途
 
 3. **已定义的应用标识**
 
    | 应用名称 | appKey | 说明 |
    |---------|--------|------|
-   | 文学创作 Agent | `literary_agent` | 文章配图、文学创作场景 |
-   | 视觉创作 Agent | `visual_agent` | 高级视觉创作工作区 |
-   | PRD Agent | `prd_agent` | PRD 智能解读与问答 |
+   | 文学创作 Agent | `literary-agent` | 文章配图、文学创作场景 |
+   | 视觉创作 Agent | `visual-agent` | 高级视觉创作工作区 |
+   | PRD Agent | `prd-agent` | PRD 智能解读与问答 |
 
 4. **为什么这样设计**
    - 权限控制：未来可以基于 Controller 做细粒度权限管理
@@ -37,7 +37,7 @@
 [Route("api/v1/admin/visual-agent")]
 public class VisualAgentController : ControllerBase
 {
-    private const string AppKey = "visual_agent";
+    private const string AppKey = "visual-agent";
 
     [HttpPost("image-gen/runs")]
     public async Task<IActionResult> CreateImageGenRun(...)

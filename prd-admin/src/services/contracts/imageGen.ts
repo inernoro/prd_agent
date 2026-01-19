@@ -105,6 +105,8 @@ export type CreateImageGenRunInput = {
   maxConcurrency?: number;
   /** 可选：绑定的 WorkspaceId。若提供，生成的图片会自动保存到 COS 并关联到该 Workspace */
   workspaceId?: string;
+  /** 可选：应用标识（如 "literary-agent"）。用于水印等功能的隔离 */
+  appKey?: string;
 };
 
 export type CreateImageGenRunResponse = {

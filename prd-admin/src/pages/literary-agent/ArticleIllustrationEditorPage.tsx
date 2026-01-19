@@ -977,6 +977,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         responseFormat: 'url',  // 使用 URL 格式，后端会自动保存到 COS
         maxConcurrency: 1,
         workspaceId,  // 传入 workspaceId，后端会自动保存图片到 COS
+        appKey: 'literary-agent',  // 文学创作应用标识，用于水印配置
       },
       idempotencyKey: idem,
     });

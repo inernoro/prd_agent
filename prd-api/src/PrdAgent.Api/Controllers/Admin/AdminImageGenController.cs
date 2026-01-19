@@ -827,6 +827,15 @@ public class AdminImageGenController : ControllerBase
         var workspaceId = (request?.WorkspaceId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(workspaceId)) workspaceId = null;
 
+        // AppKey（用于水印等功能隔离）
+        // 优先从请求体读取，如果没有则从请求头 X-App-Name 读取
+        var appKey = (request?.AppKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(appKey))
+        {
+            appKey = (Request.Headers["X-App-Name"].ToString() ?? string.Empty).Trim();
+        }
+        if (string.IsNullOrWhiteSpace(appKey)) appKey = null;
+
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
@@ -845,6 +854,7 @@ public class AdminImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
+            AppKey = appKey,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1237,6 +1247,11 @@ public class CreateImageGenRunRequest
     /// 可选：绑定的 WorkspaceId。若提供，生成的图片会自动保存到 COS 并关联到该 Workspace。
     /// </summary>
     public string? WorkspaceId { get; set; }
+
+    /// <summary>
+    /// 可选：应用标识（如 "literary-agent"）。用于水印等功能的隔离。
+    /// </summary>
+    public string? AppKey { get; set; }
 }
 
 public class ImageGenRunPlanItemInput
