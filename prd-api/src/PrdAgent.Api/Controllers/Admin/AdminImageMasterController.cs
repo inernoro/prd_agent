@@ -28,7 +28,7 @@ public class AdminImageMasterController : ControllerBase
     /// <summary>
     /// 视觉创作 Agent 的应用标识（用于水印等功能的隔离）
     /// </summary>
-    private const string AppKey = "visual_agent";
+    private const string AppKey = "visual-agent";
 
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;

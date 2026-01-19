@@ -232,6 +232,9 @@ public class ImageGenRunWorker : BackgroundService
                             }
                         }
 
+                        _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, Purpose={Purpose}",
+                            run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.Purpose ?? "(null)");
+
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
                             GroupId: null,
@@ -243,6 +246,8 @@ public class ImageGenRunWorker : BackgroundService
                             SystemPromptRedacted: "[IMAGE_GEN_RUN]",
                             RequestType: "imageGen",
                             RequestPurpose: string.IsNullOrWhiteSpace(run.Purpose) ? "imageGen.run" : run.Purpose));
+
+                        _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 
                         var res = await imageClient.GenerateAsync(
                             curPrompt,
