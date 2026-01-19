@@ -30,6 +30,7 @@ futures = "0.3"
 thiserror = "2.0"
 lazy_static = "1.5"
 uuid = { version = "1.11", features = ["v4", "serde"] }
+tauri-plugin-dialog = "2.6.0"
 
 [features]
 default = ["custom-protocol"]

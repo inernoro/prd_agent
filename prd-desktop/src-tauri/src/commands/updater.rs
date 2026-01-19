@@ -1,4 +1,18 @@
 use serde::Serialize;
+use tauri_plugin_updater::UpdaterExt;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    /// 是否有可用更新
+    pub available: bool,
+    /// 当前版本
+    pub current_version: String,
+    /// 新版本号（如果有）
+    pub version: Option<String>,
+    /// 更新日志（如果有）
+    pub body: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,5 +69,29 @@ pub async fn get_updater_platform_info() -> UpdaterPlatformInfo {
         target,
         arch,
         json_target,
+    }
+}
+
+/// 检查是否有可用更新
+#[tauri::command]
+pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    let current_version = app.package_info().version.to_string();
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateInfo {
+            available: true,
+            current_version,
+            version: Some(update.version.clone()),
+            body: update.body.clone(),
+        }),
+        Ok(None) => Ok(UpdateInfo {
+            available: false,
+            current_version,
+            version: None,
+            body: None,
+        }),
+        Err(e) => Err(format!("检查更新失败: {}", e)),
     }
 }

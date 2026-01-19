@@ -5,7 +5,11 @@
       "Bash(npm run build:*)",
       "Bash(findstr:*)",
       "Bash(npx tsc:*)",
-      "Bash(dotnet test:*)"
+      "Bash(dotnet test:*)",
+      "Bash(cargo check:*)",
+      "Bash(pnpm run build)",
+      "Bash(ls:*)",
+      "Bash(cargo add:*)"
     ]
   }
 }

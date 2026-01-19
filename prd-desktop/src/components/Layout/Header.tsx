@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -7,8 +7,16 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { assistantFontScaleBounds, useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import RoleSelector from '../Role/RoleSelector';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
+
+interface UpdateInfo {
+  available: boolean;
+  currentVersion: string;
+  version?: string;
+  body?: string;
+}
 
 interface HeaderProps {
   isDark: boolean;
@@ -27,6 +35,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const increaseAssistantFont = useUiPrefsStore((s) => s.increaseAssistantFont);
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
   const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
+  const openSettingsModal = useSettingsStore((s) => s.openModal);
   const isAdmin = user?.role === 'ADMIN';
   const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
   const loginIconUrl = useDesktopBrandingStore((s) => s.branding.loginIconUrl);
@@ -46,6 +55,30 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const canPreview = useMemo(() => {
     return groups.length > 0;
   }, [groups.length]);
+
+  const handleOpenDevtools = useCallback(async () => {
+    try {
+      await invoke('open_devtools');
+    } catch (e) {
+      console.error('打开开发者工具失败:', e);
+    }
+  }, []);
+
+  const handleCheckUpdate = useCallback(() => {
+    // 延迟执行，确保菜单关闭后再显示弹窗
+    setTimeout(async () => {
+      try {
+        const result = await invoke<UpdateInfo>('check_for_update');
+        if (result.available) {
+          window.alert(`发现新版本 ${result.version}\n\n${result.body || '请前往下载更新'}`);
+        } else {
+          window.alert(`当前已是最新版本 (${result.currentVersion})`);
+        }
+      } catch (e) {
+        window.alert(`检查更新失败: ${e}`);
+      }
+    }, 100);
+  }, []);
 
   const handleClearCurrentContext = async () => {
     const ok = window.confirm('确认清理当前对话上下文？这会清空本地对话记录，并清理服务器端“LLM上下文缓存”（不删除消息历史），不会退出登录，也不会解绑 PRD。');
@@ -229,6 +262,43 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                   >
                     当前：{Math.round(assistantFontScale * 100)}%
                   </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />
+                  <DropdownMenu.Sub>
+                    <DropdownMenu.SubTrigger className="flex items-center justify-between px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary data-[state=open]:bg-black/5 dark:data-[state=open]:bg-white/5">
+                      帮助
+                      <svg className="w-4 h-4 ml-2" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </DropdownMenu.SubTrigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.SubContent
+                        sideOffset={4}
+                        alignOffset={-4}
+                        className="z-50 min-w-[140px] rounded-md ui-glass-panel p-1"
+                      >
+                        <DropdownMenu.Item
+                          className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary"
+                          onSelect={openSettingsModal}
+                        >
+                          设置
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />
+                        <DropdownMenu.Item
+                          className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary"
+                          onSelect={handleOpenDevtools}
+                        >
+                          开发者工具
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />
+                        <DropdownMenu.Item
+                          className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary"
+                          onSelect={handleCheckUpdate}
+                        >
+                          检查更新
+                        </DropdownMenu.Item>
+                      </DropdownMenu.SubContent>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Sub>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>

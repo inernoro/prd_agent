@@ -5,6 +5,9 @@ mod services;
 use commands::session::StreamCancelState;
 use tauri::Emitter;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,6 +40,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_updater::Builder::new()
                 .target(updater_target_triple())
@@ -58,7 +62,7 @@ pub fn run() {
                 window.open_devtools();
             }
 
-            // macOS：使用“覆盖式/透明”标题栏，让 WebView 内容延伸到最顶部（类似无白色标题栏）
+            // macOS：使用"覆盖式/透明"标题栏，让 WebView 内容延伸到最顶部（类似无白色标题栏）
             // 说明：这会让红绿灯悬浮在内容之上，前端需自行留出安全区并提供可拖拽区域。
             #[cfg(target_os = "macos")]
             {
@@ -67,7 +71,92 @@ pub fn run() {
                     let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
                 }
             }
+
+            // 创建自定义菜单
+            let settings_item = MenuItemBuilder::new("设置...")
+                .id("settings")
+                .accelerator("CmdOrCtrl+,")
+                .build(app)?;
+
+            let devtools_item = MenuItemBuilder::new("开发者工具")
+                .id("devtools")
+                .accelerator("CmdOrCtrl+Shift+I")
+                .build(app)?;
+
+            let check_update_item = MenuItemBuilder::new("检查更新...")
+                .id("check_update")
+                .build(app)?;
+
+            let help_submenu = SubmenuBuilder::new(app, "帮助")
+                .item(&settings_item)
+                .separator()
+                .item(&devtools_item)
+                .separator()
+                .item(&check_update_item)
+                .build()?;
+
+            let menu = MenuBuilder::new(app)
+                .items(&[&help_submenu])
+                .build()?;
+
+            app.set_menu(menu)?;
+
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            match event.id().as_ref() {
+                "settings" => {
+                    let _ = app.emit("open-settings", ());
+                }
+                "devtools" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        window.open_devtools();
+                    }
+                }
+                "check_update" => {
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let current_version = app_handle.package_info().version.to_string();
+                        match app_handle.updater() {
+                            Ok(updater) => {
+                                match updater.check().await {
+                                    Ok(Some(update)) => {
+                                        let version = update.version.clone();
+                                        let body = update.body.clone().unwrap_or_else(|| "请前往下载更新".to_string());
+                                        app_handle.dialog()
+                                            .message(format!("发现新版本 {}\n\n{}", version, body))
+                                            .title("检查更新")
+                                            .kind(MessageDialogKind::Info)
+                                            .blocking_show();
+                                    }
+                                    Ok(None) => {
+                                        app_handle.dialog()
+                                            .message(format!("当前已是最新版本 ({})", current_version))
+                                            .title("检查更新")
+                                            .kind(MessageDialogKind::Info)
+                                            .blocking_show();
+                                    }
+                                    Err(e) => {
+                                        app_handle.dialog()
+                                            .message(format!("检查更新失败: {}", e))
+                                            .title("检查更新")
+                                            .kind(MessageDialogKind::Error)
+                                            .blocking_show();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                app_handle.dialog()
+                                    .message(format!("检查更新失败: {}", e))
+                                    .title("检查更新")
+                                    .kind(MessageDialogKind::Error)
+                                    .blocking_show();
+                            }
+                        }
+                    });
+                }
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::document::upload_document,
@@ -114,6 +203,8 @@ pub fn run() {
             commands::preview_ask_history::clear_all_preview_ask_history,
             commands::preview_ask_history::get_preview_ask_history_stats,
             commands::updater::get_updater_platform_info,
+            commands::updater::check_for_update,
+            commands::devtools::open_devtools,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

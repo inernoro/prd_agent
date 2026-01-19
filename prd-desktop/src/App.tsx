@@ -3,6 +3,7 @@ import { invoke, listen } from './lib/tauri';
 import { useSessionStore } from './stores/sessionStore';
 import { useAuthStore } from './stores/authStore';
 import { useGroupListStore } from './stores/groupListStore';
+import { useSettingsStore } from './stores/settingsStore';
 import Header from './components/Layout/Header';
 import Sidebar from './components/Layout/Sidebar';
 import DocumentUpload from './components/Document/DocumentUpload';
@@ -13,6 +14,7 @@ import LoginPage from './components/Auth/LoginPage';
 import PrdCitationPreviewDrawer from './components/Document/PrdCitationPreviewDrawer';
 import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
+import SettingsModal from './components/Settings/SettingsModal';
 import AssetsDiagPage from './components/Assets/AssetsDiagPage';
 import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
@@ -100,6 +102,18 @@ function App() {
       } catch {
         // ignore
       }
+    }).catch(() => {
+      return () => {};
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
+
+  // 监听系统菜单栏"设置"事件
+  useEffect(() => {
+    const unlistenPromise = listen('open-settings', () => {
+      useSettingsStore.getState().openModal();
     }).catch(() => {
       return () => {};
     });
@@ -417,6 +431,9 @@ function App() {
 
       {/* 全局系统级错误弹窗（invoke 层统一拦截触发） */}
       <SystemErrorModal />
+
+      {/* 设置模态框 */}
+      <SettingsModal />
 
       {/* 冷启动全局加载遮罩（唯一加载动画） */}
       <StartLoadOverlay open={showColdStartLoading} />
