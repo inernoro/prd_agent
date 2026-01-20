@@ -152,7 +152,7 @@ export default function App() {
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
-        <Route path="prompts" element={<RequirePermission perm="prompts.write"><PromptStagesPage /></RequirePermission>} />
+        <Route path="prompts" element={<RequirePermission perm="prompts.read"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="mds.read"><LabPage /></RequirePermission>} />
         <Route path="authz" element={<RequirePermission perm="authz.manage"><AuthzPage /></RequirePermission>} />

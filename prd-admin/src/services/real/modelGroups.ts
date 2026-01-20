@@ -7,8 +7,7 @@ import type {
 } from '../../types/modelGroup';
 import type { IModelGroupsService } from '../contracts/modelGroups';
 import { useAuthStore } from '@/stores/authStore';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+import { api } from '@/services/api';
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().token;
@@ -20,7 +19,6 @@ function getAuthHeaders(): Record<string, string> {
 async function readApiJson<T>(res: Response): Promise<ApiResponse<T>> {
   const text = await res.text();
   if (!text.trim()) {
-    // 兜底：后端应总是返回 ApiResponse，但这里防御空响应
     return { success: false, data: null as any, error: { code: 'INVALID_FORMAT', message: `Empty response (HTTP ${res.status})` } };
   }
   try {
@@ -37,19 +35,16 @@ function mapGroupFromApi(g: any): ModelGroup {
     ...g,
     modelType,
     isDefaultForType,
-    // code 和 priority 直接从后端获取
     code: g?.code || '',
     priority: g?.priority ?? 50,
-    // 兼容字段
     isSystemGroup: isDefaultForType,
   } as ModelGroup;
 }
 
 export class ModelGroupsService implements IModelGroupsService {
   async getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>> {
-    const url = modelType
-      ? `${API_BASE}/mds/model-groups?modelType=${encodeURIComponent(modelType)}`
-      : `${API_BASE}/mds/model-groups`;
+    const base = api.mds.modelGroups.list();
+    const url = modelType ? `${base}?modelType=${encodeURIComponent(modelType)}` : base;
 
     const res = await fetch(url, {
       headers: getAuthHeaders(),
@@ -63,7 +58,7 @@ export class ModelGroupsService implements IModelGroupsService {
   }
 
   async getModelGroup(id: string): Promise<ApiResponse<ModelGroup>> {
-    const res = await fetch(`${API_BASE}/mds/model-groups/${id}`, {
+    const res = await fetch(api.mds.modelGroups.byId(id), {
       headers: getAuthHeaders(),
     });
 
@@ -85,7 +80,7 @@ export class ModelGroupsService implements IModelGroupsService {
       isDefaultForType: !!request.isDefaultForType,
       description: request.description ?? undefined,
     };
-    const res = await fetch(`${API_BASE}/mds/model-groups`, {
+    const res = await fetch(api.mds.modelGroups.list(), {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
@@ -113,7 +108,7 @@ export class ModelGroupsService implements IModelGroupsService {
     if (request.models !== undefined) payload.models = request.models;
     if (request.isDefaultForType !== undefined) payload.isDefaultForType = !!request.isDefaultForType;
 
-    const res = await fetch(`${API_BASE}/mds/model-groups/${id}`, {
+    const res = await fetch(api.mds.modelGroups.byId(id), {
       method: 'PUT',
       headers: {
         ...getAuthHeaders(),
@@ -130,7 +125,7 @@ export class ModelGroupsService implements IModelGroupsService {
   }
 
   async deleteModelGroup(id: string): Promise<ApiResponse<{ id: string }>> {
-    const res = await fetch(`${API_BASE}/mds/model-groups/${id}`, {
+    const res = await fetch(api.mds.modelGroups.byId(id), {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
@@ -143,7 +138,7 @@ export class ModelGroupsService implements IModelGroupsService {
   }
 
   async getGroupMonitoring(groupId: string): Promise<ApiResponse<ModelGroupMonitoringData>> {
-    const res = await fetch(`${API_BASE}/mds/model-groups/${groupId}/monitoring`, {
+    const res = await fetch(api.lab.modelTest.groupMonitoring(groupId), {
       headers: getAuthHeaders(),
     });
 
@@ -160,13 +155,13 @@ export class ModelGroupsService implements IModelGroupsService {
     platformId: string,
     failureCount: number
   ): Promise<ApiResponse<void>> {
-    const res = await fetch(`${API_BASE}/mds/model-groups/${groupId}/simulate-downgrade`, {
+    const res = await fetch(api.lab.modelTest.simulate.downgrade(), {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ modelId, platformId, failureCount }),
+      body: JSON.stringify({ groupId, modelId, platformId, failureCount }),
     });
 
     const json = await readApiJson<void>(res);
@@ -182,13 +177,13 @@ export class ModelGroupsService implements IModelGroupsService {
     platformId: string,
     successCount: number
   ): Promise<ApiResponse<void>> {
-    const res = await fetch(`${API_BASE}/mds/model-groups/${groupId}/simulate-recover`, {
+    const res = await fetch(api.lab.modelTest.simulate.recover(), {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ modelId, platformId, successCount }),
+      body: JSON.stringify({ groupId, modelId, platformId, successCount }),
     });
 
     const json = await readApiJson<void>(res);

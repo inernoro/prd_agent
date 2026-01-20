@@ -34,6 +34,7 @@ type AuthState = {
   setPermissionsLoaded: (loaded: boolean) => void;
   setIsRoot: (isRoot: boolean) => void;
   setMenuCatalog: (items: AdminMenuItem[]) => void;
+  setMenuCatalogLoaded: (loaded: boolean) => void;
   patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
 };
@@ -57,6 +58,7 @@ export const useAuthStore = create<AuthState>()(
       setPermissionsLoaded: (loaded) => set({ permissionsLoaded: !!loaded }),
       setIsRoot: (isRoot) => set({ isRoot: !!isRoot }),
       setMenuCatalog: (items) => set({ menuCatalog: Array.isArray(items) ? items : [], menuCatalogLoaded: true }),
+      setMenuCatalogLoaded: (loaded) => set({ menuCatalogLoaded: !!loaded }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => set({

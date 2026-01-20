@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type { LlmRequestLog } from '@/types/admin';
 import type {
@@ -27,18 +28,18 @@ function toQuery(params?: GetLlmLogsParams) {
 }
 
 export const getLlmLogsReal: GetLlmLogsContract = async (params?: GetLlmLogsParams): Promise<ApiResponse<LlmLogsListData>> => {
-  return await apiRequest<LlmLogsListData>(`/api/logs/llm${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<LlmLogsListData>(`${api.logs.llm.list()}${toQuery(params)}`, { method: 'GET' });
 };
 
 export const getLlmLogDetailReal: GetLlmLogDetailContract = async (id: string): Promise<ApiResponse<LlmRequestLog>> => {
-  return await apiRequest<LlmRequestLog>(`/api/logs/llm/${encodeURIComponent(id)}`, { method: 'GET' });
+  return await apiRequest<LlmRequestLog>(api.logs.llm.byId(encodeURIComponent(id)), { method: 'GET' });
 };
 
 export const getLlmLogsMetaReal: GetLlmLogsMetaContract = async (): Promise<ApiResponse<LlmLogsMetaData>> => {
-  return await apiRequest<LlmLogsMetaData>('/api/logs/llm/meta', { method: 'GET' });
+  return await apiRequest<LlmLogsMetaData>(api.logs.llm.meta(), { method: 'GET' });
 };
 
 export const getLlmModelStatsReal: GetLlmModelStatsContract = async (params?: GetLlmModelStatsParams): Promise<ApiResponse<LlmModelStatsData>> => {
-  return await apiRequest<LlmModelStatsData>(`/api/logs/llm/model-stats${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<LlmModelStatsData>(`${api.logs.llm.modelStats()}${toQuery(params)}`, { method: 'GET' });
 };
 

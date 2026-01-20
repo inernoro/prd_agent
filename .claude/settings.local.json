@@ -18,7 +18,10 @@
       "Bash(pnpm build:*)",
       "Bash(curl:*)",
       "Bash(lsof:*)",
-      "Bash(ps:*)"
+      "Bash(ps:*)",
+      "Bash(cd:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

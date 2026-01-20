@@ -10,6 +10,7 @@ import { getActiveGroups, getGapStats, getLlmLogs, getMessageTrend, getOverviewS
 import type { ActiveGroup, GapStats, TrendItem, TokenUsage } from '@/services/contracts/adminStats';
 import type { LlmRequestLogListItem } from '@/types/admin';
 import { useEffect, useMemo, useState } from 'react';
+import { useAuthStore } from '@/stores/authStore';
 
 type ObsMetrics = {
   sample: number;
@@ -87,6 +88,9 @@ function calcObs(logs: LlmRequestLogListItem[]): ObsMetrics {
 }
 
 export default function DashboardPage() {
+  const permissions = useAuthStore((s) => s.permissions);
+  const hasLogsRead = permissions.includes('logs.read');
+
   const [days, setDays] = useState(14);
   const [overview, setOverview] = useState<{ totalUsers: number; activeUsers: number; totalGroups: number; todayMessages: number } | null>(null);
   const [token, setToken] = useState<TokenUsage | null>(null);
@@ -98,6 +102,11 @@ export default function DashboardPage() {
   const [loadingSeries, setLoadingSeries] = useState(true);
 
   useEffect(() => {
+    // 只有有 logs.read 权限时才请求统计数据
+    if (!hasLogsRead) {
+      setLoadingBase(false);
+      return;
+    }
     (async () => {
       setLoadingBase(true);
       try {
@@ -116,9 +125,14 @@ export default function DashboardPage() {
         setLoadingBase(false);
       }
     })();
-  }, []);
+  }, [hasLogsRead]);
 
   useEffect(() => {
+    // 只有有 logs.read 权限时才请求趋势数据
+    if (!hasLogsRead) {
+      setLoadingSeries(false);
+      return;
+    }
     (async () => {
       setLoadingSeries(true);
       try {
@@ -129,7 +143,7 @@ export default function DashboardPage() {
         setLoadingSeries(false);
       }
     })();
-  }, [days]);
+  }, [days, hasLogsRead]);
 
   const baseOption: Pick<EChartsOption, 'backgroundColor' | 'textStyle'> = useMemo(
     () => ({
@@ -224,6 +238,26 @@ export default function DashboardPage() {
     }),
     [baseOption, gapStats]
   );
+
+  // 没有 logs.read 权限时显示欢迎页面
+  if (!hasLogsRead) {
+    return (
+      <div className="space-y-6">
+        <TabBar title="仪表盘" icon={<LayoutDashboard size={16} />} />
+        <Card>
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <LayoutDashboard size={48} className="mb-4" style={{ color: 'var(--text-muted)' }} />
+            <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+              欢迎使用 PRD Agent
+            </h2>
+            <p className="text-sm max-w-md" style={{ color: 'var(--text-secondary)' }}>
+              请从左侧菜单选择功能开始使用。如需查看统计数据，请联系管理员获取相应权限。
+            </p>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/authStore';
+import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
 
@@ -12,8 +13,8 @@ export async function uploadUserAvatar(input: { userId: string; file: File }): P
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
   const url = rawBase
-    ? `${rawBase}/api/users/${encodeURIComponent(input.userId)}/avatar/upload`
-    : `/api/users/${encodeURIComponent(input.userId)}/avatar/upload`;
+    ? `${rawBase}${api.users.avatarUpload(encodeURIComponent(input.userId))}`
+    : api.users.avatarUpload(encodeURIComponent(input.userId));
 
   const res = await fetch(url, { method: 'POST', headers, body: fd });
   const text = await res.text();

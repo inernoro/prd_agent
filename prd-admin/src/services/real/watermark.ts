@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
   GetModelSizesContract,
@@ -21,21 +22,21 @@ import type { ApiResponse } from '@/types/api';
  * 获取当前用户的所有水印配置
  */
 export const getWatermarksReal: GetWatermarksContract = async () => {
-  return await apiRequest('/api/watermarks', { method: 'GET' });
+  return await apiRequest(api.watermark.list(), { method: 'GET' });
 };
 
 /**
  * 获取绑定到指定应用的水印配置
  */
 export const getWatermarkByAppReal: GetWatermarkByAppContract = async (input) => {
-  return await apiRequest(`/api/watermarks/app/${encodeURIComponent(input.appKey)}`, { method: 'GET' });
+  return await apiRequest(api.watermark.byApp(encodeURIComponent(input.appKey)), { method: 'GET' });
 };
 
 /**
  * 创建新的水印配置
  */
 export const createWatermarkReal: CreateWatermarkContract = async (input) => {
-  return await apiRequest('/api/watermarks', { method: 'POST', body: input });
+  return await apiRequest(api.watermark.list(), { method: 'POST', body: input });
 };
 
 /**
@@ -43,21 +44,21 @@ export const createWatermarkReal: CreateWatermarkContract = async (input) => {
  */
 export const updateWatermarkReal: UpdateWatermarkContract = async (input) => {
   const { id, ...body } = input;
-  return await apiRequest(`/api/watermarks/${encodeURIComponent(id)}`, { method: 'PUT', body });
+  return await apiRequest(api.watermark.byId(encodeURIComponent(id)), { method: 'PUT', body });
 };
 
 /**
  * 删除水印配置
  */
 export const deleteWatermarkReal: DeleteWatermarkContract = async (input) => {
-  return await apiRequest(`/api/watermarks/${encodeURIComponent(input.id)}`, { method: 'DELETE' });
+  return await apiRequest(api.watermark.byId(encodeURIComponent(input.id)), { method: 'DELETE' });
 };
 
 /**
  * 绑定水印到指定应用（会先解绑该应用在其他水印上的绑定）
  */
 export const bindWatermarkAppReal: BindWatermarkAppContract = async (input) => {
-  return await apiRequest(`/api/watermarks/${encodeURIComponent(input.id)}/bind/${encodeURIComponent(input.appKey)}`, {
+  return await apiRequest(api.watermark.bind(encodeURIComponent(input.id), encodeURIComponent(input.appKey)), {
     method: 'POST',
   });
 };
@@ -66,13 +67,13 @@ export const bindWatermarkAppReal: BindWatermarkAppContract = async (input) => {
  * 解绑水印与指定应用的关联
  */
 export const unbindWatermarkAppReal: UnbindWatermarkAppContract = async (input) => {
-  return await apiRequest(`/api/watermarks/${encodeURIComponent(input.id)}/unbind/${encodeURIComponent(input.appKey)}`, {
+  return await apiRequest(api.watermark.unbind(encodeURIComponent(input.id), encodeURIComponent(input.appKey)), {
     method: 'DELETE',
   });
 };
 
 export const getWatermarkFontsReal: GetWatermarkFontsContract = async () => {
-  return await apiRequest('/api/watermark/fonts', { method: 'GET' });
+  return await apiRequest(api.watermark.fonts.list(), { method: 'GET' });
 };
 
 export const uploadWatermarkFontReal: UploadWatermarkFontContract = async (input) => {
@@ -85,7 +86,7 @@ export const uploadWatermarkFontReal: UploadWatermarkFontContract = async (input
   if (input.displayName) fd.append('displayName', input.displayName);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-  const url = rawBase ? `${rawBase}/api/watermark/fonts` : '/api/watermark/fonts';
+  const url = rawBase ? `${rawBase}${api.watermark.fonts.list()}` : api.watermark.fonts.list();
   const res = await fetch(url, { method: 'POST', headers, body: fd });
   const text = await res.text();
   try {
@@ -100,7 +101,7 @@ export const uploadWatermarkFontReal: UploadWatermarkFontContract = async (input
 };
 
 export const deleteWatermarkFontReal: DeleteWatermarkFontContract = async (input) => {
-  return await apiRequest(`/api/watermark/fonts/${encodeURIComponent(input.fontKey)}`, { method: 'DELETE' });
+  return await apiRequest(api.watermark.fonts.byKey(encodeURIComponent(input.fontKey)), { method: 'DELETE' });
 };
 
 export const uploadWatermarkIconReal: UploadWatermarkIconContract = async (input) => {
@@ -112,7 +113,7 @@ export const uploadWatermarkIconReal: UploadWatermarkIconContract = async (input
   fd.append('file', input.file);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-  const url = rawBase ? `${rawBase}/api/watermark/icons` : '/api/watermark/icons';
+  const url = rawBase ? `${rawBase}${api.watermark.icons()}` : api.watermark.icons();
   const res = await fetch(url, { method: 'POST', headers, body: fd });
   const text = await res.text();
   try {
@@ -128,5 +129,5 @@ export const uploadWatermarkIconReal: UploadWatermarkIconContract = async (input
 
 export const getModelSizesReal: GetModelSizesContract = async (input) => {
   const key = encodeURIComponent(input.modelKey);
-  return await apiRequest(`/api/model/${key}/sizes`, { method: 'GET' });
+  return await apiRequest(api.modelSizes(key), { method: 'GET' });
 };

@@ -8,6 +8,7 @@ import type {
   PagedLogsResponse,
 } from '../contracts/openPlatform';
 import { apiRequest } from './apiClient';
+import { api } from '@/services/api';
 
 export class OpenPlatformService implements IOpenPlatformService {
   async getApps(page: number, pageSize: number, search?: string): Promise<PagedAppsResponse> {
@@ -20,7 +21,7 @@ export class OpenPlatformService implements IOpenPlatformService {
     }
 
     const response = await apiRequest<PagedAppsResponse>(
-      `/api/open-platform/apps?${params.toString()}`
+      `${api.openPlatform.apps.list()}?${params.toString()}`
     );
     if (!response.success) {
       throw new Error(response.error?.message || '请求失败');
@@ -29,7 +30,7 @@ export class OpenPlatformService implements IOpenPlatformService {
   }
 
   async createApp(request: CreateAppRequest): Promise<CreateAppResponse> {
-    const response = await apiRequest<CreateAppResponse>('/api/open-platform/apps', {
+    const response = await apiRequest<CreateAppResponse>(api.openPlatform.apps.list(), {
       method: 'POST',
       body: request,
     });
@@ -40,7 +41,7 @@ export class OpenPlatformService implements IOpenPlatformService {
   }
 
   async updateApp(id: string, request: UpdateAppRequest): Promise<void> {
-    const response = await apiRequest(`/api/open-platform/apps/${id}`, {
+    const response = await apiRequest(api.openPlatform.apps.byId(id), {
       method: 'PUT',
       body: request,
     });
@@ -50,7 +51,7 @@ export class OpenPlatformService implements IOpenPlatformService {
   }
 
   async deleteApp(id: string): Promise<void> {
-    const response = await apiRequest(`/api/open-platform/apps/${id}`, {
+    const response = await apiRequest(api.openPlatform.apps.byId(id), {
       method: 'DELETE',
     });
     if (!response.success) {
@@ -60,7 +61,7 @@ export class OpenPlatformService implements IOpenPlatformService {
 
   async regenerateKey(id: string): Promise<RegenerateKeyResponse> {
     const response = await apiRequest<RegenerateKeyResponse>(
-      `/api/open-platform/apps/${id}/regenerate-key`,
+      `${api.openPlatform.apps.byId(id)}/regenerate-key`,
       {
         method: 'POST',
         body: {},
@@ -73,7 +74,7 @@ export class OpenPlatformService implements IOpenPlatformService {
   }
 
   async toggleAppStatus(id: string): Promise<void> {
-    const response = await apiRequest(`/api/open-platform/apps/${id}/toggle`, {
+    const response = await apiRequest(api.openPlatform.apps.toggle(id), {
       method: 'POST',
       body: {},
     });

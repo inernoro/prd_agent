@@ -55,11 +55,10 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             apiKey = authHeaderValue.Trim();
         }
 
+        // 如果不是 sk- 开头的 API Key，静默跳过让其他认证方案处理（如 JWT）
         if (string.IsNullOrWhiteSpace(apiKey) || !apiKey.StartsWith("sk-"))
         {
-            Logger.LogWarning("[401] API Key格式无效 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
-                requestPath, requestMethod, clientIp, apiKey?.Length > 10 ? apiKey[..10] + "..." : apiKey ?? "empty");
-            return AuthenticateResult.Fail("Invalid API Key format");
+            return AuthenticateResult.NoResult();
         }
 
         // 检查是否为测试 Key

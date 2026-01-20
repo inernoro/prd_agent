@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import { fail, ok, type ApiResponse } from '@/types/api';
 import type {
   ActivateLLMConfigContract,
@@ -12,7 +13,7 @@ import type {
 import type { LLMConfig } from '@/types/admin';
 
 export const getLLMConfigsReal: GetLLMConfigsContract = async (): Promise<ApiResponse<LLMConfig[]>> => {
-  return await apiRequest<LLMConfig[]>(`/api/mds/llm-configs`);
+  return await apiRequest<LLMConfig[]>(api.mds.llmConfigs.list());
 };
 
 type BackendCreateResponse = { id: string };
@@ -27,7 +28,7 @@ async function refetchConfig(configId: string): Promise<ApiResponse<LLMConfig>> 
 }
 
 export const createLLMConfigReal: CreateLLMConfigContract = async (input: CreateLLMConfigInput): Promise<ApiResponse<LLMConfig>> => {
-  const res = await apiRequest<BackendCreateResponse>(`/api/mds/llm-configs`, {
+  const res = await apiRequest<BackendCreateResponse>(api.mds.llmConfigs.list(), {
     method: 'POST',
     body: input,
   });
@@ -36,7 +37,7 @@ export const createLLMConfigReal: CreateLLMConfigContract = async (input: Create
 };
 
 export const updateLLMConfigReal: UpdateLLMConfigContract = async (id: string, input: UpdateLLMConfigInput): Promise<ApiResponse<LLMConfig>> => {
-  // 后端 Update 接口是“全量字段模型”，这里先取旧值做 merge，避免缺字段被默认值覆盖
+  // 后端 Update 接口是"全量字段模型"，这里先取旧值做 merge，避免缺字段被默认值覆盖
   const listRes = await getLLMConfigsReal();
   if (!listRes.success) return listRes as unknown as ApiResponse<LLMConfig>;
   const current = listRes.data.find((c) => c.id === id);
@@ -54,7 +55,7 @@ export const updateLLMConfigReal: UpdateLLMConfigContract = async (id: string, i
     enablePromptCache: input.enablePromptCache ?? current.enablePromptCache ?? true,
   };
 
-  const res = await apiRequest<BackendUpdateResponse>(`/api/mds/llm-configs/${encodeURIComponent(id)}`, {
+  const res = await apiRequest<BackendUpdateResponse>(api.mds.llmConfigs.byId(encodeURIComponent(id)), {
     method: 'PUT',
     body,
   });
@@ -63,7 +64,7 @@ export const updateLLMConfigReal: UpdateLLMConfigContract = async (id: string, i
 };
 
 export const deleteLLMConfigReal: DeleteLLMConfigContract = async (id: string): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<true>(`/api/mds/llm-configs/${encodeURIComponent(id)}`, {
+  const res = await apiRequest<true>(api.mds.llmConfigs.byId(encodeURIComponent(id)), {
     method: 'DELETE',
     emptyResponseData: true,
   });
@@ -72,7 +73,7 @@ export const deleteLLMConfigReal: DeleteLLMConfigContract = async (id: string): 
 };
 
 export const activateLLMConfigReal: ActivateLLMConfigContract = async (id: string): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<unknown>(`/api/mds/llm-configs/${encodeURIComponent(id)}/activate`, {
+  const res = await apiRequest<unknown>(api.mds.llmConfigs.activate(encodeURIComponent(id)), {
     method: 'POST',
     body: {},
   });

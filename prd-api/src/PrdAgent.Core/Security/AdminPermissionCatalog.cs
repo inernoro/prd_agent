@@ -37,6 +37,7 @@ public static class AdminPermissionCatalog
     public const string SettingsRead = "settings.read";
     public const string SettingsWrite = "settings.write";
 
+    public const string PromptsRead = "prompts.read";
     public const string PromptsWrite = "prompts.write";
 
     /// <summary>
@@ -77,6 +78,7 @@ public static class AdminPermissionCatalog
         new(SettingsRead, "设置-读", "查看系统设置"),
         new(SettingsWrite, "设置-写", "修改系统设置"),
 
+        new(PromptsRead, "提示词-读", "查看提示词配置"),
         new(PromptsWrite, "提示词-写", "编辑提示词配置"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),

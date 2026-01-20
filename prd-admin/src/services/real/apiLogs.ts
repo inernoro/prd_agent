@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type { ApiLogsListData, ApiLogsListParams, ApiLogsMetaData, ApiRequestLog } from '@/services/contracts/apiLogs';
 
@@ -16,15 +17,15 @@ function toQuery(params?: ApiLogsListParams) {
 }
 
 export async function getApiLogsReal(params?: ApiLogsListParams): Promise<ApiResponse<ApiLogsListData>> {
-  return await apiRequest<ApiLogsListData>(`/api/logs/api${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<ApiLogsListData>(`${api.logs.api.list()}${toQuery(params)}`, { method: 'GET' });
 }
 
 export async function getApiLogDetailReal(id: string): Promise<ApiResponse<ApiRequestLog>> {
-  return await apiRequest<ApiRequestLog>(`/api/logs/api/${encodeURIComponent(id)}`, { method: 'GET' });
+  return await apiRequest<ApiRequestLog>(api.logs.api.byId(encodeURIComponent(id)), { method: 'GET' });
 }
 
 export async function getApiLogsMetaReal(): Promise<ApiResponse<ApiLogsMetaData>> {
-  return await apiRequest<ApiLogsMetaData>('/api/logs/api/meta', { method: 'GET' });
+  return await apiRequest<ApiLogsMetaData>(api.logs.api.meta(), { method: 'GET' });
 }
 
 

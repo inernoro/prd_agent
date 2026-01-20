@@ -197,20 +197,11 @@ export default function AppShell() {
   const focusHideAside = fullBleedMain;
   const mainPadLeft = focusHideAside ? asideGap : asideWidth + asideGap * 2;
 
-  // 过滤活跃通知：
-  // 1. 状态为 open
-  // 2. 权限目录变更通知仅对 root 用户或拥有权限管理权限的用户显示
-  const activeNotifications = useMemo(() => {
-    const hasAuthzManage = Array.isArray(permissions) && permissions.includes('authz.manage');
-    return notifications.filter((n) => {
-      if (n.status !== 'open') return false;
-      // 权限目录变更通知仅对 root 或有权限管理权限的用户显示
-      if (n.key === 'permission-catalog-updated' && !isRoot && !hasAuthzManage) {
-        return false;
-      }
-      return true;
-    });
-  }, [notifications, isRoot, permissions]);
+  // 过滤活跃通知：仅显示状态为 open 的通知
+  const activeNotifications = useMemo(
+    () => notifications.filter((n) => n.status === 'open'),
+    [notifications]
+  );
   const notificationCount = activeNotifications.length;
   const toastNotification = useMemo(
     () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),

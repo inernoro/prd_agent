@@ -15,7 +15,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/prompts/optimize")]
 [Authorize]
-[AdminController("prompts", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
+[AdminController("prompts", AdminPermissionCatalog.PromptsRead, WritePermission = AdminPermissionCatalog.PromptsWrite)]
 public class PromptsOptimizeController : ControllerBase
 {
     private readonly ILLMClient _llmClient;

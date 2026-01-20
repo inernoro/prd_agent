@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type { ListUploadArtifactsContract, ListUploadArtifactsParams, ListUploadArtifactsData } from '@/services/contracts/uploadArtifacts';
 
@@ -11,7 +12,7 @@ function toQuery(params: ListUploadArtifactsParams) {
 }
 
 export const listUploadArtifactsReal: ListUploadArtifactsContract = async (params): Promise<ApiResponse<ListUploadArtifactsData>> => {
-  return await apiRequest<ListUploadArtifactsData>(`/api/logs/upload-artifacts${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<ListUploadArtifactsData>(`${api.visualAgent.uploadArtifacts()}${toQuery(params)}`, { method: 'GET' });
 };
 
 

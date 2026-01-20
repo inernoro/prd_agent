@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/authStore';
+import { api } from '@/services/api';
 import { fail, ok, type ApiResponse } from '@/types/api';
 
 function joinUrl(base: string, path: string) {
@@ -129,7 +130,7 @@ async function tryRefreshAdminToken(): Promise<boolean> {
 
   if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
 
-  const url = joinUrl(getApiBaseUrl(), '/api/v1/auth/refresh');
+  const url = joinUrl(getApiBaseUrl(), api.auth.refresh());
   const body = JSON.stringify({
     refreshToken,
     userId,

@@ -1,4 +1,5 @@
 import { apiRequest } from './apiClient';
+import { api } from '@/services/api';
 import type {
   AddVisualAgentMessageContract,
   AddVisualAgentWorkspaceMessageContract,
@@ -29,7 +30,7 @@ import type {
 } from '../contracts/visualAgent';
 
 export const createVisualAgentSessionReal: CreateVisualAgentSessionContract = async (input) => {
-  return await apiRequest<{ session: VisualAgentSession }>('/api/visual-agent/image-master/sessions', {
+  return await apiRequest<{ session: VisualAgentSession }>(api.visualAgent.imageMaster.sessions.list(), {
     method: 'POST',
     body: { title: input.title },
   });
@@ -37,7 +38,7 @@ export const createVisualAgentSessionReal: CreateVisualAgentSessionContract = as
 
 export const listVisualAgentSessionsReal: ListVisualAgentSessionsContract = async (input) => {
   const limit = input?.limit ?? 20;
-  return await apiRequest<{ items: VisualAgentSession[] }>(`/api/visual-agent/image-master/sessions?limit=${encodeURIComponent(String(limit))}`, {
+  return await apiRequest<{ items: VisualAgentSession[] }>(`${api.visualAgent.imageMaster.sessions.list()}?limit=${encodeURIComponent(String(limit))}`, {
     method: 'GET',
   });
 };
@@ -48,7 +49,7 @@ export const getVisualAgentSessionReal: GetVisualAgentSessionContract = async (i
   if (input.assetLimit != null) qs.set('assetLimit', String(input.assetLimit));
   const q = qs.toString();
   return await apiRequest<{ session: VisualAgentSession; messages: VisualAgentMessage[]; assets: ImageAsset[] }>(
-    `/api/visual-agent/image-master/sessions/${encodeURIComponent(input.id)}${q ? `?${q}` : ''}`,
+    `${api.visualAgent.imageMaster.sessions.byId(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
     {
       method: 'GET',
     }
@@ -56,14 +57,14 @@ export const getVisualAgentSessionReal: GetVisualAgentSessionContract = async (i
 };
 
 export const addVisualAgentMessageReal: AddVisualAgentMessageContract = async (input) => {
-  return await apiRequest<{ message: VisualAgentMessage }>(`/api/visual-agent/image-master/sessions/${encodeURIComponent(input.sessionId)}/messages`, {
+  return await apiRequest<{ message: VisualAgentMessage }>(api.visualAgent.imageMaster.sessions.messages(encodeURIComponent(input.sessionId)), {
     method: 'POST',
     body: { role: input.role, content: input.content },
   });
 };
 
 export const uploadImageAssetReal: UploadImageAssetContract = async (input) => {
-  return await apiRequest<{ asset: ImageAsset }>('/api/visual-agent/image-master/assets', {
+  return await apiRequest<{ asset: ImageAsset }>(api.visualAgent.imageMaster.assets.upload(), {
     method: 'POST',
     body: {
       data: input.data,
@@ -76,13 +77,13 @@ export const uploadImageAssetReal: UploadImageAssetContract = async (input) => {
 };
 
 export const deleteVisualAgentAssetReal: DeleteVisualAgentAssetContract = async (input) => {
-  return await apiRequest<{ deleted: boolean }>(`/api/visual-agent/image-master/assets/${encodeURIComponent(input.id)}`, {
+  return await apiRequest<{ deleted: boolean }>(api.visualAgent.imageMaster.assets.byId(encodeURIComponent(input.id)), {
     method: 'DELETE',
   });
 };
 
 export const getVisualAgentCanvasReal: GetVisualAgentCanvasContract = async (input) => {
-  return await apiRequest<{ canvas: VisualAgentCanvas | null }>(`/api/visual-agent/image-master/sessions/${encodeURIComponent(input.id)}/canvas`, {
+  return await apiRequest<{ canvas: VisualAgentCanvas | null }>(api.visualAgent.imageMaster.sessions.canvas(encodeURIComponent(input.id)), {
     method: 'GET',
   });
 };
@@ -91,7 +92,7 @@ export const saveVisualAgentCanvasReal: SaveVisualAgentCanvasContract = async (i
   const headers: Record<string, string> = {};
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ canvas: VisualAgentCanvas }>(`/api/visual-agent/image-master/sessions/${encodeURIComponent(input.id)}/canvas`, {
+  return await apiRequest<{ canvas: VisualAgentCanvas }>(api.visualAgent.imageMaster.sessions.canvas(encodeURIComponent(input.id)), {
     method: 'PUT',
     headers,
     body: {
@@ -104,7 +105,7 @@ export const saveVisualAgentCanvasReal: SaveVisualAgentCanvasContract = async (i
 export const listVisualAgentWorkspacesReal: ListVisualAgentWorkspacesContract = async (input) => {
   const limit = input?.limit ?? 20;
   return await apiRequest<{ items: VisualAgentWorkspace[] }>(
-    `/api/visual-agent/image-master/workspaces?limit=${encodeURIComponent(String(limit))}`,
+    `${api.visualAgent.imageMaster.workspaces.list()}?limit=${encodeURIComponent(String(limit))}`,
     { method: 'GET' }
   );
 };
@@ -113,7 +114,7 @@ export const createVisualAgentWorkspaceReal: CreateVisualAgentWorkspaceContract 
   const headers: Record<string, string> = {};
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ workspace: VisualAgentWorkspace }>('/api/visual-agent/image-master/workspaces', {
+  return await apiRequest<{ workspace: VisualAgentWorkspace }>(api.visualAgent.imageMaster.workspaces.list(), {
     method: 'POST',
     headers,
     body: {
@@ -127,7 +128,7 @@ export const updateVisualAgentWorkspaceReal: UpdateVisualAgentWorkspaceContract 
   const headers: Record<string, string> = {};
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ workspace: VisualAgentWorkspace }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}`, {
+  return await apiRequest<{ workspace: VisualAgentWorkspace }>(api.visualAgent.imageMaster.workspaces.byId(encodeURIComponent(input.id)), {
     method: 'PUT',
     headers,
     body: {
@@ -145,7 +146,7 @@ export const deleteVisualAgentWorkspaceReal: DeleteVisualAgentWorkspaceContract 
   const headers: Record<string, string> = {};
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ deleted: boolean }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}`, {
+  return await apiRequest<{ deleted: boolean }>(api.visualAgent.imageMaster.workspaces.byId(encodeURIComponent(input.id)), {
     method: 'DELETE',
     headers,
   });
@@ -163,7 +164,7 @@ export const getVisualAgentWorkspaceDetailReal: GetVisualAgentWorkspaceDetailCon
     canvas: VisualAgentCanvas | null;
     viewport?: { z: number; x: number; y: number; updatedAt?: string } | null;
   }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/detail${q ? `?${q}` : ''}`,
+    `${api.visualAgent.imageMaster.workspaces.detail(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };
@@ -173,7 +174,7 @@ export const saveVisualAgentWorkspaceViewportReal: SaveVisualAgentWorkspaceViewp
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
   return await apiRequest<{ viewport: { z: number; x: number; y: number; updatedAt?: string } }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/viewport`,
+    api.visualAgent.imageMaster.workspaces.viewport(encodeURIComponent(input.id)),
     {
       method: 'PUT',
       headers,
@@ -183,14 +184,14 @@ export const saveVisualAgentWorkspaceViewportReal: SaveVisualAgentWorkspaceViewp
 };
 
 export const addVisualAgentWorkspaceMessageReal: AddVisualAgentWorkspaceMessageContract = async (input) => {
-  return await apiRequest<{ message: VisualAgentMessage }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/messages`, {
+  return await apiRequest<{ message: VisualAgentMessage }>(api.visualAgent.imageMaster.workspaces.messages(encodeURIComponent(input.id)), {
     method: 'POST',
     body: { role: input.role, content: input.content },
   });
 };
 
 export const getVisualAgentWorkspaceCanvasReal: GetVisualAgentWorkspaceCanvasContract = async (input) => {
-  return await apiRequest<{ canvas: VisualAgentCanvas | null }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/canvas`, {
+  return await apiRequest<{ canvas: VisualAgentCanvas | null }>(api.visualAgent.imageMaster.workspaces.canvas(encodeURIComponent(input.id)), {
     method: 'GET',
   });
 };
@@ -199,7 +200,7 @@ export const saveVisualAgentWorkspaceCanvasReal: SaveVisualAgentWorkspaceCanvasC
   const headers: Record<string, string> = {};
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ canvas: VisualAgentCanvas }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/canvas`, {
+  return await apiRequest<{ canvas: VisualAgentCanvas }>(api.visualAgent.imageMaster.workspaces.canvas(encodeURIComponent(input.id)), {
     method: 'PUT',
     headers,
     body: { schemaVersion: input.schemaVersion ?? 1, payloadJson: input.payloadJson },
@@ -210,7 +211,7 @@ export const uploadVisualAgentWorkspaceAssetReal: UploadVisualAgentWorkspaceAsse
   const headers: Record<string, string> = {};
   const idem = String(input.idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ asset: ImageAsset }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/assets`, {
+  return await apiRequest<{ asset: ImageAsset }>(api.visualAgent.imageMaster.workspaces.assets(encodeURIComponent(input.id)), {
     method: 'POST',
     headers,
     body: {
@@ -229,7 +230,7 @@ export const createWorkspaceImageGenRunReal: CreateWorkspaceImageGenRunContract 
   const headers: Record<string, string> = {};
   const idem = String(idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest<{ runId: string }>(`/api/visual-agent/image-master/workspaces/${encodeURIComponent(id)}/image-gen/runs`, {
+  return await apiRequest<{ runId: string }>(api.visualAgent.imageMaster.workspaces.imageGenRuns(encodeURIComponent(id)), {
     method: 'POST',
     headers,
     body: input,
@@ -238,7 +239,7 @@ export const createWorkspaceImageGenRunReal: CreateWorkspaceImageGenRunContract 
 
 export const deleteVisualAgentWorkspaceAssetReal: DeleteVisualAgentWorkspaceAssetContract = async (input) => {
   return await apiRequest<{ deleted: boolean }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/assets/${encodeURIComponent(input.assetId)}`,
+    api.visualAgent.imageMaster.workspaces.asset(encodeURIComponent(input.id), encodeURIComponent(input.assetId)),
     { method: 'DELETE' }
   );
 };
@@ -249,7 +250,7 @@ export const refreshVisualAgentWorkspaceCoverReal: RefreshVisualAgentWorkspaceCo
   if (idem) headers['Idempotency-Key'] = idem;
   const limit = input.limit ?? 6;
   return await apiRequest<{ workspace: VisualAgentWorkspace }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/cover/refresh?limit=${encodeURIComponent(String(limit))}`,
+    `${api.visualAgent.imageMaster.workspaces.coverRefresh(encodeURIComponent(input.id))}?limit=${encodeURIComponent(String(limit))}`,
     { method: 'POST', headers }
   );
 };
@@ -275,7 +276,7 @@ export async function* generateArticleMarkersReal(input: {
   const token = useAuthStore.getState().token;
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/article/generate-markers`, {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}${api.visualAgent.imageMaster.workspaces.article.generateMarkers(encodeURIComponent(input.id))}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -327,7 +328,7 @@ export async function extractArticleMarkersReal(input: {
   articleContentWithMarkers: string;
 }) {
   return await apiRequest<{ markers: Array<{ index: number; text: string; startPos: number; endPos: number }> }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/article/extract-markers`,
+    api.visualAgent.imageMaster.workspaces.article.extractMarkers(encodeURIComponent(input.id)),
     {
       method: 'POST',
       body: {
@@ -343,7 +344,7 @@ export async function exportArticleReal(input: {
   exportFormat?: string;
 }) {
   return await apiRequest<{ content: string; format: string; assetCount: number }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(input.id)}/article/export`,
+    api.visualAgent.imageMaster.workspaces.article.export(encodeURIComponent(input.id)),
     {
       method: 'POST',
       body: {
@@ -366,7 +367,7 @@ export async function updateArticleMarkerReal(params: {
 }) {
   const { workspaceId, markerIndex, ...body } = params;
   return await apiRequest<{ marker: unknown }>(
-    `/api/visual-agent/image-master/workspaces/${encodeURIComponent(workspaceId)}/article/markers/${encodeURIComponent(String(markerIndex))}`,
+    api.visualAgent.imageMaster.workspaces.article.marker(encodeURIComponent(workspaceId), markerIndex),
     {
       method: 'PATCH',
       body,

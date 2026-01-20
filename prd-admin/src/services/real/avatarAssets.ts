@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/authStore';
+import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type { AdminNoHeadAvatarUploadResponse } from '@/services/contracts/avatarAssets';
 
@@ -11,7 +12,7 @@ export async function uploadNoHeadAvatar(input: { file: File }): Promise<ApiResp
   fd.append('file', input.file);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-  const url = rawBase ? `${rawBase}/api/assets/avatars/nohead` : '/api/assets/avatars/nohead';
+  const url = rawBase ? `${rawBase}${api.assets.avatars.nohead()}` : api.assets.avatars.nohead();
   const res = await fetch(url, { method: 'POST', headers, body: fd });
   const text = await res.text();
   try {

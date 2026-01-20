@@ -1,9 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -30,6 +27,8 @@ public class LabController : ControllerBase
     private readonly ISessionService _sessionService;
     private readonly IGroupMessageSeqService _groupMessageSeqService;
     private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly IJwtService _jwtService;
+    private readonly IAuthSessionService _authSessionService;
 
     public LabController(
         MongoDbContext db,
@@ -40,7 +39,9 @@ public class LabController : ControllerBase
         IGroupMessageStreamHub groupMessageStreamHub,
         ISessionService sessionService,
         IGroupMessageSeqService groupMessageSeqService,
-        IServiceScopeFactory serviceScopeFactory)
+        IServiceScopeFactory serviceScopeFactory,
+        IJwtService jwtService,
+        IAuthSessionService authSessionService)
     {
         _db = db;
         _config = config;
@@ -51,6 +52,8 @@ public class LabController : ControllerBase
         _sessionService = sessionService;
         _groupMessageSeqService = groupMessageSeqService;
         _serviceScopeFactory = serviceScopeFactory;
+        _jwtService = jwtService;
+        _authSessionService = authSessionService;
     }
 
     /// <summary>
@@ -78,36 +81,15 @@ public class LabController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("ACCOUNT_DISABLED", "账号已被禁用"));
         }
 
-        var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("JWT Secret not configured");
-        var jwtIssuer = _config["Jwt:Issuer"] ?? "prdagent";
-        var jwtAudience = _config["Jwt:Audience"] ?? "prdagent";
-
         var expiresInSeconds = Math.Max(60, Math.Min(3600, request.ExpiresInSeconds ?? 900)); // 默认15分钟，范围 1-60分钟
-        var expiresAt = DateTime.UtcNow.AddSeconds(expiresInSeconds);
 
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
-        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+        // 使用 admin clientType，创建会话并获取 tokenVersion
+        const string clientType = "admin";
+        var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, clientType);
+        var (sessionKey, _) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, clientType);
 
-        // 同时写入 "role" 与 ClaimTypes.Role，最大化兼容性
-        var claims = new List<Claim>
-        {
-            new(JwtRegisteredClaimNames.Sub, user.UserId),
-            new(JwtRegisteredClaimNames.UniqueName, user.Username),
-            new("displayName", user.DisplayName),
-            new("role", user.Role.ToString()),
-            new(ClaimTypes.Role, user.Role.ToString()),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new("impersonatedBy", adminId)
-        };
-
-        var token = new JwtSecurityToken(
-            issuer: jwtIssuer,
-            audience: jwtAudience,
-            claims: claims,
-            expires: expiresAt,
-            signingCredentials: credentials);
-
-        var accessToken = new JwtSecurityTokenHandler().WriteToken(token);
+        // 使用标准 JwtService 生成 token，确保包含所有必需的 claims
+        var accessToken = _jwtService.GenerateAccessToken(user, clientType, sessionKey, tokenVersion);
 
         _logger.LogInformation("Admin impersonation issued: adminId={AdminId}, userId={UserId}, expiresIn={Expires}s",
             adminId, user.UserId, expiresInSeconds);

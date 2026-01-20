@@ -142,7 +142,7 @@ export default function UsersPage() {
   const [nameError, setNameError] = useState<string | null>(null);
 
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
-  const { login: authLogin, setPermissionsLoaded, setMenuCatalog } = useAuthStore();
+  const { login: authLogin, setPermissionsLoaded, setMenuCatalogLoaded } = useAuthStore();
   const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('authz.manage'));
 
   // 用户后台权限（systemRoleKey + allow/deny）
@@ -438,7 +438,7 @@ export default function UsersPage() {
 
       // 重置权限和菜单，触发 App.tsx 中的 useEffect 重新加载新用户的权限
       setPermissionsLoaded(false);
-      setMenuCatalog([]);
+      setMenuCatalogLoaded(false);
 
       // 提示并跳转到首页
       await systemDialog.alert(`已切换到用户 "${res.data.user.displayName}" (${res.data.user.username})\n\n请注意：当前以该用户身份登录，会话有效期约 ${Math.floor(res.data.expiresIn / 60)} 分钟。`);

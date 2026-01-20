@@ -5,7 +5,7 @@ public class AdminNotification
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>
-    /// 用于幂等去重的业务键（如 "permission-catalog-updated"）。
+    /// 用于幂等去重的业务键。
     /// </summary>
     public string? Key { get; set; }
 

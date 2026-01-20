@@ -14,6 +14,7 @@ import type {
   UpsertModelLabModelSetContract,
 } from '@/services/contracts/modelLab';
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, ok, type ApiResponse } from '@/types/api';
 
@@ -100,7 +101,7 @@ export const listModelLabExperimentsReal: ListModelLabExperimentsContract = asyn
 
   const qs = sp.toString();
   const res = await apiRequest<{ items: ModelLabExperiment[]; page: number; pageSize: number }>(
-    `/api/lab/model/experiments${qs ? `?${qs}` : ''}`
+    `${api.lab.model.experiments.list()}${qs ? `?${qs}` : ''}`
   );
 
   if (!res.success) return res;
@@ -113,7 +114,7 @@ export const listModelLabExperimentsReal: ListModelLabExperimentsContract = asyn
 
 export const createModelLabExperimentReal: CreateModelLabExperimentContract = async (input) => {
   // 后端允许部分字段；缺失字段会使用默认值
-  const res = await apiRequest<ModelLabExperiment>('/api/lab/model/experiments', {
+  const res = await apiRequest<ModelLabExperiment>(api.lab.model.experiments.list(), {
     method: 'POST',
     body: {
       name: input.name,
@@ -129,14 +130,14 @@ export const createModelLabExperimentReal: CreateModelLabExperimentContract = as
 };
 
 export const getModelLabExperimentReal: GetModelLabExperimentContract = async (id: string) => {
-  const res = await apiRequest<ModelLabExperiment>(`/api/lab/model/experiments/${encodeURIComponent(id)}`);
+  const res = await apiRequest<ModelLabExperiment>(api.lab.model.experiments.byId(encodeURIComponent(id)));
   if (!res.success) return res;
   return ok(normalizeExperimentFromApi(res.data));
 };
 
 export const updateModelLabExperimentReal: UpdateModelLabExperimentContract = async (id: string, input: UpsertModelLabExperimentInput) => {
   // 后端 PUT 对 Params 是整体替换；这里先拉取现有实验并合并，避免 params 部分更新导致字段回退到默认值
-  const current = await apiRequest<ModelLabExperiment>(`/api/lab/model/experiments/${encodeURIComponent(id)}`);
+  const current = await apiRequest<ModelLabExperiment>(api.lab.model.experiments.byId(encodeURIComponent(id)));
   if (!current.success) return current as unknown as ApiResponse<ModelLabExperiment>;
 
   const exp = normalizeExperimentFromApi(current.data);
@@ -157,13 +158,13 @@ export const updateModelLabExperimentReal: UpdateModelLabExperimentContract = as
     params: mergedParams,
   };
 
-  const updated = await apiRequest<ModelLabExperiment>(`/api/lab/model/experiments/${encodeURIComponent(id)}`, { method: 'PUT', body });
+  const updated = await apiRequest<ModelLabExperiment>(api.lab.model.experiments.byId(encodeURIComponent(id)), { method: 'PUT', body });
   if (!updated.success) return updated;
   return ok(normalizeExperimentFromApi(updated.data));
 };
 
 export const deleteModelLabExperimentReal: DeleteModelLabExperimentContract = async (id: string) => {
-  return await apiRequest<true>(`/api/lab/model/experiments/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  return await apiRequest<true>(api.lab.model.experiments.byId(encodeURIComponent(id)), { method: 'DELETE' });
 };
 
 export const listModelLabModelSetsReal: ListModelLabModelSetsContract = async (args) => {
@@ -171,11 +172,11 @@ export const listModelLabModelSetsReal: ListModelLabModelSetsContract = async (a
   if (args?.search) sp.set('search', args.search);
   if (typeof args?.limit === 'number') sp.set('limit', String(args.limit));
   const qs = sp.toString();
-  return await apiRequest<{ items: ModelLabModelSet[] }>(`/api/lab/model/model-sets${qs ? `?${qs}` : ''}`);
+  return await apiRequest<{ items: ModelLabModelSet[] }>(`${api.lab.model.modelSets()}${qs ? `?${qs}` : ''}`);
 };
 
 export const upsertModelLabModelSetReal: UpsertModelLabModelSetContract = async (input) => {
-  return await apiRequest<ModelLabModelSet>('/api/lab/model/model-sets', {
+  return await apiRequest<ModelLabModelSet>(api.lab.model.modelSets(), {
     method: 'POST',
     body: { id: input.id, name: input.name, models: input.models },
   });
@@ -185,7 +186,7 @@ export const runModelLabStreamReal: RunModelLabStreamContract = async ({ input, 
   const token = useAuthStore.getState().token;
   if (!token) return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<true>;
 
-  const url = joinUrl(getApiBaseUrl(), '/api/lab/model/runs/stream');
+  const url = joinUrl(getApiBaseUrl(), api.lab.model.runsStream());
   const body = {
     ...(input ?? {}),
     suite: input?.suite ? toApiSuite(input.suite) : undefined,

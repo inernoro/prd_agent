@@ -6,6 +6,8 @@ namespace PrdAgent.Api.Services;
 /// <summary>
 /// 权限字符串格式迁移服务
 /// 在应用启动时自动将旧格式 (admin.xxx.yyy) 迁移到新格式 (appKey.action)
+/// 注意：内置角色和权限由代码定义（AdminPermissionCatalog.All），每次启动自动生效，
+/// 数据库仅存储用户自定义的角色覆盖和权限调整。
 /// </summary>
 public sealed class PermissionMigrationService : IHostedService
 {
@@ -49,6 +51,7 @@ public sealed class PermissionMigrationService : IHostedService
             using var scope = _serviceProvider.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
 
+            // 仅执行旧格式权限字符串迁移（为已存在的数据库记录服务）
             await MigratePermissionsAsync(db, cancellationToken);
         }
         catch (Exception ex)

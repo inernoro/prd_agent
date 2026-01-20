@@ -1,0 +1,357 @@
+/**
+ * 统一 API 路径配置
+ *
+ * 使用方式:
+ *   import { api } from '@/services/api';
+ *   fetch(api.mds.models());           // GET /api/mds
+ *   fetch(api.mds.model(id));          // GET /api/mds/{id}
+ *   fetch(api.visualAgent.workspaces.detail(id)); // GET /api/visual-agent/image-master/workspaces/{id}/detail
+ */
+
+// ============ Auth 认证 ============
+export const api = {
+  auth: {
+    login: () => '/api/v1/auth/login',
+    register: () => '/api/v1/auth/register',
+    refresh: () => '/api/v1/auth/refresh',
+    validatePassword: () => '/api/v1/auth/validate-password',
+  },
+
+  // ============ Authz 权限 ============
+  authz: {
+    me: () => '/api/authz/me',
+    catalog: () => '/api/authz/catalog',
+    menuCatalog: () => '/api/authz/menu-catalog',
+    systemRoles: {
+      list: () => '/api/authz/system-roles',
+      byKey: (key: string) => `/api/authz/system-roles/${key}`,
+      resetBuiltins: () => '/api/authz/system-roles/reset-builtins',
+    },
+    users: {
+      authz: (userId: string) => `/api/authz/users/${userId}/authz`,
+    },
+  },
+
+  // ============ Users 用户管理 ============
+  users: {
+    list: () => '/api/users',
+    byId: (userId: string) => `/api/users/${userId}`,
+    role: (userId: string) => `/api/users/${userId}/role`,
+    status: (userId: string) => `/api/users/${userId}/status`,
+    password: (userId: string) => `/api/users/${userId}/password`,
+    avatar: (userId: string) => `/api/users/${userId}/avatar`,
+    avatarUpload: (userId: string) => `/api/users/${userId}/avatar/upload`,
+    displayName: (userId: string) => `/api/users/${userId}/display-name`,
+    unlock: (userId: string) => `/api/users/${userId}/unlock`,
+    forceExpire: (userId: string) => `/api/users/${userId}/force-expire`,
+    inviteCodes: () => '/api/users/invite-codes',
+    initialize: () => '/api/users/initialize',
+    bulk: () => '/api/users/bulk',
+  },
+
+  // ============ Groups 群组管理 ============
+  groups: {
+    list: () => '/api/groups',
+    byId: (groupId: string) => `/api/groups/${groupId}`,
+    members: (groupId: string) => `/api/groups/${groupId}/members`,
+    removeMember: (groupId: string, userId: string) => `/api/groups/${groupId}/members/${userId}`,
+    regenerateInvite: (groupId: string) => `/api/groups/${groupId}/regenerate-invite`,
+    messages: (groupId: string) => `/api/groups/${groupId}/messages`,
+    gaps: {
+      list: (groupId: string) => `/api/v1/groups/${groupId}/gaps`,
+      status: (groupId: string, gapId: string) => `/api/v1/groups/${groupId}/gaps/${gapId}/status`,
+      summaryReport: (groupId: string) => `/api/v1/groups/${groupId}/gaps/summary-report`,
+    },
+  },
+
+  // ============ MDS 模型管理 ============
+  mds: {
+    models: () => '/api/mds',
+    model: (id: string) => `/api/mds/${id}`,
+    test: (id: string) => `/api/mds/${id}/test`,
+    priorities: () => '/api/mds/priorities',
+    mainModel: () => '/api/mds/main-model',
+    intentModel: () => '/api/mds/intent-model',
+    visionModel: () => '/api/mds/vision-model',
+    imageGenModel: () => '/api/mds/image-gen-model',
+    adapterInfoBatch: () => '/api/mds/adapter-info/batch',
+    adapterInfo: (modelId: string) => `/api/mds/${modelId}/adapter-info`,
+
+    // 平台
+    platforms: {
+      list: () => '/api/mds/platforms',
+      byId: (id: string) => `/api/mds/platforms/${id}`,
+    },
+
+    // 模型分组
+    modelGroups: {
+      list: () => '/api/mds/model-groups',
+      byId: (id: string) => `/api/mds/model-groups/${id}`,
+    },
+
+    // LLM 配置
+    llmConfigs: {
+      list: () => '/api/mds/llm-configs',
+      byId: (id: string) => `/api/mds/llm-configs/${id}`,
+      activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
+    },
+
+    // 调度器配置
+    schedulerConfig: () => '/api/mds/scheduler-config',
+  },
+
+  // ============ Lab 实验室 ============
+  lab: {
+    impersonate: () => '/api/lab/impersonate',
+    simulateMessage: () => '/api/lab/simulate-message',
+    simulateStreamMessages: () => '/api/lab/simulate-stream-messages',
+
+    // 模型实验
+    model: {
+      experiments: {
+        list: () => '/api/lab/model/experiments',
+        byId: (id: string) => `/api/lab/model/experiments/${id}`,
+      },
+      modelSets: () => '/api/lab/model/model-sets',
+      labGroups: {
+        list: () => '/api/lab/model/lab-groups',
+        byId: (id: string) => `/api/lab/model/lab-groups/${id}`,
+      },
+      runsStream: () => '/api/lab/model/runs/stream',
+    },
+
+    // 模型测试
+    modelTest: {
+      stubs: {
+        list: () => '/api/lab/model-test/stubs',
+        byId: (id: string) => `/api/lab/model-test/stubs/${id}`,
+        clear: () => '/api/lab/model-test/stubs/clear',
+      },
+      simulate: {
+        downgrade: () => '/api/lab/model-test/simulate/downgrade',
+        recover: () => '/api/lab/model-test/simulate/recover',
+      },
+      healthCheck: () => '/api/lab/model-test/health-check',
+      groupMonitoring: (groupId: string) => `/api/lab/model-test/groups/${groupId}/monitoring`,
+    },
+  },
+
+  // ============ Logs 日志 ============
+  logs: {
+    api: {
+      list: () => '/api/logs/api',
+      byId: (id: string) => `/api/logs/api/${id}`,
+      meta: () => '/api/logs/api/meta',
+    },
+    llm: {
+      list: () => '/api/logs/llm',
+      byId: (id: string) => `/api/logs/llm/${id}`,
+      meta: () => '/api/logs/llm/meta',
+      modelStats: () => '/api/logs/llm/model-stats',
+    },
+    desktopPresence: {
+      list: () => '/api/logs/desktop-presence',
+      byUserId: (userId: string) => `/api/logs/desktop-presence/${userId}`,
+    },
+    settings: {
+      llm: () => '/api/logs/settings/llm',
+    },
+  },
+
+  // ============ Prompts 提示词 ============
+  prompts: {
+    list: () => '/api/prompts',
+    reset: () => '/api/prompts/reset',
+    system: {
+      get: () => '/api/prompts/system',
+      reset: () => '/api/prompts/system/reset',
+    },
+    overrides: {
+      imageGenPlan: () => '/api/prompts/overrides/image-gen-plan',
+    },
+    optimize: {
+      stream: () => '/api/prompts/optimize/stream',
+    },
+  },
+
+  // ============ Data 数据管理 ============
+  data: {
+    config: {
+      export: () => '/api/data/config/export',
+      import: () => '/api/data/config/import',
+      importPreview: () => '/api/data/config/import/preview',
+    },
+    summary: () => '/api/data/summary',
+    purge: () => '/api/data/purge',
+    users: {
+      preview: () => '/api/data/users/preview',
+      purge: () => '/api/data/users/purge',
+    },
+    documents: {
+      content: (documentId: string, groupId: string) => `/api/data/documents/${documentId}/content?groupId=${groupId}`,
+    },
+  },
+
+  // ============ Assets 资源管理 ============
+  assets: {
+    desktop: {
+      skins: {
+        list: () => '/api/assets/desktop/skins',
+        byId: (id: string) => `/api/assets/desktop/skins/${id}`,
+      },
+      keys: {
+        list: () => '/api/assets/desktop/keys',
+        byId: (id: string) => `/api/assets/desktop/keys/${id}`,
+      },
+      upload: () => '/api/assets/desktop/upload',
+      matrix: () => '/api/assets/desktop/matrix',
+    },
+    desktopBranding: () => '/api/assets/desktop-branding',
+    avatars: {
+      nohead: () => '/api/assets/avatars/nohead',
+    },
+  },
+
+  // ============ Dashboard 仪表盘 ============
+  dashboard: {
+    notifications: {
+      list: () => '/api/dashboard/notifications',
+      handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
+      handleAll: () => '/api/dashboard/notifications/handle-all',
+    },
+    userPreferences: {
+      get: () => '/api/dashboard/user-preferences',
+      navOrder: () => '/api/dashboard/user-preferences/nav-order',
+    },
+    stats: {
+      overview: () => '/api/dashboard/stats/overview',
+      tokenUsage: () => '/api/dashboard/stats/token-usage',
+      messageTrend: () => '/api/dashboard/stats/message-trend',
+      activeGroups: () => '/api/dashboard/stats/active-groups',
+      gapStats: () => '/api/dashboard/stats/gap-stats',
+    },
+  },
+
+  // ============ Visual Agent 视觉创作 ============
+  visualAgent: {
+    imageMaster: {
+      sessions: {
+        list: () => '/api/visual-agent/image-master/sessions',
+        byId: (id: string) => `/api/visual-agent/image-master/sessions/${id}`,
+        messages: (sessionId: string) => `/api/visual-agent/image-master/sessions/${sessionId}/messages`,
+        canvas: (id: string) => `/api/visual-agent/image-master/sessions/${id}/canvas`,
+      },
+      workspaces: {
+        list: () => '/api/visual-agent/image-master/workspaces',
+        byId: (id: string) => `/api/visual-agent/image-master/workspaces/${id}`,
+        detail: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/detail`,
+        viewport: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/viewport`,
+        messages: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/messages`,
+        canvas: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas`,
+        assets: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/assets`,
+        asset: (id: string, assetId: string) => `/api/visual-agent/image-master/workspaces/${id}/assets/${assetId}`,
+        imageGenRuns: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/image-gen/runs`,
+        coverRefresh: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/cover/refresh`,
+        article: {
+          generateMarkers: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/article/generate-markers`,
+          extractMarkers: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/article/extract-markers`,
+          export: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/article/export`,
+          marker: (id: string, markerIndex: number) => `/api/visual-agent/image-master/workspaces/${id}/article/markers/${markerIndex}`,
+        },
+      },
+      assets: {
+        upload: () => '/api/visual-agent/image-master/assets',
+        byId: (id: string) => `/api/visual-agent/image-master/assets/${id}`,
+      },
+    },
+    imageGen: {
+      plan: () => '/api/visual-agent/image-gen/plan',
+      generate: () => '/api/visual-agent/image-gen/generate',
+      sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
+      runs: {
+        create: () => '/api/visual-agent/image-gen/runs',
+        byId: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}`,
+        cancel: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}/cancel`,
+      },
+      batch: {
+        stream: () => '/api/visual-agent/image-gen/batch/stream',
+      },
+    },
+    uploadArtifacts: () => '/api/visual-agent/upload-artifacts',
+  },
+
+  // ============ Literary Agent 文学创作 ============
+  literaryAgent: {
+    prompts: {
+      list: () => '/api/literary-agent/prompts',
+      byId: (id: string) => `/api/literary-agent/prompts/${id}`,
+    },
+  },
+
+  // ============ Open Platform 开放平台 ============
+  openPlatform: {
+    apps: {
+      list: () => '/api/open-platform/apps',
+      byId: (id: string) => `/api/open-platform/apps/${id}`,
+      toggle: (id: string) => `/api/open-platform/apps/${id}/toggle`,
+    },
+    appCallers: {
+      list: () => '/api/open-platform/app-callers',
+      byId: (id: string) => `/api/open-platform/app-callers/${id}`,
+      stats: (id: string) => `/api/open-platform/app-callers/${id}/stats`,
+      scan: () => '/api/open-platform/app-callers/scan',
+    },
+  },
+
+  // ============ Watermark 水印 ============
+  watermark: {
+    list: () => '/api/watermarks',
+    byApp: (appKey: string) => `/api/watermarks/app/${appKey}`,
+    byId: (id: string) => `/api/watermarks/${id}`,
+    bind: (id: string, appKey: string) => `/api/watermarks/${id}/bind/${appKey}`,
+    unbind: (id: string, appKey: string) => `/api/watermarks/${id}/unbind/${appKey}`,
+    icons: () => '/api/watermark/icons',
+    fonts: {
+      list: () => '/api/watermark/fonts',
+      byKey: (fontKey: string) => `/api/watermark/fonts/${fontKey}`,
+    },
+  },
+
+  // ============ Model Sizes ============
+  modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
+
+  // ============ V1 API (用户端) ============
+  v1: {
+    documents: {
+      list: () => '/api/v1/documents',
+      byId: (documentId: string) => `/api/v1/documents/${documentId}`,
+      content: (documentId: string) => `/api/v1/documents/${documentId}/content`,
+      validate: () => '/api/v1/documents/validate',
+    },
+    sessions: {
+      list: () => '/api/v1/sessions',
+      byId: (sessionId: string) => `/api/v1/sessions/${sessionId}`,
+      role: (sessionId: string) => `/api/v1/sessions/${sessionId}/role`,
+      messages: (sessionId: string) => `/api/v1/sessions/${sessionId}/messages`,
+      archive: (sessionId: string) => `/api/v1/sessions/${sessionId}/archive`,
+      unarchive: (sessionId: string) => `/api/v1/sessions/${sessionId}/unarchive`,
+    },
+    groups: {
+      list: () => '/api/v1/groups',
+      byId: (groupId: string) => `/api/v1/groups/${groupId}`,
+      members: (groupId: string) => `/api/v1/groups/${groupId}/members`,
+      messages: (groupId: string) => `/api/v1/groups/${groupId}/messages`,
+      session: (groupId: string) => `/api/v1/groups/${groupId}/session`,
+      prd: (groupId: string) => `/api/v1/groups/${groupId}/prd`,
+      name: (groupId: string) => `/api/v1/groups/${groupId}/name`,
+      contextClear: (groupId: string) => `/api/v1/groups/${groupId}/context/clear`,
+      join: () => '/api/v1/groups/join',
+    },
+    intent: {
+      groupName: () => '/api/v1/intent/group-name',
+    },
+    prompts: () => '/api/v1/prompts',
+  },
+} as const;
+
+export default api;

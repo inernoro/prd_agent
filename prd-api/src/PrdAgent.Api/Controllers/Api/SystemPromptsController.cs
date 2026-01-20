@@ -18,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/prompts/system")]
 [Authorize]
-[AdminController("prompts", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
+[AdminController("prompts", AdminPermissionCatalog.PromptsRead, WritePermission = AdminPermissionCatalog.PromptsWrite)]
 public class SystemPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;
