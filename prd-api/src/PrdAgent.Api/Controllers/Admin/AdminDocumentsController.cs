@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -12,6 +13,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/documents")]
 [Authorize]
+[AdminController("admin-data", AdminPermissionCatalog.DataRead, WritePermission = AdminPermissionCatalog.DataWrite)]
 public class AdminDocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;

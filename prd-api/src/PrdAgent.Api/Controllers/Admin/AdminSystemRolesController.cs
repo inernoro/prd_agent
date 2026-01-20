@@ -13,6 +13,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/system-roles")]
 [Authorize]
+[AdminController("admin-authz", AdminPermissionCatalog.AuthzManage)]
 public sealed class AdminSystemRolesController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -4,17 +4,19 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
 /// <summary>
-/// 管理后台 - 上传/生成产物索引（用于 LLM 日志页“图片预览”）
+/// 管理后台 - 上传/生成产物索引（用于 LLM 日志页"图片预览"）
 /// - Mongo 只存元数据与 COS URL，不存 base64
 /// - ADMIN 全局可见
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/upload-artifacts")]
 [Authorize]
+[AdminController("admin-logs", AdminPermissionCatalog.LogsRead)]
 public class AdminUploadArtifactsController : ControllerBase
 {
     private readonly MongoDbContext _db;

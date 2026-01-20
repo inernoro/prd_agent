@@ -9,6 +9,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -18,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/prompt-overrides")]
 [Authorize]
+[AdminController("admin-prompts", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
 public class AdminPromptOverridesController : ControllerBase
 {
     private readonly MongoDbContext _db;

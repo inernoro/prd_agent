@@ -17,18 +17,22 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/authz")]
 [Authorize]
+[AdminController("admin-authz", AdminPermissionCatalog.AuthzManage)]
 public sealed class AdminAuthzController : ControllerBase
 {
     private readonly IAdminPermissionService _permissionService;
+    private readonly IAdminControllerScanner _scanner;
     private readonly MongoDbContext _db;
     private readonly ILogger<AdminAuthzController> _logger;
 
     public AdminAuthzController(
         IAdminPermissionService permissionService,
+        IAdminControllerScanner scanner,
         MongoDbContext db,
         ILogger<AdminAuthzController> logger)
     {
         _permissionService = permissionService;
+        _scanner = scanner;
         _db = db;
         _logger = logger;
     }
@@ -97,13 +101,22 @@ public sealed class AdminAuthzController : ControllerBase
     }
 
     /// <summary>
-    /// 获取菜单目录（含权限要求），前端用于自动生成导航菜单
+    /// 获取当前用户可见的菜单目录，前端用于自动生成导航菜单。
+    /// 根据用户权限和 Controller 扫描结果动态计算可见菜单。
     /// </summary>
     [HttpGet("menu-catalog")]
-    public IActionResult MenuCatalog()
+    public async Task<IActionResult> MenuCatalog(CancellationToken ct)
     {
-        var items = AdminMenuCatalog.All
-            .OrderBy(x => x.SortOrder)
+        var uid = GetUserId();
+        var isRoot = IsRoot();
+
+        // 获取用户有效权限
+        var userPerms = await _permissionService.GetEffectivePermissionsAsync(uid, isRoot, ct);
+
+        // 根据权限生成用户可见的菜单列表
+        var menus = AdminMenuCatalog.GetMenusForUser(_scanner, userPerms);
+
+        var items = menus
             .Select(x => new AdminMenuItemResponse
             {
                 AppKey = x.AppKey,
@@ -111,7 +124,6 @@ public sealed class AdminAuthzController : ControllerBase
                 Label = x.Label,
                 Description = x.Description,
                 Icon = x.Icon,
-                RequiredPermission = x.RequiredPermission,
                 SortOrder = x.SortOrder
             })
             .ToList();

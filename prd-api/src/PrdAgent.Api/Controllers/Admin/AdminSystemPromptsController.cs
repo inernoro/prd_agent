@@ -7,6 +7,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -17,6 +18,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/system-prompts")]
 [Authorize]
+[AdminController("admin-prompts", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
 public class AdminSystemPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;

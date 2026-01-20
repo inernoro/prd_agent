@@ -6,12 +6,14 @@ using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
 [ApiController]
 [Route("api/v1/admin/users")]
 [Authorize]
+[AdminController("admin-authz", AdminPermissionCatalog.AuthzManage)]
 public sealed class AdminUserAuthzController : ControllerBase
 {
     private readonly MongoDbContext _db;

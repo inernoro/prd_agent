@@ -5,6 +5,7 @@ using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -14,6 +15,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/model-test")]
 [Authorize]
+[AdminController("admin-models", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
 public class AdminModelTestController : ControllerBase
 {
     private readonly MongoDbContext _db;

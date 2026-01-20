@@ -5,6 +5,7 @@ using PrdAgent.Api.Json;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -14,6 +15,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/prompts/optimize")]
 [Authorize]
+[AdminController("admin-prompts", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
 public class AdminPromptsOptimizeController : ControllerBase
 {
     private readonly ILLMClient _llmClient;

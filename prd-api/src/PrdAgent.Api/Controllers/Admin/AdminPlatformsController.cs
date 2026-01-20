@@ -11,6 +11,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using PrdAgent.Core.Security;
+
 namespace PrdAgent.Api.Controllers.Admin;
 
 /// <summary>
@@ -19,6 +21,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/platforms")]
 [Authorize]
+[AdminController("admin-models", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
 public class AdminPlatformsController : ControllerBase
 {
     private readonly MongoDbContext _db;

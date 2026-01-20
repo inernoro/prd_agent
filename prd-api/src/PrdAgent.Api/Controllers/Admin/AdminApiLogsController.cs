@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Text.RegularExpressions;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -13,6 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/api-logs")]
 [Authorize]
+[AdminController("admin-logs", AdminPermissionCatalog.LogsRead)]
 public class AdminApiLogsController : ControllerBase
 {
     private readonly MongoDbContext _db;

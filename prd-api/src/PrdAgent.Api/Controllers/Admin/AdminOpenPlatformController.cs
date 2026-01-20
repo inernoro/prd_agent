@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -11,6 +12,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/open-platform")]
 [Authorize]
+[AdminController("admin-open-platform", AdminPermissionCatalog.OpenPlatformManage)]
 public class AdminOpenPlatformController : ControllerBase
 {
     private readonly IOpenPlatformService _openPlatformService;

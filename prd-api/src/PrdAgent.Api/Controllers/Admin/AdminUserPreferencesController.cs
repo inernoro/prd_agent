@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Claims;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -13,6 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/user-preferences")]
 [Authorize]
+[AdminController("dashboard", AdminPermissionCatalog.AdminAccess)]
 public class AdminUserPreferencesController : ControllerBase
 {
     private readonly MongoDbContext _db;

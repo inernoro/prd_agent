@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +17,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/models")]
 [Authorize]
+[AdminController("admin-models", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
 public class AdminModelsController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -11,6 +11,8 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
 
+using PrdAgent.Core.Security;
+
 namespace PrdAgent.Api.Controllers.Admin;
 
 /// <summary>
@@ -19,6 +21,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/model-lab")]
 [Authorize]
+[AdminController("admin-lab", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
 public class AdminModelLabController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -11,6 +11,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -20,6 +21,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/users")]
 [Authorize]
+[AdminController("admin-users", AdminPermissionCatalog.UsersRead, WritePermission = AdminPermissionCatalog.UsersWrite)]
 public class AdminUsersController : ControllerBase
 {
     private readonly MongoDbContext _db;

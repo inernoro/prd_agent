@@ -78,11 +78,6 @@ public sealed class AdminMenuItemResponse
     public string Icon { get; set; } = string.Empty;
 
     /// <summary>
-    /// 进入该菜单所需的最低权限
-    /// </summary>
-    public string RequiredPermission { get; set; } = string.Empty;
-
-    /// <summary>
     /// 排序权重
     /// </summary>
     public int SortOrder { get; set; }

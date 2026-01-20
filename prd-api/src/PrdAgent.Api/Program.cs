@@ -113,6 +113,7 @@ var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdage
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
+builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.Services.AdminControllerScanner>();
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();

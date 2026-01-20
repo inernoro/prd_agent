@@ -17,12 +17,14 @@ using PrdAgent.Api.Models.Requests;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
 [ApiController]
 [Route("api/v1/admin/image-master")]
 [Authorize]
+[AdminController("visual-agent", AdminPermissionCatalog.AgentUse)]
 public class AdminImageMasterController : ControllerBase
 {
     /// <summary>

@@ -4,12 +4,14 @@ using MongoDB.Driver;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
 [ApiController]
 [Route("api/v1/admin/notifications")]
 [Authorize]
+[AdminController("dashboard", AdminPermissionCatalog.AdminAccess)]
 public sealed class AdminNotificationsController : ControllerBase
 {
     private readonly MongoDbContext _db;

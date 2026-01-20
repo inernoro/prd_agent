@@ -8,6 +8,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -17,6 +18,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/data")]
 [Authorize]
+[AdminController("admin-data", AdminPermissionCatalog.DataRead, WritePermission = AdminPermissionCatalog.DataWrite)]
 public class AdminDataController : ControllerBase
 {
     private readonly MongoDbContext _db;

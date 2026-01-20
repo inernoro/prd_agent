@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -17,6 +18,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/lab")]
 [Authorize]
+[AdminController("admin-lab", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
 public class AdminLabController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -9,6 +9,7 @@ using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -18,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/assets/desktop")]
 [Authorize]
+[AdminController("admin-assets", AdminPermissionCatalog.AssetsRead, WritePermission = AdminPermissionCatalog.AssetsWrite)]
 public class AdminDesktopAssetsController : ControllerBase
 {
     private readonly MongoDbContext _db;

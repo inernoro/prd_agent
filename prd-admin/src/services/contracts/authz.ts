@@ -24,8 +24,6 @@ export type AdminMenuItem = {
   description?: string | null;
   /** 图标名称（Lucide icon name） */
   icon: string;
-  /** 进入该菜单所需的最低权限 */
-  requiredPermission: string;
   /** 排序权重 */
   sortOrder: number;
 };

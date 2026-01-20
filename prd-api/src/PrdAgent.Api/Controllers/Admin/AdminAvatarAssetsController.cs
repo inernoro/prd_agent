@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -12,6 +13,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/assets/avatars")]
 [Authorize]
+[AdminController("admin-assets", AdminPermissionCatalog.AssetsRead, WritePermission = AdminPermissionCatalog.AssetsWrite)]
 public class AdminAvatarAssetsController : ControllerBase
 {
     private readonly ILogger<AdminAvatarAssetsController> _logger;

@@ -7,6 +7,7 @@ using PrdAgent.Infrastructure.Database;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -16,6 +17,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/llm-logs")]
 [Authorize]
+[AdminController("admin-logs", AdminPermissionCatalog.LogsRead)]
 public class AdminLlmLogsController : ControllerBase
 {
     private readonly MongoDbContext _db;

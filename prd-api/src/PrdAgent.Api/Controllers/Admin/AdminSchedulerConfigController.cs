@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -13,6 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/scheduler-config")]
 [Authorize]
+[AdminController("admin-models", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
 public class AdminSchedulerConfigController : ControllerBase
 {
     private readonly MongoDbContext _db;

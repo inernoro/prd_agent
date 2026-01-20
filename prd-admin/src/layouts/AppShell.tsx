@@ -38,7 +38,7 @@ import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 
-type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string; perm?: string };
+type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
 
 // 图标映射：后端下发的图标名称 → Lucide 图标组件
 const iconMap: Record<string, LucideIcon> = {
@@ -172,8 +172,9 @@ export default function AppShell() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
-  // 从后端菜单目录生成导航项，如果菜单目录未加载则使用空数组
-  const items: NavItem[] = useMemo(() => {
+  // 从后端菜单目录生成导航项
+  // 注意：后端已根据用户权限过滤，返回的菜单列表即用户可见的菜单
+  const visibleItems: NavItem[] = useMemo(() => {
     if (!menuCatalogLoaded || !Array.isArray(menuCatalog) || menuCatalog.length === 0) {
       return [];
     }
@@ -184,19 +185,9 @@ export default function AppShell() {
         label: m.label,
         icon: <IconComp size={18} />,
         description: m.description ?? undefined,
-        perm: m.requiredPermission,
       };
     });
   }, [menuCatalog, menuCatalogLoaded]);
-
-  // 根据用户权限过滤导航项
-  const visibleItems = useMemo(() => {
-    if (!Array.isArray(permissions) || permissions.length === 0) {
-      // 权限尚未加载时，只显示无权限要求的菜单项（如仪表盘）
-      return items.filter((it) => !it.perm || it.perm === 'admin.access');
-    }
-    return items.filter((it) => !it.perm || permissions.includes(it.perm));
-  }, [items, permissions]);
   
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');

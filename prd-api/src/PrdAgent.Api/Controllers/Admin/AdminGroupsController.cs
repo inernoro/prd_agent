@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -14,6 +15,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/groups")]
 [Authorize]
+[AdminController("admin-groups", AdminPermissionCatalog.GroupsRead, WritePermission = AdminPermissionCatalog.GroupsWrite)]
 public class AdminGroupsController : ControllerBase
 {
     private readonly MongoDbContext _db;

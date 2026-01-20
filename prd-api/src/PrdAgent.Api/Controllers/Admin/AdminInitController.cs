@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -13,6 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/init")]
 [Authorize]
+[AdminController("admin-data", AdminPermissionCatalog.SettingsWrite)]
 public class AdminInitController : ControllerBase
 {
     private readonly MongoDbContext _db;

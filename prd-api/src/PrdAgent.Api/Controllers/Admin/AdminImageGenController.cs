@@ -13,6 +13,7 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Text.RegularExpressions;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Admin;
 
@@ -22,6 +23,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/image-gen")]
 [Authorize]
+[AdminController("visual-agent", AdminPermissionCatalog.AgentUse)]
 public class AdminImageGenController : ControllerBase
 {
     private readonly MongoDbContext _db;
