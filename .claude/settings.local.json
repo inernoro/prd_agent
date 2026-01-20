@@ -21,7 +21,12 @@
       "Bash(ps:*)",
       "Bash(cd:*)",
       "Bash(npm run type-check:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File ./quickstart.ps1:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -Command \"./quickstart.ps1 ci\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -Command \"& {.\\\\quickstart.ps1 ci}\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"quick.ps1\" ci)",
+      "Bash(cargo fmt:*)"
     ]
   }
 }

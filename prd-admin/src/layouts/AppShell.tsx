@@ -76,8 +76,6 @@ export default function AppShell() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const patchUser = useAuthStore((s) => s.patchUser);
-  const permissions = useAuthStore((s) => s.permissions);
-  const isRoot = useAuthStore((s) => s.isRoot);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const collapsed = useLayoutStore((s) => s.navCollapsed);

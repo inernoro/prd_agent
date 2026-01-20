@@ -3,9 +3,9 @@ mod models;
 mod services;
 
 use commands::session::StreamCancelState;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::Emitter;
 use tauri::Manager;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -95,68 +95,69 @@ pub fn run() {
                 .item(&check_update_item)
                 .build()?;
 
-            let menu = MenuBuilder::new(app)
-                .items(&[&help_submenu])
-                .build()?;
+            let menu = MenuBuilder::new(app).items(&[&help_submenu]).build()?;
 
             app.set_menu(menu)?;
 
             Ok(())
         })
-        .on_menu_event(|app, event| {
-            match event.id().as_ref() {
-                "settings" => {
-                    let _ = app.emit("open-settings", ());
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "settings" => {
+                let _ = app.emit("open-settings", ());
+            }
+            "devtools" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
                 }
-                "devtools" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        window.open_devtools();
-                    }
-                }
-                "check_update" => {
-                    let app_handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let current_version = app_handle.package_info().version.to_string();
-                        match app_handle.updater() {
-                            Ok(updater) => {
-                                match updater.check().await {
-                                    Ok(Some(update)) => {
-                                        let version = update.version.clone();
-                                        let body = update.body.clone().unwrap_or_else(|| "请前往下载更新".to_string());
-                                        app_handle.dialog()
-                                            .message(format!("发现新版本 {}\n\n{}", version, body))
-                                            .title("检查更新")
-                                            .kind(MessageDialogKind::Info)
-                                            .blocking_show();
-                                    }
-                                    Ok(None) => {
-                                        app_handle.dialog()
-                                            .message(format!("当前已是最新版本 ({})", current_version))
-                                            .title("检查更新")
-                                            .kind(MessageDialogKind::Info)
-                                            .blocking_show();
-                                    }
-                                    Err(e) => {
-                                        app_handle.dialog()
-                                            .message(format!("检查更新失败: {}", e))
-                                            .title("检查更新")
-                                            .kind(MessageDialogKind::Error)
-                                            .blocking_show();
-                                    }
-                                }
+            }
+            "check_update" => {
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let current_version = app_handle.package_info().version.to_string();
+                    match app_handle.updater() {
+                        Ok(updater) => match updater.check().await {
+                            Ok(Some(update)) => {
+                                let version = update.version.clone();
+                                let body = update
+                                    .body
+                                    .clone()
+                                    .unwrap_or_else(|| "请前往下载更新".to_string());
+                                app_handle
+                                    .dialog()
+                                    .message(format!("发现新版本 {}\n\n{}", version, body))
+                                    .title("检查更新")
+                                    .kind(MessageDialogKind::Info)
+                                    .blocking_show();
+                            }
+                            Ok(None) => {
+                                app_handle
+                                    .dialog()
+                                    .message(format!("当前已是最新版本 ({})", current_version))
+                                    .title("检查更新")
+                                    .kind(MessageDialogKind::Info)
+                                    .blocking_show();
                             }
                             Err(e) => {
-                                app_handle.dialog()
+                                app_handle
+                                    .dialog()
                                     .message(format!("检查更新失败: {}", e))
                                     .title("检查更新")
                                     .kind(MessageDialogKind::Error)
                                     .blocking_show();
                             }
+                        },
+                        Err(e) => {
+                            app_handle
+                                .dialog()
+                                .message(format!("检查更新失败: {}", e))
+                                .title("检查更新")
+                                .kind(MessageDialogKind::Error)
+                                .blocking_show();
                         }
-                    });
-                }
-                _ => {}
+                    }
+                });
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::document::upload_document,
