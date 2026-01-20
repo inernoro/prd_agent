@@ -1,6 +1,6 @@
 import type { ApiResponse } from '@/types/api';
 
-export type ImageMasterSession = {
+export type VisualAgentSession = {
   id: string;
   ownerUserId: string;
   title: string;
@@ -8,7 +8,7 @@ export type ImageMasterSession = {
   updatedAt: string;
 };
 
-export type ImageMasterMessage = {
+export type VisualAgentMessage = {
   id: string;
   sessionId: string;
   workspaceId?: string;
@@ -34,7 +34,7 @@ export type ImageAsset = {
   originalMarkerText?: string | null;
 };
 
-export type ImageMasterCanvas = {
+export type VisualAgentCanvas = {
   id: string;
   sessionId?: string;
   workspaceId?: string;
@@ -59,7 +59,7 @@ export type ArticleIllustrationWorkflow = {
   updatedAt: string;
 };
 
-export type ImageMasterWorkspace = {
+export type VisualAgentWorkspace = {
   id: string;
   ownerUserId: string;
   title: string;
@@ -86,26 +86,26 @@ export type ImageMasterWorkspace = {
   folderName?: string | null;
 };
 
-export type ImageMasterViewport = {
+export type VisualAgentViewport = {
   z: number;
   x: number;
   y: number;
   updatedAt?: string;
 };
 
-export type CreateImageMasterSessionContract = (input: { title?: string }) => Promise<ApiResponse<{ session: ImageMasterSession }>>;
-export type ListImageMasterSessionsContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: ImageMasterSession[] }>>;
-export type GetImageMasterSessionContract = (input: { id: string; messageLimit?: number; assetLimit?: number }) => Promise<ApiResponse<{ session: ImageMasterSession; messages: ImageMasterMessage[]; assets: ImageAsset[] }>>;
-export type AddImageMasterMessageContract = (input: { sessionId: string; role: 'User' | 'Assistant'; content: string }) => Promise<ApiResponse<{ message: ImageMasterMessage }>>;
+export type CreateVisualAgentSessionContract = (input: { title?: string }) => Promise<ApiResponse<{ session: VisualAgentSession }>>;
+export type ListVisualAgentSessionsContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: VisualAgentSession[] }>>;
+export type GetVisualAgentSessionContract = (input: { id: string; messageLimit?: number; assetLimit?: number }) => Promise<ApiResponse<{ session: VisualAgentSession; messages: VisualAgentMessage[]; assets: ImageAsset[] }>>;
+export type AddVisualAgentMessageContract = (input: { sessionId: string; role: 'User' | 'Assistant'; content: string }) => Promise<ApiResponse<{ message: VisualAgentMessage }>>;
 export type UploadImageAssetContract = (input: { data?: string; sourceUrl?: string; prompt?: string; width?: number; height?: number }) => Promise<ApiResponse<{ asset: ImageAsset }>>;
-export type DeleteImageMasterAssetContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type DeleteVisualAgentAssetContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
-export type GetImageMasterCanvasContract = (input: { id: string }) => Promise<ApiResponse<{ canvas: ImageMasterCanvas | null }>>;
-export type SaveImageMasterCanvasContract = (input: { id: string; schemaVersion?: number; payloadJson: string; idempotencyKey?: string }) => Promise<ApiResponse<{ canvas: ImageMasterCanvas }>>;
+export type GetVisualAgentCanvasContract = (input: { id: string }) => Promise<ApiResponse<{ canvas: VisualAgentCanvas | null }>>;
+export type SaveVisualAgentCanvasContract = (input: { id: string; schemaVersion?: number; payloadJson: string; idempotencyKey?: string }) => Promise<ApiResponse<{ canvas: VisualAgentCanvas }>>;
 
-export type ListImageMasterWorkspacesContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: ImageMasterWorkspace[] }>>;
-export type CreateImageMasterWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: ImageMasterWorkspace }>>;
-export type UpdateImageMasterWorkspaceContract = (input: {
+export type ListVisualAgentWorkspacesContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: VisualAgentWorkspace[] }>>;
+export type CreateVisualAgentWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
+export type UpdateVisualAgentWorkspaceContract = (input: {
   id: string;
   title?: string;
   memberUserIds?: string[];
@@ -114,37 +114,37 @@ export type UpdateImageMasterWorkspaceContract = (input: {
   scenarioType?: string;
   folderName?: string | null;
   idempotencyKey?: string;
-}) => Promise<ApiResponse<{ workspace: ImageMasterWorkspace }>>;
-export type DeleteImageMasterWorkspaceContract = (input: { id: string; idempotencyKey?: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+}) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
+export type DeleteVisualAgentWorkspaceContract = (input: { id: string; idempotencyKey?: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
-export type GetImageMasterWorkspaceDetailContract = (input: { id: string; messageLimit?: number; assetLimit?: number }) => Promise<
+export type GetVisualAgentWorkspaceDetailContract = (input: { id: string; messageLimit?: number; assetLimit?: number }) => Promise<
   ApiResponse<{
-    workspace: ImageMasterWorkspace;
-    messages: ImageMasterMessage[];
+    workspace: VisualAgentWorkspace;
+    messages: VisualAgentMessage[];
     assets: ImageAsset[];
-    canvas: ImageMasterCanvas | null;
-    viewport?: ImageMasterViewport | null;
+    canvas: VisualAgentCanvas | null;
+    viewport?: VisualAgentViewport | null;
   }>
 >;
 
-export type SaveImageMasterWorkspaceViewportContract = (input: {
+export type SaveVisualAgentWorkspaceViewportContract = (input: {
   id: string;
   z: number;
   x: number;
   y: number;
   idempotencyKey?: string;
-}) => Promise<ApiResponse<{ viewport: ImageMasterViewport }>>;
-export type AddImageMasterWorkspaceMessageContract = (input: { id: string; role: 'User' | 'Assistant'; content: string }) => Promise<
-  ApiResponse<{ message: ImageMasterMessage }>
+}) => Promise<ApiResponse<{ viewport: VisualAgentViewport }>>;
+export type AddVisualAgentWorkspaceMessageContract = (input: { id: string; role: 'User' | 'Assistant'; content: string }) => Promise<
+  ApiResponse<{ message: VisualAgentMessage }>
 >;
-export type GetImageMasterWorkspaceCanvasContract = (input: { id: string }) => Promise<ApiResponse<{ canvas: ImageMasterCanvas | null }>>;
-export type SaveImageMasterWorkspaceCanvasContract = (input: {
+export type GetVisualAgentWorkspaceCanvasContract = (input: { id: string }) => Promise<ApiResponse<{ canvas: VisualAgentCanvas | null }>>;
+export type SaveVisualAgentWorkspaceCanvasContract = (input: {
   id: string;
   schemaVersion?: number;
   payloadJson: string;
   idempotencyKey?: string;
-}) => Promise<ApiResponse<{ canvas: ImageMasterCanvas }>>;
-export type UploadImageMasterWorkspaceAssetContract = (input: {
+}) => Promise<ApiResponse<{ canvas: VisualAgentCanvas }>>;
+export type UploadVisualAgentWorkspaceAssetContract = (input: {
   id: string;
   data?: string;
   sourceUrl?: string;
@@ -156,7 +156,7 @@ export type UploadImageMasterWorkspaceAssetContract = (input: {
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ asset: ImageAsset }>>;
 
-// -------- ImageMaster：生图任务化（服务端后台执行） --------
+// -------- VisualAgent：生图任务化（服务端后台执行） --------
 
 export type CreateWorkspaceImageGenRunInput = {
   prompt: string;
@@ -179,10 +179,10 @@ export type CreateWorkspaceImageGenRunContract = (args: {
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ runId: string }>>;
 
-export type DeleteImageMasterWorkspaceAssetContract = (input: { id: string; assetId: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type DeleteVisualAgentWorkspaceAssetContract = (input: { id: string; assetId: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
-export type RefreshImageMasterWorkspaceCoverContract = (input: { id: string; limit?: number; idempotencyKey?: string }) => Promise<
-  ApiResponse<{ workspace: ImageMasterWorkspace }>
+export type RefreshVisualAgentWorkspaceCoverContract = (input: { id: string; limit?: number; idempotencyKey?: string }) => Promise<
+  ApiResponse<{ workspace: VisualAgentWorkspace }>
 >;
 
 // -------- 文章配图场景专用接口 --------
@@ -211,4 +211,3 @@ export type ExportArticleContract = (input: {
   useCdn: boolean;
   exportFormat?: string;
 }) => Promise<ApiResponse<{ content: string; format: string; assetCount: number }>>;
-

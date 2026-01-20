@@ -1,5 +1,5 @@
 import { Card } from '@/components/design/Card';
-import AdvancedImageMasterTab from '@/pages/ai-chat/AdvancedImageMasterTab';
+import AdvancedVisualAgentTab from '@/pages/ai-chat/AdvancedVisualAgentTab';
 import { useParams, Link } from 'react-router-dom';
 import { useRef } from 'react';
 
@@ -19,11 +19,11 @@ export default function VisualAgentWorkspaceEditorPage() {
       </div>
     );
   }
-  // AdvancedImageMasterTab 内部使用大量 h-full/min-h-0 布局，必须由父容器提供稳定高度
-  // initialPrompt 现在在 AdvancedImageMasterTab 内部从 sessionStorage 读取
+  // AdvancedVisualAgentTab 内部使用大量 h-full/min-h-0 布局，必须由父容器提供稳定高度
+  // initialPrompt 现在在 AdvancedVisualAgentTab 内部从 sessionStorage 读取
   return (
     <div ref={wrapRef} className="h-full min-h-0 flex flex-col">
-      <AdvancedImageMasterTab workspaceId={workspaceId} />
+      <AdvancedVisualAgentTab workspaceId={workspaceId} />
     </div>
   );
 }

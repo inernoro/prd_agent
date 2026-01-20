@@ -758,9 +758,11 @@ export default function LlmLogsPage() {
   const [qGroupId, setQGroupId] = useState(() => searchParams.get('groupId') ?? '');
   const [qSessionId, setQSessionId] = useState(() => searchParams.get('sessionId') ?? '');
   const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
+  const [qRequestPurpose, setQRequestPurpose] = useState(() => searchParams.get('requestPurpose') ?? '');
 
   const [metaProviders, setMetaProviders] = useState<string[]>([]);
   const [metaModels, setMetaModels] = useState<string[]>([]);
+  const [metaRequestPurposes, setMetaRequestPurposes] = useState<string[]>([]);
   const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -893,8 +895,9 @@ export default function LlmLogsPage() {
       sp.set('groupId', qGroupId || '');
       sp.set('sessionId', qSessionId || '');
       sp.set('userId', qUserId || '');
+      sp.set('requestPurpose', qRequestPurpose || '');
       // 清理空参数（保持 URL 干净）
-      ['provider', 'model', 'status', 'requestId', 'groupId', 'sessionId', 'userId'].forEach((k) => {
+      ['provider', 'model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'requestPurpose'].forEach((k) => {
         if (!String(sp.get(k) ?? '').trim()) sp.delete(k);
       });
       setSearchParams(sp, { replace: true });
@@ -909,6 +912,7 @@ export default function LlmLogsPage() {
         groupId: qGroupId || undefined,
         sessionId: qSessionId || undefined,
         userId: qUserId || undefined,
+        requestPurpose: qRequestPurpose || undefined,
       });
       if (res.success) {
         setItems(res.data.items);
@@ -1013,6 +1017,7 @@ export default function LlmLogsPage() {
       if (res.success) {
         setMetaProviders(res.data.providers ?? []);
         setMetaModels(res.data.models ?? []);
+        setMetaRequestPurposes(res.data.requestPurposes ?? []);
         setMetaStatuses(res.data.statuses ?? ['running', 'succeeded', 'failed', 'cancelled']);
       }
     })();
@@ -1139,7 +1144,7 @@ export default function LlmLogsPage() {
       />
 
       <Card className="p-4">
-        <div className="grid gap-3 md:grid-cols-6">
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
           <Select
             value={qProvider}
             onChange={(e) => setQProvider(e.target.value)}
@@ -1176,6 +1181,18 @@ export default function LlmLogsPage() {
               <option key={s} value={s}>{s}</option>
             ))}
           </Select>
+          <SearchableSelect
+            value={qRequestPurpose}
+            onValueChange={setQRequestPurpose}
+            options={[
+              { value: '', label: '应用（全部）' },
+              ...metaRequestPurposes.map((rp) => ({ value: rp, label: getFeatureDescriptionFromRequestPurpose(rp) })),
+            ]}
+            placeholder="应用（全部）"
+            leftIcon={<Zap size={16} />}
+            uiSize="sm"
+            style={inputStyle}
+          />
           <div className="relative">
             <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -1237,6 +1254,7 @@ export default function LlmLogsPage() {
                 setQUserId('');
                 setQGroupId('');
                 setQSessionId('');
+                setQRequestPurpose('');
                 setPage(1);
                 // 立即刷新
                 setTimeout(() => load({ resetPage: true }), 0);

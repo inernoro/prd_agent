@@ -402,7 +402,7 @@ public class OpenAIImageClient
                     UserPromptChars: prompt.Trim().Length,
                     StartedAt: startedAt,
                     RequestType: (ctx?.RequestType ?? "imageGen"),
-                    RequestPurpose: (ctx?.RequestPurpose ?? "imageGen.generate")),
+                    RequestPurpose: (ctx?.RequestPurpose ?? "prd-agent-web::image-gen.generate")),
                 ct);
         }
 
@@ -753,44 +753,34 @@ public class OpenAIImageClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                // 原图字节（用于保存无水印版本）
-                var originalBytes = bytes;
-                var originalMime = outMime;
+                // 1. 原图保存到 visual-agent 目录（核心数据，不会删除）
+                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
 
+                // 2. 默认展示原图 URL
+                var displayUrl = stored.Url;
+
+                // 3. 如果有水印配置，生成水印图保存到 watermark 目录（仅用于展示）
                 if (watermarkConfig != null)
                 {
                     try
                     {
                         _logger.LogInformation("Applying watermark to image index {Index}. FontKey={FontKey}", images[i].Index, watermarkConfig.FontKey);
-
-                        // 先保存原图（无水印），再应用水印保存水印版
-                        var originalStored = await _assetStorage.SaveAsync(originalBytes, originalMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
-                        images[i].OriginalUrl = originalStored.Url;
-                        images[i].OriginalSha256 = originalStored.Sha256;
-
-                        // 应用水印
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
-                        bytes = rendered.bytes;
-                        outMime = rendered.mime;
+                        var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                        displayUrl = watermarkedStored.Url;
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to apply watermark. Skipping watermark for this image.");
-                        // 水印失败时，原图 URL 与展示图相同
-                        images[i].OriginalUrl = null;
-                        images[i].OriginalSha256 = null;
+                        _logger.LogWarning(ex, "Failed to apply watermark. Using original image for display.");
                     }
                 }
-                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
-                images[i].Url = stored.Url;
-                images[i].Base64 = null;
 
-                // 无水印配置时，原图与展示图相同
-                if (watermarkConfig == null)
-                {
-                    images[i].OriginalUrl = stored.Url;
-                    images[i].OriginalSha256 = stored.Sha256;
-                }
+                // 4. Url = 展示用（有水印时是 watermark 目录，无水印时是 imagemaster 目录）
+                //    OriginalUrl/OriginalSha256 = 原图（imagemaster 目录），用于参考图查找
+                images[i].Url = displayUrl;
+                images[i].Base64 = null;
+                images[i].OriginalUrl = stored.Url;
+                images[i].OriginalSha256 = stored.Sha256;
 
                 // 尺寸：优先使用本次请求最终 size（若解析失败则为 0）
                 var sizeStr = NormalizeSizeString(size);

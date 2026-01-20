@@ -4,16 +4,16 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import {
-  createImageMasterWorkspace,
-  deleteImageMasterWorkspace,
+  createVisualAgentWorkspace,
+  deleteVisualAgentWorkspace,
   getUsers,
-  listImageMasterWorkspaces,
-  refreshImageMasterWorkspaceCover,
-  updateImageMasterWorkspace,
-  uploadImageMasterWorkspaceAsset,
+  listVisualAgentWorkspaces,
+  refreshVisualAgentWorkspaceCover,
+  updateVisualAgentWorkspace,
+  uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
+import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import {
   Plus,
   Users2,
@@ -318,7 +318,7 @@ function formatDate(iso: string | null | undefined) {
   return `${y}-${m}-${day}`;
 }
 
-function CoverMosaic(props: { title: string; assets: ImageMasterWorkspace['coverAssets'] }) {
+function CoverMosaic(props: { title: string; assets: VisualAgentWorkspace['coverAssets'] }) {
   const assets = Array.isArray(props.assets) ? props.assets : [];
   const n = assets.length;
 
@@ -669,7 +669,7 @@ function QuickInputBox(props: {
       >
         {/* 输入区域 - 简化内边距 */}
         <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
-          {/* 图片预览 chip - 参考 AdvancedImageMasterTab 样式 */}
+          {/* 图片预览 chip - 参考 AdvancedVisualAgentTab 样式 */}
           {selectedImage ? (
             <div
               className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
@@ -777,7 +777,7 @@ function QuickInputBox(props: {
                 )}
               </button>
 
-              {/* 尺寸选择器（参考 AdvancedImageMasterTab 样式） */}
+              {/* 尺寸选择器（参考 AdvancedVisualAgentTab 样式） */}
               {onSizeChange && (
                 <>
                   {/* 档位选择器（1K/2K/4K） */}
@@ -1105,7 +1105,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
 
 // ============ 项目卡片（网格布局） ============
 function ProjectCard(props: {
-  workspace: ImageMasterWorkspace;
+  workspace: VisualAgentWorkspace;
   onRename: () => void;
   onShare: () => void;
   onDelete: () => void;
@@ -1233,13 +1233,13 @@ function NewProjectCard(props: { onClick: () => void }) {
 
 // ============ 项目列表（网格布局，一排5个） ============
 function ProjectCarousel(props: {
-  items: ImageMasterWorkspace[];
+  items: VisualAgentWorkspace[];
   loading: boolean;
   onCreate: () => void;
-  onRename: (ws: ImageMasterWorkspace) => void;
-  onShare: (ws: ImageMasterWorkspace) => void;
-  onDelete: (ws: ImageMasterWorkspace) => void;
-  onOpen: (ws: ImageMasterWorkspace) => void;
+  onRename: (ws: VisualAgentWorkspace) => void;
+  onShare: (ws: VisualAgentWorkspace) => void;
+  onDelete: (ws: VisualAgentWorkspace) => void;
+  onOpen: (ws: VisualAgentWorkspace) => void;
 }) {
   const { items, loading, onCreate, onRename, onShare, onDelete, onOpen } = props;
 
@@ -1303,7 +1303,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       ? `/visual-agent-fullscreen/${encodeURIComponent(workspaceId)}`
       : `/visual-agent/${encodeURIComponent(workspaceId)}`;
   };
-  const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
+  const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const refreshBusyRef = useRef<Set<string>>(new Set());
@@ -1318,7 +1318,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
-  const [shareWs, setShareWs] = useState<ImageMasterWorkspace | null>(null);
+  const [shareWs, setShareWs] = useState<VisualAgentWorkspace | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [memberSet, setMemberSet] = useState<Set<string>>(new Set());
@@ -1329,7 +1329,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     setLoading(true);
     setError('');
     try {
-      const res = await listImageMasterWorkspaces({ limit: 30 });
+      const res = await listVisualAgentWorkspaces({ limit: 30 });
       if (!res.success) {
         setError(res.error?.message || '加载 workspace 失败');
         return;
@@ -1374,7 +1374,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
           void (async () => {
             try {
-              const res = await refreshImageMasterWorkspaceCover({
+              const res = await refreshVisualAgentWorkspaceCover({
                 id: wid,
                 limit: 6,
                 idempotencyKey: contentHash ? `ws_cover_${wid}_${contentHash}` : `ws_cover_${wid}_${Date.now()}`,
@@ -1406,7 +1406,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       cancelText: '取消',
     });
     if (title == null) return;
-    const res = await createImageMasterWorkspace({ title: title.trim() || '未命名', idempotencyKey: `ws_create_${Date.now()}` });
+    const res = await createVisualAgentWorkspace({ title: title.trim() || '未命名', idempotencyKey: `ws_create_${Date.now()}` });
     if (!res.success) {
       await systemDialog.alert(res.error?.message || '创建失败');
       return;
@@ -1423,7 +1423,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     setInputLoading(true);
     try {
       // 1. 创建 workspace
-      const res = await createImageMasterWorkspace({
+      const res = await createVisualAgentWorkspace({
         title: prompt.slice(0, 20) || '未命名',
         idempotencyKey: `ws_quick_${Date.now()}`,
       });
@@ -1442,7 +1442,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
       // 如果有选中的图片，上传图片并添加到消息中
       if (selectedImage) {
-        const uploadRes = await uploadImageMasterWorkspaceAsset({
+        const uploadRes = await uploadVisualAgentWorkspaceAsset({
           id: ws.id,
           data: selectedImage.previewUrl,
           prompt: selectedImage.file.name || '参考图',
@@ -1542,7 +1542,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     await systemDialog.alert(`文件夹功能正在开发中，将创建名为「${folderName.trim() || '新文件夹'}」的文件夹。`);
   };
 
-  const onRename = async (ws: ImageMasterWorkspace) => {
+  const onRename = async (ws: VisualAgentWorkspace) => {
     const title = await systemDialog.prompt({
       title: '重命名',
       message: '请输入新名称',
@@ -1551,7 +1551,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       cancelText: '取消',
     });
     if (title == null) return;
-    const res = await updateImageMasterWorkspace({
+    const res = await updateVisualAgentWorkspace({
       id: ws.id,
       title: title.trim() || '未命名',
       idempotencyKey: `ws_rename_${Date.now()}`,
@@ -1563,7 +1563,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     await reload();
   };
 
-  const onDelete = async (ws: ImageMasterWorkspace) => {
+  const onDelete = async (ws: VisualAgentWorkspace) => {
     const ok = await systemDialog.confirm({
       title: '确认删除',
       message: `确认删除「${ws.title || '未命名'}」？（将删除画布与消息，资产记录会被清理）`,
@@ -1572,7 +1572,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       cancelText: '取消',
     });
     if (!ok) return;
-    const res = await deleteImageMasterWorkspace({ id: ws.id, idempotencyKey: `ws_del_${Date.now()}` });
+    const res = await deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `ws_del_${Date.now()}` });
     if (!res.success) {
       await systemDialog.alert(res.error?.message || '删除失败');
       return;
@@ -1580,7 +1580,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     await reload();
   };
 
-  const openShare = async (ws: ImageMasterWorkspace) => {
+  const openShare = async (ws: VisualAgentWorkspace) => {
     setShareWs(ws);
     setMemberSet(new Set((ws.memberUserIds ?? []).filter(Boolean)));
     setShareOpen(true);
@@ -1600,7 +1600,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const saveShare = async () => {
     const ws = shareWs;
     if (!ws) return;
-    const res = await updateImageMasterWorkspace({
+    const res = await updateVisualAgentWorkspace({
       id: ws.id,
       memberUserIds: memberIds,
       idempotencyKey: `ws_share_${Date.now()}`,

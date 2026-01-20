@@ -190,14 +190,57 @@ public class AdminPlatformsController : ControllerBase
     /// <summary>
     /// 删除平台
     /// </summary>
+    /// <param name="id">平台 ID</param>
+    /// <param name="cascade">是否级联删除平台下的所有模型（默认 false）</param>
     [HttpDelete("{id}")]
-    public async Task<IActionResult> DeletePlatform(string id)
+    public async Task<IActionResult> DeletePlatform(string id, [FromQuery] bool cascade = false)
     {
-        // 检查是否有关联模型
-        var modelCount = await _db.LLMModels.CountDocumentsAsync(m => m.PlatformId == id);
-        if (modelCount > 0)
+        // 获取平台下的所有模型
+        var platformModels = await _db.LLMModels.Find(m => m.PlatformId == id).ToListAsync();
+
+        if (platformModels.Count > 0)
         {
-            return BadRequest(ApiResponse<object>.Fail("HAS_MODELS", $"该平台下有{modelCount}个模型，无法删除"));
+            // 检查是否有模型被设置为四大类型（主模型/意图/识图/生图）
+            var blockedModels = new List<string>();
+            foreach (var m in platformModels)
+            {
+                var roles = new List<string>();
+                if (m.IsMain) roles.Add("主模型");
+                if (m.IsIntent) roles.Add("意图模型");
+                if (m.IsVision) roles.Add("识图模型");
+                if (m.IsImageGen) roles.Add("生图模型");
+                if (roles.Count > 0)
+                {
+                    blockedModels.Add($"{m.Name}({string.Join("/", roles)})");
+                }
+            }
+            if (blockedModels.Count > 0)
+            {
+                return BadRequest(ApiResponse<object>.Fail("HAS_SPECIAL_MODELS",
+                    $"以下模型被设置为系统模型，请先取消设置后再删除平台：{string.Join("、", blockedModels)}"));
+            }
+
+            // 检查是否有模型被添加到模型池
+            var modelIds = platformModels.Select(m => m.Id).ToHashSet();
+            var groupsWithModels = await _db.ModelGroups
+                .Find(g => g.Models.Any(item => modelIds.Contains(item.ModelId)))
+                .ToListAsync();
+
+            if (groupsWithModels.Count > 0)
+            {
+                var affectedGroups = groupsWithModels.Select(g => g.Name).Distinct().ToList();
+                return BadRequest(ApiResponse<object>.Fail("HAS_MODEL_POOL_REFS",
+                    $"平台下的模型被以下模型池引用，请先从模型池移除：{string.Join("、", affectedGroups)}"));
+            }
+
+            if (!cascade)
+            {
+                return BadRequest(ApiResponse<object>.Fail("HAS_MODELS", $"该平台下有{platformModels.Count}个模型，无法删除。如需级联删除，请添加 ?cascade=true 参数"));
+            }
+
+            // 级联删除：先删除平台下的所有模型
+            var deleteModelsResult = await _db.LLMModels.DeleteManyAsync(m => m.PlatformId == id);
+            _logger.LogInformation("Cascade deleted {Count} models for platform: {Id}", deleteModelsResult.DeletedCount, id);
         }
 
         var result = await _db.LLMPlatforms.DeleteOneAsync(p => p.Id == id);

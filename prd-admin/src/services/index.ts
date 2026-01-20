@@ -4,6 +4,7 @@ import type { LoginContract } from '@/services/contracts/auth';
 import type {
   GetAdminAuthzMeContract,
   GetAdminPermissionCatalogContract,
+  GetAdminMenuCatalogContract,
   GetSystemRolesContract,
   CreateSystemRoleContract,
   UpdateSystemRoleContract,
@@ -86,28 +87,28 @@ import type {
 import type { UploadNoHeadAvatarContract } from '@/services/contracts/avatarAssets';
 import type { UploadUserAvatarContract } from '@/services/contracts/userAvatarUpload';
 import type {
-  AddImageMasterMessageContract,
-  AddImageMasterWorkspaceMessageContract,
-  CreateImageMasterSessionContract,
-  CreateImageMasterWorkspaceContract,
-  DeleteImageMasterAssetContract,
-  DeleteImageMasterWorkspaceContract,
-  RefreshImageMasterWorkspaceCoverContract,
-  GetImageMasterCanvasContract,
-  GetImageMasterSessionContract,
-  GetImageMasterWorkspaceCanvasContract,
-  GetImageMasterWorkspaceDetailContract,
-  ListImageMasterSessionsContract,
-  ListImageMasterWorkspacesContract,
-  SaveImageMasterCanvasContract,
-  SaveImageMasterWorkspaceCanvasContract,
-  SaveImageMasterWorkspaceViewportContract,
+  AddVisualAgentMessageContract,
+  AddVisualAgentWorkspaceMessageContract,
+  CreateVisualAgentSessionContract,
+  CreateVisualAgentWorkspaceContract,
+  DeleteVisualAgentAssetContract,
+  DeleteVisualAgentWorkspaceContract,
+  RefreshVisualAgentWorkspaceCoverContract,
+  GetVisualAgentCanvasContract,
+  GetVisualAgentSessionContract,
+  GetVisualAgentWorkspaceCanvasContract,
+  GetVisualAgentWorkspaceDetailContract,
+  ListVisualAgentSessionsContract,
+  ListVisualAgentWorkspacesContract,
+  SaveVisualAgentCanvasContract,
+  SaveVisualAgentWorkspaceCanvasContract,
+  SaveVisualAgentWorkspaceViewportContract,
   UploadImageAssetContract,
-  UploadImageMasterWorkspaceAssetContract,
-  DeleteImageMasterWorkspaceAssetContract,
-  UpdateImageMasterWorkspaceContract,
+  UploadVisualAgentWorkspaceAssetContract,
+  DeleteVisualAgentWorkspaceAssetContract,
+  UpdateVisualAgentWorkspaceContract,
   CreateWorkspaceImageGenRunContract,
-} from '@/services/contracts/imageMaster';
+} from '@/services/contracts/visualAgent';
 import type {
   CreateDesktopAssetKeyContract,
   CreateDesktopAssetSkinContract,
@@ -166,6 +167,7 @@ import { loginReal } from '@/services/real/auth';
 import {
   getAdminAuthzMeReal,
   getAdminPermissionCatalogReal,
+  getAdminMenuCatalogReal,
   getSystemRolesReal,
   createSystemRoleReal,
   updateSystemRoleReal,
@@ -235,32 +237,32 @@ import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupRea
 import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
 import { suggestGroupNameReal } from '@/services/real/intent';
 import {
-  addImageMasterMessageReal,
-  addImageMasterWorkspaceMessageReal,
-  createImageMasterSessionReal,
-  createImageMasterWorkspaceReal,
-  deleteImageMasterAssetReal,
-  deleteImageMasterWorkspaceReal,
-  refreshImageMasterWorkspaceCoverReal,
-  getImageMasterCanvasReal,
-  getImageMasterSessionReal,
-  getImageMasterWorkspaceCanvasReal,
-  getImageMasterWorkspaceDetailReal,
-  listImageMasterSessionsReal,
-  listImageMasterWorkspacesReal,
-  saveImageMasterCanvasReal,
-  saveImageMasterWorkspaceCanvasReal,
-  saveImageMasterWorkspaceViewportReal,
+  addVisualAgentMessageReal,
+  addVisualAgentWorkspaceMessageReal,
+  createVisualAgentSessionReal,
+  createVisualAgentWorkspaceReal,
+  deleteVisualAgentAssetReal,
+  deleteVisualAgentWorkspaceReal,
+  refreshVisualAgentWorkspaceCoverReal,
+  getVisualAgentCanvasReal,
+  getVisualAgentSessionReal,
+  getVisualAgentWorkspaceCanvasReal,
+  getVisualAgentWorkspaceDetailReal,
+  listVisualAgentSessionsReal,
+  listVisualAgentWorkspacesReal,
+  saveVisualAgentCanvasReal,
+  saveVisualAgentWorkspaceCanvasReal,
+  saveVisualAgentWorkspaceViewportReal,
   uploadImageAssetReal,
-  uploadImageMasterWorkspaceAssetReal,
-  deleteImageMasterWorkspaceAssetReal,
-  updateImageMasterWorkspaceReal,
+  uploadVisualAgentWorkspaceAssetReal,
+  deleteVisualAgentWorkspaceAssetReal,
+  updateVisualAgentWorkspaceReal,
   createWorkspaceImageGenRunReal,
   generateArticleMarkersReal,
   extractArticleMarkersReal,
   exportArticleReal,
   updateArticleMarkerReal,
-} from '@/services/real/imageMaster';
+} from '@/services/real/visualAgent';
 import {
   exportConfigReal,
   getDataSummaryReal,
@@ -338,6 +340,7 @@ export const login: LoginContract = loginReal;
 
 export const getAdminAuthzMe: GetAdminAuthzMeContract = withAuth(getAdminAuthzMeReal);
 export const getAdminPermissionCatalog: GetAdminPermissionCatalogContract = withAuth(getAdminPermissionCatalogReal);
+export const getAdminMenuCatalog: GetAdminMenuCatalogContract = withAuth(getAdminMenuCatalogReal);
 export const getSystemRoles: GetSystemRolesContract = withAuth(getSystemRolesReal);
 export const createSystemRole: CreateSystemRoleContract = withAuth(createSystemRoleReal);
 export const updateSystemRole: UpdateSystemRoleContract = withAuth(updateSystemRoleReal);
@@ -480,28 +483,28 @@ export const uploadUserAvatar: UploadUserAvatarContract = withAuth(uploadUserAva
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);
 
-export const createImageMasterSession: CreateImageMasterSessionContract = withAuth(createImageMasterSessionReal);
-export const listImageMasterSessions: ListImageMasterSessionsContract = withAuth(listImageMasterSessionsReal);
-export const getImageMasterSession: GetImageMasterSessionContract = withAuth(getImageMasterSessionReal);
-export const addImageMasterMessage: AddImageMasterMessageContract = withAuth(addImageMasterMessageReal);
+export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);
+export const listVisualAgentSessions: ListVisualAgentSessionsContract = withAuth(listVisualAgentSessionsReal);
+export const getVisualAgentSession: GetVisualAgentSessionContract = withAuth(getVisualAgentSessionReal);
+export const addVisualAgentMessage: AddVisualAgentMessageContract = withAuth(addVisualAgentMessageReal);
 export const uploadImageAsset: UploadImageAssetContract = withAuth(uploadImageAssetReal);
-export const deleteImageMasterAsset: DeleteImageMasterAssetContract = withAuth(deleteImageMasterAssetReal);
-export const getImageMasterCanvas: GetImageMasterCanvasContract = withAuth(getImageMasterCanvasReal);
-export const saveImageMasterCanvas: SaveImageMasterCanvasContract = withAuth(saveImageMasterCanvasReal);
+export const deleteVisualAgentAsset: DeleteVisualAgentAssetContract = withAuth(deleteVisualAgentAssetReal);
+export const getVisualAgentCanvas: GetVisualAgentCanvasContract = withAuth(getVisualAgentCanvasReal);
+export const saveVisualAgentCanvas: SaveVisualAgentCanvasContract = withAuth(saveVisualAgentCanvasReal);
 
-export const listImageMasterWorkspaces: ListImageMasterWorkspacesContract = withAuth(listImageMasterWorkspacesReal);
-export const createImageMasterWorkspace: CreateImageMasterWorkspaceContract = withAuth(createImageMasterWorkspaceReal);
-export const updateImageMasterWorkspace: UpdateImageMasterWorkspaceContract = withAuth(updateImageMasterWorkspaceReal);
-export const deleteImageMasterWorkspace: DeleteImageMasterWorkspaceContract = withAuth(deleteImageMasterWorkspaceReal);
-export const getImageMasterWorkspaceDetail: GetImageMasterWorkspaceDetailContract = withAuth(getImageMasterWorkspaceDetailReal);
-export const addImageMasterWorkspaceMessage: AddImageMasterWorkspaceMessageContract = withAuth(addImageMasterWorkspaceMessageReal);
-export const getImageMasterWorkspaceCanvas: GetImageMasterWorkspaceCanvasContract = withAuth(getImageMasterWorkspaceCanvasReal);
-export const saveImageMasterWorkspaceCanvas: SaveImageMasterWorkspaceCanvasContract = withAuth(saveImageMasterWorkspaceCanvasReal);
-export const saveImageMasterWorkspaceViewport: SaveImageMasterWorkspaceViewportContract = withAuth(saveImageMasterWorkspaceViewportReal);
-export const uploadImageMasterWorkspaceAsset: UploadImageMasterWorkspaceAssetContract = withAuth(uploadImageMasterWorkspaceAssetReal);
-export const deleteImageMasterWorkspaceAsset: DeleteImageMasterWorkspaceAssetContract = withAuth(deleteImageMasterWorkspaceAssetReal);
+export const listVisualAgentWorkspaces: ListVisualAgentWorkspacesContract = withAuth(listVisualAgentWorkspacesReal);
+export const createVisualAgentWorkspace: CreateVisualAgentWorkspaceContract = withAuth(createVisualAgentWorkspaceReal);
+export const updateVisualAgentWorkspace: UpdateVisualAgentWorkspaceContract = withAuth(updateVisualAgentWorkspaceReal);
+export const deleteVisualAgentWorkspace: DeleteVisualAgentWorkspaceContract = withAuth(deleteVisualAgentWorkspaceReal);
+export const getVisualAgentWorkspaceDetail: GetVisualAgentWorkspaceDetailContract = withAuth(getVisualAgentWorkspaceDetailReal);
+export const addVisualAgentWorkspaceMessage: AddVisualAgentWorkspaceMessageContract = withAuth(addVisualAgentWorkspaceMessageReal);
+export const getVisualAgentWorkspaceCanvas: GetVisualAgentWorkspaceCanvasContract = withAuth(getVisualAgentWorkspaceCanvasReal);
+export const saveVisualAgentWorkspaceCanvas: SaveVisualAgentWorkspaceCanvasContract = withAuth(saveVisualAgentWorkspaceCanvasReal);
+export const saveVisualAgentWorkspaceViewport: SaveVisualAgentWorkspaceViewportContract = withAuth(saveVisualAgentWorkspaceViewportReal);
+export const uploadVisualAgentWorkspaceAsset: UploadVisualAgentWorkspaceAssetContract = withAuth(uploadVisualAgentWorkspaceAssetReal);
+export const deleteVisualAgentWorkspaceAsset: DeleteVisualAgentWorkspaceAssetContract = withAuth(deleteVisualAgentWorkspaceAssetReal);
 export const createWorkspaceImageGenRun: CreateWorkspaceImageGenRunContract = withAuth(createWorkspaceImageGenRunReal);
-export const refreshImageMasterWorkspaceCover: RefreshImageMasterWorkspaceCoverContract = withAuth(refreshImageMasterWorkspaceCoverReal);
+export const refreshVisualAgentWorkspaceCover: RefreshVisualAgentWorkspaceCoverContract = withAuth(refreshVisualAgentWorkspaceCoverReal);
 
 export const generateArticleMarkers = generateArticleMarkersReal;
 export const extractArticleMarkers = extractArticleMarkersReal;

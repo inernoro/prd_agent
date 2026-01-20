@@ -13,6 +13,7 @@ export type GetLlmLogsParams = {
   sessionId?: string;
   userId?: string;
   status?: string;
+  requestPurpose?: string;
 };
 
 export type LlmLogsListData = {
@@ -25,6 +26,7 @@ export type LlmLogsListData = {
 export type LlmLogsMetaData = {
   providers: string[];
   models: string[];
+  requestPurposes: string[];
   statuses: string[];
 };
 

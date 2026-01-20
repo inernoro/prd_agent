@@ -270,15 +270,51 @@ export function getModelTypeIcon(modelType: string): ComponentType<any> {
 export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string | null | undefined): string {
   const rp = (requestPurpose ?? '').trim();
   if (!rp) return '未知';
-  
-  // 新格式：包含 ::
-  if (rp.includes('::')) {
-    const parsed = parseAppCallerKey(rp);
-    return getFeatureDescription(parsed);
+
+  // 应用名称映射
+  const appSubjectMap: Record<string, string> = {
+    'prd-agent-desktop': '桌面端',
+    'prd-agent-web': '管理后台',
+    'visual-agent': '视觉创作',
+    'literary-agent': '文学创作',
+    'open-platform': '开放平台',
+    'desktop': '桌面端',
+    'admin': '管理后台',
+  };
+
+  // 功能名称映射
+  const featureNameMap: Record<string, string> = {
+    'chat.send-message': '用户发送聊天消息',
+    'preview-ask.section': 'PRD 预览问答',
+    'gaps.summary-report': 'Gap 差异总结',
+    'group-name.suggest': '群组名称建议',
+    'model-lab.run': '模型实验室',
+    'image-gen.plan': '图片生成规划',
+    'image-gen.generate': '图片生成',
+    'image-gen.batch-generate': '批量图片生成',
+    'image-gen.run': '图片生成任务',
+  };
+
+  // 精确匹配映射（用于不含 :: 的纯应用名）
+  const exactMap: Record<string, string> = {
+    'visual-agent': '视觉创作',
+    'literary-agent': '文学创作',
+  };
+
+  // 先检查精确匹配
+  if (exactMap[rp]) {
+    return exactMap[rp];
   }
-  
-  // 旧格式：chat.sendMessage / modelLab.run 等
-  // 简单映射
+
+  // 新格式：app::feature（kebab-case）
+  if (rp.includes('::')) {
+    const [app, feature] = rp.split('::');
+    const appName = appSubjectMap[app] || app;
+    const featureName = featureNameMap[feature] || feature;
+    return `${appName}：${featureName}`;
+  }
+
+  // 旧格式兼容映射（camelCase）
   const oldFormatMap: Record<string, string> = {
     'chat.sendMessage': '桌面端：用户发送聊天消息',
     'modelLab.run': '实验室：模型测试',
@@ -287,7 +323,7 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
     'gap.detect': '桌面端：Gap 差异检测',
     'imageGen.generate': '视觉创作：生成配图',
   };
-  
+
   return oldFormatMap[rp] || rp;
 }
 

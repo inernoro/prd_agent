@@ -126,7 +126,7 @@ public class AdminImageGenController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[IMAGE_GEN_PLAN]",
                 RequestType: "intent",
-                RequestPurpose: "imageGen.plan");
+                RequestPurpose: "prd-agent-web::image-gen.plan");
             
             _logger.LogInformation("ImageGen.Plan: BeginScope with RequestType={RequestType}, RequestPurpose={RequestPurpose}", 
                 requestContext.RequestType, requestContext.RequestPurpose);
@@ -257,7 +257,7 @@ public class AdminImageGenController : ControllerBase
                 return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权使用该参考图"));
             }
 
-            var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+            var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             if (found == null)
             {
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考图文件不存在或不可用"));
@@ -331,7 +331,7 @@ public class AdminImageGenController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[IMAGE_GEN_GENERATE]",
             RequestType: "imageGen",
-            RequestPurpose: "imageGen.generate"));
+            RequestPurpose: "prd-agent-web::image-gen.generate"));
 
         var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName, initImageBase64, initImageProvided);
         if (!res.Success)
@@ -640,7 +640,7 @@ public class AdminImageGenController : ControllerBase
                                 DocumentHash: null,
                                 SystemPromptRedacted: "[IMAGE_GEN_BATCH_GENERATE]",
                                 RequestType: "imageGen",
-                                RequestPurpose: "imageGen.batch.generate"));
+                                RequestPurpose: "prd-agent-web::image-gen.batch-generate"));
 
                             var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, currentSize, responseFormat, cancellationToken, modelId, platformId, modelName);
                             
@@ -854,6 +854,7 @@ public class AdminImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
+            Purpose = appKey, // 使用应用标识作为用途标记
             AppKey = appKey,
             CreatedAt = DateTime.UtcNow
         };

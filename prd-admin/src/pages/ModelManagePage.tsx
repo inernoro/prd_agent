@@ -34,8 +34,8 @@ import {
 } from '@/services';
 import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, Cpu, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, Cpu, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { ModelKpiRail } from '@/components/model/ModelKpiRail';
@@ -292,6 +292,7 @@ export default function ModelManagePage() {
   const [allStatsExpanded, setAllStatsExpanded] = useState(false);
   const [platformSidebarCollapsed, setPlatformSidebarCollapsed] = useState(false);
   const [modelActionMenuOpenId, setModelActionMenuOpenId] = useState<string | null>(null);
+  const [stubCreating, setStubCreating] = useState(false);
 
   const loadModelStats = async () => {
     setModelStatsLoading(true);
@@ -621,6 +622,127 @@ export default function ModelManagePage() {
     setPlatformDialogOpen(true);
   };
 
+  // 一键添加桩平台和模型（用于开发测试）- 仅创建平台和模型，不设置能力标记
+  const createStubPlatformAndModels = async () => {
+    // 检查是否已存在桩平台
+    const existingStub = platforms.find((p) => p.name === 'Stub 开发桩' || p.apiUrl?.includes('/api/v1/stub'));
+    if (existingStub) {
+      systemDialog.alert({ title: '桩平台已存在', message: '已存在名为 "Stub 开发桩" 的平台，无需重复创建。' });
+      return;
+    }
+
+    setStubCreating(true);
+    try {
+      // 获取当前页面的 origin 作为桩服务地址
+      const stubBaseUrl = `${window.location.origin}/api/v1/stub`;
+
+      // 1. 创建桩平台
+      const platformRes = await createPlatform({
+        name: 'Stub 开发桩',
+        platformType: 'openai',
+        providerId: 'stub',
+        apiUrl: stubBaseUrl,
+        apiKey: 'stub-key-not-required',
+        enabled: true,
+      });
+
+      if (!platformRes.success) {
+        systemDialog.alert({ title: '创建失败', message: `创建桩平台失败：${platformRes.error?.message || '未知错误'}` });
+        return;
+      }
+
+      const stubPlatformId = platformRes.data.id;
+
+      // 2. 创建桩模型（对应 StubOpenAIController 提供的模型）- 不设置能力标记
+      const stubModels = [
+        { name: 'Stub Chat', modelName: 'stub-chat' },
+        { name: 'Stub Intent', modelName: 'stub-intent' },
+        { name: 'Stub Vision', modelName: 'stub-vision' },
+        { name: 'Stub Image', modelName: 'stub-image' },
+      ];
+
+      for (const sm of stubModels) {
+        await createModel({
+          name: sm.name,
+          modelName: sm.modelName,
+          platformId: stubPlatformId,
+          enabled: true,
+          enablePromptCache: false,
+        });
+      }
+
+      // 3. 刷新列表
+      await load();
+      systemDialog.alert({ title: '创建成功', message: '已成功创建桩平台和 4 个桩模型（聊天、意图、识图、生图）。' });
+    } catch (err) {
+      systemDialog.alert({ title: '创建失败', message: `创建桩平台时发生错误：${err instanceof Error ? err.message : '未知错误'}` });
+    } finally {
+      setStubCreating(false);
+    }
+  };
+
+  // 长按添加平台按钮的处理逻辑
+  const longPressTimerRef = useRef<number | null>(null);
+  const [longPressProgress, setLongPressProgress] = useState(0);
+
+  const handleAddPlatformMouseDown = () => {
+    setLongPressProgress(0);
+    const startTime = Date.now();
+    const duration = 3000; // 3秒
+
+    const updateProgress = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      setLongPressProgress(progress);
+
+      if (progress >= 1) {
+        // 长按完成，弹出确认对话框
+        handleLongPressComplete();
+      } else {
+        longPressTimerRef.current = window.requestAnimationFrame(updateProgress);
+      }
+    };
+
+    longPressTimerRef.current = window.requestAnimationFrame(updateProgress);
+  };
+
+  const handleAddPlatformMouseUp = () => {
+    if (longPressTimerRef.current) {
+      window.cancelAnimationFrame(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    // 如果没有达到长按阈值，执行正常的点击操作
+    if (longPressProgress < 1) {
+      setLongPressProgress(0);
+      if (longPressProgress < 0.1) {
+        // 几乎没有按下就松开，视为普通点击
+        openCreatePlatform();
+      }
+    }
+    setLongPressProgress(0);
+  };
+
+  const handleAddPlatformMouseLeave = () => {
+    if (longPressTimerRef.current) {
+      window.cancelAnimationFrame(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    setLongPressProgress(0);
+  };
+
+  const handleLongPressComplete = async () => {
+    setLongPressProgress(0);
+    const confirmed = await systemDialog.confirm({
+      title: '一键添加桩',
+      message: '是否创建本地桩平台和 4 个桩模型（聊天、意图、识图、生图）用于开发测试？',
+      confirmText: '创建',
+      cancelText: '取消',
+    });
+    if (confirmed) {
+      await createStubPlatformAndModels();
+    }
+  };
+
   const openEditPlatform = (p: Platform) => {
     setEditingPlatform(p);
     const pricing = pricingByPlatformId[p.id];
@@ -684,8 +806,29 @@ export default function ModelManagePage() {
   };
 
   const onDeletePlatform = async (p: Platform) => {
-    const res = await deletePlatform(p.id);
-    if (!res.success) return;
+    // 检查平台下是否有模型
+    const platformModels = models.filter((m) => m.platformId === p.id);
+    let cascade = false;
+
+    if (platformModels.length > 0) {
+      // 平台下有模型，询问是否级联删除
+      cascade = await systemDialog.confirm({
+        title: '级联删除确认',
+        message: `该平台下有 ${platformModels.length} 个模型，是否一并删除？`,
+        confirmText: '全部删除',
+        cancelText: '取消',
+        tone: 'danger',
+      });
+      if (!cascade) return;
+    }
+
+    const res = await deletePlatform(p.id, { cascade });
+    if (!res.success) {
+      // 显示具体的错误信息
+      const errorMsg = res.error?.message || '删除失败';
+      systemDialog.alert({ title: '删除失败', message: errorMsg, tone: 'danger' });
+      return;
+    }
     if (selectedPlatformId === p.id) setSelectedPlatformId('');
     await load();
   };
@@ -1104,10 +1247,33 @@ export default function ModelManagePage() {
           </div>
 
           <div className="p-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <Button variant="secondary" size="md" className="w-full" onClick={openCreatePlatform}>
-              <Plus size={16} />
-              添加平台
-            </Button>
+            <div className="relative">
+              <Button
+                variant="secondary"
+                size="md"
+                className="w-full select-none"
+                onMouseDown={handleAddPlatformMouseDown}
+                onMouseUp={handleAddPlatformMouseUp}
+                onMouseLeave={handleAddPlatformMouseLeave}
+                onTouchStart={handleAddPlatformMouseDown}
+                onTouchEnd={handleAddPlatformMouseUp}
+                disabled={stubCreating}
+                title="点击添加平台，长按 3 秒添加桩"
+              >
+                {stubCreating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                {stubCreating ? '创建中...' : '添加平台'}
+              </Button>
+              {/* 长按进度指示器 */}
+              {longPressProgress > 0 && (
+                <div
+                  className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all"
+                  style={{
+                    width: `${longPressProgress * 100}%`,
+                    background: 'linear-gradient(90deg, rgba(250,204,21,0.8), rgba(250,204,21,1))',
+                  }}
+                />
+              )}
+            </div>
           </div>
             </>
           )}

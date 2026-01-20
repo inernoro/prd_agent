@@ -1,6 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
-import { saveImageMasterWorkspaceViewport } from '@/services';
+import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -8,17 +8,17 @@ import { RichComposer, type RichComposerRef, type ImageOption } from '@/componen
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
-  addImageMasterWorkspaceMessage,
-  deleteImageMasterWorkspaceAsset,
+  addVisualAgentWorkspaceMessage,
+  deleteVisualAgentWorkspaceAsset,
   createWorkspaceImageGenRun,
-  getImageMasterWorkspaceDetail,
+  getVisualAgentWorkspaceDetail,
   getImageGenSizeCaps,
   getModels,
   getWatermarkByApp,
   planImageGen,
-  refreshImageMasterWorkspaceCover,
-  saveImageMasterWorkspaceCanvas,
-  uploadImageMasterWorkspaceAsset,
+  refreshVisualAgentWorkspaceCover,
+  saveVisualAgentWorkspaceCanvas,
+  uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
@@ -36,7 +36,7 @@ import {
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { normalizeImageToSquareDataUrl } from '@/lib/imageSquare';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
-import type { ImageAsset, ImageMasterCanvas, ImageMasterMessage, ImageMasterWorkspace } from '@/services/contracts/imageMaster';
+import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
   ArrowUp,
@@ -238,18 +238,6 @@ type PersistedCanvasElementV1 =
 
 const PERSIST_SCHEMA_VERSION = 1 as const;
 const MAX_PERSIST_ELEMENTS = 200;
-
-function overlayUiScaleForBox(boxW: number, boxH: number): number {
-  const w = Math.max(1, Math.round(boxW));
-  const h = Math.max(1, Math.round(boxH));
-  const area = w * h;
-  // 基准面积：约等于 420x280 的卡片
-  const base = 420 * 280;
-  const s = Math.sqrt(area / base);
-  // 1) 最小也要比现在大一点，确保可读
-  // 2) 上限避免盖住整个画布
-  return Math.max(1.25, Math.min(2.4, s));
-}
 
 function safeJsonParse<T>(s: string): T | null {
   const raw = String(s ?? '').trim();
@@ -719,7 +707,7 @@ function buildTemplate(name: string) {
   return '';
 }
 
-export default function AdvancedImageMasterTab(props: { workspaceId: string; initialPrompt?: string }) {
+export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
@@ -739,12 +727,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
   useEffect(() => {
     return () => setFullBleedMain(false);
   }, [setFullBleedMain]);
-  const splitKey = userId ? `prdAdmin.imageMaster.splitWidth.${userId}` : '';
+  const splitKey = userId ? `prdAdmin.visualAgent.splitWidth.${userId}` : '';
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 360;
 
   // 模型偏好：按账号持久化（不写 DB）
-  const modelPrefKey = userId ? `prdAdmin.imageMaster.modelPref.${userId}` : '';
+  const modelPrefKey = userId ? `prdAdmin.visualAgent.modelPref.${userId}` : '';
   const [modelPrefOpen, setModelPrefOpen] = useState(false);
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
@@ -760,7 +748,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
-  const directPromptKey = userId ? `prdAdmin.imageMaster.directPrompt.${userId}` : '';
+  const directPromptKey = userId ? `prdAdmin.visualAgent.directPrompt.${userId}` : '';
   // 需求：直连作为默认值（首次进入默认开启）；若本地已有值则以本地为准
   const [directPrompt, setDirectPrompt] = useState(true);
   const [directPromptReady, setDirectPromptReady] = useState(false);
@@ -1448,13 +1436,13 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
-  const [workspace, setWorkspace] = useState<ImageMasterWorkspace | null>(null);
+  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
   // debug logs removed
 
   // 重要：pushMsg 需要稳定引用（供多个 useEffect 依赖），并且不能直接依赖 workspace state（否则每次 render 变更都触发 effect）
-  const workspaceRef = useRef<ImageMasterWorkspace | null>(null);
+  const workspaceRef = useRef<VisualAgentWorkspace | null>(null);
   useEffect(() => {
     workspaceRef.current = workspace;
   }, [workspace]);
@@ -1464,8 +1452,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     setMessages((prev) => prev.concat(msg));
     const ws = workspaceRef.current;
     if (ws?.id) {
-      const backendRole: ImageMasterMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      void addImageMasterWorkspaceMessage({ id: ws.id, role: backendRole, content });
+      const backendRole: VisualAgentMessage['role'] = role === 'User' ? 'User' : 'Assistant';
+      void addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content });
     }
   }, []);
 
@@ -1551,7 +1539,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
 
   const reloadWorkspace = useCallback(async () => {
     if (!workspaceId) return;
-    const detail = await getImageMasterWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
+    const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
     if (!detail.success) return;
     setWorkspace(detail.data.workspace);
 
@@ -1621,7 +1609,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       setSelectedKeys([]);
 
       if (assetIds.length === 0) return;
-      const results = await Promise.all(assetIds.map((id) => deleteImageMasterWorkspaceAsset({ id: workspaceId, assetId: id })));
+      const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
       const failed = results.find((r) => !r.success) ?? null;
       if (failed) {
         await systemDialog.alert(failed.error?.message || '删除失败');
@@ -1722,7 +1710,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     let cancelled = false;
     setBooting(true);
     (async () => {
-      const detail = await getImageMasterWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
+      const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
       if (!detail.success) {
         if (!cancelled) setError(detail.error?.message || '加载 Workspace 失败');
         return;
@@ -1774,7 +1762,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         }
       };
 
-      const canvasObj: ImageMasterCanvas | null = detail.data.canvas ?? null;
+      const canvasObj: VisualAgentCanvas | null = detail.data.canvas ?? null;
       if (canvasObj && String(canvasObj.payloadJson ?? '').trim()) {
         const parsed = safeJsonParse<PersistedCanvasStateV1>(String(canvasObj.payloadJson ?? ''));
         if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
@@ -1817,7 +1805,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       const built = canvasToPersistedV1(fallbackItems);
       const json = JSON.stringify(built.state);
       lastSavedJsonRef.current = json;
-      void saveImageMasterWorkspaceCanvas({ id: workspaceId, schemaVersion: PERSIST_SCHEMA_VERSION, payloadJson: json, idempotencyKey: `boot_${Date.now()}` });
+      void saveVisualAgentWorkspaceCanvas({ id: workspaceId, schemaVersion: PERSIST_SCHEMA_VERSION, payloadJson: json, idempotencyKey: `boot_${Date.now()}` });
     })()
       .catch((e) => {
         if (cancelled) return;
@@ -1871,7 +1859,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         );
       }
 
-      void saveImageMasterWorkspaceCanvas({
+      void saveVisualAgentWorkspaceCanvas({
         id: workspaceId,
         schemaVersion: PERSIST_SCHEMA_VERSION,
         payloadJson: json,
@@ -1931,7 +1919,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       if (!last2 && same(next, def)) return;
       if (last2 && same(next, last2)) return;
       void (async () => {
-        const res = await saveImageMasterWorkspaceViewport({
+        const res = await saveVisualAgentWorkspaceViewport({
           id: workspaceId,
           z: next.z,
           x: next.x,
@@ -2746,8 +2734,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
     try {
       const refForInit = (primaryRef ?? selected) as CanvasImageItem | null;
       const initSrc = (refForInit?.src ?? '').trim();
-      // 优先使用原图 SHA256（无水印），避免参考图重复叠加水印
-      const initSha = (refForInit?.originalSha256 ?? refForInit?.sha256 ?? '').trim();
+      const initSha = (refForInit?.sha256 ?? '').trim();
       let initImageBase64: string | undefined;
       let initImageUrl: string | undefined;
       let initImageAssetSha256: string | undefined;
@@ -2819,7 +2806,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
           }
 
           if (data || sourceUrl) {
-            const up = await uploadImageMasterWorkspaceAsset({
+            const up = await uploadVisualAgentWorkspaceAsset({
               id: workspaceId,
               data,
               sourceUrl,
@@ -2842,7 +2829,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
               }
               // best-effort：刷新封面（尤其当这是该 workspace 第一张图时）
               void (async () => {
-                const r2 = await refreshImageMasterWorkspaceCover({ id: workspaceId, idempotencyKey: `cover_${Date.now()}` });
+                const r2 = await refreshVisualAgentWorkspaceCover({ id: workspaceId, idempotencyKey: `cover_${Date.now()}` });
                 if (r2.success) setWorkspace(r2.data.workspace);
               })();
             } else {
@@ -2871,7 +2858,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
         if (json !== lastSavedJsonRef.current) {
           lastSavedJsonRef.current = json;
           lastSaveAtRef.current = Date.now();
-          await saveImageMasterWorkspaceCanvas({
+          await saveVisualAgentWorkspaceCanvas({
             id: workspaceId,
             schemaVersion: PERSIST_SCHEMA_VERSION,
             payloadJson: json,
@@ -3330,7 +3317,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       pushMsg('Assistant', '已替换当前选中图片。');
 
       // 持久化替换后的图片
-      const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: finalSrc, prompt: file.name || 'uploaded' });
+      const up = await uploadVisualAgentWorkspaceAsset({ id: workspaceId, data: finalSrc, prompt: file.name || 'uploaded' });
       if (up.success) {
         const a = up.data.asset;
         setCanvas((prev) =>
@@ -3459,7 +3446,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
       let failedCount = 0;
       for (const it of added) {
         if (!it.src || !it.src.startsWith('data:')) continue;
-        const up = await uploadImageMasterWorkspaceAsset({ id: workspaceId, data: it.src, prompt: it.prompt });
+        const up = await uploadVisualAgentWorkspaceAsset({ id: workspaceId, data: it.src, prompt: it.prompt });
         if (!up.success) {
           failedCount += 1;
           const msg = up.error?.message || '图片持久化失败';
@@ -4192,8 +4179,6 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                 const selW = Math.max(1, inner.w);
                 const selH = Math.max(1, inner.h);
                 const selRadius = clampRadius(fitToImage ? 14 : 16, selW, selH);
-                const overlayUiScale = overlayUiScaleForBox(boxW, boxH);
-                const overlayTransform = `scale(calc(var(--invZoom) * ${overlayUiScale.toFixed(3)}))`;
                 const handleBase: React.CSSProperties = {
                   width: 12,
                   height: 12,
@@ -4360,8 +4345,8 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                             <PrdPetalBreathingLoader fill paused grayscale className="absolute inset-0" />
                             {/* 重试按钮覆盖层 */}
                             <div
-                              className="absolute inset-0 flex flex-col items-center justify-center gap-2"
-                              style={{ transform: overlayTransform, transformOrigin: 'center', zIndex: 200 }}
+                              className="absolute inset-0 flex flex-col items-center justify-center gap-[3%]"
+                              style={{ zIndex: 200 }}
                               onPointerDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -4372,10 +4357,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                   // 使用保存的参考图信息重试
                                   void retryGenerate(it);
                                 }}
+                                style={{ fontSize: '5%', fontWeight: 600, padding: '2% 5%', height: 'auto', borderRadius: '3%' }}
+                                className="!text-[5cqw] !h-auto !px-[5%] !py-[2%] !rounded-[3%]"
                               >
                                 重试
                               </Button>
-                              <div className="text-[11px] max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={it.errorMessage || '生成失败'}>
+                              <div className="max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
                                 {it.errorMessage || '生成失败'}
                               </div>
                             </div>
@@ -4495,7 +4482,7 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                             <PrdPetalBreathingLoader fill paused grayscale className="absolute inset-0" />
                             {/* 重试按钮覆盖层 */}
                             <div
-                              className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+                              className="absolute inset-0 flex flex-col items-center justify-center gap-[3%]"
                               style={{ zIndex: 200 }}
                               onPointerDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
@@ -4507,10 +4494,12 @@ export default function AdvancedImageMasterTab(props: { workspaceId: string; ini
                                   // 使用保存的参考图信息重试
                                   void retryGenerate(it);
                                 }}
+                                style={{ fontSize: '5%', fontWeight: 600, padding: '2% 5%', height: 'auto', borderRadius: '3%' }}
+                                className="!text-[5cqw] !h-auto !px-[5%] !py-[2%] !rounded-[3%]"
                               >
                                 重试
                               </Button>
-                              <div className="text-[11px] max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={it.errorMessage || '图片加载失败'}>
+                              <div className="max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
                                 {it.errorMessage || '图片加载失败'}
                               </div>
                             </div>

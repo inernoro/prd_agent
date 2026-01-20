@@ -608,7 +608,7 @@ export default function DataManagePage() {
         <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4 mt-2.5">
           <StatCard
             icon={<MessageSquare size={18} />}
-            label="ImageMaster 会话"
+            label="视觉创作会话"
             value={fmtNum(summary?.imageMasterSessions ?? 0)}
             subValue="图像会话"
             accent="blue"
@@ -616,7 +616,7 @@ export default function DataManagePage() {
           />
           <StatCard
             icon={<MessageSquare size={18} />}
-            label="ImageMaster 消息"
+            label="视觉创作消息"
             value={fmtNum(summary?.imageMasterMessages ?? 0)}
             subValue="图像交互"
             accent="green"
@@ -661,8 +661,8 @@ export default function DataManagePage() {
           description="对话历史记录"
           items={[
             { label: 'PRD 消息', value: summary?.messages ?? 0 },
-            { label: 'ImageMaster 会话', value: summary?.imageMasterSessions ?? 0 },
-            { label: 'ImageMaster 消息', value: summary?.imageMasterMessages ?? 0 },
+            { label: '视觉创作会话', value: summary?.imageMasterSessions ?? 0 },
+            { label: '视觉创作消息', value: summary?.imageMasterMessages ?? 0 },
           ]}
           total={(summary?.messages ?? 0) + (summary?.imageMasterSessions ?? 0) + (summary?.imageMasterMessages ?? 0)}
           domains={['sessionsMessages']}

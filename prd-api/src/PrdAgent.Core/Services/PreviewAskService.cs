@@ -152,7 +152,7 @@ public class PreviewAskService : IPreviewAskService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: "previewAsk.section"));
+            RequestPurpose: "prd-agent-desktop::preview-ask.section"));
 
         yield return new PreviewAskStreamEvent { Type = "start", RequestId = requestId };
 

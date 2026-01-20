@@ -4,12 +4,12 @@ import { TabBar } from '@/components/design/TabBar';
 import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
 import { systemDialog } from '@/lib/systemDialog';
 import {
-  createImageMasterWorkspace,
-  deleteImageMasterWorkspace,
-  listImageMasterWorkspaces,
-  updateImageMasterWorkspace,
+  createVisualAgentWorkspace,
+  deleteVisualAgentWorkspace,
+  listVisualAgentWorkspaces,
+  updateVisualAgentWorkspace,
 } from '@/services';
-import type { ImageMasterWorkspace } from '@/services/contracts/imageMaster';
+import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -25,7 +25,7 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
-function getArticlePreviewText(ws: ImageMasterWorkspace, maxChars = 200) {
+function getArticlePreviewText(ws: VisualAgentWorkspace, maxChars = 200) {
   const raw = ws.articleContent ?? ws.articleContentWithMarkers ?? '';
   let s = String(raw ?? '').trim();
   if (!s) return '';
@@ -92,12 +92,12 @@ function ArticlePreview({ markdown }: { markdown: string }) {
 
 type FolderGroup = {
   folderName: string | null;
-  items: ImageMasterWorkspace[];
+  items: VisualAgentWorkspace[];
 };
 
 export default function LiteraryAgentWorkspaceListPage() {
   const navigate = useNavigate();
-  const [items, setItems] = useState<ImageMasterWorkspace[]>([]);
+  const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -108,7 +108,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await listImageMasterWorkspaces({ limit: 100 });
+      const res = await listVisualAgentWorkspaces({ limit: 100 });
       if (!res.success) {
         setError(res.error?.message || '加载失败');
         return;
@@ -127,7 +127,7 @@ export default function LiteraryAgentWorkspaceListPage() {
 
   // 按 folderName 分组
   const groups = useMemo<FolderGroup[]>(() => {
-    const map = new Map<string | null, ImageMasterWorkspace[]>();
+    const map = new Map<string | null, VisualAgentWorkspace[]>();
     for (const ws of items) {
       const key = ws.folderName ?? null;
       if (!map.has(key)) map.set(key, []);
@@ -164,7 +164,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!title) return;
-    const res = await createImageMasterWorkspace({
+    const res = await createVisualAgentWorkspace({
       title,
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-${Date.now()}`,
@@ -175,7 +175,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     }
     // 如果指定了文件夹，设置 folderName
     if (folderName && res.data?.workspace?.id) {
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: res.data.workspace.id,
         folderName,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
@@ -197,13 +197,13 @@ export default function LiteraryAgentWorkspaceListPage() {
     });
     if (!name) return;
     // 创建一个新文章并设置 folderName
-    const res = await createImageMasterWorkspace({
+    const res = await createVisualAgentWorkspace({
       title: '未命名',
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-folder-${Date.now()}`,
     });
     if (res.success && res.data?.workspace?.id) {
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: res.data.workspace.id,
         folderName: name,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
@@ -225,7 +225,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     // 批量更新所有同名文章的 folderName
     const toUpdate = items.filter((ws) => ws.folderName === oldName);
     for (const ws of toUpdate) {
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: ws.id,
         folderName: newName,
         idempotencyKey: `rename-folder-${ws.id}-${Date.now()}`,
@@ -246,7 +246,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     if (!ok) return;
     const toUpdate = items.filter((ws) => ws.folderName === folderName);
     for (const ws of toUpdate) {
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: ws.id,
         folderName: null,
         idempotencyKey: `delete-folder-${ws.id}-${Date.now()}`,
@@ -255,7 +255,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     await reload();
   };
 
-  const onRename = async (ws: ImageMasterWorkspace) => {
+  const onRename = async (ws: VisualAgentWorkspace) => {
     const title = await systemDialog.prompt({
       title: '重命名',
       message: '请输入新标题',
@@ -265,7 +265,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!title || title === ws.title) return;
-    const res = await updateImageMasterWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
+    const res = await updateVisualAgentWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
     if (!res.success) {
       await systemDialog.alert({ title: '重命名失败', message: res.error?.message || '未知错误', confirmText: '确定' });
       return;
@@ -273,7 +273,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     await reload();
   };
 
-  const onDelete = async (ws: ImageMasterWorkspace) => {
+  const onDelete = async (ws: VisualAgentWorkspace) => {
     const ok = await systemDialog.confirm({
       title: '删除',
       message: `确定删除 "${ws.title}" 吗? 此操作无法撤销。`,
@@ -282,7 +282,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!ok) return;
-    const res = await deleteImageMasterWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
+    const res = await deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
     if (!res.success) {
       await systemDialog.alert({ title: '删除失败', message: res.error?.message || '未知错误', confirmText: '确定' });
       return;
@@ -290,8 +290,8 @@ export default function LiteraryAgentWorkspaceListPage() {
     await reload();
   };
 
-  const onMoveToFolder = async (ws: ImageMasterWorkspace, targetFolder: string | null) => {
-    await updateImageMasterWorkspace({
+  const onMoveToFolder = async (ws: VisualAgentWorkspace, targetFolder: string | null) => {
+    await updateVisualAgentWorkspace({
       id: ws.id,
       folderName: targetFolder,
       idempotencyKey: `move-${ws.id}-${Date.now()}`,
@@ -328,7 +328,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   // 右键菜单：文章卡片
-  const handleCardContextMenu = (e: React.MouseEvent, ws: ImageMasterWorkspace) => {
+  const handleCardContextMenu = (e: React.MouseEvent, ws: VisualAgentWorkspace) => {
     e.stopPropagation();
     const moveItems: ContextMenuItem[] = allFolderNames
       .filter((fn) => fn !== ws.folderName)
@@ -362,7 +362,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   // 拖拽处理
-  const handleDragStart = (e: React.DragEvent, ws: ImageMasterWorkspace) => {
+  const handleDragStart = (e: React.DragEvent, ws: VisualAgentWorkspace) => {
     e.dataTransfer.setData('text/plain', ws.id);
     e.dataTransfer.effectAllowed = 'move';
   };
@@ -387,7 +387,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     await onMoveToFolder(ws, targetFolder);
   };
 
-  const renderCard = (ws: ImageMasterWorkspace) => (
+  const renderCard = (ws: VisualAgentWorkspace) => (
     <Card key={ws.id} className="p-0 overflow-hidden">
       <div
         role="button"

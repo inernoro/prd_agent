@@ -13,17 +13,14 @@ type NodeInfo = {
   tone: 'gold' | 'green' | 'blue' | 'purple' | 'cyan' | 'amber' | 'muted';
 };
 
-function pickMainModel(models: Model[], platforms: Platform[], selectedPlatformId?: string | null) {
+function pickMainModel(models: Model[], selectedPlatformId?: string | null) {
   const byPlatform = (pid: string) => models.filter((m) => m.platformId === pid);
   if (selectedPlatformId && selectedPlatformId !== '__all__') {
+    // 选择了特定平台：在该平台内找主模型（如果该平台恰好有全局主模型）或启用的模型
     const ms = byPlatform(selectedPlatformId);
     return ms.find((m) => m.isMain) ?? ms.find((m) => m.enabled) ?? ms[0] ?? null;
   }
-  const p0 = platforms.find((p) => p.enabled) ?? platforms[0] ?? null;
-  if (p0) {
-    const ms = byPlatform(p0.id);
-    return ms.find((m) => m.isMain) ?? ms.find((m) => m.enabled) ?? ms[0] ?? null;
-  }
+  // 选择"全部"时：直接在所有模型中找全局唯一的 isMain=true 的主模型
   return models.find((m) => m.isMain) ?? models.find((m) => m.enabled) ?? models[0] ?? null;
 }
 
@@ -70,20 +67,26 @@ export function ModelMapDialog({
         ? models.filter((m) => m.platformId === selectedPlatformId)
         : models;
 
-    const main = pickMainModel(models, platforms, selectedPlatformId);
+    const main = pickMainModel(models, selectedPlatformId);
     const intent = pickByFlag(models, 'isIntent');
     const vision = pickByFlag(models, 'isVision');
     const imageGen = pickByFlag(models, 'isImageGen');
     const embedding = pickByRegex(scopeModels, /(embed|embedding)/);
     const rerank = pickByRegex(scopeModels, /(rerank|re-rank)/);
 
-    const pName = getPlatformName(platforms, selectedPlatformId);
+    // 获取模型所属平台的名称
+    const getModelPlatformName = (m: Model | null) => {
+      if (!m?.platformId) return '未知';
+      return platforms.find((p) => p.id === m.platformId)?.name ?? '未知';
+    };
 
     const nameOf = (m: Model | null) => (m ? (m.name || m.modelName || '未命名') : '未配置');
     const titleOf = (m: Model | null) => (m ? `${m.name} (${m.modelName})` : '未配置');
 
-    const mainText = main ? `${pName}:${nameOf(main)}` : `${pName}:未配置`;
-    const mainTitle = main ? `${pName} · ${titleOf(main)}` : `${pName} · 未配置`;
+    // 主模型显示时使用其实际所属平台名称（而非当前筛选的平台名）
+    const mainPlatformName = main ? getModelPlatformName(main) : (selectedPlatformId === '__all__' ? '全部' : getPlatformName(platforms, selectedPlatformId));
+    const mainText = main ? `${mainPlatformName}:${nameOf(main)}` : `${mainPlatformName}:未配置`;
+    const mainTitle = main ? `${mainPlatformName} · ${titleOf(main)}` : `${mainPlatformName} · 未配置`;
 
     const intentText = intent ? nameOf(intent) : (main ? `回退:${nameOf(main)}` : '未配置');
     const intentTitle = intent ? titleOf(intent) : (main ? `未设置意图模型，回退到主模型：${titleOf(main)}` : '未配置');

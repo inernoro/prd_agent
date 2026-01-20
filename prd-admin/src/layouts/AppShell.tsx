@@ -1,12 +1,34 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Cpu, LogOut, PanelLeftClose, PanelLeftOpen, Users2, ScrollText, FlaskConical, MessagesSquare, Database, FileText, Wand2, Image, PenLine, Plug, UserCog, User, Settings, Bell, CheckCircle2, X } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Users,
+  Cpu,
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Users2,
+  ScrollText,
+  FlaskConical,
+  MessagesSquare,
+  Database,
+  FileText,
+  Wand2,
+  Image,
+  PenLine,
+  Plug,
+  UserCog,
+  User,
+  Settings,
+  Bell,
+  CheckCircle2,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
-// 导航排序功能已移除
-// import { useNavOrderStore, mergeNavOrder } from '@/stores/navOrderStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
@@ -17,6 +39,24 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string; perm?: string };
+
+// 图标映射：后端下发的图标名称 → Lucide 图标组件
+const iconMap: Record<string, LucideIcon> = {
+  LayoutDashboard,
+  Users,
+  Users2,
+  Cpu,
+  FileText,
+  MessagesSquare,
+  Wand2,
+  PenLine,
+  Image,
+  ScrollText,
+  Database,
+  Plug,
+  UserCog,
+  FlaskConical,
+};
 
 const notificationTone = {
   info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: '#93c5fd' },
@@ -36,6 +76,10 @@ export default function AppShell() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const patchUser = useAuthStore((s) => s.patchUser);
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
+  const menuCatalog = useAuthStore((s) => s.menuCatalog);
+  const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
@@ -128,28 +172,31 @@ export default function AppShell() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
-  const items: NavItem[] = useMemo(
-    () => [
-      { key: '/', label: '仪表盘', icon: <LayoutDashboard size={18} />, description: 'LLM 可观测性与数据概览' },
-      { key: '/users', label: '用户管理', icon: <Users size={18} />, description: '账号、角色与权限管理', perm: 'admin.users.read' },
-      { key: '/groups', label: '群组管理', icon: <Users2 size={18} />, description: '协作群组与成员管理', perm: 'admin.groups.read' },
-      { key: '/model-manage', label: '模型管理', icon: <Cpu size={18} />, description: '平台、模型与配置管理', perm: 'admin.models.read' },
-      { key: '/prompts', label: '提示词管理', icon: <FileText size={18} />, description: 'PRD 问答提示词配置', perm: 'admin.settings.write' },
-      { key: '/ai-chat', label: 'PRD Agent', icon: <MessagesSquare size={18} />, description: 'PRD 智能解读与问答', perm: 'admin.agent.use' },
-      { key: '/visual-agent-fullscreen', label: '视觉创作 Agent', icon: <Wand2 size={18} />, description: '高级视觉创作工作区', perm: 'admin.agent.use' },
-      { key: '/literary-agent', label: '文学创作 Agent', icon: <PenLine size={18} />, description: '文章配图智能生成', perm: 'admin.agent.use' },
-      { key: '/assets', label: '资源管理', icon: <Image size={18} />, description: 'Desktop 资源与品牌配置', perm: 'admin.assets.read' },
-      { key: '/llm-logs', label: '请求日志', icon: <ScrollText size={18} />, description: 'LLM 请求与系统日志', perm: 'admin.logs.read' },
-      { key: '/data', label: '数据管理', icon: <Database size={18} />, description: '数据概览、清理与迁移', perm: 'admin.data.read' },
-      { key: '/open-platform', label: '开放平台', icon: <Plug size={18} />, description: 'API 应用与调用日志', perm: 'admin.open-platform.manage' },
-      { key: '/authz', label: '权限管理', icon: <UserCog size={18} />, description: '系统角色与用户权限', perm: 'admin.authz.manage' },
-      { key: '/lab', label: '实验室', icon: <FlaskConical size={18} />, description: '模型测试与实验功能', perm: 'admin.models.read' },
-    ],
-    []
-  );
+  // 从后端菜单目录生成导航项，如果菜单目录未加载则使用空数组
+  const items: NavItem[] = useMemo(() => {
+    if (!menuCatalogLoaded || !Array.isArray(menuCatalog) || menuCatalog.length === 0) {
+      return [];
+    }
+    return menuCatalog.map((m) => {
+      const IconComp = iconMap[m.icon] ?? LayoutDashboard;
+      return {
+        key: m.path,
+        label: m.label,
+        icon: <IconComp size={18} />,
+        description: m.description ?? undefined,
+        perm: m.requiredPermission,
+      };
+    });
+  }, [menuCatalog, menuCatalogLoaded]);
 
-  // 直接使用 items，不再进行排序
-  const visibleItems = items;
+  // 根据用户权限过滤导航项
+  const visibleItems = useMemo(() => {
+    if (!Array.isArray(permissions) || permissions.length === 0) {
+      // 权限尚未加载时，只显示无权限要求的菜单项（如仪表盘）
+      return items.filter((it) => !it.perm || it.perm === 'admin.access');
+    }
+    return items.filter((it) => !it.perm || permissions.includes(it.perm));
+  }, [items, permissions]);
   
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
@@ -159,7 +206,20 @@ export default function AppShell() {
   const focusHideAside = fullBleedMain;
   const mainPadLeft = focusHideAside ? asideGap : asideWidth + asideGap * 2;
 
-  const activeNotifications = useMemo(() => notifications.filter((n) => n.status === 'open'), [notifications]);
+  // 过滤活跃通知：
+  // 1. 状态为 open
+  // 2. 权限目录变更通知仅对 root 用户或拥有权限管理权限的用户显示
+  const activeNotifications = useMemo(() => {
+    const hasAuthzManage = Array.isArray(permissions) && permissions.includes('admin.authz.manage');
+    return notifications.filter((n) => {
+      if (n.status !== 'open') return false;
+      // 权限目录变更通知仅对 root 或有权限管理权限的用户显示
+      if (n.key === 'permission-catalog-updated' && !isRoot && !hasAuthzManage) {
+        return false;
+      }
+      return true;
+    });
+  }, [notifications, isRoot, permissions]);
   const notificationCount = activeNotifications.length;
   const toastNotification = useMemo(
     () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),

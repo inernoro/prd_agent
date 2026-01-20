@@ -7,13 +7,13 @@ import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
   createImageGenRun,
   generateArticleMarkers,
-  getImageMasterWorkspaceDetail,
+  getVisualAgentWorkspaceDetail,
   getModels,
   planImageGen,
   streamImageGenRunWithRetry,
-  updateImageMasterWorkspace,
+  updateVisualAgentWorkspace,
   updateArticleMarker,
-  uploadImageMasterWorkspaceAsset,
+  uploadVisualAgentWorkspaceAsset,
   listLiteraryPrompts,
   createLiteraryPrompt,
   updateLiteraryPrompt,
@@ -208,7 +208,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function loadWorkspace() {
     try {
-      const res = await getImageMasterWorkspaceDetail({ id: workspaceId });
+      const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
         const content = ws.articleContent || '';
@@ -344,7 +344,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function saveArticleContent() {
     try {
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: workspaceId,
         articleContent: debouncedArticleContent,
         idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
@@ -367,7 +367,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(fileName);
       
       // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -424,7 +424,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(file.name);
       
       // 保存到后端
-      await updateImageMasterWorkspace({
+      await updateVisualAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -1070,7 +1070,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadImageMasterWorkspaceAsset({ 
+    const up = await uploadVisualAgentWorkspaceAsset({ 
       id: workspaceId, 
       data: dataUrl, 
       prompt: plannedPrompt,
@@ -1093,7 +1093,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl } : x))
     );
-    // 图片已经通过 uploadImageMasterWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
+    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
     // 保存 URL 到后端（刷新后可恢复）
     await updateMarkerStatus(markerIndex, { status: 'done' });
     try {

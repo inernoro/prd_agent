@@ -380,7 +380,7 @@ public class AdminImageMasterController : ControllerBase
                         var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
                         if (remain <= 0)
                         {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                         }
                     }
                     catch
@@ -435,7 +435,7 @@ public class AdminImageMasterController : ControllerBase
                 var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
                 if (remain <= 0)
                 {
-                    await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                    await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                 }
             }
             catch
@@ -1041,7 +1041,7 @@ public class AdminImageMasterController : ControllerBase
             normalizedSize = size;
         }
 
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
 
         var asset = new ImageAsset
         {
@@ -1088,7 +1088,7 @@ public class AdminImageMasterController : ControllerBase
                         var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == old.Sha256, cancellationToken: ct);
                         if (remain <= 0)
                         {
-                            await _assetStorage.DeleteByShaAsync(old.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                            await _assetStorage.DeleteByShaAsync(old.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                         }
                     }
                 }
@@ -1238,7 +1238,7 @@ public class AdminImageMasterController : ControllerBase
                 {
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "initImageAssetSha256 格式不正确"));
                 }
-                var found = await _assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                var found = await _assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                 if (found == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考图文件不存在或不可用"));
             }
             else
@@ -1276,7 +1276,7 @@ public class AdminImageMasterController : ControllerBase
                 LastSeq = 0,
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
-                Purpose = "imageMaster",
+                Purpose = AppKey, // 使用应用标识作为用途标记
                 AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,
@@ -1434,7 +1434,7 @@ public class AdminImageMasterController : ControllerBase
             var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
             if (remain <= 0)
             {
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             }
         }
         catch
@@ -1617,7 +1617,7 @@ public class AdminImageMasterController : ControllerBase
         }
 
         // 3) store file (sha de-dupe at storage level) and upsert meta
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
 
         var asset = new ImageAsset
         {
@@ -1689,9 +1689,9 @@ public class AdminImageMasterController : ControllerBase
                     asset.Id,
                     asset.Sha256,
                     asset.Url,
-                    AppDomainPaths.DomainImageMaster,
+                    AppDomainPaths.DomainVisualAgent,
                     AppDomainPaths.TypeImg);
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             }
         }
         catch (Exception ex)
@@ -1711,7 +1711,7 @@ public class AdminImageMasterController : ControllerBase
         var sha = dot > 0 ? n[..dot] : n;
         if (sha.Length != 64) return NotFound();
 
-        var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+        var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
         if (found == null) return NotFound();
         return File(found.Value.bytes, found.Value.mime);
     }
@@ -1932,7 +1932,7 @@ public class AdminImageMasterController : ControllerBase
                         var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
                         if (remain <= 0)
                         {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                         }
                     }
                     catch

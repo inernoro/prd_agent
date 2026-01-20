@@ -863,12 +863,25 @@ app.MapControllers();
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
 
-// 启动时输出“实际监听端口/前端默认端口提示”
+// 启动时输出"实际监听端口/前端默认端口提示"
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     Log.Information("API listening on: {Urls}", app.Urls);
     Log.Information("Admin Web 默认: http://localhost:8000 （可通过 prd-admin: PORT=xxxx pnpm dev 修改）");
     Log.Information("Desktop Dev 默认: http://localhost:1420");
+
+    // Root 破窗账户状态
+    var rootUsername = (builder.Configuration["RootAccess:Username"] ?? string.Empty).Trim();
+    var rootPassword = (builder.Configuration["RootAccess:Password"] ?? string.Empty).Trim();
+    var rootEnabled = !string.IsNullOrWhiteSpace(rootUsername) && !string.IsNullOrWhiteSpace(rootPassword);
+    if (rootEnabled)
+    {
+        Log.Warning("Root 破窗账户已启用，用户名: {RootUsername}", rootUsername);
+    }
+    else
+    {
+        Log.Information("Root 破窗账户未配置（如需启用，请设置 RootAccess:Username 和 RootAccess:Password）");
+    }
 });
 
 app.Run();

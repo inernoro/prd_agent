@@ -49,6 +49,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<UserAvatarUploadResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminAuthzMeResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPermissionCatalogResponse>))]
+[JsonSerializable(typeof(ApiResponse<AdminMenuCatalogResponse>))]
 [JsonSerializable(typeof(ApiResponse<List<SystemRoleDto>>))]
 [JsonSerializable(typeof(ApiResponse<SystemRoleDto>))]
 [JsonSerializable(typeof(ApiResponse<AdminUserAuthzSnapshot>))]

@@ -635,7 +635,7 @@ public class AdminModelLabController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
-                RequestPurpose: "modelLab.run"));
+                RequestPurpose: "prd-agent-web::model-lab.run"));
 
             var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;

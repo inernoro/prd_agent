@@ -223,7 +223,7 @@ public class ImageGenRunWorker : BackgroundService
                         var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
                         if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
                         {
-                            var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
+                            var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                             if (found != null && found.Value.bytes.Length > 0)
                             {
                                 var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
@@ -245,7 +245,7 @@ public class ImageGenRunWorker : BackgroundService
                             DocumentHash: null,
                             SystemPromptRedacted: "[IMAGE_GEN_RUN]",
                             RequestType: "imageGen",
-                            RequestPurpose: string.IsNullOrWhiteSpace(run.Purpose) ? "imageGen.run" : run.Purpose));
+                            RequestPurpose: string.IsNullOrWhiteSpace(run.Purpose) ? "prd-agent-web::image-gen.run" : run.Purpose));
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 
@@ -515,92 +515,59 @@ public class ImageGenRunWorker : BackgroundService
         var adminId = (run.OwnerAdminId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(adminId)) return null;
 
-        byte[] bytes;
-        string mime;
-        if (!string.IsNullOrWhiteSpace(base64))
+        // 原图已在 OpenAIImageClient 保存到 imagemaster 目录
+        // 这里只需创建 ImageAsset 记录，不需要重新下载保存
+        // 如果没有 originalUrl/originalSha256，则回退到下载 url
+
+        string assetUrl;
+        string assetSha256;
+        string assetMime = "image/png";
+        long assetSizeBytes = 0;
+
+        if (!string.IsNullOrWhiteSpace(originalUrl) && !string.IsNullOrWhiteSpace(originalSha256))
         {
-            var s = base64.Trim();
-            if (s.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            {
-                var comma = s.IndexOf(',');
-                if (comma < 0) return null;
-                var header = s.Substring(5, comma - 5);
-                var payload = s[(comma + 1)..].Trim();
-                var semi = header.IndexOf(';');
-                var ctStr = semi >= 0 ? header[..semi] : header;
-                mime = string.IsNullOrWhiteSpace(ctStr) ? "image/png" : ctStr.Trim();
-                bytes = Convert.FromBase64String(payload);
-            }
-            else
-            {
-                mime = "image/png";
-                bytes = Convert.FromBase64String(s);
-            }
-        }
-        else if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
-        {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-            using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
-            mime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
-            bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            // 已有原图信息，直接使用
+            assetUrl = originalUrl.Trim();
+            assetSha256 = originalSha256.Trim();
         }
         else
         {
-            return null;
-        }
-
-        if (bytes.Length == 0) return null;
-        if (bytes.LongLength > 15 * 1024 * 1024) return null;
-        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) mime = "image/png";
-
-        var stored = await assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
-
-        // 如果有原图（无水印版）且与展示图不同，需要把原图也保存到 DomainImageMaster 域
-        // 以便后续作为参考图时可以通过 sha256 找到
-        string? persistedOriginalUrl = null;
-        string? persistedOriginalSha256 = null;
-        if (!string.IsNullOrWhiteSpace(originalUrl) && !string.IsNullOrWhiteSpace(originalSha256)
-            && originalSha256 != stored.Sha256)
-        {
-            try
+            // 回退：下载展示图保存（兼容旧逻辑）
+            byte[]? bytes = null;
+            if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-                using var resp = await http.GetAsync(originalUrl.Trim(), ct).ConfigureAwait(false);
-                if (resp.IsSuccessStatusCode)
-                {
-                    var origMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
-                    var origBytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-                    if (origBytes.Length > 0 && origBytes.LongLength <= 15 * 1024 * 1024)
-                    {
-                        var origStored = await assetStorage.SaveAsync(origBytes, origMime, ct, domain: AppDomainPaths.DomainImageMaster, type: AppDomainPaths.TypeImg);
-                        persistedOriginalUrl = origStored.Url;
-                        persistedOriginalSha256 = origStored.Sha256;
-                    }
-                }
+                using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return null;
+                assetMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+                bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             }
-            catch
-            {
-                // 原图保存失败不影响主流程，继续使用传入的 originalUrl/originalSha256
-            }
+            if (bytes == null || bytes.Length == 0) return null;
+            if (bytes.LongLength > 15 * 1024 * 1024) return null;
+            if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
+
+            var stored = await assetStorage.SaveAsync(bytes, assetMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+            assetUrl = stored.Url;
+            assetSha256 = stored.Sha256;
+            assetSizeBytes = stored.SizeBytes;
         }
 
-        ImageAsset asset;
-        // 允许"同图多次上传/同 sha 多条记录"：仅底层对象存储按 sha 去重
-        asset = new ImageAsset
+        // 创建 ImageAsset 记录
+        // Sha256 = 原图 SHA256（用于参考图查找）
+        // Url = 展示图 URL（可能是水印图）
+        var asset = new ImageAsset
         {
             Id = Guid.NewGuid().ToString("N"),
             OwnerUserId = adminId,
             WorkspaceId = wid,
-            Sha256 = stored.Sha256,
-            Mime = stored.Mime,
-            SizeBytes = stored.SizeBytes,
-            Url = stored.Url,
+            Sha256 = assetSha256,
+            Mime = assetMime,
+            SizeBytes = assetSizeBytes,
+            Url = url ?? assetUrl,  // 展示用（有水印时是 watermark URL，无水印时是 imagemaster URL）
             Prompt = (prompt ?? string.Empty).Trim(),
             CreatedAt = DateTime.UtcNow,
-            // 原图信息：优先使用持久化到 ImageMaster 域的版本，否则回退到传入的 URL
-            OriginalUrl = persistedOriginalUrl ?? originalUrl ?? stored.Url,
-            OriginalSha256 = persistedOriginalSha256 ?? originalSha256 ?? stored.Sha256
+            OriginalUrl = assetUrl,
+            OriginalSha256 = assetSha256
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
 

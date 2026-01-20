@@ -2,6 +2,7 @@ import { apiRequest } from '@/services/real/apiClient';
 import type {
   GetAdminAuthzMeContract,
   GetAdminPermissionCatalogContract,
+  GetAdminMenuCatalogContract,
   GetSystemRolesContract,
   CreateSystemRoleContract,
   UpdateSystemRoleContract,
@@ -11,6 +12,7 @@ import type {
   UpdateUserAuthzContract,
   AdminAuthzMe,
   AdminPermissionDef,
+  AdminMenuItem,
   SystemRoleDto,
   AdminUserAuthzSnapshot,
 } from '@/services/contracts/authz';
@@ -21,6 +23,10 @@ export const getAdminAuthzMeReal: GetAdminAuthzMeContract = async () => {
 
 export const getAdminPermissionCatalogReal: GetAdminPermissionCatalogContract = async () => {
   return await apiRequest<{ items: AdminPermissionDef[] }>('/api/v1/admin/authz/catalog', { method: 'GET' });
+};
+
+export const getAdminMenuCatalogReal: GetAdminMenuCatalogContract = async () => {
+  return await apiRequest<{ items: AdminMenuItem[] }>('/api/v1/admin/authz/menu-catalog', { method: 'GET' });
 };
 
 export const getSystemRolesReal: GetSystemRolesContract = async () => {

@@ -1,10 +1,10 @@
 /**
- * ImageMaster Canvas 持久化工具
- * 
+ * VisualAgent Canvas 持久化工具
+ *
  * 核心逻辑：
  * 1. canvasToPersistedV1: 将内存中的 canvas 状态转换为可持久化的 JSON
  * 2. persistedV1ToCanvas: 从持久化的 JSON 恢复 canvas 状态
- * 
+ *
  * 关键点：
  * - running 状态的占位元素必须被保存，以便后端能够回填
  * - 使用 id 字段作为元素标识（与后端保持一致）
@@ -153,19 +153,19 @@ export function isRemoteImageSrc(src: string): boolean {
 
 /**
  * 将内存中的 canvas 状态转换为可持久化的 JSON
- * 
+ *
  * 关键逻辑：
  * - 对于 image 类型，如果有 assetId 或远程 src 或是占位状态（running/error），则保存
  * - 对于 data:/blob: 本地图片，跳过并计入 skippedLocalOnlyImages
  */
-export function canvasToPersistedV1(items: CanvasImageItem[]): { 
-  state: PersistedCanvasStateV1; 
-  skippedLocalOnlyImages: number 
+export function canvasToPersistedV1(items: CanvasImageItem[]): {
+  state: PersistedCanvasStateV1;
+  skippedLocalOnlyImages: number;
 } {
   const els: PersistedCanvasElementV1[] = [];
   let skippedLocalOnlyImages = 0;
   const src = Array.isArray(items) ? items : [];
-  
+
   for (let i = 0; i < src.length && els.length < MAX_PERSIST_ELEMENTS; i++) {
     const it = src[i]!;
     const kind = (it.kind ?? 'image') as PersistedCanvasElementV1['kind'];
@@ -179,12 +179,12 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
       z: i,
       name: String(it.prompt ?? '').trim() || undefined,
     };
-    
+
     if (kind === 'image') {
       const assetId = String(it.assetId ?? '').trim();
       const srcOk = isRemoteImageSrc(it.src);
       const isPlaceholder = it.status === 'running' || it.status === 'error';
-      
+
       if (!assetId && !srcOk && !isPlaceholder) {
         // 仅把"真正的本地临时内容"计入 skipped：
         // - data: / blob: 属于本地内容，刷新后无法从服务器恢复 => 计数并提示
@@ -195,7 +195,7 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         }
         continue;
       }
-      
+
       els.push({
         ...base,
         kind: 'image',
@@ -241,16 +241,16 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
       });
     }
   }
-  
-  return { 
-    state: { schemaVersion: 1, meta: { skippedLocalOnlyImages }, elements: els }, 
-    skippedLocalOnlyImages 
+
+  return {
+    state: { schemaVersion: 1, meta: { skippedLocalOnlyImages }, elements: els },
+    skippedLocalOnlyImages,
   };
 }
 
 /**
  * 从持久化的 JSON 恢复 canvas 状态
- * 
+ *
  * 关键逻辑：
  * - 对于 image 类型，优先从 assets 中查找 URL
  * - 如果是占位状态（running/error），即使没有 src 也要恢复
@@ -263,28 +263,28 @@ export function persistedV1ToCanvas(
   for (const a of assets ?? []) {
     if (a?.id) byId.set(String(a.id), a);
   }
-  
+
   const out: CanvasImageItem[] = [];
   let missingAssets = 0;
   let localOnlyImages = 0;
   const sorted = [...(state.elements ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
-  
+
   for (const el of sorted) {
     const id = String(el.id ?? '').trim();
     if (!id) continue;
-    
+
     if (el.kind === 'image') {
       const aid = String(el.assetId ?? '').trim();
       const a = aid ? byId.get(aid) : undefined;
       const src = a?.url || (isRemoteImageSrc(String(el.src ?? '')) ? String(el.src) : '');
       const isPlaceholder = el.status === 'running' || el.status === 'error';
-      
+
       if (!src && !isPlaceholder) {
         if (!aid && !el.src) localOnlyImages += 1;
         else missingAssets += 1;
         continue;
       }
-      
+
       const prompt = String(el.name ?? a?.prompt ?? '').trim();
       out.push({
         key: id,
@@ -358,6 +358,6 @@ export function persistedV1ToCanvas(
       });
     }
   }
-  
+
   return { canvas: out, missingAssets, localOnlyImages };
 }

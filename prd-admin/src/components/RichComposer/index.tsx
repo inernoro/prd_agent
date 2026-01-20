@@ -228,7 +228,7 @@ function EditorInner({
 export const RichComposer = forwardRef<RichComposerRef, RichComposerProps>(
   function RichComposer(props, ref) {
     const initialConfig = {
-      namespace: 'ImageMasterComposer',
+      namespace: 'VisualAgentComposer',
       theme: {
         paragraph: 'rich-composer-paragraph',
       },

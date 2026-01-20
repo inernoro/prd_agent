@@ -59,8 +59,9 @@ export const updatePlatformReal: UpdatePlatformContract = async (id: string, inp
   return await apiRequest<Platform>(`/api/v1/platforms/${id}`);
 };
 
-export const deletePlatformReal: DeletePlatformContract = async (id: string) => {
-  const res = await apiRequest<true>(`/api/v1/platforms/${id}`, { method: 'DELETE', emptyResponseData: true });
+export const deletePlatformReal: DeletePlatformContract = async (id: string, opts?: { cascade?: boolean }) => {
+  const url = opts?.cascade ? `/api/v1/platforms/${id}?cascade=true` : `/api/v1/platforms/${id}`;
+  const res = await apiRequest<true>(url, { method: 'DELETE', emptyResponseData: true });
   if (!res.success) return res;
   return ok(true);
 };

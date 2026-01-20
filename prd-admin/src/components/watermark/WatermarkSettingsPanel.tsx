@@ -509,7 +509,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
           <div
             className="grid gap-3 flex-1 min-h-0 overflow-auto overflow-x-hidden pr-1 content-start items-start"
-            style={{ 
+            style={{
               gridTemplateColumns: columns > 1 ? `repeat(${columns}, minmax(0, 1fr))` : '1fr',
               gridAutoRows: 'min-content'
             }}
@@ -673,7 +673,13 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
           </div>
         </div>
       ) : (
-        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无水印</div>
+        <div className="flex flex-col items-center justify-center py-8 gap-3">
+          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无水印配置</div>
+          <Button variant="secondary" size="sm" onClick={handleAddConfig} disabled={saving}>
+            <Plus size={14} />
+            创建水印
+          </Button>
+        </div>
       )}
 
       <Dialog

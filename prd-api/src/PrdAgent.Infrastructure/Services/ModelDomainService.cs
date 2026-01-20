@@ -122,7 +122,7 @@ public class ModelDomainService : IModelDomainService
             // 展示给管理后台/日志的 system（脱敏版）：不要再用占位符，避免误导排障
             SystemPromptRedacted: "意图：根据文件名与PRD片段输出群组名称（只输出名称，不追问）",
             RequestType: "intent",
-            RequestPurpose: "groupName.suggest"));
+            RequestPurpose: "prd-agent-desktop::group-name.suggest"));
 
         var systemPrompt =
             "你是PRD Agent的意图模型。\n" +

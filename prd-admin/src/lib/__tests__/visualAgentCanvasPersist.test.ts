@@ -1,12 +1,12 @@
 /**
- * ImageMaster Canvas 持久化测试
- * 
+ * VisualAgent Canvas 持久化测试
+ *
  * 关键测试场景：
  * 1. running 状态的占位元素必须被保存
  * 2. running 状态的占位元素必须能被正确恢复
  * 3. 后端回填时能通过 id 字段找到元素
- * 
- * 运行方式：pnpm -C prd-admin test imageMasterCanvasPersist
+ *
+ * 运行方式：pnpm -C prd-admin test visualAgentCanvasPersist
  */
 
 import { describe, it, expect } from 'vitest';
@@ -17,9 +17,9 @@ import {
   type CanvasImageItem,
   type PersistedCanvasStateV1,
   type ImageAsset,
-} from '../imageMasterCanvasPersist';
+} from '../visualAgentCanvasPersist';
 
-describe('ImageMaster Canvas 持久化测试', () => {
+describe('VisualAgent Canvas 持久化测试', () => {
   
   describe('isRemoteImageSrc', () => {
     it('应识别远程 URL', () => {

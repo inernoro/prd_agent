@@ -116,7 +116,7 @@ public class AdminLlmLogsController : ControllerBase
     [HttpGet("meta")]
     public async Task<IActionResult> Meta()
     {
-        // 下拉枚举：为了稳定性，status 使用固定枚举；provider/model 使用 distinct
+        // 下拉枚举：为了稳定性，status 使用固定枚举；provider/model/requestPurposes 使用 distinct
         var providers = (await _db.LlmRequestLogs
                 .Distinct(x => x.Provider, Builders<LlmRequestLog>.Filter.Empty)
                 .ToListAsync())
@@ -133,9 +133,17 @@ public class AdminLlmLogsController : ControllerBase
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var requestPurposes = (await _db.LlmRequestLogs
+                .Distinct(x => x.RequestPurpose, Builders<LlmRequestLog>.Filter.Empty)
+                .ToListAsync())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
 
-        return Ok(ApiResponse<object>.Ok(new { providers, models, statuses }));
+        return Ok(ApiResponse<object>.Ok(new { providers, models, requestPurposes, statuses }));
     }
 
     [HttpGet]
@@ -150,7 +158,8 @@ public class AdminLlmLogsController : ControllerBase
         [FromQuery] string? groupId = null,
         [FromQuery] string? sessionId = null,
         [FromQuery] string? userId = null,
-        [FromQuery] string? status = null)
+        [FromQuery] string? status = null,
+        [FromQuery] string? requestPurpose = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 10, 200);
@@ -165,6 +174,7 @@ public class AdminLlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(sessionId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.SessionId, sessionId);
         if (!string.IsNullOrWhiteSpace(userId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.UserId, userId);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.RequestPurpose, requestPurpose);
 
         var total = await _db.LlmRequestLogs.CountDocumentsAsync(filter);
         var rawItems = await _db.LlmRequestLogs.Find(filter)

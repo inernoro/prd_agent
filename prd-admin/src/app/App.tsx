@@ -19,7 +19,7 @@ import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
 import AuthzPage from '@/pages/AuthzPage';
-import { getAdminAuthzMe } from '@/services';
+import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -69,9 +69,12 @@ export default function App() {
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
+  const setIsRoot = useAuthStore((s) => s.setIsRoot);
+  const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
+  const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
 
-  // 刷新/回到主页时补齐权限（避免“持久化 token 但 permissions 为空”导致误判）
+  // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
   useEffect(() => {
     if (!isAuthenticated) return;
     if (permissionsLoaded) return;
@@ -82,9 +85,22 @@ export default function App() {
         return;
       }
       setPermissions(res.data.effectivePermissions || []);
+      setIsRoot(res.data.isRoot ?? false);
       setPermissionsLoaded(true);
     })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, logout]);
+  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, logout]);
+
+  // 加载菜单目录
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (menuCatalogLoaded) return;
+    (async () => {
+      const res = await getAdminMenuCatalog();
+      if (res.success && res.data?.items) {
+        setMenuCatalog(res.data.items);
+      }
+    })();
+  }, [isAuthenticated, menuCatalogLoaded, setMenuCatalog]);
 
   return (
     <>

@@ -17,4 +17,4 @@ export type UpdatePlatformInput = Partial<CreatePlatformInput>;
 
 export type CreatePlatformContract = (input: CreatePlatformInput) => Promise<ApiResponse<Platform>>;
 export type UpdatePlatformContract = (id: string, input: UpdatePlatformInput) => Promise<ApiResponse<Platform>>;
-export type DeletePlatformContract = (id: string) => Promise<ApiResponse<true>>;
+export type DeletePlatformContract = (id: string, opts?: { cascade?: boolean }) => Promise<ApiResponse<true>>;

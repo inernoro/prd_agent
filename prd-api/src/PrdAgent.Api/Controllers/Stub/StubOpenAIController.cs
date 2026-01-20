@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using PrdAgent.Infrastructure.Services;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Drawing;
@@ -19,7 +20,7 @@ namespace PrdAgent.Api.Controllers.Stub;
 /// - 支持：
 ///   - POST /v1/chat/completions（stream=true -> SSE）
 ///   - POST /v1/images/generations（返回随机颜色图片 URL）
-///   - POST /v1/images/edits（multipart：返回“参考图 + 水印” URL）
+///   - POST /v1/images/edits（multipart：返回"参考图 + 水印" URL）
 ///   - GET  /assets/{id}.png（返回图片 bytes）
 /// </summary>
 [ApiController]
@@ -30,22 +31,16 @@ public class StubOpenAIController : ControllerBase
     private static readonly ConcurrentDictionary<string, (byte[] bytes, DateTimeOffset expireAt)> _imgStore = new();
     private static readonly TimeSpan ImgTtl = TimeSpan.FromMinutes(30);
     private static readonly object _fontLock = new();
-    private static FontFamily _bestFontFamily;
-    private static bool _bestFontFamilySet;
-    private static readonly string[] PreferredCjkFonts = new[]
+    private static Font? _cachedFont;
+    private static bool _fontInitialized;
+    private static string? _fontInitError;
+
+    private readonly WatermarkFontRegistry _fontRegistry;
+
+    public StubOpenAIController(WatermarkFontRegistry fontRegistry)
     {
-        // Windows
-        "Microsoft YaHei",
-        "SimHei",
-        "SimSun",
-        // macOS
-        "PingFang SC",
-        "Heiti SC",
-        // Linux (常见)
-        "Noto Sans CJK SC",
-        "Noto Sans SC",
-        "Source Han Sans SC"
-    };
+        _fontRegistry = fontRegistry;
+    }
 
     [HttpGet("assets/{id}.png")]
     public IActionResult GetAsset(string id)
@@ -347,7 +342,7 @@ public class StubOpenAIController : ControllerBase
         return new Rgba32(r, g, b, 255);
     }
 
-    private static byte[] RenderSolidPng(int w, int h, Color color, string? watermarkText)
+    private byte[] RenderSolidPng(int w, int h, Color color, string? watermarkText)
     {
         using var img = new Image<Rgba32>(w, h);
         img.Mutate(ctx => ctx.BackgroundColor(color));
@@ -361,7 +356,7 @@ public class StubOpenAIController : ControllerBase
         return ms.ToArray();
     }
 
-    private static byte[] TryRenderWatermarkedFromInput(byte[] inputBytes, int w, int h, string watermarkText)
+    private byte[] TryRenderWatermarkedFromInput(byte[] inputBytes, int w, int h, string watermarkText)
     {
         // 尽量加载用户图并缩放；失败则退回纯色图（仍带水印）
         try
@@ -401,9 +396,9 @@ public class StubOpenAIController : ControllerBase
         }
     }
 
-    private static void DrawWatermark(Image<Rgba32> img, string text)
+    private void DrawWatermark(Image<Rgba32> img, string text)
     {
-        // 右下角水印：半透明底 + 文本（用于 image edits，更“像真实服务”）
+        // 右下角水印：半透明底 + 文本（用于 image edits，更"像真实服务"）
         var w = img.Width;
         var h = img.Height;
         var pad = Math.Max(10, Math.Min(w, h) / 50);
@@ -427,9 +422,9 @@ public class StubOpenAIController : ControllerBase
         });
     }
 
-    private static void DrawCenterWatermark(Image<Rgba32> img, string text)
+    private void DrawCenterWatermark(Image<Rgba32> img, string text)
     {
-        // 中间水印：只写一块（不铺满），用于快速验证“prompt 是否透传 + 返回容器是否遮挡”
+        // 中间水印：只写一块（不铺满），用于快速验证"prompt 是否透传 + 返回容器是否遮挡"
         var w = img.Width;
         var h = img.Height;
         var min = Math.Max(1, Math.Min(w, h));
@@ -584,50 +579,58 @@ public class StubOpenAIController : ControllerBase
         return $"{head}\n{p}";
     }
 
-    private static FontFamily GetBestFontFamily()
+    private Font GetOrCreateFont(float size)
     {
-        if (_bestFontFamilySet) return _bestFontFamily;
+        // 使用 WatermarkFontRegistry 获取字体，它会自动处理：
+        // 1. 本地 Assets/Fonts/default.ttf 存在则使用
+        // 2. 不存在则从远程下载并缓存
+        // 3. 下载失败会抛出明确异常
         lock (_fontLock)
         {
-            if (_bestFontFamilySet) return _bestFontFamily;
-
-            var families = SystemFonts.Collection.Families?.ToList() ?? new List<FontFamily>();
-            if (families.Count == 0)
+            if (_fontInitialized && _cachedFont != null)
             {
-                // 极端兜底：让 SystemFonts 自己决定（不会为空，但可能不支持 CJK）
-                _bestFontFamily = SystemFonts.CreateFont("Arial", 12).Family;
-                _bestFontFamilySet = true;
-                return _bestFontFamily;
-            }
-
-            foreach (var name in PreferredCjkFonts)
-            {
-                var hit = families.FirstOrDefault(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(hit.Name))
+                // 如果缓存的字体大小接近，直接使用；否则重新创建
+                if (Math.Abs(_cachedFont.Size - size) < 0.1f)
                 {
-                    _bestFontFamily = hit;
-                    _bestFontFamilySet = true;
-                    return _bestFontFamily;
+                    return _cachedFont;
                 }
             }
 
-            _bestFontFamily = families[0];
-            _bestFontFamilySet = true;
-            return _bestFontFamily;
+            if (_fontInitialized && _fontInitError != null)
+            {
+                // 已经尝试过初始化但失败了，抛出明确错误
+                throw new InvalidOperationException($"Stub font initialization failed: {_fontInitError}");
+            }
+
+            try
+            {
+                // 使用 WatermarkFontRegistry 的 default 字体
+                var resolved = _fontRegistry.ResolveFont(_fontRegistry.DefaultFontKey, size);
+                _cachedFont = resolved.Font;
+                _fontInitialized = true;
+                _fontInitError = null;
+
+                Console.WriteLine($"[StubOpenAIController] Font loaded successfully: {resolved.FontFamily}, FallbackUsed={resolved.FallbackUsed}");
+                return _cachedFont;
+            }
+            catch (Exception ex)
+            {
+                _fontInitialized = true;
+                _fontInitError = ex.Message;
+                Console.WriteLine($"[StubOpenAIController] Font loading failed: {ex.Message}");
+                throw new InvalidOperationException(
+                    $"Stub watermark font not available. " +
+                    $"Please ensure 'default.ttf' exists at Assets/Fonts/default.ttf or can be downloaded from remote. " +
+                    $"Error: {ex.Message}", ex);
+            }
         }
     }
 
-    private static Font CreateBestEffortFont(float size, FontStyle style)
+    private Font CreateBestEffortFont(float size, FontStyle style)
     {
-        try
-        {
-            var fam = GetBestFontFamily();
-            return new Font(fam, size, style);
-        }
-        catch
-        {
-            return SystemFonts.CreateFont("Arial", size, style);
-        }
+        // 注意：style 参数暂时忽略，因为 WatermarkFontRegistry 只返回 Regular 样式
+        // 如果需要 Bold，可以后续扩展 WatermarkFontRegistry
+        return GetOrCreateFont(size);
     }
 
     private async Task WriteSseAsync(object obj, CancellationToken ct, bool addDelay = false)

@@ -96,6 +96,32 @@ public sealed class AdminAuthzController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 获取菜单目录（含权限要求），前端用于自动生成导航菜单
+    /// </summary>
+    [HttpGet("menu-catalog")]
+    public IActionResult MenuCatalog()
+    {
+        var items = AdminMenuCatalog.All
+            .OrderBy(x => x.SortOrder)
+            .Select(x => new AdminMenuItemResponse
+            {
+                AppKey = x.AppKey,
+                Path = x.Path,
+                Label = x.Label,
+                Description = x.Description,
+                Icon = x.Icon,
+                RequiredPermission = x.RequiredPermission,
+                SortOrder = x.SortOrder
+            })
+            .ToList();
+
+        return Ok(ApiResponse<AdminMenuCatalogResponse>.Ok(new AdminMenuCatalogResponse
+        {
+            Items = items
+        }));
+    }
+
     private async Task EnsurePermissionCatalogNoticeAsync(CancellationToken ct)
     {
         var currentPermissions = AdminPermissionCatalog.All.ToList();

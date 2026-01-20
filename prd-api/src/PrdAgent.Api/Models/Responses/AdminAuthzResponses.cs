@@ -45,3 +45,46 @@ public sealed class AdminPermissionCatalogResponse
     public List<AdminPermissionDef> Items { get; set; } = new();
 }
 
+public sealed class AdminMenuCatalogResponse
+{
+    public List<AdminMenuItemResponse> Items { get; set; } = new();
+}
+
+public sealed class AdminMenuItemResponse
+{
+    /// <summary>
+    /// 应用标识，对应后端 Controller 路由前缀
+    /// </summary>
+    public string AppKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 前端路由路径
+    /// </summary>
+    public string Path { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 菜单显示名称
+    /// </summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 菜单描述
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// 图标名称（Lucide icon name）
+    /// </summary>
+    public string Icon { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 进入该菜单所需的最低权限
+    /// </summary>
+    public string RequiredPermission { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 排序权重
+    /// </summary>
+    public int SortOrder { get; set; }
+}
+

@@ -13,7 +13,7 @@ public static class AppDomainPaths
     public const string BaseLocal = "/data";
 
     // domains（全小写）
-    public const string DomainImageMaster = "imagemaster";
+    public const string DomainVisualAgent = "visual-agent";
     public const string DomainImageGen = "imagegen";
     public const string DomainUploads = "uploads";
     public const string DomainLlmLogs = "llmlogs";
@@ -29,7 +29,7 @@ public static class AppDomainPaths
 
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
-        DomainImageMaster, DomainImageGen, DomainUploads, DomainLlmLogs, DomainWatermark,
+        DomainVisualAgent, DomainImageGen, DomainUploads, DomainLlmLogs, DomainWatermark,
     };
 
     private static readonly HashSet<string> TypeAllow = new(StringComparer.Ordinal)

@@ -369,7 +369,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var safeMime = string.IsNullOrWhiteSpace(mime) ? "image/png" : mime.Trim();
         var ext = MimeToExt(safeMime);
         var sha = Sha256Hex(bytes);
-        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainImageMaster : AppDomainPaths.NormDomain(domain);
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
         var key = BuildObjectKey(d, t, sha, ext);
 

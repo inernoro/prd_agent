@@ -145,7 +145,7 @@ public class GapsController : ControllerBase
             DocumentHash: Sha256Hex(document.RawContent ?? string.Empty),
             SystemPromptRedacted: "你是一个专业的产品文档分析师。",
             RequestType: "reasoning",
-            RequestPurpose: "gaps.summaryReport"));
+            RequestPurpose: "prd-agent-desktop::gaps.summary-report"));
 
         var detector = new AIGapDetector(_llmClient, _promptManager);
         var report = await detector.GenerateSummaryReportAsync(
