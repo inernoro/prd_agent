@@ -12,10 +12,12 @@ namespace PrdAgent.Infrastructure.Services;
 public sealed class AdminPermissionService : IAdminPermissionService
 {
     private readonly MongoDbContext _db;
+    private readonly ISystemRoleCacheService _roleCache;
 
-    public AdminPermissionService(MongoDbContext db)
+    public AdminPermissionService(MongoDbContext db, ISystemRoleCacheService roleCache)
     {
         _db = db;
+        _roleCache = roleCache;
     }
 
     private static string InferSystemRoleKey(User user)
@@ -56,7 +58,8 @@ public sealed class AdminPermissionService : IAdminPermissionService
         var rolePerms = new HashSet<string>(StringComparer.Ordinal);
         if (!string.Equals(roleKey, "none", StringComparison.Ordinal))
         {
-            var r = await _db.SystemRoles.Find(x => x.Key == roleKey).FirstOrDefaultAsync(ct);
+            // 从缓存获取角色（不再查询数据库）
+            var r = _roleCache.GetRoleByKey(roleKey);
             if (r?.Permissions != null)
             {
                 foreach (var p in r.Permissions)

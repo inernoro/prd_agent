@@ -301,4 +301,77 @@ public class InitController : ControllerBase
             message = "系统初始化完成"
         }));
     }
+
+    /// <summary>
+    /// 迁移权限字符串格式（admin.xxx.yyy → appKey.action）
+    /// </summary>
+    [HttpPost("migrate-permissions")]
+    public async Task<IActionResult> MigratePermissions()
+    {
+        // 权限映射表：旧格式 → 新格式
+        var permissionMap = new Dictionary<string, string>
+        {
+            { "admin.access", "access" },
+            { "admin.authz.manage", "authz.manage" },
+            { "admin.users.read", "users.read" },
+            { "admin.users.write", "users.write" },
+            { "admin.groups.read", "groups.read" },
+            { "admin.groups.write", "groups.write" },
+            { "admin.models.read", "mds.read" },
+            { "admin.models.write", "mds.write" },
+            { "admin.logs.read", "logs.read" },
+            { "admin.open-platform.manage", "open-platform.manage" },
+            { "admin.data.read", "data.read" },
+            { "admin.data.write", "data.write" },
+            { "admin.assets.read", "assets.read" },
+            { "admin.assets.write", "assets.write" },
+            { "admin.settings.read", "settings.read" },
+            { "admin.settings.write", "settings.write" },
+            { "admin.prompts.write", "prompts.write" },
+            { "admin.agent.use", "agent.use" },
+            { "admin.super", "super" },
+        };
+
+        var updatedRoles = 0;
+        var updatedPermissions = 0;
+
+        // 获取所有系统角色
+        var roles = await _db.SystemRoles.Find(_ => true).ToListAsync();
+
+        foreach (var role in roles)
+        {
+            var changed = false;
+            var newPermissions = new List<string>();
+
+            foreach (var perm in role.Permissions)
+            {
+                if (permissionMap.TryGetValue(perm, out var newPerm))
+                {
+                    newPermissions.Add(newPerm);
+                    changed = true;
+                    updatedPermissions++;
+                    _logger.LogInformation("角色 {RoleKey}: 权限 {OldPerm} → {NewPerm}", role.Key, perm, newPerm);
+                }
+                else
+                {
+                    newPermissions.Add(perm);
+                }
+            }
+
+            if (changed)
+            {
+                role.Permissions = newPermissions;
+                role.UpdatedAt = DateTime.UtcNow;
+                await _db.SystemRoles.ReplaceOneAsync(r => r.Id == role.Id, role);
+                updatedRoles++;
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            updatedRoles,
+            updatedPermissions,
+            message = $"已更新 {updatedRoles} 个角色，共迁移 {updatedPermissions} 个权限"
+        }));
+    }
 }

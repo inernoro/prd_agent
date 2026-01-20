@@ -168,7 +168,8 @@ public class UsersController : ControllerBase
                 LastLoginAt = u.LastLoginAt,
                 LastActiveAt = u.LastActiveAt,
                 IsLocked = remaining > 0,
-                LockoutRemainingSeconds = remaining
+                LockoutRemainingSeconds = remaining,
+                SystemRoleKey = u.SystemRoleKey
             };
         }));
 

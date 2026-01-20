@@ -285,8 +285,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     const { appId, modelType } = bindingTarget;
 
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-      const url = `${API_BASE}/admin/app-callers/${appId}/requirements/${modelType}/bindings`;
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+      const url = `${API_BASE}/open-platform/app-callers/${appId}/requirements/${modelType}/bindings`;
 
       const response = await fetch(url, {
         method: 'PUT',
@@ -380,8 +380,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         throw new Error('未登录，请重新登录');
       }
 
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-      const url = `${API_BASE}/admin/init/default-apps`;
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+      const url = `${API_BASE}/data/init/default-apps`;
 
       const response = await fetch(url, {
         method: 'POST',

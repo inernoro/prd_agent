@@ -31,8 +31,21 @@ public sealed class AdminPermissionMiddleware
         _scanner = scanner;
     }
 
+    /// <summary>
+    /// 判断是否具有超级权限（root 账户或 AI 超级访问模式）
+    /// </summary>
     private static bool IsRoot(HttpContext ctx)
-        => string.Equals(ctx.User?.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+    {
+        // 方式 1：root 破窗账户
+        if (string.Equals(ctx.User?.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal))
+            return true;
+
+        // 方式 2：AI 超级访问密钥
+        if (string.Equals(ctx.User?.FindFirst(Authentication.AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
+            return true;
+
+        return false;
+    }
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {

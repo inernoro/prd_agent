@@ -22,6 +22,8 @@ export type AdminUser = {
   isLocked?: boolean;
   /** 剩余锁定秒数（0/undefined 表示未锁定） */
   lockoutRemainingSeconds?: number;
+  /** 系统角色 key（用于权限管理） */
+  systemRoleKey?: string | null;
 };
 
 export type PagedResult<T> = {

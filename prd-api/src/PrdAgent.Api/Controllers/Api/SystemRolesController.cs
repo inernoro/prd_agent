@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -17,21 +18,25 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class SystemRolesController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly ISystemRoleCacheService _roleCache;
 
-    public SystemRolesController(MongoDbContext db)
+    public SystemRolesController(MongoDbContext db, ISystemRoleCacheService roleCache)
     {
         _db = db;
+        _roleCache = roleCache;
     }
 
     private string GetOperatorId()
         => User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? "unknown";
 
+    /// <summary>
+    /// 获取所有角色（内置 + 自定义）
+    /// </summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public IActionResult List()
     {
-        var list = await _db.SystemRoles.Find(_ => true)
-            .SortBy(x => x.Key)
-            .ToListAsync(ct);
+        // 从缓存获取所有角色
+        var list = _roleCache.GetAllRoles();
 
         var items = list.Select(x => new SystemRoleDto
         {
@@ -47,6 +52,9 @@ public sealed class SystemRolesController : ControllerBase
         return Ok(ApiResponse<List<SystemRoleDto>>.Ok(items));
     }
 
+    /// <summary>
+    /// 创建自定义角色
+    /// </summary>
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UpsertSystemRoleRequest req, CancellationToken ct)
     {
@@ -58,8 +66,9 @@ public sealed class SystemRolesController : ControllerBase
         if (key is "root")
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "key 不合法"));
 
-        var existed = await _db.SystemRoles.Find(x => x.Key == key).FirstOrDefaultAsync(ct);
-        if (existed != null)
+        // 检查缓存中是否已存在（包括内置角色）
+        var existedInCache = _roleCache.GetRoleByKey(key);
+        if (existedInCache != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "角色 key 已存在"));
 
         var perms = (req?.Permissions ?? new List<string>())
@@ -81,6 +90,9 @@ public sealed class SystemRolesController : ControllerBase
 
         await _db.SystemRoles.InsertOneAsync(role, cancellationToken: ct);
 
+        // 刷新缓存
+        await _roleCache.RefreshCustomRolesAsync(ct);
+
         return Ok(ApiResponse<SystemRoleDto>.Ok(new SystemRoleDto
         {
             Id = role.Id,
@@ -93,6 +105,9 @@ public sealed class SystemRolesController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 更新自定义角色（内置角色不可修改）
+    /// </summary>
     [HttpPut("{key}")]
     public async Task<IActionResult> Update([FromRoute] string key, [FromBody] UpsertSystemRoleRequest req, CancellationToken ct)
     {
@@ -100,6 +115,16 @@ public sealed class SystemRolesController : ControllerBase
         if (string.IsNullOrWhiteSpace(k))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "key 不能为空"));
 
+        // 先检查缓存中是否存在
+        var cachedRole = _roleCache.GetRoleByKey(k);
+        if (cachedRole == null)
+            return NotFound(ApiResponse<object>.Fail("SYSTEM_ROLE_NOT_FOUND", "系统角色不存在"));
+
+        // 内置角色不可修改
+        if (cachedRole.IsBuiltIn)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "内置角色不可修改"));
+
+        // 从数据库获取自定义角色进行更新
         var existed = await _db.SystemRoles.Find(x => x.Key == k).FirstOrDefaultAsync(ct);
         if (existed == null)
             return NotFound(ApiResponse<object>.Fail("SYSTEM_ROLE_NOT_FOUND", "系统角色不存在"));
@@ -119,6 +144,9 @@ public sealed class SystemRolesController : ControllerBase
 
         await _db.SystemRoles.ReplaceOneAsync(x => x.Id == existed.Id, existed, cancellationToken: ct);
 
+        // 刷新缓存
+        await _roleCache.RefreshCustomRolesAsync(ct);
+
         return Ok(ApiResponse<SystemRoleDto>.Ok(new SystemRoleDto
         {
             Id = existed.Id,
@@ -131,6 +159,9 @@ public sealed class SystemRolesController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 删除自定义角色（内置角色不可删除）
+    /// </summary>
     [HttpDelete("{key}")]
     public async Task<IActionResult> Delete([FromRoute] string key, CancellationToken ct)
     {
@@ -138,59 +169,32 @@ public sealed class SystemRolesController : ControllerBase
         if (string.IsNullOrWhiteSpace(k))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "key 不能为空"));
 
-        var existed = await _db.SystemRoles.Find(x => x.Key == k).FirstOrDefaultAsync(ct);
-        if (existed == null)
+        // 先检查缓存中是否存在
+        var cachedRole = _roleCache.GetRoleByKey(k);
+        if (cachedRole == null)
             return Ok(ApiResponse<object>.Ok(new { deleted = false }));
 
-        if (existed.IsBuiltIn)
+        // 内置角色不可删除
+        if (cachedRole.IsBuiltIn)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "内置角色不可删除"));
 
-        await _db.SystemRoles.DeleteOneAsync(x => x.Id == existed.Id, cancellationToken: ct);
+        // 从数据库删除
+        await _db.SystemRoles.DeleteOneAsync(x => x.Key == k, cancellationToken: ct);
+
+        // 刷新缓存
+        await _roleCache.RefreshCustomRolesAsync(ct);
+
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     /// <summary>
-    /// 重置内置角色为默认定义（会覆盖内置角色的 name/permissions；不影响自定义角色）。
+    /// 重置内置角色（已废弃，内置角色现在从代码加载，无需重置）
     /// </summary>
     [HttpPost("reset-builtins")]
-    public async Task<IActionResult> ResetBuiltIns(CancellationToken ct)
+    public IActionResult ResetBuiltIns()
     {
-        var operatorId = GetOperatorId();
-        var defs = BuiltInSystemRoles.Definitions;
-
-        foreach (var def in defs)
-        {
-            var existed = await _db.SystemRoles.Find(x => x.Key == def.Key).FirstOrDefaultAsync(ct);
-            if (existed == null)
-            {
-                var created = new SystemRole
-                {
-                    Id = Guid.NewGuid().ToString("N"),
-                    Key = def.Key,
-                    Name = def.Name,
-                    Permissions = def.Permissions.Distinct(StringComparer.Ordinal).ToList(),
-                    IsBuiltIn = true,
-                    UpdatedAt = DateTime.UtcNow,
-                    UpdatedBy = operatorId
-                };
-                await _db.SystemRoles.InsertOneAsync(created, cancellationToken: ct);
-                continue;
-            }
-
-            // 仅重置内置角色；自定义角色不做覆盖
-            if (!existed.IsBuiltIn) continue;
-
-            existed.Name = def.Name;
-            existed.Permissions = def.Permissions.Distinct(StringComparer.Ordinal).ToList();
-            existed.IsBuiltIn = true;
-            existed.UpdatedAt = DateTime.UtcNow;
-            existed.UpdatedBy = operatorId;
-            await _db.SystemRoles.ReplaceOneAsync(x => x.Id == existed.Id, existed, cancellationToken: ct);
-        }
-
-        var list = await _db.SystemRoles.Find(_ => true)
-            .SortBy(x => x.Key)
-            .ToListAsync(ct);
+        // 内置角色现在从代码加载，返回所有角色列表
+        var list = _roleCache.GetAllRoles();
 
         var items = list.Select(x => new SystemRoleDto
         {
@@ -206,4 +210,3 @@ public sealed class SystemRolesController : ControllerBase
         return Ok(ApiResponse<List<SystemRoleDto>>.Ok(items));
     }
 }
-

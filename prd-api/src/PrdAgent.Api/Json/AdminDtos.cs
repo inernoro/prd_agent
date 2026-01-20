@@ -38,6 +38,8 @@ public class UserListItem
     public bool IsLocked { get; set; }
     /// <summary>剩余锁定秒数（0 表示未锁定）</summary>
     public int LockoutRemainingSeconds { get; set; }
+    /// <summary>系统角色 key（用于权限管理）</summary>
+    public string? SystemRoleKey { get; set; }
 }
 
 /// <summary>

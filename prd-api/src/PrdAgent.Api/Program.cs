@@ -112,6 +112,7 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
+builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
 builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.Services.AdminControllerScanner>();
 
@@ -143,6 +144,9 @@ builder.Services.AddHostedService<ImageGenRunWorker>();
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
+
+// 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
+builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
@@ -367,10 +371,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     })
     .AddScheme<PrdAgent.Api.Authentication.ApiKeyAuthenticationOptions, PrdAgent.Api.Authentication.ApiKeyAuthenticationHandler>(
-        "ApiKey", 
+        "ApiKey",
+        options => { })
+    .AddScheme<PrdAgent.Api.Authentication.AiAccessKeyAuthenticationOptions, PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler>(
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
         options => { });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // 配置默认策略，支持多种认证方案
+    options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
+        JwtBearerDefaults.AuthenticationScheme,
+        "ApiKey",
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 // 配置CORS
 var allowedOriginsSection = builder.Configuration.GetSection("Cors:AllowedOrigins");
@@ -836,6 +852,12 @@ using (var scope = app.Services.CreateScope())
     var idGenerator = scope.ServiceProvider.GetRequiredService<IIdGenerator>();
     var initializer = new DatabaseInitializer(db, idGenerator);
     await initializer.InitializeAsync();
+}
+
+// 初始化系统角色缓存（内置角色从代码加载，自定义角色从数据库加载）
+{
+    var roleCache = app.Services.GetRequiredService<ISystemRoleCacheService>();
+    await roleCache.InitializeAsync();
 }
 
 // 配置中间件

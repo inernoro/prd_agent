@@ -8,7 +8,7 @@ import type {
 import type { IModelGroupsService } from '../contracts/modelGroups';
 import { useAuthStore } from '@/stores/authStore';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().token;
@@ -48,8 +48,8 @@ function mapGroupFromApi(g: any): ModelGroup {
 export class ModelGroupsService implements IModelGroupsService {
   async getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>> {
     const url = modelType
-      ? `${API_BASE}/admin-models/groups?modelType=${encodeURIComponent(modelType)}`
-      : `${API_BASE}/admin-models/groups`;
+      ? `${API_BASE}/mds/model-groups?modelType=${encodeURIComponent(modelType)}`
+      : `${API_BASE}/mds/model-groups`;
 
     const res = await fetch(url, {
       headers: getAuthHeaders(),
@@ -63,7 +63,7 @@ export class ModelGroupsService implements IModelGroupsService {
   }
 
   async getModelGroup(id: string): Promise<ApiResponse<ModelGroup>> {
-    const res = await fetch(`${API_BASE}/admin-models/groups/${id}`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups/${id}`, {
       headers: getAuthHeaders(),
     });
 
@@ -85,7 +85,7 @@ export class ModelGroupsService implements IModelGroupsService {
       isDefaultForType: !!request.isDefaultForType,
       description: request.description ?? undefined,
     };
-    const res = await fetch(`${API_BASE}/admin-models/groups`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups`, {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
@@ -113,7 +113,7 @@ export class ModelGroupsService implements IModelGroupsService {
     if (request.models !== undefined) payload.models = request.models;
     if (request.isDefaultForType !== undefined) payload.isDefaultForType = !!request.isDefaultForType;
 
-    const res = await fetch(`${API_BASE}/admin-models/groups/${id}`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups/${id}`, {
       method: 'PUT',
       headers: {
         ...getAuthHeaders(),
@@ -130,7 +130,7 @@ export class ModelGroupsService implements IModelGroupsService {
   }
 
   async deleteModelGroup(id: string): Promise<ApiResponse<{ id: string }>> {
-    const res = await fetch(`${API_BASE}/admin-models/groups/${id}`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
@@ -143,7 +143,7 @@ export class ModelGroupsService implements IModelGroupsService {
   }
 
   async getGroupMonitoring(groupId: string): Promise<ApiResponse<ModelGroupMonitoringData>> {
-    const res = await fetch(`${API_BASE}/admin-models/groups/${groupId}/monitoring`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups/${groupId}/monitoring`, {
       headers: getAuthHeaders(),
     });
 
@@ -160,7 +160,7 @@ export class ModelGroupsService implements IModelGroupsService {
     platformId: string,
     failureCount: number
   ): Promise<ApiResponse<void>> {
-    const res = await fetch(`${API_BASE}/admin-models/groups/${groupId}/simulate-downgrade`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups/${groupId}/simulate-downgrade`, {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
@@ -182,7 +182,7 @@ export class ModelGroupsService implements IModelGroupsService {
     platformId: string,
     successCount: number
   ): Promise<ApiResponse<void>> {
-    const res = await fetch(`${API_BASE}/admin-models/groups/${groupId}/simulate-recover`, {
+    const res = await fetch(`${API_BASE}/mds/model-groups/${groupId}/simulate-recover`, {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),

@@ -15,7 +15,10 @@
       "Bash(npm run typecheck:*)",
       "Bash(pnpm tsc:*)",
       "Bash(xargs ls:*)",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Bash(curl:*)",
+      "Bash(lsof:*)",
+      "Bash(ps:*)"
     ]
   }
 }

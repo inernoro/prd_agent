@@ -6,7 +6,7 @@ import type {
 import type { ISchedulerConfigService } from '../contracts/schedulerConfig';
 import { useAuthStore } from '@/stores/authStore';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().token;
@@ -17,7 +17,7 @@ function getAuthHeaders(): Record<string, string> {
 
 export class SchedulerConfigService implements ISchedulerConfigService {
   async getConfig(): Promise<ApiResponse<ModelSchedulerConfig>> {
-    const res = await fetch(`${API_BASE}/admin-models/scheduler-config`, {
+    const res = await fetch(`${API_BASE}/mds/scheduler-config`, {
       headers: getAuthHeaders(),
     });
 
@@ -31,7 +31,7 @@ export class SchedulerConfigService implements ISchedulerConfigService {
   async updateConfig(
     request: UpdateSchedulerConfigRequest
   ): Promise<ApiResponse<ModelSchedulerConfig>> {
-    const res = await fetch(`${API_BASE}/admin-models/scheduler-config`, {
+    const res = await fetch(`${API_BASE}/mds/scheduler-config`, {
       method: 'PUT',
       headers: {
         ...getAuthHeaders(),

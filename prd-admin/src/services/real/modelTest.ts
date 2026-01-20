@@ -9,7 +9,7 @@ import type {
 import type { IModelTestService } from '../contracts/modelTest';
 import { useAuthStore } from '@/stores/authStore';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().token;
@@ -20,7 +20,7 @@ function getAuthHeaders(): Record<string, string> {
 
 export class ModelTestService implements IModelTestService {
   async getTestStubs(): Promise<ApiResponse<ModelTestStub[]>> {
-    const res = await fetch(`${API_BASE}/admin-models/test/stubs`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/stubs`, {
       headers: getAuthHeaders(),
     });
 
@@ -34,7 +34,7 @@ export class ModelTestService implements IModelTestService {
   async upsertTestStub(
     request: UpsertTestStubRequest
   ): Promise<ApiResponse<ModelTestStub>> {
-    const res = await fetch(`${API_BASE}/admin-models/test/stubs`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/stubs`, {
       method: 'PUT',
       headers: {
         ...getAuthHeaders(),
@@ -51,7 +51,7 @@ export class ModelTestService implements IModelTestService {
   }
 
   async deleteTestStub(id: string): Promise<ApiResponse<{ id: string }>> {
-    const res = await fetch(`${API_BASE}/admin-models/test/stubs/${id}`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/stubs/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
@@ -66,7 +66,7 @@ export class ModelTestService implements IModelTestService {
   async clearTestStubs(): Promise<
     ApiResponse<{ deletedCount: number; message: string }>
   > {
-    const res = await fetch(`${API_BASE}/admin-models/test/stubs/clear`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/stubs/clear`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });
@@ -81,7 +81,7 @@ export class ModelTestService implements IModelTestService {
   async simulateDowngrade(
     request: SimulateDowngradeRequest
   ): Promise<ApiResponse<object>> {
-    const res = await fetch(`${API_BASE}/admin-models/test/simulate/downgrade`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/simulate/downgrade`, {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
@@ -100,7 +100,7 @@ export class ModelTestService implements IModelTestService {
   async simulateRecover(
     request: SimulateRecoverRequest
   ): Promise<ApiResponse<object>> {
-    const res = await fetch(`${API_BASE}/admin-models/test/simulate/recover`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/simulate/recover`, {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
@@ -117,7 +117,7 @@ export class ModelTestService implements IModelTestService {
   }
 
   async triggerHealthCheck(): Promise<ApiResponse<{ message: string }>> {
-    const res = await fetch(`${API_BASE}/admin-models/test/health-check`, {
+    const res = await fetch(`${API_BASE}/lab/model-test/health-check`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });
@@ -133,7 +133,7 @@ export class ModelTestService implements IModelTestService {
     groupId: string
   ): Promise<ApiResponse<GroupMonitoring>> {
     const res = await fetch(
-      `${API_BASE}/admin-models/test/groups/${groupId}/monitoring`,
+      `${API_BASE}/lab/model-test/groups/${groupId}/monitoring`,
       {
         headers: getAuthHeaders(),
       }
