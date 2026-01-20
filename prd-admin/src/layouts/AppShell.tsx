@@ -201,7 +201,7 @@ export default function AppShell() {
   // 1. 状态为 open
   // 2. 权限目录变更通知仅对 root 用户或拥有权限管理权限的用户显示
   const activeNotifications = useMemo(() => {
-    const hasAuthzManage = Array.isArray(permissions) && permissions.includes('admin.authz.manage');
+    const hasAuthzManage = Array.isArray(permissions) && permissions.includes('authz.manage');
     return notifications.filter((n) => {
       if (n.status !== 'open') return false;
       // 权限目录变更通知仅对 root 或有权限管理权限的用户显示

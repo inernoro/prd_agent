@@ -25,7 +25,7 @@ describe('VisualAgent Canvas 持久化测试', () => {
     it('应识别远程 URL', () => {
       expect(isRemoteImageSrc('https://example.com/image.png')).toBe(true);
       expect(isRemoteImageSrc('http://example.com/image.png')).toBe(true);
-      expect(isRemoteImageSrc('/api/v1/admin/image-master/assets/file/abc.png')).toBe(true);
+      expect(isRemoteImageSrc('/api/visual-agent/image-master/assets/file/abc.png')).toBe(true);
     });
 
     it('应拒绝本地/无效 URL', () => {

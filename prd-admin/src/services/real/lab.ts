@@ -8,7 +8,7 @@ export const adminImpersonateReal: AdminImpersonateContract = async (
   userId: string,
   expiresInSeconds?: number
 ): Promise<ApiResponse<AdminImpersonateResponse>> => {
-  const res = await apiRequest<BackendImpersonateResponse>('/api/v1/admin/lab/impersonate', {
+  const res = await apiRequest<BackendImpersonateResponse>('/api/lab/impersonate', {
     method: 'POST',
     body: { userId, expiresInSeconds },
   });

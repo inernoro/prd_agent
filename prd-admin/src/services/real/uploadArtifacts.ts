@@ -11,7 +11,7 @@ function toQuery(params: ListUploadArtifactsParams) {
 }
 
 export const listUploadArtifactsReal: ListUploadArtifactsContract = async (params): Promise<ApiResponse<ListUploadArtifactsData>> => {
-  return await apiRequest<ListUploadArtifactsData>(`/api/v1/admin/upload-artifacts${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<ListUploadArtifactsData>(`/api/logs/upload-artifacts${toQuery(params)}`, { method: 'GET' });
 };
 
 

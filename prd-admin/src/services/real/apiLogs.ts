@@ -16,15 +16,15 @@ function toQuery(params?: ApiLogsListParams) {
 }
 
 export async function getApiLogsReal(params?: ApiLogsListParams): Promise<ApiResponse<ApiLogsListData>> {
-  return await apiRequest<ApiLogsListData>(`/api/v1/admin/api-logs${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<ApiLogsListData>(`/api/logs/api${toQuery(params)}`, { method: 'GET' });
 }
 
 export async function getApiLogDetailReal(id: string): Promise<ApiResponse<ApiRequestLog>> {
-  return await apiRequest<ApiRequestLog>(`/api/v1/admin/api-logs/${encodeURIComponent(id)}`, { method: 'GET' });
+  return await apiRequest<ApiRequestLog>(`/api/logs/api/${encodeURIComponent(id)}`, { method: 'GET' });
 }
 
 export async function getApiLogsMetaReal(): Promise<ApiResponse<ApiLogsMetaData>> {
-  return await apiRequest<ApiLogsMetaData>('/api/v1/admin/api-logs/meta', { method: 'GET' });
+  return await apiRequest<ApiLogsMetaData>('/api/logs/api/meta', { method: 'GET' });
 }
 
 

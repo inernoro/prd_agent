@@ -610,7 +610,7 @@ export default function ImageGenPanel() {
               图片创作（功能测试）
             </div>
             <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              复用 /api/v1/admin/image-gen 接口：单次生成 + plan + 批量 SSE（参数自动选择）
+              复用 /api/visual-agent/image-gen 接口：单次生成 + plan + 批量 SSE（参数自动选择）
             </div>
           </div>
           {batchRunning ? (

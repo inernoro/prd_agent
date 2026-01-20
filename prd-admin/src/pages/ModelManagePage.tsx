@@ -906,7 +906,7 @@ export default function ModelManagePage() {
         return;
       }
 
-      const r = await apiRequest<unknown[]>(`/api/v1/platforms/${selectedPlatform.id}/refresh-models`, {
+      const r = await apiRequest<unknown[]>(`/api/mds/platforms/${selectedPlatform.id}/refresh-models`, {
         method: 'POST',
         body: {},
       });

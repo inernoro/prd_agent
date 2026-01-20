@@ -372,7 +372,7 @@ function persistedV1ToCanvas(
         // 恢复占位状态：running 表示后端仍在生成中
         status: isPlaceholder ? el.status! : 'done',
         kind: 'image',
-        syncStatus: src.startsWith('/api/v1/admin/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
+        syncStatus: src.startsWith('/api/visual-agent/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
         syncError: null,
         x: el.x,
         y: el.y,
@@ -2777,7 +2777,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           let sourceUrl: string | undefined = initImageUrl;
 
           // 若引用的是自托管 file URL（可能来自别的画板/别的 workspace），则从浏览器 fetch 出 blob 再上传进当前 workspace
-          if (!data && initSrc.startsWith('/api/v1/admin/image-master/assets/file/')) {
+          if (!data && initSrc.startsWith('/api/visual-agent/image-master/assets/file/')) {
             try {
               const r = await fetch(initSrc);
               if (r.ok) {

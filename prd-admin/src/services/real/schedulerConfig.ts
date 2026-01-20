@@ -17,7 +17,7 @@ function getAuthHeaders(): Record<string, string> {
 
 export class SchedulerConfigService implements ISchedulerConfigService {
   async getConfig(): Promise<ApiResponse<ModelSchedulerConfig>> {
-    const res = await fetch(`${API_BASE}/admin/scheduler-config`, {
+    const res = await fetch(`${API_BASE}/admin-models/scheduler-config`, {
       headers: getAuthHeaders(),
     });
 
@@ -31,7 +31,7 @@ export class SchedulerConfigService implements ISchedulerConfigService {
   async updateConfig(
     request: UpdateSchedulerConfigRequest
   ): Promise<ApiResponse<ModelSchedulerConfig>> {
-    const res = await fetch(`${API_BASE}/admin/scheduler-config`, {
+    const res = await fetch(`${API_BASE}/admin-models/scheduler-config`, {
       method: 'PUT',
       headers: {
         ...getAuthHeaders(),

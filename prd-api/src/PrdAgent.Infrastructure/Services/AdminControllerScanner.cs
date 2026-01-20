@@ -22,10 +22,10 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
     // 公开路由（无需额外权限检查）
     private static readonly HashSet<string> PublicRoutes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/api/v1/admin/authz/me",
-        "/api/v1/admin/authz/catalog",
-        "/api/v1/admin/authz/menu-catalog",
-        "/api/v1/admin/notifications",
+        "/api/authz/me",
+        "/api/authz/catalog",
+        "/api/authz/menu-catalog",
+        "/api/dashboard/notifications",
     };
 
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
@@ -147,14 +147,7 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
             return IsReadMethod(method) ? meta.ReadPermission : meta.WritePermission;
         }
 
-        // 未匹配到任何标记的 Controller
-        // 如果是 admin 路由，返回超级权限作为兜底
-        if (path.StartsWith("/api/v1/admin", StringComparison.OrdinalIgnoreCase))
-        {
-            return AdminPermissionCatalog.Super;
-        }
-
-        // 非 admin 路由，不需要权限检查
+        // 未匹配到任何标记的 Controller，不需要权限检查
         return null;
     }
 

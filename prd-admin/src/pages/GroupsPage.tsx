@@ -904,7 +904,7 @@ export default function GroupsPage() {
           if (!v) setLlmDetailRequestId(null);
         }}
         requestId={llmDetailRequestId}
-        jumpToLogsHref={llmDetailRequestId ? `/llm-logs?tab=llm&requestId=${encodeURIComponent(llmDetailRequestId)}` : undefined}
+        jumpToLogsHref={llmDetailRequestId ? `/logs?tab=llm&requestId=${encodeURIComponent(llmDetailRequestId)}` : undefined}
       />
 
       <Dialog

@@ -3,49 +3,55 @@ namespace PrdAgent.Core.Security;
 /// <summary>
 /// 管理后台权限点清单（代码侧稳定定义，分配关系存储在 DB）。
 /// 说明：
-/// - 权限点是“合约”，需要稳定；不建议频繁改 key。
-/// - 菜单/路由/接口的准入建议都绑定到这些 key 上，避免“只藏菜单不控访问”的不一致。
+/// - 权限点是"合约"，需要稳定；不建议频繁改 key。
+/// - 菜单/路由/接口的准入建议都绑定到这些 key 上，避免"只藏菜单不控访问"的不一致。
+/// - 权限格式：appKey.action（如 users.read, mds.write）
 /// </summary>
 public static class AdminPermissionCatalog
 {
-    public const string AdminAccess = "admin.access";
-    public const string AuthzManage = "admin.authz.manage";
+    /// <summary>后台访问权限（基础准入）</summary>
+    public const string Access = "access";
 
-    public const string UsersRead = "admin.users.read";
-    public const string UsersWrite = "admin.users.write";
+    /// <summary>权限管理权限</summary>
+    public const string AuthzManage = "authz.manage";
 
-    public const string GroupsRead = "admin.groups.read";
-    public const string GroupsWrite = "admin.groups.write";
+    public const string UsersRead = "users.read";
+    public const string UsersWrite = "users.write";
 
-    public const string ModelsRead = "admin.models.read";
-    public const string ModelsWrite = "admin.models.write";
+    public const string GroupsRead = "groups.read";
+    public const string GroupsWrite = "groups.write";
 
-    public const string LogsRead = "admin.logs.read";
+    public const string ModelsRead = "mds.read";
+    public const string ModelsWrite = "mds.write";
 
-    public const string OpenPlatformManage = "admin.open-platform.manage";
+    public const string LogsRead = "logs.read";
 
-    public const string DataRead = "admin.data.read";
-    public const string DataWrite = "admin.data.write";
+    public const string OpenPlatformManage = "open-platform.manage";
 
-    public const string AssetsRead = "admin.assets.read";
-    public const string AssetsWrite = "admin.assets.write";
+    public const string DataRead = "data.read";
+    public const string DataWrite = "data.write";
 
-    public const string SettingsRead = "admin.settings.read";
-    public const string SettingsWrite = "admin.settings.write";
+    public const string AssetsRead = "assets.read";
+    public const string AssetsWrite = "assets.write";
+
+    public const string SettingsRead = "settings.read";
+    public const string SettingsWrite = "settings.write";
+
+    public const string PromptsWrite = "prompts.write";
 
     /// <summary>
-    /// Agent 体验权限：用于开放 PRD Agent / 视觉创作 Agent / 文学创作 Agent 等“体验型功能”菜单与相关后台接口。
+    /// Agent 体验权限：用于开放 PRD Agent / 视觉创作 Agent / 文学创作 Agent 等"体验型功能"菜单与相关后台接口。
     /// </summary>
-    public const string AgentUse = "admin.agent.use";
+    public const string AgentUse = "agent.use";
 
     /// <summary>
-    /// 超级权限（当 admin 路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
+    /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
-    public const string Super = "admin.super";
+    public const string Super = "super";
 
     public static readonly IReadOnlyList<AdminPermissionDef> All = new List<AdminPermissionDef>
     {
-        new(AdminAccess, "后台访问", "允许进入管理后台"),
+        new(Access, "后台访问", "允许进入管理后台"),
         new(AuthzManage, "权限管理", "管理系统角色/用户权限"),
         new(AgentUse, "Agent 体验", "允许访问 PRD/视觉/文学 Agent 等体验功能"),
 
@@ -70,6 +76,8 @@ public static class AdminPermissionCatalog
 
         new(SettingsRead, "设置-读", "查看系统设置"),
         new(SettingsWrite, "设置-写", "修改系统设置"),
+
+        new(PromptsWrite, "提示词-写", "编辑提示词配置"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

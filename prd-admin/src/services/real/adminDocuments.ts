@@ -9,7 +9,7 @@ export const getAdminDocumentContentReal: GetAdminDocumentContentContract = asyn
 ): Promise<ApiResponse<DocumentContentInfo>> => {
   const groupId = String(params?.groupId ?? '').trim();
   return await apiRequest<DocumentContentInfo>(
-    `/api/v1/admin/documents/${encodeURIComponent(documentId)}/content?groupId=${encodeURIComponent(groupId)}`,
+    `/api/data/documents/${encodeURIComponent(documentId)}/content?groupId=${encodeURIComponent(groupId)}`,
     { method: 'GET' }
   );
 };

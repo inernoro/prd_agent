@@ -12,7 +12,7 @@ import type {
 import type { LLMConfig } from '@/types/admin';
 
 export const getLLMConfigsReal: GetLLMConfigsContract = async (): Promise<ApiResponse<LLMConfig[]>> => {
-  return await apiRequest<LLMConfig[]>(`/api/v1/admin/llm-configs`);
+  return await apiRequest<LLMConfig[]>(`/api/mds/llm-configs`);
 };
 
 type BackendCreateResponse = { id: string };
@@ -27,7 +27,7 @@ async function refetchConfig(configId: string): Promise<ApiResponse<LLMConfig>> 
 }
 
 export const createLLMConfigReal: CreateLLMConfigContract = async (input: CreateLLMConfigInput): Promise<ApiResponse<LLMConfig>> => {
-  const res = await apiRequest<BackendCreateResponse>(`/api/v1/admin/llm-configs`, {
+  const res = await apiRequest<BackendCreateResponse>(`/api/mds/llm-configs`, {
     method: 'POST',
     body: input,
   });
@@ -54,7 +54,7 @@ export const updateLLMConfigReal: UpdateLLMConfigContract = async (id: string, i
     enablePromptCache: input.enablePromptCache ?? current.enablePromptCache ?? true,
   };
 
-  const res = await apiRequest<BackendUpdateResponse>(`/api/v1/admin/llm-configs/${encodeURIComponent(id)}`, {
+  const res = await apiRequest<BackendUpdateResponse>(`/api/mds/llm-configs/${encodeURIComponent(id)}`, {
     method: 'PUT',
     body,
   });
@@ -63,7 +63,7 @@ export const updateLLMConfigReal: UpdateLLMConfigContract = async (id: string, i
 };
 
 export const deleteLLMConfigReal: DeleteLLMConfigContract = async (id: string): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<true>(`/api/v1/admin/llm-configs/${encodeURIComponent(id)}`, {
+  const res = await apiRequest<true>(`/api/mds/llm-configs/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     emptyResponseData: true,
   });
@@ -72,7 +72,7 @@ export const deleteLLMConfigReal: DeleteLLMConfigContract = async (id: string): 
 };
 
 export const activateLLMConfigReal: ActivateLLMConfigContract = async (id: string): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<unknown>(`/api/v1/admin/llm-configs/${encodeURIComponent(id)}/activate`, {
+  const res = await apiRequest<unknown>(`/api/mds/llm-configs/${encodeURIComponent(id)}/activate`, {
     method: 'POST',
     body: {},
   });

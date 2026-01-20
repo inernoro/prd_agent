@@ -699,7 +699,7 @@ public class OpenAIImageClient
                 if (TryDecodeDataUrlOrBase64(initImageBase64, out var initBytes, out var initMime) && initBytes.Length > 0)
                 {
                     // 参考图也落 COS（与输出一并可在日志页预览）
-                    var stored = await _assetStorage.SaveAsync(initBytes, initMime, ct, domain: AppDomainPaths.DomainUploads, type: AppDomainPaths.TypeImg);
+                    var stored = await _assetStorage.SaveAsync(initBytes, initMime, ct, domain: AppDomainPaths.DomainAssets, type: AppDomainPaths.TypeImg);
                     var dim = TryParseSize(NormalizeSizeString(size), out var iw, out var ih) ? new { w = iw, h = ih } : null;
                     var input = new UploadArtifact
                     {

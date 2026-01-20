@@ -30,7 +30,7 @@ export class AppCallersService implements IAppCallersService {
     }>
   > {
     const res = await fetch(
-      `${API_BASE}/admin/app-callers?page=${page}&pageSize=${pageSize}`,
+      `${API_BASE}/admin-open-platform/app-callers?page=${page}&pageSize=${pageSize}`,
       {
         headers: getAuthHeaders(),
       }
@@ -44,7 +44,7 @@ export class AppCallersService implements IAppCallersService {
   }
 
   async getAppCaller(id: string): Promise<ApiResponse<LLMAppCaller>> {
-    const res = await fetch(`${API_BASE}/admin/app-callers/${id}`, {
+    const res = await fetch(`${API_BASE}/admin-open-platform/app-callers/${id}`, {
       headers: getAuthHeaders(),
     });
 
@@ -58,7 +58,7 @@ export class AppCallersService implements IAppCallersService {
   async createAppCaller(
     request: CreateAppCallerRequest
   ): Promise<ApiResponse<LLMAppCaller>> {
-    const res = await fetch(`${API_BASE}/admin/app-callers`, {
+    const res = await fetch(`${API_BASE}/admin-open-platform/app-callers`, {
       method: 'POST',
       headers: {
         ...getAuthHeaders(),
@@ -78,7 +78,7 @@ export class AppCallersService implements IAppCallersService {
     id: string,
     request: UpdateAppCallerRequest
   ): Promise<ApiResponse<LLMAppCaller>> {
-    const res = await fetch(`${API_BASE}/admin/app-callers/${id}`, {
+    const res = await fetch(`${API_BASE}/admin-open-platform/app-callers/${id}`, {
       method: 'PUT',
       headers: {
         ...getAuthHeaders(),
@@ -95,7 +95,7 @@ export class AppCallersService implements IAppCallersService {
   }
 
   async deleteAppCaller(id: string): Promise<ApiResponse<{ id: string }>> {
-    const res = await fetch(`${API_BASE}/admin/app-callers/${id}`, {
+    const res = await fetch(`${API_BASE}/admin-open-platform/app-callers/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
@@ -108,7 +108,7 @@ export class AppCallersService implements IAppCallersService {
   }
 
   async getAppCallerStats(id: string): Promise<ApiResponse<AppCallerStats>> {
-    const res = await fetch(`${API_BASE}/admin/app-callers/${id}/stats`, {
+    const res = await fetch(`${API_BASE}/admin-open-platform/app-callers/${id}/stats`, {
       headers: getAuthHeaders(),
     });
 
@@ -122,7 +122,7 @@ export class AppCallersService implements IAppCallersService {
   async scanApps(): Promise<
     ApiResponse<{ discovered: string[]; message: string }>
   > {
-    const res = await fetch(`${API_BASE}/admin/app-callers/scan`, {
+    const res = await fetch(`${API_BASE}/admin-open-platform/app-callers/scan`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });

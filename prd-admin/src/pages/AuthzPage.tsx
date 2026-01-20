@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Cpu, Database, Image, Plug, ScrollText, Settings2, Shield, ShieldCheck, Users, Users2, Wand2 } from 'lucide-react';
+import { Cpu, Database, FileText, Image, Plug, ScrollText, Settings2, Shield, ShieldCheck, Users, Users2, Wand2 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -95,16 +95,17 @@ export default function AuthzPage() {
 
   const permRows: PermRow[] = useMemo(
     () => [
-      { id: 'users', title: '用户管理', hint: '账号、角色与权限', readKey: 'admin.users.read', writeKey: 'admin.users.write', icon: <Users size={16} /> },
-      { id: 'groups', title: '群组管理', hint: '协作群组与成员', readKey: 'admin.groups.read', writeKey: 'admin.groups.write', icon: <Users2 size={16} /> },
-      { id: 'models', title: '模型管理', hint: '平台/模型/配置/调度', readKey: 'admin.models.read', writeKey: 'admin.models.write', icon: <Cpu size={16} /> },
-      { id: 'logs', title: '日志', hint: '系统/LLM/API 请求日志', readKey: 'admin.logs.read', icon: <ScrollText size={16} /> },
-      { id: 'open', title: '开放平台', hint: 'App/调用方/日志', writeKey: 'admin.open-platform.manage', writeLabel: '管', icon: <Plug size={16} /> },
-      { id: 'data', title: '数据管理', hint: '导入导出/清理', readKey: 'admin.data.read', writeKey: 'admin.data.write', icon: <Database size={16} /> },
-      { id: 'assets', title: '资源管理', hint: '桌面资源/头像等', readKey: 'admin.assets.read', writeKey: 'admin.assets.write', icon: <Image size={16} /> },
-      { id: 'settings', title: '系统设置/提示词', hint: 'settings/prompts', readKey: 'admin.settings.read', writeKey: 'admin.settings.write', icon: <Settings2 size={16} /> },
-      { id: 'authz', title: '权限管理', hint: 'system roles / user authz', writeKey: 'admin.authz.manage', writeLabel: '管', icon: <Shield size={16} /> },
-      { id: 'agent', title: 'Agent 体验', hint: 'PRD/视觉/文学 Agent', writeKey: 'admin.agent.use', writeLabel: '用', icon: <Wand2 size={16} /> },
+      { id: 'users', title: '用户管理', hint: '账号、角色与权限', readKey: 'users.read', writeKey: 'users.write', icon: <Users size={16} /> },
+      { id: 'groups', title: '群组管理', hint: '协作群组与成员', readKey: 'groups.read', writeKey: 'groups.write', icon: <Users2 size={16} /> },
+      { id: 'models', title: '模型管理', hint: '平台/模型/配置/调度', readKey: 'mds.read', writeKey: 'mds.write', icon: <Cpu size={16} /> },
+      { id: 'logs', title: '日志', hint: '系统/LLM/API 请求日志', readKey: 'logs.read', icon: <ScrollText size={16} /> },
+      { id: 'open', title: '开放平台', hint: 'App/调用方/日志', writeKey: 'open-platform.manage', writeLabel: '管', icon: <Plug size={16} /> },
+      { id: 'data', title: '数据管理', hint: '导入导出/清理', readKey: 'data.read', writeKey: 'data.write', icon: <Database size={16} /> },
+      { id: 'assets', title: '资源管理', hint: '桌面资源/头像等', readKey: 'assets.read', writeKey: 'assets.write', icon: <Image size={16} /> },
+      { id: 'settings', title: '系统设置', hint: 'settings', readKey: 'settings.read', writeKey: 'settings.write', icon: <Settings2 size={16} /> },
+      { id: 'prompts', title: '提示词管理', hint: 'prompts', writeKey: 'prompts.write', writeLabel: '写', icon: <FileText size={16} /> },
+      { id: 'authz', title: '权限管理', hint: 'system roles / user authz', writeKey: 'authz.manage', writeLabel: '管', icon: <Shield size={16} /> },
+      { id: 'agent', title: 'Agent 体验', hint: 'PRD/视觉/文学 Agent', writeKey: 'agent.use', writeLabel: '用', icon: <Wand2 size={16} /> },
     ],
     []
   );
@@ -361,7 +362,7 @@ export default function AuthzPage() {
                     <div className="min-w-0">
                       <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>后台访问</div>
                       <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        <span className="opacity-80">admin.access</span> · {catalogByKey.get('admin.access')?.description || '允许进入管理后台'}
+                        <span className="opacity-80">access</span> · {catalogByKey.get('access')?.description || '允许进入管理后台'}
                       </div>
                     </div>
                   </div>
@@ -371,8 +372,8 @@ export default function AuthzPage() {
                     type="checkbox"
                     className="h-4 w-4"
                     disabled={loading || !dirtyPerms}
-                    checked={!!dirtyPerms?.has('admin.access')}
-                    onChange={(e) => setChecked('admin.access', e.target.checked)}
+                    checked={!!dirtyPerms?.has('access')}
+                    onChange={(e) => setChecked('access', e.target.checked)}
                   />
                 </label>
               </div>
@@ -459,7 +460,7 @@ export default function AuthzPage() {
                     <div className="min-w-0">
                       <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>超级权限（兜底）</div>
                       <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        <span className="opacity-80">admin.super</span> · 仅建议给 root/破窗或极少数超级管理员
+                        <span className="opacity-80">super</span> · 仅建议给 root/破窗或极少数超级管理员
                       </div>
                     </div>
                   </div>
@@ -467,8 +468,8 @@ export default function AuthzPage() {
                     type="checkbox"
                     className="h-4 w-4"
                     disabled={loading || !dirtyPerms}
-                    checked={!!dirtyPerms?.has('admin.super')}
-                    onChange={(e) => setChecked('admin.super', e.target.checked)}
+                    checked={!!dirtyPerms?.has('super')}
+                    onChange={(e) => setChecked('super', e.target.checked)}
                   />
                 </label>
               </div>

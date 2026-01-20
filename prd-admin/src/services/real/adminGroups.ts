@@ -35,15 +35,15 @@ export const getAdminGroupsReal: GetAdminGroupsContract = async (params: GetAdmi
   if (params.search) q.set('search', params.search);
   if (params.inviteStatus) q.set('inviteStatus', params.inviteStatus);
   if (params.sort) q.set('sort', params.sort);
-  return await apiRequest<PagedResult<AdminGroup>>(`/api/v1/admin/groups?${q.toString()}`);
+  return await apiRequest<PagedResult<AdminGroup>>(`/api/groups?${q.toString()}`);
 };
 
 export const getAdminGroupMembersReal: GetAdminGroupMembersContract = async (groupId: string) => {
-  return await apiRequest<AdminGroupMember[]>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/members`);
+  return await apiRequest<AdminGroupMember[]>(`/api/groups/${encodeURIComponent(groupId)}/members`);
 };
 
 export const removeAdminGroupMemberReal: RemoveAdminGroupMemberContract = async (groupId: string, userId: string) => {
-  const res = await apiRequest<true>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
+  const res = await apiRequest<true>(`/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
     emptyResponseData: true,
   });
@@ -52,14 +52,14 @@ export const removeAdminGroupMemberReal: RemoveAdminGroupMemberContract = async 
 };
 
 export const regenerateAdminGroupInviteReal: RegenerateAdminGroupInviteContract = async (groupId: string) => {
-  return await apiRequest<RegenerateInviteResponse>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/regenerate-invite`, {
+  return await apiRequest<RegenerateInviteResponse>(`/api/groups/${encodeURIComponent(groupId)}/regenerate-invite`, {
     method: 'POST',
     body: {},
   });
 };
 
 export const updateAdminGroupReal: UpdateAdminGroupContract = async (groupId: string, input: UpdateAdminGroupInput) => {
-  const res = await apiRequest<true>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}`, {
+  const res = await apiRequest<true>(`/api/groups/${encodeURIComponent(groupId)}`, {
     method: 'PUT',
     body: input,
     emptyResponseData: true,
@@ -69,7 +69,7 @@ export const updateAdminGroupReal: UpdateAdminGroupContract = async (groupId: st
 };
 
 export const deleteAdminGroupReal: DeleteAdminGroupContract = async (groupId: string) => {
-  const res = await apiRequest<true>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}`, {
+  const res = await apiRequest<true>(`/api/groups/${encodeURIComponent(groupId)}`, {
     method: 'DELETE',
     emptyResponseData: true,
   });
@@ -78,7 +78,7 @@ export const deleteAdminGroupReal: DeleteAdminGroupContract = async (groupId: st
 };
 
 export const deleteAdminGroupMessagesReal: DeleteAdminGroupMessagesContract = async (groupId: string) => {
-  const res = await apiRequest<true>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/messages`, {
+  const res = await apiRequest<true>(`/api/groups/${encodeURIComponent(groupId)}/messages`, {
     method: 'DELETE',
     emptyResponseData: true,
   });
@@ -117,18 +117,18 @@ export const getAdminGroupMessagesReal: GetAdminGroupMessagesContract = async (g
   q.set('page', String(params.page));
   q.set('pageSize', String(params.pageSize));
   if (params.q) q.set('q', params.q);
-  return await apiRequest<PagedResult<AdminMessage>>(`/api/v1/admin/groups/${encodeURIComponent(groupId)}/messages?${q.toString()}`);
+  return await apiRequest<PagedResult<AdminMessage>>(`/api/groups/${encodeURIComponent(groupId)}/messages?${q.toString()}`);
 };
 
 export const simulateMessageReal: SimulateMessageContract = async (input: SimulateMessageInput) => {
-  return await apiRequest<SimulateMessageResponse>('/api/v1/admin/lab/simulate-message', {
+  return await apiRequest<SimulateMessageResponse>('/api/lab/simulate-message', {
     method: 'POST',
     body: input,
   });
 };
 
 export const simulateStreamMessagesReal: SimulateStreamMessagesContract = async (input: SimulateStreamMessagesInput) => {
-  return await apiRequest<SimulateStreamMessagesResponse>('/api/v1/admin/lab/simulate-stream-messages', {
+  return await apiRequest<SimulateStreamMessagesResponse>('/api/lab/simulate-stream-messages', {
     method: 'POST',
     body: input,
   });

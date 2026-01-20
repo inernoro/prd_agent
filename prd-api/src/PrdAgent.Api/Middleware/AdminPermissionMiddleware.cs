@@ -71,10 +71,10 @@ public sealed class AdminPermissionMiddleware
         var has = perms.Contains(AdminPermissionCatalog.Super) ||
                   perms.Contains(required);
 
-        // 所有 admin.* 权限都必须先具备 admin.access（除了 root/super）
+        // 所有权限都必须先具备 access 权限（除了 root/super）
         if (!isRoot &&
             !perms.Contains(AdminPermissionCatalog.Super) &&
-            !perms.Contains(AdminPermissionCatalog.AdminAccess))
+            !perms.Contains(AdminPermissionCatalog.Access))
         {
             has = false;
         }

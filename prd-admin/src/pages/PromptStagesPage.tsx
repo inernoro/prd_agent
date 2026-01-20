@@ -573,7 +573,7 @@ export default function PromptStagesPage() {
 
     let res: Response;
     try {
-      const url = joinUrl(getApiBaseUrl(), '/api/v1/admin/prompts/optimize/stream');
+      const url = joinUrl(getApiBaseUrl(), '/api/prompts/optimize/stream');
       res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -801,7 +801,7 @@ export default function PromptStagesPage() {
         : null;
       
       // 通过 state 传递临时数据
-      navigate('/ai-chat', {
+      navigate('/prd-agent', {
         state: {
           testMode: true,
           role: args.role,

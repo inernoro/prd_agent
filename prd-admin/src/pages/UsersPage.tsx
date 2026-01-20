@@ -143,7 +143,7 @@ export default function UsersPage() {
 
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
   const { login: authLogin } = useAuthStore();
-  const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('admin.authz.manage'));
+  const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('authz.manage'));
 
   // 用户后台权限（systemRoleKey + allow/deny）
   const [authzOpen, setAuthzOpen] = useState(false);
@@ -448,7 +448,7 @@ export default function UsersPage() {
 
   const openUserAuthz = async (u: UserRow) => {
     if (!canAuthzManage) {
-      await systemDialog.alert('无权限：需要 admin.authz.manage');
+      await systemDialog.alert('无权限：需要 authz.manage');
       return;
     }
     setAuthzUser(u);
@@ -1062,7 +1062,7 @@ export default function UsersPage() {
                                 style={{ color: 'var(--text-primary)' }}
                                 onSelect={(e) => {
                                   e.preventDefault();
-                                  navigate(`/llm-logs?tab=llm&userId=${encodeURIComponent(u.userId)}`);
+                                  navigate(`/logs?tab=llm&userId=${encodeURIComponent(u.userId)}`);
                                 }}
                               >
                                 查看 LLM 请求日志
@@ -1072,7 +1072,7 @@ export default function UsersPage() {
                                 style={{ color: 'var(--text-primary)' }}
                                 onSelect={(e) => {
                                   e.preventDefault();
-                                  navigate(`/llm-logs?tab=system&userId=${encodeURIComponent(u.userId)}`);
+                                  navigate(`/logs?tab=system&userId=${encodeURIComponent(u.userId)}`);
                                 }}
                               >
                                 查看 系统请求日志

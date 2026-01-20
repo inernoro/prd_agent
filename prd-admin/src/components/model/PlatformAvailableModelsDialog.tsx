@@ -230,7 +230,7 @@ export function PlatformAvailableModelsDialog({
     try {
       const isRefresh = !!opts?.refresh;
       const r = await apiRequest<AvailableModel[]>(
-        isRefresh ? `/api/v1/platforms/${platform.id}/refresh-models` : `/api/v1/platforms/${platform.id}/available-models`,
+        isRefresh ? `/api/mds/platforms/${platform.id}/refresh-models` : `/api/mds/platforms/${platform.id}/available-models`,
         isRefresh ? { method: 'POST', body: {} } : { method: 'GET' }
       );
       if (!r.success) {
@@ -262,7 +262,7 @@ export function PlatformAvailableModelsDialog({
         updatedCount: number;
         availableCount: number;
         configuredCount: number;
-      }>(`/api/v1/admin/platforms/${platform.id}/reclassify-models`, {
+      }>(`/api/mds/platforms/${platform.id}/reclassify-models`, {
         method: 'POST',
         body: {},
         headers: { 'Idempotency-Key': idem },

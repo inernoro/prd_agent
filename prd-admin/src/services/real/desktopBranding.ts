@@ -3,7 +3,7 @@ import type { ApiResponse } from '@/types/api';
 import type { DesktopBrandingSettings } from '@/services/contracts/desktopBranding';
 
 export async function getDesktopBrandingSettings(): Promise<ApiResponse<DesktopBrandingSettings>> {
-  return await apiRequest<DesktopBrandingSettings>('/api/v1/admin/settings/desktop');
+  return await apiRequest<DesktopBrandingSettings>('/api/assets/branding');
 }
 
 export async function updateDesktopBrandingSettings(input: {
@@ -13,7 +13,7 @@ export async function updateDesktopBrandingSettings(input: {
   loginIconKey: string;
   loginBackgroundKey: string;
 }): Promise<ApiResponse<DesktopBrandingSettings>> {
-  return await apiRequest<DesktopBrandingSettings>('/api/v1/admin/settings/desktop', { method: 'PUT', body: input });
+  return await apiRequest<DesktopBrandingSettings>('/api/assets/branding', { method: 'PUT', body: input });
 }
 
 

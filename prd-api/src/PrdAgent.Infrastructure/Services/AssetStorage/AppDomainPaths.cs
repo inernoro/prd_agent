@@ -3,21 +3,40 @@ using System.Text.RegularExpressions;
 namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
 /// <summary>
-/// 统一的“领域(domain) + 类型(type)”目录映射：
+/// 统一的"领域(domain) + 类型(type)"目录映射：
 /// - 本地：/data/{domain}/{type}
 /// - COS key：{domain}/{type}/{sha}.{ext}
 /// 全部强制小写，避免跨系统大小写不一致导致的 404/重复写入。
+///
+/// 域名设计原则：与 appKey 一一对应
+/// - visual-agent: 视觉创作 Agent
+/// - literary-agent: 文学创作 Agent
+/// - prd-agent: PRD 智能问答 Agent
+/// - assets: 资源管理（头像、桌面素材等）
+/// - watermark: 水印配置
+/// - logs: 日志相关
+/// - mds: 模型管理相关
 /// </summary>
 public static class AppDomainPaths
 {
     public const string BaseLocal = "/data";
 
-    // domains（全小写）
+    // domains - 与 appKey 一一对应（全小写）
     public const string DomainVisualAgent = "visual-agent";
-    public const string DomainImageGen = "imagegen";
-    public const string DomainUploads = "uploads";
-    public const string DomainLlmLogs = "llmlogs";
+    public const string DomainLiteraryAgent = "literary-agent";
+    public const string DomainPrdAgent = "prd-agent";
+    public const string DomainAssets = "assets";
     public const string DomainWatermark = "watermark";
+    public const string DomainLogs = "logs";
+    public const string DomainMds = "mds";
+
+    // 兼容旧域名（逐步迁移）
+    [Obsolete("请使用 DomainVisualAgent")]
+    public const string DomainImageGen = "imagegen";
+    [Obsolete("请使用 DomainAssets")]
+    public const string DomainUploads = "uploads";
+    [Obsolete("请使用 DomainLogs")]
+    public const string DomainLlmLogs = "llmlogs";
 
     // types（全小写）
     public const string TypeImg = "img";
@@ -29,7 +48,12 @@ public static class AppDomainPaths
 
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
-        DomainVisualAgent, DomainImageGen, DomainUploads, DomainLlmLogs, DomainWatermark,
+        // 新域名
+        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds,
+#pragma warning disable CS0618 // 允许使用旧域名以保持兼容
+        // 兼容旧域名
+        DomainImageGen, DomainUploads, DomainLlmLogs,
+#pragma warning restore CS0618
     };
 
     private static readonly HashSet<string> TypeAllow = new(StringComparer.Ordinal)
@@ -75,4 +99,3 @@ public static class AppDomainPaths
         return $"{d}/{t}/{sha}.{e}";
     }
 }
-

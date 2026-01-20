@@ -36,13 +36,13 @@ export const getUsersReal: GetUsersContract = async (params: GetUsersParams): Pr
   if (params.role) q.set('role', params.role);
   if (params.status) q.set('status', params.status);
 
-  const res = await apiRequest<BackendPagedUsers>(`/api/v1/admin/users?${q.toString()}`);
+  const res = await apiRequest<BackendPagedUsers>(`/api/users?${q.toString()}`);
   if (!res.success) return res as unknown as ApiResponse<PagedResult<AdminUser>>;
   return ok({ items: res.data.items ?? [], total: res.data.total ?? 0 });
 };
 
 export const updateUserRoleReal: UpdateUserRoleContract = async (userId: string, role: UserRole): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/role`, {
+  const res = await apiRequest<unknown>(`/api/users/${encodeURIComponent(userId)}/role`, {
     method: 'PUT',
     body: { role },
   });
@@ -51,7 +51,7 @@ export const updateUserRoleReal: UpdateUserRoleContract = async (userId: string,
 };
 
 export const updateUserStatusReal: UpdateUserStatusContract = async (userId: string, status: UserStatus): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/status`, {
+  const res = await apiRequest<unknown>(`/api/users/${encodeURIComponent(userId)}/status`, {
     method: 'PUT',
     body: { status },
   });
@@ -60,7 +60,7 @@ export const updateUserStatusReal: UpdateUserStatusContract = async (userId: str
 };
 
 export const updateUserPasswordReal: UpdateUserPasswordContract = async (userId: string, password: string): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/password`, {
+  const res = await apiRequest<unknown>(`/api/users/${encodeURIComponent(userId)}/password`, {
     method: 'PUT',
     body: { password },
   });
@@ -73,7 +73,7 @@ export const updateUserAvatarReal: UpdateUserAvatarContract = async (
   avatarFileName: string | null
 ): Promise<ApiResponse<{ userId: string; avatarFileName?: string | null; updatedAt?: string }>> => {
   const res = await apiRequest<{ userId: string; avatarFileName?: string | null; updatedAt?: string }>(
-    `/api/v1/admin/users/${encodeURIComponent(userId)}/avatar`,
+    `/api/users/${encodeURIComponent(userId)}/avatar`,
     {
       method: 'PUT',
       body: { avatarFileName: avatarFileName || null },
@@ -88,7 +88,7 @@ export const updateUserDisplayNameReal: UpdateUserDisplayNameContract = async (
 ): Promise<ApiResponse<{ userId: string; displayName: string; updatedAt?: string }>> => {
   const name = (displayName ?? '').trim();
   const res = await apiRequest<{ userId: string; displayName: string; updatedAt?: string }>(
-    `/api/v1/admin/users/${encodeURIComponent(userId)}/display-name`,
+    `/api/users/${encodeURIComponent(userId)}/display-name`,
     {
       method: 'PUT',
       body: { displayName: name },
@@ -98,7 +98,7 @@ export const updateUserDisplayNameReal: UpdateUserDisplayNameContract = async (
 };
 
 export const unlockUserReal: UnlockUserContract = async (userId: string): Promise<ApiResponse<true>> => {
-  const res = await apiRequest<unknown>(`/api/v1/admin/users/${encodeURIComponent(userId)}/unlock`, {
+  const res = await apiRequest<unknown>(`/api/users/${encodeURIComponent(userId)}/unlock`, {
     method: 'POST',
     body: {},
   });
@@ -107,7 +107,7 @@ export const unlockUserReal: UnlockUserContract = async (userId: string): Promis
 };
 
 export const generateInviteCodesReal: GenerateInviteCodesContract = async (count: number): Promise<ApiResponse<{ codes: string[] }>> => {
-  const res = await apiRequest<{ codes: string[] }>(`/api/v1/admin/users/invite-codes`, {
+  const res = await apiRequest<{ codes: string[] }>(`/api/users/invite-codes`, {
     method: 'POST',
     body: { count: Math.max(1, Math.min(50, Math.floor(count || 1))) },
   });
@@ -116,7 +116,7 @@ export const generateInviteCodesReal: GenerateInviteCodesContract = async (count
 };
 
 export const initializeUsersReal = async (): Promise<ApiResponse<{ deletedCount: number; adminUserId: string; botUserIds: string[] }>> => {
-  const res = await apiRequest<{ deletedCount: number; adminUserId: string; botUserIds: string[] }>(`/api/v1/admin/users/initialize`, {
+  const res = await apiRequest<{ deletedCount: number; adminUserId: string; botUserIds: string[] }>(`/api/users/initialize`, {
     method: 'POST',
   });
   if (!res.success) return res;
@@ -129,7 +129,7 @@ export const forceExpireUserReal: ForceExpireUserContract = async (
 ): Promise<ApiResponse<{ userId: string; targets: string[] }>> => {
   const ts = Array.isArray(targets) ? targets : [];
   const res = await apiRequest<{ userId: string; targets: string[] }>(
-    `/api/v1/admin/users/${encodeURIComponent(userId)}/force-expire`,
+    `/api/users/${encodeURIComponent(userId)}/force-expire`,
     {
       method: 'POST',
       body: { targets: ts },
@@ -146,7 +146,7 @@ function newIdempotencyKey() {
 }
 
 export const createUserReal: CreateAdminUserContract = async (input: CreateAdminUserInput): Promise<ApiResponse<CreateAdminUserResponse>> => {
-  const res = await apiRequest<CreateAdminUserResponse>(`/api/v1/admin/users`, {
+  const res = await apiRequest<CreateAdminUserResponse>(`/api/users`, {
     method: 'POST',
     body: {
       username: (input.username ?? '').trim(),
@@ -163,7 +163,7 @@ export const bulkCreateUsersReal: BulkCreateAdminUsersContract = async (
   items: BulkCreateAdminUsersItem[]
 ): Promise<ApiResponse<BulkCreateAdminUsersResponse>> => {
   const arr = Array.isArray(items) ? items : [];
-  const res = await apiRequest<BulkCreateAdminUsersResponse>(`/api/v1/admin/users/bulk`, {
+  const res = await apiRequest<BulkCreateAdminUsersResponse>(`/api/users/bulk`, {
     method: 'POST',
     body: {
       items: arr.map((it) => ({

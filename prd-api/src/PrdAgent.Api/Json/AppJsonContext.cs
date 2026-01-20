@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 using PrdAgent.Api.Controllers;
-using PrdAgent.Api.Controllers.Admin;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;

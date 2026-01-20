@@ -11,11 +11,11 @@ import { fail, ok, type ApiResponse } from '@/types/api';
 import type { Platform } from '@/types/admin';
 
 export const getPlatformsReal: GetPlatformsContract = async () => {
-  return await apiRequest<Platform[]>('/api/v1/platforms');
+  return await apiRequest<Platform[]>('/api/mds/platforms');
 };
 
 export const createPlatformReal: CreatePlatformContract = async (input: CreatePlatformInput) => {
-  const created = await apiRequest<{ id: string }>('/api/v1/platforms', {
+  const created = await apiRequest<{ id: string }>('/api/mds/platforms', {
     method: 'POST',
     body: {
       name: input.name,
@@ -33,12 +33,12 @@ export const createPlatformReal: CreatePlatformContract = async (input: CreatePl
   const id = created.data.id;
   if (!id) return fail('UNKNOWN', '创建平台失败：后端未返回 id') as unknown as ApiResponse<Platform>;
 
-  return await apiRequest<Platform>(`/api/v1/platforms/${id}`);
+  return await apiRequest<Platform>(`/api/mds/platforms/${id}`);
 };
 
 export const updatePlatformReal: UpdatePlatformContract = async (id: string, input: UpdatePlatformInput) => {
   // 后端 PUT 需要完整对象；这里先拉取现有配置再合并，避免字段丢失
-  const current = await apiRequest<any>(`/api/v1/platforms/${id}`);
+  const current = await apiRequest<any>(`/api/mds/platforms/${id}`);
   if (!current.success) return current as unknown as ApiResponse<Platform>;
 
   const p = current.data as any;
@@ -53,14 +53,14 @@ export const updatePlatformReal: UpdatePlatformContract = async (id: string, inp
   };
   if (input.apiKey) body.apiKey = input.apiKey;
 
-  const updated = await apiRequest<{ id: string }>(`/api/v1/platforms/${id}`, { method: 'PUT', body });
+  const updated = await apiRequest<{ id: string }>(`/api/mds/platforms/${id}`, { method: 'PUT', body });
   if (!updated.success) return updated as unknown as ApiResponse<Platform>;
 
-  return await apiRequest<Platform>(`/api/v1/platforms/${id}`);
+  return await apiRequest<Platform>(`/api/mds/platforms/${id}`);
 };
 
 export const deletePlatformReal: DeletePlatformContract = async (id: string, opts?: { cascade?: boolean }) => {
-  const url = opts?.cascade ? `/api/v1/platforms/${id}?cascade=true` : `/api/v1/platforms/${id}`;
+  const url = opts?.cascade ? `/api/mds/platforms/${id}?cascade=true` : `/api/mds/platforms/${id}`;
   const res = await apiRequest<true>(url, { method: 'DELETE', emptyResponseData: true });
   if (!res.success) return res;
   return ok(true);

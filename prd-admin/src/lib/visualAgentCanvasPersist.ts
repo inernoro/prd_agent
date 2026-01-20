@@ -296,7 +296,7 @@ export function persistedV1ToCanvas(
         // 恢复占位状态：running 表示后端仍在生成中
         status: isPlaceholder ? el.status! : 'done',
         kind: 'image',
-        syncStatus: src.startsWith('/api/v1/admin/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
+        syncStatus: src.startsWith('/api/visual-agent/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
         syncError: null,
         x: el.x,
         y: el.y,

@@ -3,9 +3,9 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Core.Security;
 
 /// <summary>
-/// 内置系统角色默认定义（可用于初始化与“重置内置角色”）。
+/// 内置系统角色默认定义（可用于初始化与"重置内置角色"）。
 /// 说明：
-/// - 这里是“默认值”，不应在启动时强制覆盖用户修改；覆盖应由显式“重置”操作触发。
+/// - 这里是"默认值"，不应在启动时强制覆盖用户修改；覆盖应由显式"重置"操作触发。
 /// </summary>
 public static class BuiltInSystemRoles
 {
@@ -21,7 +21,7 @@ public static class BuiltInSystemRoles
             Name: "运营/运维",
             Permissions: new List<string>
             {
-                AdminPermissionCatalog.AdminAccess,
+                AdminPermissionCatalog.Access,
                 AdminPermissionCatalog.AgentUse,
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,
@@ -41,7 +41,7 @@ public static class BuiltInSystemRoles
             Name: "只读",
             Permissions: new List<string>
             {
-                AdminPermissionCatalog.AdminAccess,
+                AdminPermissionCatalog.Access,
                 AdminPermissionCatalog.AgentUse,
                 AdminPermissionCatalog.UsersRead,
                 AdminPermissionCatalog.GroupsRead,
@@ -57,9 +57,9 @@ public static class BuiltInSystemRoles
             Name: "Agent 体验者",
             Permissions: new List<string>
             {
-                AdminPermissionCatalog.AdminAccess,
+                AdminPermissionCatalog.Access,
                 AdminPermissionCatalog.AgentUse,
-                // PRD Agent 读取提示词需要 settings.read，但不应默认展示“提示词管理”（前端已改为 settings.write 才可见）
+                // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,
             }
         ),
@@ -72,4 +72,3 @@ public static class BuiltInSystemRoles
 }
 
 public sealed record BuiltInSystemRoleDef(string Key, string Name, List<string> Permissions);
-

@@ -1368,7 +1368,7 @@ export default function LlmLogsPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 // 跳转到应用与分组页面
-                                window.location.href = '/model-manage?tab=apps';
+                                window.location.href = '/mds?tab=apps';
                               }}
                             >
                               {b.icon}

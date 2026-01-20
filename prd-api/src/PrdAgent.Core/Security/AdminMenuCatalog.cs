@@ -20,37 +20,37 @@ public static class AdminMenuCatalog
         new("dashboard", "/", "仪表盘", "LLM 可观测性与数据概览", "LayoutDashboard", 10),
 
         // 用户与群组管理
-        new("admin-users", "/users", "用户管理", "账号、角色与权限管理", "Users", 20),
-        new("admin-groups", "/groups", "群组管理", "协作群组与成员管理", "Users2", 30),
+        new("users", "/users", "用户管理", "账号、角色与权限管理", "Users", 20),
+        new("groups", "/groups", "群组管理", "协作群组与成员管理", "Users2", 30),
 
         // 模型管理
-        new("admin-models", "/model-manage", "模型管理", "平台、模型与配置管理", "Cpu", 40),
+        new("mds", "/mds", "模型管理", "平台、模型与配置管理", "Cpu", 40),
 
         // 提示词管理
-        new("admin-prompts", "/prompts", "提示词管理", "PRD 问答提示词配置", "FileText", 50),
+        new("prompts", "/prompts", "提示词管理", "PRD 问答提示词配置", "FileText", 50),
 
         // Agent 体验类菜单
-        new("prd-agent", "/ai-chat", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
+        new("prd-agent", "/prd-agent", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
         new("visual-agent", "/visual-agent", "视觉创作 Agent", "高级视觉创作工作区", "Wand2", 70),
         new("literary-agent", "/literary-agent", "文学创作 Agent", "文章配图智能生成", "PenLine", 80),
 
         // 资源管理
-        new("admin-assets", "/assets", "资源管理", "Desktop 资源与品牌配置", "Image", 90),
+        new("assets", "/assets", "资源管理", "Desktop 资源与品牌配置", "Image", 90),
 
         // 日志
-        new("admin-logs", "/llm-logs", "请求日志", "LLM 请求与系统日志", "ScrollText", 100),
+        new("logs", "/logs", "请求日志", "LLM 请求与系统日志", "ScrollText", 100),
 
         // 数据管理
-        new("admin-data", "/data", "数据管理", "数据概览、清理与迁移", "Database", 110),
+        new("data", "/data", "数据管理", "数据概览、清理与迁移", "Database", 110),
 
         // 开放平台
-        new("admin-open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
+        new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
 
         // 权限管理
-        new("admin-authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
+        new("authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
 
         // 实验室
-        new("admin-lab", "/lab", "实验室", "模型测试与实验功能", "FlaskConical", 140),
+        new("lab", "/lab", "实验室", "模型测试与实验功能", "FlaskConical", 140),
     };
 
     /// <summary>
@@ -75,7 +75,7 @@ public static class AdminMenuCatalog
             {
                 // 没有对应的 Controller，跳过（或者是仪表盘等特殊菜单）
                 // 对于 dashboard，检查 admin.access
-                if (menu.AppKey == "dashboard" && permSet.Contains(AdminPermissionCatalog.AdminAccess))
+                if (menu.AppKey == "dashboard" && permSet.Contains(AdminPermissionCatalog.Access))
                 {
                     result.Add(menu);
                 }

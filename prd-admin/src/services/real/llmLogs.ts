@@ -27,18 +27,18 @@ function toQuery(params?: GetLlmLogsParams) {
 }
 
 export const getLlmLogsReal: GetLlmLogsContract = async (params?: GetLlmLogsParams): Promise<ApiResponse<LlmLogsListData>> => {
-  return await apiRequest<LlmLogsListData>(`/api/v1/admin/llm-logs${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<LlmLogsListData>(`/api/logs/llm${toQuery(params)}`, { method: 'GET' });
 };
 
 export const getLlmLogDetailReal: GetLlmLogDetailContract = async (id: string): Promise<ApiResponse<LlmRequestLog>> => {
-  return await apiRequest<LlmRequestLog>(`/api/v1/admin/llm-logs/${encodeURIComponent(id)}`, { method: 'GET' });
+  return await apiRequest<LlmRequestLog>(`/api/logs/llm/${encodeURIComponent(id)}`, { method: 'GET' });
 };
 
 export const getLlmLogsMetaReal: GetLlmLogsMetaContract = async (): Promise<ApiResponse<LlmLogsMetaData>> => {
-  return await apiRequest<LlmLogsMetaData>('/api/v1/admin/llm-logs/meta', { method: 'GET' });
+  return await apiRequest<LlmLogsMetaData>('/api/logs/llm/meta', { method: 'GET' });
 };
 
 export const getLlmModelStatsReal: GetLlmModelStatsContract = async (params?: GetLlmModelStatsParams): Promise<ApiResponse<LlmModelStatsData>> => {
-  return await apiRequest<LlmModelStatsData>(`/api/v1/admin/llm-logs/model-stats${toQuery(params)}`, { method: 'GET' });
+  return await apiRequest<LlmModelStatsData>(`/api/logs/llm/model-stats${toQuery(params)}`, { method: 'GET' });
 };
 

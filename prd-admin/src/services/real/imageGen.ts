@@ -45,14 +45,14 @@ async function readImageGenRunSseStream(
 }
 
 export const planImageGenReal: PlanImageGenContract = async (input) => {
-  return await apiRequest('/api/v1/admin/image-gen/plan', {
+  return await apiRequest('/api/visual-agent/image-gen/plan', {
     method: 'POST',
     body: { text: input.text, maxItems: input.maxItems, systemPromptOverride: input.systemPromptOverride },
   });
 };
 
 export const generateImageGenReal: GenerateImageGenContract = async (input) => {
-  return await apiRequest('/api/v1/admin/image-gen/generate', {
+  return await apiRequest('/api/visual-agent/image-gen/generate', {
     method: 'POST',
     body: {
       modelId: input.modelId,
@@ -73,7 +73,7 @@ export const runImageGenBatchStreamReal: RunImageGenBatchStreamContract = async 
   const token = useAuthStore.getState().token;
   if (!token) return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<true>;
 
-  const url = joinUrl(getApiBaseUrl(), '/api/v1/admin/image-gen/batch/stream');
+  const url = joinUrl(getApiBaseUrl(), '/api/visual-agent/image-gen/batch/stream');
 
   let res: Response;
   try {
@@ -117,25 +117,25 @@ export const runImageGenBatchStreamReal: RunImageGenBatchStreamContract = async 
 export const getImageGenSizeCapsReal: GetImageGenSizeCapsContract = async (input) => {
   const includeFallback = Boolean(input?.includeFallback);
   const qs = includeFallback ? '?includeFallback=true' : '';
-  return await apiRequest(`/api/v1/admin/image-gen/size-caps${qs}`, { method: 'GET' });
+  return await apiRequest(`/api/visual-agent/image-gen/size-caps${qs}`, { method: 'GET' });
 };
 
 export const createImageGenRunReal: CreateImageGenRunContract = async ({ input, idempotencyKey }) => {
   const headers: Record<string, string> = {};
   const idem = String(idempotencyKey ?? '').trim();
   if (idem) headers['Idempotency-Key'] = idem;
-  return await apiRequest('/api/v1/admin/image-gen/runs', { method: 'POST', body: input, headers });
+  return await apiRequest('/api/visual-agent/image-gen/runs', { method: 'POST', body: input, headers });
 };
 
 export const getImageGenRunReal: GetImageGenRunContract = async ({ runId, includeItems = true, includeImages = false }) => {
   const rid = encodeURIComponent(String(runId ?? '').trim());
   const qs = `?includeItems=${includeItems ? 'true' : 'false'}&includeImages=${includeImages ? 'true' : 'false'}`;
-  return await apiRequest(`/api/v1/admin/image-gen/runs/${rid}${qs}`, { method: 'GET' });
+  return await apiRequest(`/api/visual-agent/image-gen/runs/${rid}${qs}`, { method: 'GET' });
 };
 
 export const cancelImageGenRunReal: CancelImageGenRunContract = async ({ runId }) => {
   const rid = encodeURIComponent(String(runId ?? '').trim());
-  return await apiRequest(`/api/v1/admin/image-gen/runs/${rid}/cancel`, { method: 'POST' });
+  return await apiRequest(`/api/visual-agent/image-gen/runs/${rid}/cancel`, { method: 'POST' });
 };
 
 export const runImageGenRunStreamReal: RunImageGenRunStreamContract = async ({ runId, afterSeq, onEvent, signal }) => {
@@ -145,7 +145,7 @@ export const runImageGenRunStreamReal: RunImageGenRunStreamContract = async ({ r
   const rid = encodeURIComponent(String(runId ?? '').trim());
   const a = Number(afterSeq ?? 0);
   const qs = a > 0 ? `?afterSeq=${encodeURIComponent(String(a))}` : '';
-  const url = joinUrl(getApiBaseUrl(), `/api/v1/admin/image-gen/runs/${rid}/stream${qs}`);
+  const url = joinUrl(getApiBaseUrl(), `/api/visual-agent/image-gen/runs/${rid}/stream${qs}`);
 
   let res: Response;
   try {

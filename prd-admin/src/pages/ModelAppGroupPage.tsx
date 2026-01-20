@@ -679,7 +679,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
             <Settings size={14} />
             系统配置
           </Button>
-          <Button variant="primary" size="sm" onClick={() => window.location.href = '/model-manage?tab=pools'}>
+          <Button variant="primary" size="sm" onClick={() => window.location.href = '/mds?tab=pools'}>
             <Plus size={14} />
             新建模型池
           </Button>
@@ -1587,7 +1587,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => window.location.href = '/model-manage?tab=pools'}
+                        onClick={() => window.location.href = '/mds?tab=pools'}
                       >
                         <Plus size={12} />
                         新建模型池
