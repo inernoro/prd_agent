@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/settings")]
 [Authorize]
-[AdminController("admin-data", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
+[AdminController("admin-logs", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
 public class AdminSettingsController : ControllerBase
 {
     private readonly MongoDbContext _db;

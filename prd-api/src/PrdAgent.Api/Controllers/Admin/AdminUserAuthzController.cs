@@ -11,7 +11,7 @@ using PrdAgent.Core.Security;
 namespace PrdAgent.Api.Controllers.Admin;
 
 [ApiController]
-[Route("api/v1/admin/users")]
+[Route("api/v1/admin/authz/users")]
 [Authorize]
 [AdminController("admin-authz", AdminPermissionCatalog.AuthzManage)]
 public sealed class AdminUserAuthzController : ControllerBase

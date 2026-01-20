@@ -17,7 +17,7 @@ namespace PrdAgent.Api.Controllers.Admin;
 [ApiController]
 [Route("api/v1/admin/settings/desktop")]
 [Authorize]
-[AdminController("admin-assets", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
+[AdminController("admin-assets", AdminPermissionCatalog.AssetsRead, WritePermission = AdminPermissionCatalog.AssetsWrite)]
 public class AdminDesktopBrandingController : ControllerBase
 {
     private readonly MongoDbContext _db;

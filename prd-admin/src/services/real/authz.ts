@@ -53,11 +53,11 @@ export const resetBuiltInSystemRolesReal: ResetBuiltInSystemRolesContract = asyn
 
 export const getUserAuthzReal: GetUserAuthzContract = async (userId) => {
   const uid = String(userId || '').trim();
-  return await apiRequest<AdminUserAuthzSnapshot>(`/api/v1/admin/users/${encodeURIComponent(uid)}/authz`, { method: 'GET' });
+  return await apiRequest<AdminUserAuthzSnapshot>(`/api/v1/admin/authz/users/${encodeURIComponent(uid)}/authz`, { method: 'GET' });
 };
 
 export const updateUserAuthzReal: UpdateUserAuthzContract = async (userId, req) => {
   const uid = String(userId || '').trim();
-  return await apiRequest<AdminUserAuthzSnapshot>(`/api/v1/admin/users/${encodeURIComponent(uid)}/authz`, { method: 'PUT', body: req });
+  return await apiRequest<AdminUserAuthzSnapshot>(`/api/v1/admin/authz/users/${encodeURIComponent(uid)}/authz`, { method: 'PUT', body: req });
 };
 
