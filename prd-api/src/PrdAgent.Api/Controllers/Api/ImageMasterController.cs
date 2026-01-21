@@ -24,7 +24,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/visual-agent/image-master")]
 [Authorize]
-[AdminController("visual-agent", AdminPermissionCatalog.AgentUse)]
+[AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageMasterController : ControllerBase
 {
     /// <summary>

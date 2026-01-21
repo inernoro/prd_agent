@@ -21,7 +21,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/lab/model")]
 [Authorize]
-[AdminController("lab", AdminPermissionCatalog.ModelsRead, WritePermission = AdminPermissionCatalog.ModelsWrite)]
+[AdminController("lab", AdminPermissionCatalog.LabRead, WritePermission = AdminPermissionCatalog.LabWrite)]
 public class ModelLabController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -585,3 +585,28 @@ export const uploadWatermarkFont: UploadWatermarkFontContract = withAuth(uploadW
 export const uploadWatermarkIcon: UploadWatermarkIconContract = withAuth(uploadWatermarkIconReal);
 export const deleteWatermarkFont: DeleteWatermarkFontContract = withAuth(deleteWatermarkFontReal);
 export const getModelSizes: GetModelSizesContract = withAuth(getModelSizesReal);
+
+// 限流配置服务
+import type {
+  GetGlobalRateLimitContract,
+  UpdateGlobalRateLimitContract,
+  GetUserRateLimitContract,
+  UpdateUserRateLimitContract,
+  GetExemptUsersContract,
+  GetCustomConfigsContract,
+} from '@/services/contracts/rateLimit';
+import {
+  getGlobalRateLimitReal,
+  updateGlobalRateLimitReal,
+  getUserRateLimitReal,
+  updateUserRateLimitReal,
+  getExemptUsersReal,
+  getCustomConfigsReal,
+} from '@/services/real/rateLimit';
+
+export const getGlobalRateLimit: GetGlobalRateLimitContract = withAuth(getGlobalRateLimitReal);
+export const updateGlobalRateLimit: UpdateGlobalRateLimitContract = withAuth(updateGlobalRateLimitReal);
+export const getUserRateLimit: GetUserRateLimitContract = withAuth(getUserRateLimitReal);
+export const updateUserRateLimit: UpdateUserRateLimitContract = withAuth(updateUserRateLimitReal);
+export const getExemptUsers: GetExemptUsersContract = withAuth(getExemptUsersReal);
+export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConfigsReal);

@@ -1,62 +1,61 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Json;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Middleware;
 
 /// <summary>
-/// 速率限制中间件
+/// 速率限制中间件（基于 Redis 的分布式限流）
 /// </summary>
 public class RateLimitMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<RateLimitMiddleware> _logger;
-    private readonly ConcurrentDictionary<string, RateLimitInfo> _clients = new();
-    private readonly int _maxRequestsPerMinute;
-    private readonly int _maxConcurrentRequests;
 
     public RateLimitMiddleware(
-        RequestDelegate next, 
-        ILogger<RateLimitMiddleware> logger,
-        IConfiguration configuration)
+        RequestDelegate next,
+        ILogger<RateLimitMiddleware> logger)
     {
         _next = next;
         _logger = logger;
-        _maxRequestsPerMinute = configuration.GetValue<int>("RateLimit:MaxRequestsPerMinute", 600);
-        _maxConcurrentRequests = configuration.GetValue<int>("RateLimit:MaxConcurrentRequests", 100);
-        
-        _logger.LogInformation("RateLimit initialized: MaxRequestsPerMinute={MaxRequestsPerMinute}, MaxConcurrentRequests={MaxConcurrentRequests}", 
-            _maxRequestsPerMinute, _maxConcurrentRequests);
     }
 
-    public async Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(HttpContext context, IRateLimitService rateLimitService)
     {
         var clientId = GetClientId(context);
-        var info = _clients.GetOrAdd(clientId, _ => new RateLimitInfo());
 
-        // 清理过期记录
-        info.CleanupOldRequests();
-
-        // 检查并发限制
-        if (info.ConcurrentRequests >= _maxConcurrentRequests)
+        // 检查是否为 root 用户（豁免限流）
+        if (IsRoot(context))
         {
-            await RejectRequest(context, "并发请求过多，请稍后再试");
+            _logger.LogDebug("Root user bypassed rate limiting: {ClientId}", clientId);
+            await _next(context);
             return;
         }
 
-        // 检查频率限制
-        if (info.RequestsInLastMinute >= _maxRequestsPerMinute)
+        // 检查用户是否在豁免列表中
+        var userId = context.User?.FindFirst("sub")?.Value;
+        if (!string.IsNullOrEmpty(userId))
         {
-            await RejectRequest(context, "请求频率过高，请稍后再试");
-            return;
+            var isExempt = await rateLimitService.IsExemptAsync(userId);
+            if (isExempt)
+            {
+                _logger.LogDebug("Exempt user bypassed rate limiting: {UserId}", userId);
+                await _next(context);
+                return;
+            }
         }
 
-        // 记录请求
-        info.AddRequest();
-        Interlocked.Increment(ref info.ConcurrentRequests);
+        // 执行限流检查
+        var (allowed, reason) = await rateLimitService.CheckRequestAsync(clientId);
+
+        if (!allowed)
+        {
+            _logger.LogWarning("Rate limit exceeded for {ClientId}: {Reason}", clientId, reason);
+            await RejectRequest(context, reason ?? "请求被限制");
+            return;
+        }
 
         try
         {
@@ -64,11 +63,17 @@ public class RateLimitMiddleware
         }
         finally
         {
-            Interlocked.Decrement(ref info.ConcurrentRequests);
+            // 请求完成后减少并发计数
+            await rateLimitService.RequestCompletedAsync(clientId);
         }
     }
 
-    private string GetClientId(HttpContext context)
+    private static bool IsRoot(HttpContext context)
+    {
+        return string.Equals(context.User?.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+    }
+
+    private static string GetClientId(HttpContext context)
     {
         // 优先使用用户ID，其次使用IP
         var userId = context.User?.FindFirst("sub")?.Value;
@@ -79,7 +84,7 @@ public class RateLimitMiddleware
         return $"ip:{ip}";
     }
 
-    private async Task RejectRequest(HttpContext context, string message)
+    private static async Task RejectRequest(HttpContext context, string message)
     {
         context.Response.StatusCode = (int)HttpStatusCode.TooManyRequests;
         context.Response.ContentType = "application/json";
@@ -88,38 +93,6 @@ public class RateLimitMiddleware
         var json = JsonSerializer.Serialize(response, AppJsonContext.Default.ApiResponseObject);
 
         await context.Response.WriteAsync(json);
-    }
-}
-
-/// <summary>
-/// 速率限制信息
-/// </summary>
-public class RateLimitInfo
-{
-    private readonly ConcurrentQueue<DateTime> _requestTimes = new();
-    public int ConcurrentRequests;
-
-    public int RequestsInLastMinute
-    {
-        get
-        {
-            CleanupOldRequests();
-            return _requestTimes.Count;
-        }
-    }
-
-    public void AddRequest()
-    {
-        _requestTimes.Enqueue(DateTime.UtcNow);
-    }
-
-    public void CleanupOldRequests()
-    {
-        var cutoff = DateTime.UtcNow.AddMinutes(-1);
-        while (_requestTimes.TryPeek(out var time) && time < cutoff)
-        {
-            _requestTimes.TryDequeue(out _);
-        }
     }
 }
 

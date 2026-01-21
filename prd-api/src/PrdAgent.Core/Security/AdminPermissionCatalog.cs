@@ -40,10 +40,23 @@ public static class AdminPermissionCatalog
     public const string PromptsRead = "prompts.read";
     public const string PromptsWrite = "prompts.write";
 
+    public const string LabRead = "lab.read";
+    public const string LabWrite = "lab.write";
+
     /// <summary>
-    /// Agent 体验权限：用于开放 PRD Agent / 视觉创作 Agent / 文学创作 Agent 等"体验型功能"菜单与相关后台接口。
+    /// PRD Agent 权限：PRD 智能解读与问答功能
     /// </summary>
-    public const string AgentUse = "agent.use";
+    public const string PrdAgentUse = "prd-agent.use";
+
+    /// <summary>
+    /// 视觉创作 Agent 权限：高级视觉创作工作区
+    /// </summary>
+    public const string VisualAgentUse = "visual-agent.use";
+
+    /// <summary>
+    /// 文学创作 Agent 权限：文章配图智能生成
+    /// </summary>
+    public const string LiteraryAgentUse = "literary-agent.use";
 
     /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
@@ -54,7 +67,9 @@ public static class AdminPermissionCatalog
     {
         new(Access, "后台访问", "允许进入管理后台"),
         new(AuthzManage, "权限管理", "管理系统角色/用户权限"),
-        new(AgentUse, "Agent 体验", "允许访问 PRD/视觉/文学 Agent 等体验功能"),
+        new(PrdAgentUse, "PRD Agent", "PRD 智能解读与问答"),
+        new(VisualAgentUse, "视觉创作 Agent", "高级视觉创作工作区"),
+        new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),
@@ -80,6 +95,9 @@ public static class AdminPermissionCatalog
 
         new(PromptsRead, "提示词-读", "查看提示词配置"),
         new(PromptsWrite, "提示词-写", "编辑提示词配置"),
+
+        new(LabRead, "实验室-读", "查看实验室功能"),
+        new(LabWrite, "实验室-写", "使用实验室功能"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

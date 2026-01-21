@@ -4,8 +4,8 @@ import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog } from '@/services';
-import { CheckCircle2, Circle, Clock, MoreVertical, Pencil, Search, XCircle, UserCog, Users } from 'lucide-react';
+import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit } from '@/services';
+import { CheckCircle2, Circle, Clock, MoreVertical, Pencil, Search, XCircle, UserCog, Users, Gauge } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -155,6 +155,18 @@ export default function UsersPage() {
   const [authzCatalog, setAuthzCatalog] = useState<Array<{ key: string; name: string; description?: string | null }>>([]);
   const [authzAllowSet, setAuthzAllowSet] = useState<Set<string>>(new Set());
   const [authzDenySet, setAuthzDenySet] = useState<Set<string>>(new Set());
+
+  // 限流配置
+  const [rateLimitOpen, setRateLimitOpen] = useState(false);
+  const [rateLimitUser, setRateLimitUser] = useState<UserRow | null>(null);
+  const [rateLimitLoading, setRateLimitLoading] = useState(false);
+  const [rateLimitSaving, setRateLimitSaving] = useState(false);
+  const [rateLimitIsExempt, setRateLimitIsExempt] = useState(false);
+  const [rateLimitUseCustom, setRateLimitUseCustom] = useState(false);
+  const [rateLimitMaxRpm, setRateLimitMaxRpm] = useState(600);
+  const [rateLimitMaxConcurrent, setRateLimitMaxConcurrent] = useState(100);
+  const [rateLimitGlobalMaxRpm, setRateLimitGlobalMaxRpm] = useState(600);
+  const [rateLimitGlobalMaxConcurrent, setRateLimitGlobalMaxConcurrent] = useState(100);
 
   const pwdChecks = useMemo(() => {
     const v = pwd ?? '';
@@ -524,6 +536,51 @@ export default function UsersPage() {
       await load();
     } finally {
       setAuthzSaving(false);
+    }
+  };
+
+  // 限流配置相关函数
+  const openRateLimitConfig = async (u: UserRow) => {
+    setRateLimitUser(u);
+    setRateLimitOpen(true);
+    setRateLimitLoading(true);
+    try {
+      const res = await getUserRateLimit(u.userId);
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '加载限流配置失败');
+        setRateLimitOpen(false);
+        return;
+      }
+      setRateLimitIsExempt(res.data.isExempt);
+      setRateLimitUseCustom(res.data.hasCustomConfig);
+      setRateLimitMaxRpm(res.data.maxRequestsPerMinute);
+      setRateLimitMaxConcurrent(res.data.maxConcurrentRequests);
+      setRateLimitGlobalMaxRpm(res.data.globalMaxRequestsPerMinute);
+      setRateLimitGlobalMaxConcurrent(res.data.globalMaxConcurrentRequests);
+    } finally {
+      setRateLimitLoading(false);
+    }
+  };
+
+  const saveRateLimitConfig = async () => {
+    if (!rateLimitUser) return;
+    if (rateLimitSaving) return;
+    setRateLimitSaving(true);
+    try {
+      const res = await updateUserRateLimit(rateLimitUser.userId, {
+        isExempt: rateLimitIsExempt,
+        useCustomConfig: rateLimitUseCustom,
+        maxRequestsPerMinute: rateLimitUseCustom ? rateLimitMaxRpm : undefined,
+        maxConcurrentRequests: rateLimitUseCustom ? rateLimitMaxConcurrent : undefined,
+      });
+      if (!res.success) {
+        await systemDialog.alert(res.error?.message || '保存失败');
+        return;
+      }
+      await systemDialog.alert('已保存用户限流配置');
+      setRateLimitOpen(false);
+    } finally {
+      setRateLimitSaving(false);
     }
   };
 
@@ -1043,6 +1100,17 @@ export default function UsersPage() {
                                   后台菜单权限
                                 </DropdownMenu.Item>
                               ) : null}
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  void openRateLimitConfig(u);
+                                }}
+                              >
+                                <Gauge size={14} />
+                                限流配置
+                              </DropdownMenu.Item>
 
                               <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
 
@@ -2057,6 +2125,130 @@ export default function UsersPage() {
                 {authzSaving ? '保存中...' : '保存'}
               </Button>
             </div>
+          </div>
+        }
+      />
+
+      {/* 限流配置 Dialog */}
+      <Dialog
+        open={rateLimitOpen}
+        onOpenChange={(v) => {
+          setRateLimitOpen(v);
+          if (!v) {
+            setRateLimitUser(null);
+            setRateLimitLoading(false);
+            setRateLimitSaving(false);
+          }
+        }}
+        title={rateLimitUser ? `限流配置：${rateLimitUser.username}` : '限流配置'}
+        description={rateLimitUser ? `${rateLimitUser.displayName} · ${rateLimitUser.userId}` : undefined}
+        content={
+          <div className="space-y-4">
+            {rateLimitLoading ? (
+              <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                加载中...
+              </div>
+            ) : (
+              <>
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  全局默认：每分钟 {rateLimitGlobalMaxRpm} 次，最大并发 {rateLimitGlobalMaxConcurrent}
+                </div>
+
+                {/* 豁免开关 */}
+                <div
+                  className="rounded-[14px] p-4"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}
+                >
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rateLimitIsExempt}
+                      onChange={(e) => setRateLimitIsExempt(e.target.checked)}
+                      disabled={rateLimitSaving}
+                      className="w-4 h-4"
+                    />
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        豁免限流
+                      </div>
+                      <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        开启后该用户不受任何限流约束（仅限特殊用户）
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* 自定义配置 */}
+                {!rateLimitIsExempt && (
+                  <div
+                    className="rounded-[14px] p-4"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  >
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rateLimitUseCustom}
+                        onChange={(e) => setRateLimitUseCustom(e.target.checked)}
+                        disabled={rateLimitSaving}
+                        className="w-4 h-4"
+                      />
+                      <div>
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          使用自定义配置
+                        </div>
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          不勾选则使用全局默认配置
+                        </div>
+                      </div>
+                    </label>
+
+                    {rateLimitUseCustom && (
+                      <div className="mt-4 grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                            每分钟最大请求数
+                          </label>
+                          <input
+                            type="number"
+                            value={rateLimitMaxRpm}
+                            onChange={(e) => setRateLimitMaxRpm(Number(e.target.value) || 600)}
+                            disabled={rateLimitSaving}
+                            min={1}
+                            max={100000}
+                            className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
+                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                            最大并发请求数
+                          </label>
+                          <input
+                            type="number"
+                            value={rateLimitMaxConcurrent}
+                            onChange={(e) => setRateLimitMaxConcurrent(Number(e.target.value) || 100)}
+                            disabled={rateLimitSaving}
+                            min={1}
+                            max={10000}
+                            className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
+                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2">
+                  <Button variant="secondary" size="sm" disabled={rateLimitSaving} onClick={() => setRateLimitOpen(false)}>
+                    取消
+                  </Button>
+                  <Button variant="primary" size="sm" disabled={rateLimitSaving || !rateLimitUser} onClick={saveRateLimitConfig}>
+                    {rateLimitSaving ? '保存中...' : '保存'}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         }
       />

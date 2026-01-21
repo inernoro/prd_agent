@@ -22,7 +22,9 @@ public static class BuiltInSystemRoles
             Permissions: new List<string>
             {
                 AdminPermissionCatalog.Access,
-                AdminPermissionCatalog.AgentUse,
+                AdminPermissionCatalog.PrdAgentUse,
+                AdminPermissionCatalog.VisualAgentUse,
+                AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,
                 AdminPermissionCatalog.GroupsRead,
@@ -34,6 +36,8 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.AssetsWrite,
                 AdminPermissionCatalog.OpenPlatformManage,
                 AdminPermissionCatalog.SettingsRead,
+                AdminPermissionCatalog.LabRead,
+                AdminPermissionCatalog.LabWrite,
             }
         ),
         new(
@@ -42,7 +46,9 @@ public static class BuiltInSystemRoles
             Permissions: new List<string>
             {
                 AdminPermissionCatalog.Access,
-                AdminPermissionCatalog.AgentUse,
+                AdminPermissionCatalog.PrdAgentUse,
+                AdminPermissionCatalog.VisualAgentUse,
+                AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.UsersRead,
                 AdminPermissionCatalog.GroupsRead,
                 AdminPermissionCatalog.ModelsRead,
@@ -50,6 +56,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.DataRead,
                 AdminPermissionCatalog.AssetsRead,
                 AdminPermissionCatalog.SettingsRead,
+                AdminPermissionCatalog.LabRead,
             }
         ),
         new(
@@ -58,7 +65,9 @@ public static class BuiltInSystemRoles
             Permissions: new List<string>
             {
                 AdminPermissionCatalog.Access,
-                AdminPermissionCatalog.AgentUse,
+                AdminPermissionCatalog.PrdAgentUse,
+                AdminPermissionCatalog.VisualAgentUse,
+                AdminPermissionCatalog.LiteraryAgentUse,
                 // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,
             }

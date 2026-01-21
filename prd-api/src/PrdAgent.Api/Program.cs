@@ -240,6 +240,14 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
     new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
 
+// 注册分布式限流服务（基于 Redis）
+builder.Services.AddSingleton<IRateLimitService>(sp =>
+{
+    var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
+    var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.RedisRateLimitService>>();
+    return new PrdAgent.Infrastructure.Services.RedisRateLimitService(redis, logger);
+});
+
 // 配置JWT认证
 var jwtSecret = builder.Configuration["Jwt:Secret"];
 if (string.IsNullOrWhiteSpace(jwtSecret))

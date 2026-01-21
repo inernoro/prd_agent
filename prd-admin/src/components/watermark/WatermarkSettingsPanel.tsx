@@ -891,9 +891,9 @@ function WatermarkEditor(props: {
                 <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(config.fontSizePx)}px</div>
                 <input
                   type="range"
-                  min={12}
+                  min={5}
                   max={64}
-                  step={2}
+                  step={1}
                   value={config.fontSizePx}
                   onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
                   className="w-full"
@@ -1004,23 +1004,6 @@ function WatermarkEditor(props: {
                 <label
                   className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
                   style={{
-                    background: config.textColor || '#ffffff',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    color: 'rgba(0,0,0,0.65)',
-                  }}
-                  title="前景色（字体）"
-                >
-                  <Type size={14} />
-                  <input
-                    type="color"
-                    value={(config.textColor || '#ffffff') as string}
-                    className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
-                    onChange={(e) => updateConfig({ textColor: e.target.value })}
-                  />
-                </label>
-                <label
-                  className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
-                  style={{
                     background: config.backgroundColor || '#000000',
                     border: '1px solid rgba(255,255,255,0.2)',
                     color: 'rgba(255,255,255,0.85)',
@@ -1033,6 +1016,23 @@ function WatermarkEditor(props: {
                     value={(config.backgroundColor || '#000000') as string}
                     className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
                     onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
+                  />
+                </label>
+                <label
+                  className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
+                  style={{
+                    background: config.textColor || '#ffffff',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    color: 'rgba(0,0,0,0.65)',
+                  }}
+                  title="前景色（字体）"
+                >
+                  <Type size={14} />
+                  <input
+                    type="color"
+                    value={(config.textColor || '#ffffff') as string}
+                    className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
+                    onChange={(e) => updateConfig({ textColor: e.target.value })}
                   />
                 </label>
               </div>

@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/literary-agent/prompts")]
 [Authorize]
-[AdminController("literary-agent", AdminPermissionCatalog.AgentUse)]
+[AdminController("literary-agent", AdminPermissionCatalog.LiteraryAgentUse)]
 public class LiteraryPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;

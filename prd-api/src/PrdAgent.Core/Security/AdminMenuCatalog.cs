@@ -43,6 +43,9 @@ public static class AdminMenuCatalog
         // 数据管理
         new("data", "/data", "数据管理", "数据概览、清理与迁移", "Database", 110),
 
+        // 系统设置
+        new("settings", "/settings", "系统设置", "系统初始化与配置", "Settings", 115),
+
         // 开放平台
         new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
 

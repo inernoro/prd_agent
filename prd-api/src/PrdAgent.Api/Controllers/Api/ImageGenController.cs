@@ -23,7 +23,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/visual-agent/image-gen")]
 [Authorize]
-[AdminController("visual-agent", AdminPermissionCatalog.AgentUse)]
+[AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
     private readonly MongoDbContext _db;

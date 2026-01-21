@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/prd-agent")]
 [Authorize]
-[AdminController("prd-agent", AdminPermissionCatalog.AgentUse)]
+[AdminController("prd-agent", AdminPermissionCatalog.PrdAgentUse)]
 public sealed class PrdAgentController : ControllerBase
 {
     /// <summary>

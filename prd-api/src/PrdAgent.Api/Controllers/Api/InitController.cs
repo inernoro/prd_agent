@@ -12,9 +12,9 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 系统初始化
 /// </summary>
 [ApiController]
-[Route("api/data/init")]
+[Route("api/settings/init")]
 [Authorize]
-[AdminController("data", AdminPermissionCatalog.SettingsWrite)]
+[AdminController("settings", AdminPermissionCatalog.SettingsWrite)]
 public class InitController : ControllerBase
 {
     private readonly MongoDbContext _db;

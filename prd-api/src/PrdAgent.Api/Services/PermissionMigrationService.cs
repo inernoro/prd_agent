@@ -14,7 +14,7 @@ public sealed class PermissionMigrationService : IHostedService
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<PermissionMigrationService> _logger;
 
-    // 权限映射表：旧格式 → 新格式
+    // 权限映射表：旧格式 → 新格式（一对一）
     private static readonly Dictionary<string, string> PermissionMap = new()
     {
         { "admin.access", "access" },
@@ -34,8 +34,14 @@ public sealed class PermissionMigrationService : IHostedService
         { "admin.settings.read", "settings.read" },
         { "admin.settings.write", "settings.write" },
         { "admin.prompts.write", "prompts.write" },
-        { "admin.agent.use", "agent.use" },
         { "admin.super", "super" },
+    };
+
+    // 一对多权限迁移：旧权限 → 多个新权限（agent.use 拆分为三个独立 Agent 权限）
+    private static readonly Dictionary<string, string[]> PermissionExpandMap = new()
+    {
+        { "agent.use", new[] { "prd-agent.use", "visual-agent.use", "literary-agent.use" } },
+        { "admin.agent.use", new[] { "prd-agent.use", "visual-agent.use", "literary-agent.use" } },
     };
 
     public PermissionMigrationService(IServiceProvider serviceProvider, ILogger<PermissionMigrationService> logger)
@@ -85,11 +91,19 @@ public sealed class PermissionMigrationService : IHostedService
 
             foreach (var perm in role.Permissions)
             {
+                // 一对一映射
                 if (PermissionMap.TryGetValue(perm, out var newPerm))
                 {
                     newPermissions.Add(newPerm);
                     changed = true;
                     updatedPermissions++;
+                }
+                // 一对多映射（如 agent.use → prd-agent.use, visual-agent.use, literary-agent.use）
+                else if (PermissionExpandMap.TryGetValue(perm, out var expandedPerms))
+                {
+                    newPermissions.AddRange(expandedPerms);
+                    changed = true;
+                    updatedPermissions += expandedPerms.Length;
                 }
                 else
                 {
@@ -99,7 +113,8 @@ public sealed class PermissionMigrationService : IHostedService
 
             if (changed)
             {
-                role.Permissions = newPermissions;
+                // 去重
+                role.Permissions = newPermissions.Distinct().ToList();
                 role.UpdatedAt = DateTime.UtcNow;
                 await db.SystemRoles.ReplaceOneAsync(r => r.Id == role.Id, role, cancellationToken: ct);
                 updatedRoles++;
@@ -136,9 +151,16 @@ public sealed class PermissionMigrationService : IHostedService
                 var newPermAllow = new List<string>();
                 foreach (var perm in user.PermAllow)
                 {
+                    // 一对一映射
                     if (PermissionMap.TryGetValue(perm, out var newPerm))
                     {
                         newPermAllow.Add(newPerm);
+                        changed = true;
+                    }
+                    // 一对多映射
+                    else if (PermissionExpandMap.TryGetValue(perm, out var expandedPerms))
+                    {
+                        newPermAllow.AddRange(expandedPerms);
                         changed = true;
                     }
                     else
@@ -146,7 +168,7 @@ public sealed class PermissionMigrationService : IHostedService
                         newPermAllow.Add(perm);
                     }
                 }
-                user.PermAllow = newPermAllow;
+                user.PermAllow = newPermAllow.Distinct().ToList();
             }
 
             // 迁移 PermDeny
@@ -155,9 +177,16 @@ public sealed class PermissionMigrationService : IHostedService
                 var newPermDeny = new List<string>();
                 foreach (var perm in user.PermDeny)
                 {
+                    // 一对一映射
                     if (PermissionMap.TryGetValue(perm, out var newPerm))
                     {
                         newPermDeny.Add(newPerm);
+                        changed = true;
+                    }
+                    // 一对多映射
+                    else if (PermissionExpandMap.TryGetValue(perm, out var expandedPerms))
+                    {
+                        newPermDeny.AddRange(expandedPerms);
                         changed = true;
                     }
                     else
@@ -165,7 +194,7 @@ public sealed class PermissionMigrationService : IHostedService
                         newPermDeny.Add(perm);
                     }
                 }
-                user.PermDeny = newPermDeny;
+                user.PermDeny = newPermDeny.Distinct().ToList();
             }
 
             if (changed)

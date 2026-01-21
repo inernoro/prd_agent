@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/visual-agent/upload-artifacts")]
 [Authorize]
-[AdminController("logs", AdminPermissionCatalog.LogsRead)]
+[AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class UploadArtifactsController : ControllerBase
 {
     private readonly MongoDbContext _db;

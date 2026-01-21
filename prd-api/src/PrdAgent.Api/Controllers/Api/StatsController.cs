@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/dashboard/stats")]
 [Authorize]
-[AdminController("logs", AdminPermissionCatalog.LogsRead)]
+[AdminController("dashboard", AdminPermissionCatalog.Access)]
 public class StatsController : ControllerBase
 {
     private readonly MongoDbContext _db;
