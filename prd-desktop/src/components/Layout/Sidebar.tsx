@@ -14,7 +14,7 @@ import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripF
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
   const { setSession, activeGroupId, documentLoaded, document: prdDocument, mode, sessionId, setMode, openPrdPreviewPage } = useSessionStore();
-  const { loadGroups, groups } = useGroupListStore();
+  const { loadGroups } = useGroupListStore();
   const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -124,10 +124,15 @@ export default function Sidebar() {
 
   type GroupMemberInfo = { userId: string; isOwner: boolean };
   const [activeOwner, setActiveOwner] = useState<boolean>(false);
-  const [activeOwnerLoading, setActiveOwnerLoading] = useState<boolean>(false);
+  const [, setActiveOwnerLoading] = useState<boolean>(false);
   const isAdmin = user?.role === 'ADMIN';
 
-  const refreshActiveOwner = useCallback(async () => {
+  // 缓存已查询过的群主信息，避免重复请求
+  const ownerCacheRef = useRef<Map<string, { isOwner: boolean; timestamp: number }>>(new Map());
+  const OWNER_CACHE_TTL = 60_000; // 缓存 60 秒
+
+  // 只在 activeGroupId 或 userId 变化时才刷新群主信息
+  useEffect(() => {
     const gid = String(activeGroupId || '').trim();
     if (!gid) {
       setActiveOwner(false);
@@ -141,32 +146,43 @@ export default function Sidebar() {
       setActiveOwner(false);
       return;
     }
-    // 检查群组是否存在（避免为已解散的群组查询成员）
-    const groupExists = groups.some((g) => String(g.groupId) === gid);
-    if (!groupExists) {
-      setActiveOwner(false);
+
+    // 检查缓存
+    const cacheKey = `${gid}:${user.userId}`;
+    const cached = ownerCacheRef.current.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < OWNER_CACHE_TTL) {
+      setActiveOwner(cached.isOwner);
       return;
     }
-    if (activeOwnerLoading) return;
-    try {
-      setActiveOwnerLoading(true);
-      const resp = await invoke<ApiResponse<GroupMemberInfo[]>>('get_group_members', { groupId: gid });
-      if (!resp.success || !resp.data) {
-        setActiveOwner(false);
-        return;
-      }
-      const ok = resp.data.some((m) => m.userId === user.userId && m.isOwner);
-      setActiveOwner(ok);
-    } catch {
-      setActiveOwner(false);
-    } finally {
-      setActiveOwnerLoading(false);
-    }
-  }, [activeGroupId, activeOwnerLoading, invoke, isAdmin, user?.userId, groups]);
 
-  useEffect(() => {
-    void refreshActiveOwner();
-  }, [refreshActiveOwner]);
+    let cancelled = false;
+
+    const fetchOwnerStatus = async () => {
+      try {
+        setActiveOwnerLoading(true);
+        const resp = await invoke<ApiResponse<GroupMemberInfo[]>>('get_group_members', { groupId: gid });
+        if (cancelled) return;
+        if (!resp.success || !resp.data) {
+          setActiveOwner(false);
+          return;
+        }
+        const ok = resp.data.some((m) => m.userId === user.userId && m.isOwner);
+        // 写入缓存
+        ownerCacheRef.current.set(cacheKey, { isOwner: ok, timestamp: Date.now() });
+        setActiveOwner(ok);
+      } catch {
+        if (!cancelled) setActiveOwner(false);
+      } finally {
+        if (!cancelled) setActiveOwnerLoading(false);
+      }
+    };
+
+    void fetchOwnerStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeGroupId, isAdmin, user?.userId]); // 移除 groups 和 invoke 依赖
 
   const canReplacePrd = useMemo(() => {
     if (!activeGroupId) return false;

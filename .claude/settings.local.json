@@ -26,7 +26,8 @@
       "Bash(powershell.exe -ExecutionPolicy Bypass -Command \"./quickstart.ps1 ci\")",
       "Bash(powershell.exe -ExecutionPolicy Bypass -Command \"& {.\\\\quickstart.ps1 ci}\")",
       "Bash(powershell.exe -ExecutionPolicy Bypass -File \"quick.ps1\" ci)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(pnpm exec tsc:*)"
     ]
   }
 }

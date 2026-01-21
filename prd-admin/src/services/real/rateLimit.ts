@@ -1,5 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
-import { ok, type ApiResponse } from '@/types/api';
+import { ok } from '@/types/api';
 import type {
   GetGlobalRateLimitContract,
   UpdateGlobalRateLimitContract,
