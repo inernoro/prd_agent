@@ -96,7 +96,7 @@ export const menuList: MenuDef[] = [
     appKey: 'lab',
     label: '实验室',
     icon: 'FlaskConical',
-    permissions: ['settings.read', 'settings.write'],
+    permissions: ['lab.read', 'lab.write'],
   },
 ];
 
@@ -145,7 +145,12 @@ export const allPermissions: PermissionDef[] = [
   { key: 'settings.write', label: '系统设置 - 写', description: '修改系统设置', category: 'write' },
 
   // 提示词管理
+  { key: 'prompts.read', label: '提示词管理 - 读', description: '查看提示词配置', category: 'read' },
   { key: 'prompts.write', label: '提示词管理 - 写', description: '编辑提示词', category: 'write' },
+
+  // 实验室
+  { key: 'lab.read', label: '实验室 - 读', description: '查看实验室功能', category: 'read' },
+  { key: 'lab.write', label: '实验室 - 写', description: '使用实验室功能', category: 'write' },
 
   // 权限管理
   { key: 'authz.manage', label: '权限管理', description: '管理系统角色和用户权限', category: 'manage' },
