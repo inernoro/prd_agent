@@ -320,6 +320,19 @@ export const api = {
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
 
+  // ============ Settings 系统设置 ============
+  settings: {
+    init: {
+      defaultGroups: () => '/api/settings/init/default-groups',
+      migrateModels: () => '/api/settings/init/migrate-models',
+      defaultConfig: () => '/api/settings/init/default-config',
+      defaultApps: () => '/api/settings/init/default-apps',
+      all: () => '/api/settings/init/all',
+      scan: () => '/api/settings/init/scan',
+      migratePermissions: () => '/api/settings/init/migrate-permissions',
+    },
+  },
+
   // ============ V1 API (用户端) ============
   v1: {
     documents: {

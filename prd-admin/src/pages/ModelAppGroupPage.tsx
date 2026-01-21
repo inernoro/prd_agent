@@ -21,6 +21,7 @@ import {
   getSchedulerConfig,
   updateSchedulerConfig,
 } from '@/services';
+import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
   LLMAppCaller,
@@ -380,8 +381,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         throw new Error('未登录，请重新登录');
       }
 
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
-      const url = `${API_BASE}/settings/init/default-apps`;
+      const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, '') || '';
+      const url = `${API_BASE}${api.settings.init.defaultApps()}`;
 
       const response = await fetch(url, {
         method: 'POST',

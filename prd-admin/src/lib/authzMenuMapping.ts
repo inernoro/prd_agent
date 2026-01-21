@@ -48,19 +48,19 @@ export const menuList: MenuDef[] = [
     appKey: 'prd-agent',
     label: 'PRD Agent',
     icon: 'MessagesSquare',
-    permissions: ['agent.use'],
+    permissions: ['prd-agent.use'],
   },
   {
     appKey: 'visual-agent',
     label: '视觉创作 Agent',
     icon: 'Wand2',
-    permissions: ['agent.use'],
+    permissions: ['visual-agent.use'],
   },
   {
     appKey: 'literary-agent',
     label: '文学创作 Agent',
     icon: 'PenLine',
-    permissions: ['agent.use'],
+    permissions: ['literary-agent.use'],
   },
   {
     appKey: 'assets',
@@ -150,8 +150,10 @@ export const allPermissions: PermissionDef[] = [
   // 权限管理
   { key: 'authz.manage', label: '权限管理', description: '管理系统角色和用户权限', category: 'manage' },
 
-  // Agent 体验
-  { key: 'agent.use', label: 'Agent 体验', description: '使用 PRD/视觉/文学 Agent', category: 'use' },
+  // Agent 权限（独立）
+  { key: 'prd-agent.use', label: 'PRD Agent', description: 'PRD 智能解读与问答', category: 'use' },
+  { key: 'visual-agent.use', label: '视觉创作 Agent', description: '高级视觉创作工作区', category: 'use' },
+  { key: 'literary-agent.use', label: '文学创作 Agent', description: '文章配图智能生成', category: 'use' },
 
   // 超级权限
   { key: 'super', label: '超级权限', description: '绕过所有权限检查', category: 'super' },
