@@ -239,9 +239,13 @@ jobs:
       - name: Generate Tauri icons
         run: pnpm tauri:icons
 
-      - name: Check Rust
+      - name: Check Rust (dev)
         working-directory: prd-desktop/src-tauri
         run: cargo check
+
+      - name: Check Rust (release)
+        working-directory: prd-desktop/src-tauri
+        run: cargo check --release
 
       - name: Rust format check
         working-directory: prd-desktop/src-tauri
