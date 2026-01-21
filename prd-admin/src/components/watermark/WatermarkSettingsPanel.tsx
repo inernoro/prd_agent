@@ -1449,10 +1449,11 @@ function WatermarkPreview(props: {
         spec.iconImageRef ?? '',
         spec.backgroundEnabled ? '1' : '0',
         spec.borderEnabled ? '1' : '0',
+        borderWidth.toFixed(2),
         fontFamily,
         fontSize.toFixed(2),
       ].join('|'),
-    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, fontFamily, fontSize]
+    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize]
   );
   const cachedSize = watermarkSizeCache.get(measureSignature);
 
@@ -1566,8 +1567,10 @@ function WatermarkPreview(props: {
       const iconRect = iconRef.current?.getBoundingClientRect();
       const iconWidth = iconRect?.width ?? 0;
       const iconHeight = iconRect?.height ?? 0;
-      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0) + decorationPadding * 2;
-      const combinedHeight = Math.max(textRect.height, iconHeight) + decorationPadding * 2;
+      // 边框宽度会增加元素整体尺寸（CSS border 在 padding 外面）
+      const borderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
+      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0) + decorationPadding * 2 + borderExtra;
+      const combinedHeight = Math.max(textRect.height, iconHeight) + decorationPadding * 2 + borderExtra;
       setWatermarkSize((prev) => {
         if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
           return prev;
