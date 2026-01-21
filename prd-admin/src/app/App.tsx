@@ -12,8 +12,6 @@ import LabPage from '@/pages/LabPage';
 import AiChatPage from '@/pages/AiChatPage';
 import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
-import VisualAgentWorkspaceListPage from '@/pages/visual-agent/VisualAgentWorkspaceListPage';
-import VisualAgentWorkspaceEditorPage from '@/pages/visual-agent/VisualAgentWorkspaceEditorPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import AssetsManagePage from '@/pages/AssetsManagePage';
@@ -127,7 +125,28 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 
-        {/* 独立全屏页面 - 不使用 AppShell 布局 */}
+        {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
+        <Route
+          path="/visual-agent"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="visual-agent.use">
+                <VisualAgentFullscreenPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/visual-agent/:workspaceId"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="visual-agent.use">
+                <VisualAgentFullscreenPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+        {/* 兼容旧路由 */}
         <Route
           path="/visual-agent-fullscreen"
           element={
@@ -164,8 +183,6 @@ export default function App() {
         <Route path="groups" element={<RequirePermission perm="groups.read"><GroupsPage /></RequirePermission>} />
         <Route path="mds" element={<RequirePermission perm="mds.read"><ModelManageTabsPage /></RequirePermission>} />
         <Route path="prd-agent" element={<RequirePermission perm="prd-agent.use"><AiChatPage /></RequirePermission>} />
-        <Route path="visual-agent" element={<RequirePermission perm="visual-agent.use"><VisualAgentWorkspaceListPage /></RequirePermission>} />
-        <Route path="visual-agent/:workspaceId" element={<RequirePermission perm="visual-agent.use"><VisualAgentWorkspaceEditorPage /></RequirePermission>} />
         <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />

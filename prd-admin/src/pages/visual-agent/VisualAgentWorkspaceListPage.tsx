@@ -1294,14 +1294,14 @@ function ProjectCarousel(props: {
 
 // ============ 主页面 ============
 export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: boolean }) {
-  const { fullscreenMode = false } = props;
+  // fullscreenMode 参数保留用于兼容，但现在所有模式都是全屏
+  const _fullscreenMode = props.fullscreenMode;
+  void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
 
-  // 根据模式决定导航路径前缀
+  // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
   const getEditorPath = (workspaceId: string) => {
-    return fullscreenMode
-      ? `/visual-agent-fullscreen/${encodeURIComponent(workspaceId)}`
-      : `/visual-agent/${encodeURIComponent(workspaceId)}`;
+    return `/visual-agent/${encodeURIComponent(workspaceId)}`;
   };
   const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);

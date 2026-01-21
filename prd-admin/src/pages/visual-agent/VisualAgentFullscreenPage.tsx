@@ -16,10 +16,10 @@ export default function VisualAgentFullscreenPage() {
   // 判断是列表页还是编辑页
   const isEditor = !!workspaceId;
 
-  // 返回目标：编辑页返回全屏列表页，列表页返回首页
+  // 返回目标：编辑页返回列表页，列表页返回首页
   const onBack = () => {
     if (isEditor) {
-      navigate('/visual-agent-fullscreen');
+      navigate('/visual-agent');
     } else {
       navigate('/');
     }
