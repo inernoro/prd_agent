@@ -38,18 +38,24 @@ public class AuthController : ControllerBase
         _logger = logger;
     }
 
+    private string GetRootUsername() =>
+        (_cfg["ROOT_ACCESS_USERNAME"] ?? string.Empty).Trim();
+
+    private string GetRootPassword() =>
+        (_cfg["ROOT_ACCESS_PASSWORD"] ?? string.Empty).Trim();
+
     private bool IsRootEnabled()
     {
-        var u = (_cfg["RootAccess:Username"] ?? string.Empty).Trim();
-        var p = (_cfg["RootAccess:Password"] ?? string.Empty).Trim();
+        var u = GetRootUsername();
+        var p = GetRootPassword();
         return !string.IsNullOrWhiteSpace(u) && !string.IsNullOrWhiteSpace(p);
     }
 
     private bool IsRootCredential(string username, string password)
     {
         if (!IsRootEnabled()) return false;
-        var u = (_cfg["RootAccess:Username"] ?? string.Empty).Trim();
-        var p = (_cfg["RootAccess:Password"] ?? string.Empty).Trim();
+        var u = GetRootUsername();
+        var p = GetRootPassword();
         return string.Equals(u, (username ?? string.Empty).Trim(), StringComparison.Ordinal)
                && string.Equals(p, (password ?? string.Empty).Trim(), StringComparison.Ordinal);
     }

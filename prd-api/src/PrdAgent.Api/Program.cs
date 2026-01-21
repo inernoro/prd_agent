@@ -902,8 +902,8 @@ app.Lifetime.ApplicationStarted.Register(() =>
     Log.Information("Desktop Dev 默认: http://localhost:1420");
 
     // Root 破窗账户状态
-    var rootUsername = (builder.Configuration["RootAccess:Username"] ?? string.Empty).Trim();
-    var rootPassword = (builder.Configuration["RootAccess:Password"] ?? string.Empty).Trim();
+    var rootUsername = (builder.Configuration["ROOT_ACCESS_USERNAME"] ?? string.Empty).Trim();
+    var rootPassword = (builder.Configuration["ROOT_ACCESS_PASSWORD"] ?? string.Empty).Trim();
     var rootEnabled = !string.IsNullOrWhiteSpace(rootUsername) && !string.IsNullOrWhiteSpace(rootPassword);
     if (rootEnabled)
     {
@@ -911,7 +911,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
     }
     else
     {
-        Log.Information("Root 破窗账户未配置（如需启用，请设置 RootAccess:Username 和 RootAccess:Password）");
+        Log.Information("Root 破窗账户未配置（如需启用，请设置 ROOT_ACCESS_USERNAME 和 ROOT_ACCESS_PASSWORD）");
     }
 });
 

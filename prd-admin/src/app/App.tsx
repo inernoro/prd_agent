@@ -31,6 +31,8 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequirePermission({ perm, children }: { perm: string; children: React.ReactNode }) {
   const perms = useAuthStore((s) => s.permissions);
   const loaded = useAuthStore((s) => s.permissionsLoaded);
+  const logout = useAuthStore((s) => s.logout);
+
   if (!loaded) {
     return (
       <div className="h-full w-full flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
@@ -57,6 +59,23 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
           <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
             缺少权限：{perm}
           </div>
+          <button
+            onClick={() => logout()}
+            className="mt-4 px-4 py-2 text-sm rounded-md transition-colors"
+            style={{
+              background: 'var(--bg-elevated)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-default)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--bg-hover)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'var(--bg-elevated)';
+            }}
+          >
+            退出登录
+          </button>
         </div>
       </div>
     );

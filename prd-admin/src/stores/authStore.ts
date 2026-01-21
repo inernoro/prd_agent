@@ -61,18 +61,24 @@ export const useAuthStore = create<AuthState>()(
       setMenuCatalogLoaded: (loaded) => set({ menuCatalogLoaded: !!loaded }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
-      logout: () => set({
-        isAuthenticated: false,
-        user: null,
-        token: null,
-        refreshToken: null,
-        sessionKey: null,
-        permissions: [],
-        permissionsLoaded: false,
-        isRoot: false,
-        menuCatalog: [],
-        menuCatalogLoaded: false,
-      }),
+      logout: () => {
+        // 清空所有本地存储，避免垃圾数据
+        localStorage.clear();
+        sessionStorage.clear();
+        // 重置 store 状态
+        set({
+          isAuthenticated: false,
+          user: null,
+          token: null,
+          refreshToken: null,
+          sessionKey: null,
+          permissions: [],
+          permissionsLoaded: false,
+          isRoot: false,
+          menuCatalog: [],
+          menuCatalogLoaded: false,
+        });
+      },
     }),
     { name: 'prd-admin-auth' }
   )
