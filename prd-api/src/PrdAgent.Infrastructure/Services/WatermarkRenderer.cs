@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing;
 using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.PixelFormats;
@@ -60,29 +61,53 @@ public class WatermarkRenderer
         var textTop = (float)(watermarkTop + padding);
 
         var textColor = ResolveColorHex(config.TextColor, config.Opacity);
-        var borderColor = ResolveColorHex(config.TextColor, config.Opacity);
+        var borderColor = ResolveColorHex(config.BorderColor ?? config.TextColor, config.Opacity);
         var backgroundColor = ResolveColorHex(config.BackgroundColor, config.Opacity, fallback: Color.FromRgba(0, 0, 0, (byte)Math.Round(0.4 * 255)));
 
         image.Mutate(ctx =>
         {
-            if (config.BackgroundEnabled)
-            {
-                var backgroundRect = new RectangleF(
-                    (float)watermarkLeft,
-                    (float)watermarkTop,
-                    (float)watermarkWidth,
-                    (float)watermarkHeight);
-                ctx.Fill(backgroundColor, backgroundRect);
-            }
+            var backgroundRect = new RectangleF(
+                (float)watermarkLeft,
+                (float)watermarkTop,
+                (float)watermarkWidth,
+                (float)watermarkHeight);
 
-            if (config.BorderEnabled)
+            // 计算缩放后的圆角半径
+            var scale = image.Width / (double)config.BaseCanvasWidth;
+            var scaledCornerRadius = (float)(config.CornerRadius * scale);
+            var hasRoundedCorner = scaledCornerRadius > 0;
+            var hasBackground = config.BackgroundEnabled || hasRoundedCorner;
+
+            // 计算缩放后的边框宽度
+            var scaledBorderWidth = (float)(config.BorderWidth * scale);
+
+            if (hasRoundedCorner)
             {
-                var borderRect = new RectangleF(
-                    (float)watermarkLeft,
-                    (float)watermarkTop,
-                    (float)watermarkWidth,
-                    (float)watermarkHeight);
-                ctx.Draw(borderColor, 2f, borderRect);
+                // 使用圆角矩形
+                var roundedPath = CreateRoundedRectanglePath(backgroundRect, scaledCornerRadius);
+
+                if (hasBackground)
+                {
+                    ctx.Fill(backgroundColor, roundedPath);
+                }
+
+                if (config.BorderEnabled)
+                {
+                    ctx.Draw(borderColor, scaledBorderWidth, roundedPath);
+                }
+            }
+            else if (config.BackgroundEnabled || config.BorderEnabled)
+            {
+                // 使用普通矩形
+                if (config.BackgroundEnabled)
+                {
+                    ctx.Fill(backgroundColor, backgroundRect);
+                }
+
+                if (config.BorderEnabled)
+                {
+                    ctx.Draw(borderColor, scaledBorderWidth, backgroundRect);
+                }
             }
 
             ctx.DrawText(config.Text, font, textColor, new PointF(textLeft, textTop));
@@ -208,5 +233,71 @@ public class WatermarkRenderer
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 创建圆角矩形路径
+    /// </summary>
+    private static IPath CreateRoundedRectanglePath(RectangleF rect, float cornerRadius)
+    {
+        // 确保圆角半径不超过矩形最小边的一半
+        var maxRadius = Math.Min(rect.Width, rect.Height) / 2f;
+        cornerRadius = Math.Min(cornerRadius, maxRadius);
+
+        if (cornerRadius <= 0)
+        {
+            return new RectangularPolygon(rect);
+        }
+
+        // 使用多边形点来模拟圆弧，按顺时针方向绘制
+        var points = new List<PointF>();
+        const int segments = 16; // 每个角的圆弧分段数，增加平滑度
+
+        // 从左上角开始，顺时针绘制
+        // 左上角圆弧：从180度到270度（从左侧到顶部）
+        var cx1 = rect.Left + cornerRadius;
+        var cy1 = rect.Top + cornerRadius;
+        for (int i = 0; i <= segments; i++)
+        {
+            var angle = Math.PI + (Math.PI / 2) * i / segments; // 180° -> 270°
+            var x = cx1 + cornerRadius * (float)Math.Cos(angle);
+            var y = cy1 + cornerRadius * (float)Math.Sin(angle);
+            points.Add(new PointF(x, y));
+        }
+
+        // 右上角圆弧：从270度到360度（从顶部到右侧）
+        var cx2 = rect.Right - cornerRadius;
+        var cy2 = rect.Top + cornerRadius;
+        for (int i = 0; i <= segments; i++)
+        {
+            var angle = Math.PI * 1.5 + (Math.PI / 2) * i / segments; // 270° -> 360°
+            var x = cx2 + cornerRadius * (float)Math.Cos(angle);
+            var y = cy2 + cornerRadius * (float)Math.Sin(angle);
+            points.Add(new PointF(x, y));
+        }
+
+        // 右下角圆弧：从0度到90度（从右侧到底部）
+        var cx3 = rect.Right - cornerRadius;
+        var cy3 = rect.Bottom - cornerRadius;
+        for (int i = 0; i <= segments; i++)
+        {
+            var angle = (Math.PI / 2) * i / segments; // 0° -> 90°
+            var x = cx3 + cornerRadius * (float)Math.Cos(angle);
+            var y = cy3 + cornerRadius * (float)Math.Sin(angle);
+            points.Add(new PointF(x, y));
+        }
+
+        // 左下角圆弧：从90度到180度（从底部到左侧）
+        var cx4 = rect.Left + cornerRadius;
+        var cy4 = rect.Bottom - cornerRadius;
+        for (int i = 0; i <= segments; i++)
+        {
+            var angle = Math.PI / 2 + (Math.PI / 2) * i / segments; // 90° -> 180°
+            var x = cx4 + cornerRadius * (float)Math.Cos(angle);
+            var y = cy4 + cornerRadius * (float)Math.Sin(angle);
+            points.Add(new PointF(x, y));
+        }
+
+        return new Polygon(points.ToArray());
     }
 }

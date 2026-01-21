@@ -17,7 +17,11 @@ public class CreateWatermarkRequest
     public bool? IconEnabled { get; set; }
     public string? IconImageRef { get; set; }
     public bool? BorderEnabled { get; set; }
+    public string? BorderColor { get; set; }
+    public double? BorderWidth { get; set; }
     public bool? BackgroundEnabled { get; set; }
+    public bool? RoundedBackgroundEnabled { get; set; }
+    public double? CornerRadius { get; set; }
     public int? BaseCanvasWidth { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
@@ -40,7 +44,11 @@ public class UpdateWatermarkRequest
     public bool? IconEnabled { get; set; }
     public string? IconImageRef { get; set; }
     public bool? BorderEnabled { get; set; }
+    public string? BorderColor { get; set; }
+    public double? BorderWidth { get; set; }
     public bool? BackgroundEnabled { get; set; }
+    public bool? RoundedBackgroundEnabled { get; set; }
+    public double? CornerRadius { get; set; }
     public int? BaseCanvasWidth { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }

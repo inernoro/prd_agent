@@ -10,6 +10,10 @@ public static class WatermarkSpecValidator
     public const int MaxFontSizePx = 512;
     public const int MinCanvasWidth = 64;
     public const int MaxCanvasWidth = 4096;
+    public const double MinCornerRadius = 0;
+    public const double MaxCornerRadius = 100;
+    public const double MinBorderWidth = 1;
+    public const double MaxBorderWidth = 20;
 
     private static readonly Regex HexColorRegex = new("^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$", RegexOptions.Compiled);
     private static readonly HashSet<string> AllowedPositionModes = new(StringComparer.OrdinalIgnoreCase) { "pixel", "ratio" };
@@ -71,9 +75,21 @@ public static class WatermarkSpecValidator
         {
             return (false, "textColor 必须为 #RRGGBB 或 #RRGGBBAA");
         }
+        if (!string.IsNullOrWhiteSpace(config.BorderColor) && !HexColorRegex.IsMatch(config.BorderColor))
+        {
+            return (false, "borderColor 必须为 #RRGGBB 或 #RRGGBBAA");
+        }
+        if (!double.IsFinite(config.BorderWidth) || config.BorderWidth < MinBorderWidth || config.BorderWidth > MaxBorderWidth)
+        {
+            return (false, $"borderWidth 必须在 {MinBorderWidth}-{MaxBorderWidth} 范围内");
+        }
         if (!string.IsNullOrWhiteSpace(config.BackgroundColor) && !HexColorRegex.IsMatch(config.BackgroundColor))
         {
             return (false, "backgroundColor 必须为 #RRGGBB 或 #RRGGBBAA");
+        }
+        if (!double.IsFinite(config.CornerRadius) || config.CornerRadius < MinCornerRadius || config.CornerRadius > MaxCornerRadius)
+        {
+            return (false, $"cornerRadius 必须在 {MinCornerRadius}-{MaxCornerRadius} 范围内");
         }
 
         return (true, null);

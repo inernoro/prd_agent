@@ -693,7 +693,11 @@ public class WatermarkController : ControllerBase
             IconEnabled = request.IconEnabled ?? false,
             IconImageRef = request.IconImageRef,
             BorderEnabled = request.BorderEnabled ?? false,
+            BorderColor = request.BorderColor,
+            BorderWidth = request.BorderWidth ?? 2,
             BackgroundEnabled = request.BackgroundEnabled ?? false,
+            RoundedBackgroundEnabled = request.RoundedBackgroundEnabled ?? false,
+            CornerRadius = request.CornerRadius ?? 0,
             BaseCanvasWidth = request.BaseCanvasWidth ?? 320,
             TextColor = textColor,
             BackgroundColor = request.BackgroundColor ?? "#000000",
@@ -716,7 +720,11 @@ public class WatermarkController : ControllerBase
         if (request.IconEnabled.HasValue) config.IconEnabled = request.IconEnabled.Value;
         if (request.IconImageRef != null) config.IconImageRef = request.IconImageRef;
         if (request.BorderEnabled.HasValue) config.BorderEnabled = request.BorderEnabled.Value;
+        if (request.BorderColor != null) config.BorderColor = request.BorderColor;
+        if (request.BorderWidth.HasValue) config.BorderWidth = request.BorderWidth.Value;
         if (request.BackgroundEnabled.HasValue) config.BackgroundEnabled = request.BackgroundEnabled.Value;
+        if (request.RoundedBackgroundEnabled.HasValue) config.RoundedBackgroundEnabled = request.RoundedBackgroundEnabled.Value;
+        if (request.CornerRadius.HasValue) config.CornerRadius = request.CornerRadius.Value;
         if (request.BaseCanvasWidth.HasValue) config.BaseCanvasWidth = request.BaseCanvasWidth.Value;
         if (request.TextColor != null) config.TextColor = request.TextColor;
         if (request.BackgroundColor != null) config.BackgroundColor = request.BackgroundColor;

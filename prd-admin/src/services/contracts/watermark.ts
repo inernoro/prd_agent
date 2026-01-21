@@ -19,7 +19,11 @@ export type WatermarkConfig = {
   iconEnabled: boolean;
   iconImageRef?: string | null;
   borderEnabled?: boolean;
+  borderColor?: string | null;
+  borderWidth?: number;
   backgroundEnabled?: boolean;
+  roundedBackgroundEnabled?: boolean;
+  cornerRadius?: number;
   baseCanvasWidth: number;
   textColor?: string | null;
   backgroundColor?: string | null;
@@ -58,7 +62,11 @@ export type CreateWatermarkInput = {
   iconEnabled?: boolean;
   iconImageRef?: string | null;
   borderEnabled?: boolean;
+  borderColor?: string | null;
+  borderWidth?: number;
   backgroundEnabled?: boolean;
+  roundedBackgroundEnabled?: boolean;
+  cornerRadius?: number;
   baseCanvasWidth?: number;
   textColor?: string | null;
   backgroundColor?: string | null;

@@ -27,7 +27,7 @@ import {
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, PaintBucket, Type, Droplet, Plus, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2 } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -75,7 +75,11 @@ const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   iconEnabled: false,
   iconImageRef: null,
   borderEnabled: false,
+  borderColor: '#FFFFFF',
+  borderWidth: 2,
   backgroundEnabled: false,
+  roundedBackgroundEnabled: false,
+  cornerRadius: 0,
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
   textColor: '#FFFFFF',
   backgroundColor: '#000000',
@@ -93,7 +97,11 @@ const normalizeConfig = (config: WatermarkConfig, fallbackName: string): Waterma
     offsetX: Number.isFinite(config.offsetX) ? config.offsetX : 24,
     offsetY: Number.isFinite(config.offsetY) ? config.offsetY : 24,
     borderEnabled: Boolean(config.borderEnabled),
+    borderColor: config.borderColor ?? '#FFFFFF',
+    borderWidth: Number.isFinite(config.borderWidth) ? config.borderWidth : 2,
     backgroundEnabled: Boolean(config.backgroundEnabled),
+    roundedBackgroundEnabled: Boolean(config.roundedBackgroundEnabled),
+    cornerRadius: Number.isFinite(config.cornerRadius) ? config.cornerRadius : 0,
     textColor: resolvedTextColor,
     backgroundColor: config.backgroundColor ?? '#000000',
   };
@@ -200,6 +208,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const [fontDeletingKey, setFontDeletingKey] = useState<string | null>(null);
   const [previewEpoch, setPreviewEpoch] = useState(0);
   const [previewErrorById, setPreviewErrorById] = useState<Record<string, boolean>>({});
+  const [enlargedPreviewUrl, setEnlargedPreviewUrl] = useState<string | null>(null);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
 
@@ -278,7 +287,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             iconEnabled: config.iconEnabled,
             iconImageRef: config.iconImageRef,
             borderEnabled: config.borderEnabled,
+            borderColor: config.borderColor,
+            borderWidth: config.borderWidth,
             backgroundEnabled: config.backgroundEnabled,
+            roundedBackgroundEnabled: config.roundedBackgroundEnabled,
+            cornerRadius: config.cornerRadius,
             baseCanvasWidth: config.baseCanvasWidth,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
@@ -302,7 +315,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             iconEnabled: config.iconEnabled,
             iconImageRef: config.iconImageRef,
             borderEnabled: config.borderEnabled,
+            borderColor: config.borderColor,
+            borderWidth: config.borderWidth,
             backgroundEnabled: config.backgroundEnabled,
+            roundedBackgroundEnabled: config.roundedBackgroundEnabled,
+            cornerRadius: config.cornerRadius,
             baseCanvasWidth: config.baseCanvasWidth,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
@@ -612,7 +629,14 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                               : 'transparent',
                             minHeight: '120px',
                             maxHeight: '160px',
+                            cursor: previewUrl && !previewError ? 'zoom-in' : 'default',
                           }}
+                          onClick={() => {
+                            if (previewUrl && !previewError) {
+                              setEnlargedPreviewUrl(previewUrl);
+                            }
+                          }}
+                          title={previewUrl && !previewError ? '点击放大' : undefined}
                         >
                           {previewUrl && !previewError ? (
                             <img
@@ -716,6 +740,33 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
           />
         ) : null}
       />
+
+      {/* 放大预览模态框 */}
+      {enlargedPreviewUrl && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setEnlargedPreviewUrl(null)}
+        >
+          <div className="relative max-w-[90vw] max-h-[90vh]">
+            <img
+              src={enlargedPreviewUrl}
+              alt="预览大图"
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              className="absolute -top-3 -right-3 w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)' }}
+              onClick={() => setEnlargedPreviewUrl(null)}
+              title="关闭"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -938,103 +989,197 @@ function WatermarkEditor(props: {
               </div>
 
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>装饰</div>
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
-                <div className="relative shrink-0">
-                  <label
-                    className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer overflow-hidden"
-                    style={{
-                      background: 'rgba(255,255,255,0.08)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'var(--text-primary)',
-                      opacity: iconUploading ? 0.6 : 1,
-                      pointerEvents: iconUploading ? 'none' : 'auto',
-                    }}
-                    title="上传图标"
-                  >
+              <div className="flex flex-col gap-3 pt-2">
+                {/* 图标 */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>图标</span>
+                  <div className="relative">
+                    <label
+                      className="h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                      style={{
+                        background: config.iconEnabled && config.iconImageRef ? 'transparent' : 'transparent',
+                        border: config.iconEnabled && config.iconImageRef ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                        color: config.iconEnabled && config.iconImageRef ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                        opacity: iconUploading ? 0.6 : 1,
+                        pointerEvents: iconUploading ? 'none' : 'auto',
+                      }}
+                      title="上传图标"
+                    >
+                      {config.iconEnabled && config.iconImageRef ? (
+                        <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
+                      ) : (
+                        <UploadCloud size={16} />
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => void handleIconUpload(e.target.files?.[0] ?? null)}
+                      />
+                    </label>
                     {config.iconEnabled && config.iconImageRef ? (
-                      <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
-                    ) : (
-                      <UploadCloud size={15} />
-                    )}
+                      <button
+                        type="button"
+                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full inline-flex items-center justify-center"
+                        style={{ background: '#1a1a1a', border: '1.5px solid rgba(255,255,255,0.25)', color: 'rgba(255,255,255,0.9)' }}
+                        onClick={() => updateConfig({ iconEnabled: false, iconImageRef: null })}
+                        title="移除图标"
+                      >
+                        <X size={10} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* 填充 + 背景色 */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>填充</span>
+                  <button
+                    type="button"
+                    className="h-9 w-9 rounded-lg inline-flex items-center justify-center"
+                    style={{
+                      background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
+                      border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                      color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                    }}
+                    title="填充背景"
+                    onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
+                  >
+                    <div className="w-4.5 h-4.5 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
+                  </button>
+                  {config.backgroundEnabled && (
+                    <label
+                      className="relative h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                      style={{
+                        background: config.backgroundColor || '#000000',
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        color: 'rgba(255,255,255,0.9)',
+                      }}
+                      title="背景颜色"
+                    >
+                      <Droplet size={14} />
+                      <input
+                        type="color"
+                        value={(config.backgroundColor || '#000000') as string}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* 边框 + 边框色 */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>边框</span>
+                  <button
+                    type="button"
+                    className="h-9 w-9 rounded-lg inline-flex items-center justify-center"
+                    style={{
+                      background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
+                      border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                      color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                    }}
+                    title="显示边框"
+                    onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
+                  >
+                    <Square size={16} />
+                  </button>
+                  {config.borderEnabled && (
+                    <label
+                      className="relative h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                      style={{
+                        background: config.borderColor || '#ffffff',
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        color: 'rgba(0,0,0,0.7)',
+                      }}
+                      title="边框颜色"
+                    >
+                      <Droplet size={14} />
+                      <input
+                        type="color"
+                        value={(config.borderColor || '#ffffff') as string}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        onChange={(e) => updateConfig({ borderColor: e.target.value })}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* 边框宽度（启用边框时显示） */}
+                {config.borderEnabled && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>粗细</span>
                     <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => void handleIconUpload(e.target.files?.[0] ?? null)}
+                      type="range"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={config.borderWidth ?? 2}
+                      onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
+                      className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                      }}
+                    />
+                    <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                      {config.borderWidth ?? 2}
+                    </span>
+                  </div>
+                )}
+
+                {/* 圆角 */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>圆角</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="50"
+                    step="1"
+                    value={config.cornerRadius ?? 0}
+                    onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
+                    className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
+                    style={{
+                      background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                    }}
+                  />
+                  <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                    {config.cornerRadius ?? 0}
+                  </span>
+                </div>
+
+                {/* 文字 + 文字色 */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>文字</span>
+                  <div
+                    className="h-9 w-9 rounded-lg inline-flex items-center justify-center"
+                    style={{
+                      background: 'rgba(255,255,255,0.1)',
+                      border: '1.5px solid rgba(255,255,255,0.2)',
+                      color: 'rgba(255,255,255,0.8)',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  >
+                    字
+                  </div>
+                  <label
+                    className="relative h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                    style={{
+                      background: config.textColor || '#ffffff',
+                      border: '2px solid rgba(255,255,255,0.3)',
+                      color: 'rgba(0,0,0,0.7)',
+                    }}
+                    title="文字颜色"
+                  >
+                    <Droplet size={14} />
+                    <input
+                      type="color"
+                      value={(config.textColor || '#ffffff') as string}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => updateConfig({ textColor: e.target.value })}
                     />
                   </label>
-                  {config.iconEnabled && config.iconImageRef ? (
-                    <button
-                      type="button"
-                      className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full inline-flex items-center justify-center"
-                      style={{ background: 'rgba(15,15,18,0.9)', border: '1px solid rgba(255,255,255,0.15)', color: 'var(--text-primary)' }}
-                      onClick={() => updateConfig({ iconEnabled: false, iconImageRef: null })}
-                      title="移除图标"
-                    >
-                      <X size={10} />
-                    </button>
-                  ) : null}
                 </div>
-                <button
-                  type="button"
-                  className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center shrink-0"
-                  style={{
-                    background: config.borderEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: config.borderEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
-                  }}
-                  title="是否边框"
-                  onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
-                >
-                  <Square size={15} />
-                </button>
-                <button
-                  type="button"
-                  className="h-9 w-9 rounded-[9px] inline-flex items-center justify-center shrink-0"
-                  style={{
-                    background: config.backgroundEnabled ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: config.backgroundEnabled ? 'var(--text-primary)' : 'var(--text-muted)',
-                  }}
-                  title="填充背景"
-                  onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
-                >
-                  <PaintBucket size={15} />
-                </button>
-                <label
-                  className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
-                  style={{
-                    background: config.backgroundColor || '#000000',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    color: 'rgba(255,255,255,0.85)',
-                  }}
-                  title="背景色"
-                >
-                  <Droplet size={14} />
-                  <input
-                    type="color"
-                    value={(config.backgroundColor || '#000000') as string}
-                    className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
-                    onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
-                  />
-                </label>
-                <label
-                  className="relative h-9 w-9 rounded-[9px] inline-flex items-center justify-center cursor-pointer shrink-0"
-                  style={{
-                    background: config.textColor || '#ffffff',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    color: 'rgba(0,0,0,0.65)',
-                  }}
-                  title="前景色（字体）"
-                >
-                  <Type size={14} />
-                  <input
-                    type="color"
-                    value={(config.textColor || '#ffffff') as string}
-                    className="absolute inset-0 opacity-0 h-9 w-9 cursor-pointer"
-                    onChange={(e) => updateConfig({ textColor: e.target.value })}
-                  />
-                </label>
               </div>
             </div>
           </div>
@@ -1280,8 +1425,11 @@ function WatermarkPreview(props: {
   const fontSize = spec.fontSizePx * previewScale;
   const iconSize = fontSize;
   const gap = fontSize / 4;
-  const decorationPadding = spec.backgroundEnabled || spec.borderEnabled ? Math.round(fontSize * 0.3) : 0;
+  const hasDecoration = spec.backgroundEnabled || spec.borderEnabled || (spec.cornerRadius ?? 0) > 0;
+  const decorationPadding = hasDecoration ? Math.round(fontSize * 0.3) : 0;
   const textColor = spec.textColor || '#ffffff';
+  const borderColor = spec.borderColor || textColor;
+  const borderWidth = (spec.borderWidth ?? 2) * previewScale;
   const backgroundColor = spec.backgroundColor || '#000000';
 
   const watermarkRef = useRef<HTMLDivElement | null>(null);
@@ -1634,9 +1782,9 @@ function WatermarkPreview(props: {
             fontFamily,
             fontSize,
             padding: decorationPadding,
-            background: spec.backgroundEnabled ? backgroundColor : 'transparent',
-            border: spec.borderEnabled ? `1px solid ${textColor}` : '1px solid transparent',
-            borderRadius: spec.backgroundEnabled || spec.borderEnabled ? 8 : 0,
+            background: hasDecoration ? backgroundColor : 'transparent',
+            border: spec.borderEnabled ? `${borderWidth}px solid ${borderColor}` : '1px solid transparent',
+            borderRadius: (spec.cornerRadius ?? 0) * previewScale,
           }}
         >
           {spec.iconEnabled && spec.iconImageRef ? (
