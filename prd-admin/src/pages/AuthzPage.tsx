@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield } from 'lucide-react';
+import { Shield, Plus, RefreshCw, ChevronDown, User, X, UserCog, ShieldCheck } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
@@ -13,19 +13,14 @@ import {
   getSystemRoles,
   resetBuiltInSystemRoles,
   updateSystemRole,
+  updateUserAuthz,
   getUsers,
 } from '@/services';
 import type { SystemRoleDto } from '@/services/contracts/authz';
 import type { AdminUser } from '@/types/admin';
 import { useAuthStore } from '@/stores/authStore';
-import { AuthzRoleColumn } from './authz/AuthzRoleColumn';
-import { AuthzMenuColumn } from './authz/AuthzMenuColumn';
-import { AuthzPermissionColumn } from './authz/AuthzPermissionColumn';
-import { AuthzUserBar } from './authz/AuthzUserBar';
-
-function normKey(x: string): string {
-  return String(x || '').trim();
-}
+import { PermissionMatrix } from './authz/PermissionMatrix';
+import { MenuPermissionDialog } from './authz/MenuPermissionDialog';
 
 export default function AuthzPage() {
   const navigate = useNavigate();
@@ -35,31 +30,25 @@ export default function AuthzPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [roles, setRoles] = useState<SystemRoleDto[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
 
-  // 选择状态
-  const [selectedRoleKey, setSelectedRoleKey] = useState<string | null>(null); // null = 全部
-  const [selectedMenuAppKey, setSelectedMenuAppKey] = useState<string | null>(null); // null = 全部
+  // 用户选择状态
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
-  // 编辑状态
-  const [dirtyPerms, setDirtyPerms] = useState<Set<string>>(new Set());
+  // 菜单权限预览弹窗
+  const [menuPreviewAppKey, setMenuPreviewAppKey] = useState<string | null>(null);
 
   // 对话框状态
   const [createOpen, setCreateOpen] = useState(false);
   const [createKey, setCreateKey] = useState('');
   const [createName, setCreateName] = useState('');
-  const [createClonePerms, setCreateClonePerms] = useState(true);
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [resetSubmitting, setResetSubmitting] = useState(false);
 
-  // 用户数据（用于查看用户权限）
-  const [users, setUsers] = useState<AdminUser[]>([]);
-
-  // 当前选中的角色
-  const activeRole = useMemo(
-    () => (selectedRoleKey ? roles.find((r) => r.key === selectedRoleKey) : null),
-    [roles, selectedRoleKey]
-  );
+  // 用户赋权弹窗
+  const [assignRoleOpen, setAssignRoleOpen] = useState(false);
+  const [assignRoleSubmitting, setAssignRoleSubmitting] = useState(false);
 
   // 当前选中的用户
   const activeUser = useMemo(
@@ -67,26 +56,11 @@ export default function AuthzPage() {
     [users, selectedUserId]
   );
 
-  // 当前显示的权限（角色权限或用户权限）
-  const displayPermissions = useMemo(() => {
-    if (activeUser) {
-      // 显示用户的角色权限
-      const userRoleKey = activeUser.systemRoleKey || (activeUser.role === 'ADMIN' ? 'admin' : 'none');
-      const userRole = roles.find((r) => r.key === userRoleKey);
-      return new Set(userRole?.permissions || []);
-    }
-    if (activeRole) {
-      return new Set(activeRole.permissions || []);
-    }
-    // 全部：显示所有权限的并集
-    const allPerms = new Set<string>();
-    for (const r of roles) {
-      for (const p of r.permissions || []) {
-        allPerms.add(p);
-      }
-    }
-    return allPerms;
-  }, [activeRole, activeUser, roles]);
+  // 用户对应的角色 key
+  const highlightRoleKey = useMemo(() => {
+    if (!activeUser) return null;
+    return activeUser.systemRoleKey || (activeUser.role === 'ADMIN' ? 'admin' : 'none');
+  }, [activeUser]);
 
   // 加载数据
   useEffect(() => {
@@ -110,61 +84,16 @@ export default function AuthzPage() {
     setLoading(false);
   };
 
-  // 切换角色时重置编辑态
-  useEffect(() => {
-    if (activeRole) {
-      setDirtyPerms(new Set((activeRole.permissions || []).map(normKey).filter(Boolean)));
-    } else {
-      setDirtyPerms(new Set());
-    }
-  }, [activeRole]);
-
-  // 选择角色
-  const handleSelectRole = (key: string | null) => {
-    setSelectedRoleKey(key);
-    setSelectedUserId(null); // 清除用户选择
-    setSelectedMenuAppKey(null); // 重置菜单选择
-  };
-
-  // 选择用户
-  const handleSelectUser = (userId: string | null) => {
-    setSelectedUserId(userId);
-    if (userId) {
-      // 选择用户时，自动选择该用户的角色
-      const user = users.find((u) => u.userId === userId);
-      if (user) {
-        const userRoleKey = user.systemRoleKey || (user.role === 'ADMIN' ? 'admin' : 'none');
-        setSelectedRoleKey(userRoleKey);
-      }
-    }
-  };
-
-  // 权限切换
-  const setChecked = (key: string, checked: boolean) => {
-    const k = normKey(key);
-    if (!k) return;
-    setDirtyPerms((prev) => {
-      const set = new Set(prev);
-      if (checked) set.add(k);
-      else set.delete(k);
-      return set;
-    });
-  };
-
-  // 保存
-  const save = async () => {
-    if (!activeRole || saving) return;
-    if (activeRole.isBuiltIn) {
-      systemDialog.error('内置角色不可修改');
-      return;
-    }
+  // 更新角色权限
+  const handleUpdateRole = async (roleKey: string, permissions: string[]) => {
+    const role = roles.find((r) => r.key === roleKey);
+    if (!role || role.isBuiltIn) return;
 
     setSaving(true);
-    const perms = Array.from(dirtyPerms).sort();
-    const res = await updateSystemRole(activeRole.key, {
-      key: activeRole.key,
-      name: activeRole.name,
-      permissions: perms,
+    const res = await updateSystemRole(roleKey, {
+      key: roleKey,
+      name: role.name,
+      permissions,
     });
 
     if (!res.success) {
@@ -173,9 +102,33 @@ export default function AuthzPage() {
       return;
     }
 
-    setRoles((prev) => prev.map((r) => (r.key === activeRole.key ? res.data : r)));
+    setRoles((prev) => prev.map((r) => (r.key === roleKey ? res.data : r)));
     systemDialog.success('已保存');
     setSaving(false);
+  };
+
+  // 删除角色
+  const handleDeleteRole = async (roleKey: string) => {
+    const role = roles.find((r) => r.key === roleKey);
+    if (!role || role.isBuiltIn) return;
+
+    const ok = await systemDialog.confirm({
+      title: '删除系统角色',
+      message: `将删除角色：${role.name}（${role.key}）\n\n注意：已绑定该角色的用户将退回到默认推断。`,
+      tone: 'danger',
+      confirmText: '确认删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+
+    const res = await deleteSystemRole(roleKey);
+    if (!res.success) {
+      systemDialog.error(res.error?.message || '删除失败');
+      return;
+    }
+
+    setRoles((prev) => prev.filter((r) => r.key !== roleKey));
+    systemDialog.success('已删除');
   };
 
   // 创建角色
@@ -202,8 +155,7 @@ export default function AuthzPage() {
     }
 
     setCreateSubmitting(true);
-    const basePerms = createClonePerms ? Array.from(dirtyPerms).sort() : [];
-    const res = await createSystemRole({ key, name, permissions: basePerms });
+    const res = await createSystemRole({ key, name, permissions: [] });
 
     if (!res.success) {
       systemDialog.error(res.error?.message || '创建失败');
@@ -211,17 +163,24 @@ export default function AuthzPage() {
       return;
     }
 
-    setRoles((prev) => prev.concat(res.data).sort((a, b) => a.key.localeCompare(b.key)));
-    setSelectedRoleKey(res.data.key);
+    // 排序：内置角色在前，自定义角色按字母排序在后
+    setRoles((prev) =>
+      prev.concat(res.data).sort((a, b) => {
+        // 内置角色优先
+        if (a.isBuiltIn && !b.isBuiltIn) return -1;
+        if (!a.isBuiltIn && b.isBuiltIn) return 1;
+        // 同类型按 key 排序
+        return a.key.localeCompare(b.key);
+      })
+    );
     setCreateOpen(false);
     setCreateKey('');
     setCreateName('');
-    setCreateClonePerms(true);
     systemDialog.success('已创建');
     setCreateSubmitting(false);
   };
 
-  // 重置内置（现已废弃，内置角色从代码加载）
+  // 重置内置
   const resetBuiltIns = async () => {
     if (resetSubmitting) return;
     const ok = await systemDialog.confirm({
@@ -243,7 +202,6 @@ export default function AuthzPage() {
     }
 
     setRoles(Array.isArray(res.data) ? res.data : []);
-    setSelectedRoleKey(null);
 
     // 刷新当前用户权限
     const me = await getAdminAuthzMe();
@@ -255,92 +213,122 @@ export default function AuthzPage() {
     setResetSubmitting(false);
   };
 
-  // 删除角色
-  const removeActiveRole = async () => {
-    if (!activeRole) return;
-    if (activeRole.isBuiltIn) {
-      systemDialog.error('内置角色不可删除');
-      return;
-    }
+  // 用户选择按钮（点击打开弹窗）
+  const UserSelectButton = (
+    <button
+      type="button"
+      onClick={() => setUserDropdownOpen(true)}
+      className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors"
+      style={{
+        background: activeUser ? 'rgba(214, 178, 106, 0.15)' : 'rgba(255, 255, 255, 0.06)',
+        border: activeUser ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid rgba(255, 255, 255, 0.1)',
+        color: activeUser ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-secondary)',
+      }}
+    >
+      <User size={12} />
+      <span>{activeUser ? activeUser.displayName || activeUser.username : '选择用户'}</span>
+      {activeUser ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedUserId(null);
+          }}
+          className="ml-0.5 p-0.5 rounded hover:bg-white/10"
+        >
+          <X size={10} />
+        </button>
+      ) : (
+        <ChevronDown size={12} />
+      )}
+    </button>
+  );
 
-    const ok = await systemDialog.confirm({
-      title: '删除系统角色',
-      message: `将删除角色：${activeRole.name}（${activeRole.key}）\n\n注意：已绑定该角色的用户将退回到默认推断。`,
-      tone: 'danger',
-      confirmText: '确认删除',
-      cancelText: '取消',
-    });
-    if (!ok) return;
+  // TabBar 右侧操作按钮
+  const tabBarActions = (
+    <div className="flex items-center gap-1.5">
+      {UserSelectButton}
 
-    const res = await deleteSystemRole(activeRole.key);
-    if (!res.success) {
-      systemDialog.error(res.error?.message || '删除失败');
-      return;
-    }
+      {/* 新增角色 */}
+      <button
+        type="button"
+        onClick={() => setCreateOpen(true)}
+        className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
+        style={{
+          background: 'rgba(255, 255, 255, 0.06)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          color: 'var(--text-secondary)',
+        }}
+      >
+        <Plus size={12} />
+        <span>新增角色</span>
+      </button>
 
-    setRoles((prev) => prev.filter((r) => r.key !== activeRole.key));
-    setSelectedRoleKey(null);
-    systemDialog.success('已删除');
-  };
+      {/* 用户赋权按钮 - 根据是否选中用户显示不同功能 */}
+      <button
+        type="button"
+        onClick={() => {
+          if (activeUser) {
+            setAssignRoleOpen(true);
+          } else {
+            navigate('/users');
+          }
+        }}
+        className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
+        style={{
+          background: activeUser ? 'rgba(214, 178, 106, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+          border: activeUser ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid rgba(255, 255, 255, 0.1)',
+          color: activeUser ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-secondary)',
+        }}
+      >
+        <UserCog size={12} />
+        <span>{activeUser ? `给 ${activeUser.displayName || activeUser.username} 赋权` : '用户赋权'}</span>
+      </button>
+
+      {/* 刷新 */}
+      <button
+        type="button"
+        onClick={resetBuiltIns}
+        disabled={resetSubmitting}
+        className="h-7 w-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/10 disabled:opacity-50"
+        style={{
+          background: 'rgba(255, 255, 255, 0.06)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          color: 'var(--text-secondary)',
+        }}
+      >
+        <RefreshCw size={12} className={resetSubmitting ? 'animate-spin' : ''} />
+      </button>
+    </div>
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 overflow-hidden">
-      <TabBar title="权限管理" icon={<Shield size={16} />} />
+      {/* 顶部工具栏 - TabBar 全宽，包含右侧按钮 */}
+      <TabBar title="权限管理" icon={<Shield size={16} />} actions={tabBarActions} />
 
-      {/* 用户水平条 */}
-      <AuthzUserBar selectedUserId={selectedUserId} onSelectUser={handleSelectUser} />
+      {/* 权限矩阵 - 占满剩余高度 */}
+      <Card className="flex-1 min-h-0 overflow-hidden">
+        <PermissionMatrix
+          roles={roles}
+          highlightRoleKey={highlightRoleKey}
+          onUpdateRole={handleUpdateRole}
+          onDeleteRole={handleDeleteRole}
+          onMenuClick={setMenuPreviewAppKey}
+          loading={loading}
+          saving={saving}
+          readOnly={!!activeUser}
+        />
+      </Card>
 
-      {/* 三栏布局 */}
-      <div
-        className="grid gap-4 flex-1 min-h-0 overflow-hidden"
-        style={{ gridTemplateColumns: '240px 240px minmax(0, 1fr)' }}
-      >
-        {/* 角色栏 */}
-        <Card className="min-h-0 overflow-hidden">
-          <AuthzRoleColumn
-            roles={roles}
-            activeKey={selectedRoleKey}
-            onSelect={handleSelectRole}
-            onCreateClick={() => setCreateOpen(true)}
-            onResetClick={resetBuiltIns}
-            loading={loading}
-            resetSubmitting={resetSubmitting}
-          />
-        </Card>
-
-        {/* 菜单栏 */}
-        <Card className="min-h-0 overflow-hidden">
-          <AuthzMenuColumn
-            activeAppKey={selectedMenuAppKey}
-            onSelect={setSelectedMenuAppKey}
-            rolePermissions={Array.from(displayPermissions)}
-            loading={loading}
-          />
-        </Card>
-
-        {/* 权限栏 */}
-        <Card className="min-h-0 overflow-hidden">
-          <AuthzPermissionColumn
-            selectedMenuAppKey={selectedMenuAppKey}
-            checkedPermissions={activeUser ? displayPermissions : dirtyPerms}
-            onToggle={setChecked}
-            onSave={save}
-            onDelete={removeActiveRole}
-            canDelete={!!activeRole && !activeRole.isBuiltIn}
-            saving={saving}
-            loading={loading}
-            roleName={activeUser ? `${activeUser.displayName || activeUser.username} (${activeRole?.name || '无角色'})` : activeRole?.name}
-            isBuiltIn={activeRole?.isBuiltIn || !!activeUser}
-          />
-        </Card>
-      </div>
-
-      {/* 底部操作栏 */}
-      <div className="flex items-center justify-end gap-3 py-2">
-        <Button variant="secondary" onClick={() => navigate('/users')}>
-          去用户管理赋权
-        </Button>
-      </div>
+      {/* 菜单权限预览弹窗 */}
+      <MenuPermissionDialog
+        open={!!menuPreviewAppKey}
+        onOpenChange={(open) => {
+          if (!open) setMenuPreviewAppKey(null);
+        }}
+        menuAppKey={menuPreviewAppKey}
+      />
 
       {/* 创建角色对话框 */}
       <Dialog
@@ -350,7 +338,6 @@ export default function AuthzPage() {
           if (!v) {
             setCreateKey('');
             setCreateName('');
-            setCreateClonePerms(true);
             setCreateSubmitting(false);
           }
         }}
@@ -390,15 +377,6 @@ export default function AuthzPage() {
                 placeholder="例如：内容只读"
               />
             </div>
-            <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
-              <input
-                type="checkbox"
-                checked={createClonePerms}
-                onChange={(e) => setCreateClonePerms(e.target.checked)}
-                disabled={createSubmitting}
-              />
-              复制当前选中角色的权限点作为初始值
-            </label>
             <div className="flex items-center justify-end gap-2 pt-1">
               <Button variant="secondary" size="sm" onClick={() => setCreateOpen(false)} disabled={createSubmitting}>
                 取消
@@ -410,6 +388,277 @@ export default function AuthzPage() {
           </div>
         }
       />
+
+      {/* 用户选择弹窗 */}
+      {userDropdownOpen && (
+        <>
+          {/* 遮罩层 */}
+          <div
+            className="fixed inset-0 z-40"
+            style={{ background: 'rgba(0, 0, 0, 0.4)' }}
+            onClick={() => setUserDropdownOpen(false)}
+          />
+
+          {/* 弹窗内容 */}
+          <div
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[360px] max-h-[70vh] overflow-hidden rounded-2xl"
+            style={{
+              background: 'rgba(24, 24, 28, 0.95)',
+              backdropFilter: 'blur(20px)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-5 py-4"
+              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+            >
+              <div>
+                <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  选择用户
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  查看用户对应角色的权限分布
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUserDropdownOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={16} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-3 overflow-auto max-h-[calc(70vh-100px)]">
+              {users.length === 0 ? (
+                <div className="text-sm text-center py-8" style={{ color: 'var(--text-muted)' }}>
+                  暂无用户
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {users.map((user) => {
+                    const userRoleKey = user.systemRoleKey || (user.role === 'ADMIN' ? 'admin' : 'none');
+                    const userRole = roles.find((r) => r.key === userRoleKey);
+                    const isSelected = selectedUserId === user.userId;
+
+                    return (
+                      <button
+                        key={user.userId}
+                        type="button"
+                        onClick={() => {
+                          setSelectedUserId(user.userId);
+                          setUserDropdownOpen(false);
+                        }}
+                        className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200"
+                        style={{
+                          background: isSelected ? 'rgba(214, 178, 106, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                          border: isSelected ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid transparent',
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div
+                              className="text-sm font-medium"
+                              style={{ color: isSelected ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-primary)' }}
+                            >
+                              {user.displayName || user.username}
+                            </div>
+                            <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                              {user.username}
+                            </div>
+                          </div>
+                          <span
+                            className="text-[11px] px-2 py-0.5 rounded-md"
+                            style={{
+                              background: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                              color: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.8)' : 'var(--text-muted)',
+                            }}
+                          >
+                            {userRole?.name || userRoleKey}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div
+              className="px-5 py-3 text-xs flex items-center justify-between"
+              style={{
+                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <span>共 {users.length} 个用户</span>
+              {activeUser && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedUserId(null);
+                    setUserDropdownOpen(false);
+                  }}
+                  className="text-xs px-2 py-1 rounded-md hover:bg-white/5 transition-colors"
+                  style={{ color: 'rgba(214, 178, 106, 0.8)' }}
+                >
+                  清除选择
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 用户赋权弹窗 */}
+      {assignRoleOpen && activeUser && (
+        <>
+          {/* 遮罩层 */}
+          <div
+            className="fixed inset-0 z-40"
+            style={{ background: 'rgba(0, 0, 0, 0.4)' }}
+            onClick={() => !assignRoleSubmitting && setAssignRoleOpen(false)}
+          />
+
+          {/* 弹窗内容 */}
+          <div
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[400px] max-h-[70vh] overflow-hidden rounded-2xl"
+            style={{
+              background: 'rgba(24, 24, 28, 0.95)',
+              backdropFilter: 'blur(20px)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-5 py-4"
+              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+            >
+              <div>
+                <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  用户角色赋权
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  为 {activeUser.displayName || activeUser.username} 分配系统角色
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !assignRoleSubmitting && setAssignRoleOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                disabled={assignRoleSubmitting}
+              >
+                <X size={16} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 overflow-auto max-h-[calc(70vh-140px)]">
+              <div className="space-y-2">
+                {roles.map((role) => {
+                  const isCurrentRole = highlightRoleKey === role.key;
+
+                  return (
+                    <button
+                      key={role.key}
+                      type="button"
+                      onClick={async () => {
+                        if (assignRoleSubmitting) return;
+                        if (isCurrentRole) return; // 已经是当前角色
+
+                        setAssignRoleSubmitting(true);
+                        const res = await updateUserAuthz(activeUser.userId, {
+                          systemRoleKey: role.key === 'none' ? null : role.key,
+                        });
+
+                        if (!res.success) {
+                          systemDialog.error(res.error?.message || '赋权失败');
+                          setAssignRoleSubmitting(false);
+                          return;
+                        }
+
+                        // 更新本地用户数据
+                        setUsers((prev) =>
+                          prev.map((u) =>
+                            u.userId === activeUser.userId
+                              ? { ...u, systemRoleKey: role.key === 'none' ? undefined : role.key }
+                              : u
+                          )
+                        );
+
+                        systemDialog.success(`已将 ${activeUser.displayName || activeUser.username} 的角色设为 ${role.name}`);
+                        setAssignRoleSubmitting(false);
+                        setAssignRoleOpen(false);
+                      }}
+                      disabled={assignRoleSubmitting}
+                      className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200 disabled:opacity-50"
+                      style={{
+                        background: isCurrentRole ? 'rgba(214, 178, 106, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                        border: isCurrentRole ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid rgba(255, 255, 255, 0.06)',
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-9 h-9 rounded-[10px] flex items-center justify-center"
+                            style={{
+                              background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.12)' : 'rgba(255, 255, 255, 0.05)',
+                            }}
+                          >
+                            {role.isBuiltIn ? (
+                              <ShieldCheck size={16} style={{ color: 'rgba(214, 178, 106, 0.8)' }} />
+                            ) : (
+                              <User size={16} style={{ color: 'var(--text-muted)' }} />
+                            )}
+                          </div>
+                          <div>
+                            <div
+                              className="text-sm font-medium"
+                              style={{ color: isCurrentRole ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-primary)' }}
+                            >
+                              {role.name}
+                            </div>
+                            <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                              {role.key} · {role.permissions?.length || 0} 项权限
+                            </div>
+                          </div>
+                        </div>
+                        {isCurrentRole && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-md"
+                            style={{
+                              background: 'rgba(214, 178, 106, 0.2)',
+                              color: 'rgba(214, 178, 106, 0.9)',
+                            }}
+                          >
+                            当前
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div
+              className="px-5 py-3 text-[11px]"
+              style={{
+                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              点击角色即可立即赋权，带盾牌图标为内置角色
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

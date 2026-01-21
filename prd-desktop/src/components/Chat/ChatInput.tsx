@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useConnectionStore } from '../../stores/connectionStore';
+import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { ApiResponse, Message, PromptItem, UserRole } from '../../types';
 
 function roleSuffix(role: UserRole) {
@@ -51,10 +52,11 @@ function fallbackPrompts(role: UserRole): PromptItem[] {
 
 export default function ChatInput() {
   const { sessionId, currentRole, document, prompts } = useSessionStore();
-  const { addUserMessageWithPendingAssistant, isStreaming, stopStreaming, ackPendingUserMessageRunId } = useMessageStore();
+  const { addUserMessageWithPendingAssistant, isStreaming, stopStreaming, ackPendingUserMessageRunId, clearPendingAssistant } = useMessageStore();
   const { user } = useAuthStore();
   const connectionStatus = useConnectionStore((s) => s.status);
   const isDisconnected = connectionStatus === 'disconnected';
+  const skipAiReply = useUiPrefsStore((s) => s.skipAiReply);
   const [content, setContent] = useState('');
   const [resendTargetMessageId, setResendTargetMessageId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -180,15 +182,24 @@ export default function ChatInput() {
           messageId: target,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
+          skipAiReply: skipAiReply || undefined,
         });
       } else {
         const resp = await invoke<ApiResponse<any>>('create_chat_run', {
           sessionId,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
+          skipAiReply: skipAiReply || undefined,
         });
-        const runId = resp?.success ? String((resp as any).data?.runId || '') : '';
-        if (runId) {
+        const data = resp?.success ? (resp as any).data : null;
+        const runId = data?.runId ? String(data.runId) : '';
+        const skippedAi = data?.skippedAiReply === true;
+
+        if (skippedAi) {
+          // 跳过 AI 回复模式：不需要订阅 run，清除等待中的 assistant 消息
+          clearPendingAssistant();
+          setIsSubmitting(false);
+        } else if (runId) {
           ackPendingUserMessageRunId({ runId });
           await invoke('subscribe_chat_run', { runId, afterSeq: 0 });
         }

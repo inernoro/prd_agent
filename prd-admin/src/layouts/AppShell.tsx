@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
+import { useNavOrderStore } from '@/stores/navOrderStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
@@ -81,6 +82,7 @@ export default function AppShell() {
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
+  const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
   const backdropRunning = backdropCount > 0;
   const backdropStopping = !backdropRunning && !!pendingStopId;
@@ -170,22 +172,44 @@ export default function AppShell() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
-  // 从后端菜单目录生成导航项
+  // 加载用户导航顺序偏好
+  useEffect(() => {
+    if (!navOrderLoaded && user?.userId) {
+      void loadNavOrder();
+    }
+  }, [navOrderLoaded, user?.userId, loadNavOrder]);
+
+  // 从后端菜单目录生成导航项，并应用用户自定义排序
   // 注意：后端已根据用户权限过滤，返回的菜单列表即用户可见的菜单
   const visibleItems: NavItem[] = useMemo(() => {
     if (!menuCatalogLoaded || !Array.isArray(menuCatalog) || menuCatalog.length === 0) {
       return [];
     }
-    return menuCatalog.map((m) => {
+
+    // 构建导航项列表
+    const items = menuCatalog.map((m) => {
       const IconComp = iconMap[m.icon] ?? LayoutDashboard;
       return {
         key: m.path,
+        appKey: m.appKey, // 用于排序匹配
         label: m.label,
         icon: <IconComp size={18} />,
         description: m.description ?? undefined,
       };
     });
-  }, [menuCatalog, menuCatalogLoaded]);
+
+    // 如果有用户自定义顺序，则按该顺序排列
+    if (navOrder.length > 0) {
+      const orderMap = new Map(navOrder.map((k, i) => [k, i]));
+      items.sort((a, b) => {
+        const aOrder = orderMap.get(a.appKey) ?? 9999;
+        const bOrder = orderMap.get(b.appKey) ?? 9999;
+        return aOrder - bOrder;
+      });
+    }
+
+    return items;
+  }, [menuCatalog, menuCatalogLoaded, navOrder]);
   
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');

@@ -1,14 +1,18 @@
-import { useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import rehypeRaw from 'rehype-raw';
 import MermaidBlock from './MermaidBlock';
 import GithubSlugger from 'github-slugger';
 import type { DocCitation } from '../../types';
 import CitationChip from '../Chat/CitationChip';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyImageFromUrl, copyText, tableElementToMarkdown } from '../../lib/clipboard';
+
+// Citation tokens 缓存（使用 WeakMap 避免内存泄漏）
+const citationTokensCache = new WeakMap<DocCitation[], Array<Set<string>>>();
 
 function CopySvg({ className }: { className?: string }) {
   return (
@@ -119,27 +123,91 @@ function scoreOverlap(a: Set<string>, b: Set<string>) {
   return score;
 }
 
+/**
+ * 获取或计算 citation tokens（带缓存）
+ */
+function getCitationTokens(citations: DocCitation[]): Array<Set<string>> {
+  const cached = citationTokensCache.get(citations);
+  if (cached) return cached;
+
+  const tokens = citations.map((c) =>
+    tokenizeForMatch(`${c?.headingTitle || ''} ${c?.excerpt || ''}`)
+  );
+  citationTokensCache.set(citations, tokens);
+  return tokens;
+}
+
+/**
+ * 延迟匹配 Citation 的组件
+ * 使用 requestIdleCallback 避免阻塞渲染
+ */
+const LazyCitationMatcher = memo(function LazyCitationMatcher({
+  blockText,
+  citationList,
+  citationTokens,
+  onOpenCitation,
+}: {
+  blockText: string;
+  citationList: DocCitation[];
+  citationTokens: Array<Set<string>>;
+  onOpenCitation?: (citationIdx: number) => void;
+}) {
+  const [matched, setMatched] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (!citationList.length || !onOpenCitation) {
+      setMatched([]);
+      return;
+    }
+
+    const t = String(blockText || '').trim();
+    if (!t || t.length < 10) {
+      setMatched([]);
+      return;
+    }
+
+    // 使用 requestIdleCallback 延迟执行匹配
+    const doMatch = () => {
+      const bt = tokenizeForMatch(t);
+      if (bt.size === 0) {
+        setMatched([]);
+        return;
+      }
+
+      const scored = citationTokens
+        .map((ct, idx) => ({ idx, score: scoreOverlap(bt, ct) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 2)
+        .map((x) => x.idx);
+
+      setMatched(scored);
+    };
+
+    // 优先使用 requestIdleCallback，降级使用 setTimeout
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(doMatch, { timeout: 150 });
+      return () => cancelIdleCallback(id);
+    } else {
+      const id = setTimeout(doMatch, 16);
+      return () => clearTimeout(id);
+    }
+  }, [blockText, citationList, citationTokens, onOpenCitation]);
+
+  if (!matched.length || !onOpenCitation) return null;
+
+  return <CitationChip citations={citationList} matchedIndices={matched} onOpen={onOpenCitation} />;
+});
+
 export default function MarkdownRenderer({ content, className, style, onInternalLinkClick, citations, onOpenCitation }: MarkdownRendererProps) {
   // slugger 需要在一次渲染周期内保持状态，用于处理重名标题的去重（a、a-1、a-2...）
   const slugger = useMemo(() => new GithubSlugger(), [content]);
   const citationList = useMemo(() => (Array.isArray(citations) ? citations.slice(0, 30) : []), [citations]);
-  const citationTokens = useMemo(() => citationList.map((c) => tokenizeForMatch(`${c?.headingTitle || ''} ${c?.excerpt || ''}`)), [citationList]);
-
-  const matchCitationsForBlock = (blockText: string) => {
-    if (!citationList.length) return [];
-    const t = String(blockText || '').trim();
-    if (!t) return [];
-    if (t.length < 10) return [];
-    const bt = tokenizeForMatch(t);
-    if (bt.size === 0) return [];
-    const scored = citationTokens
-      .map((ct, idx) => ({ idx, score: scoreOverlap(bt, ct) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 2)
-      .map((x) => x.idx);
-    return scored;
-  };
+  // 使用缓存的 citation tokens
+  const citationTokens = useMemo(
+    () => (citationList.length > 0 ? getCitationTokens(citationList) : []),
+    [citationList]
+  );
 
   const headingComponents = useMemo(() => {
     const make = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => {
@@ -168,41 +236,48 @@ export default function MarkdownRenderer({ content, className, style, onInternal
     <div className={className} style={style}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        rehypePlugins={[rehypeRaw]}
         components={{
           ...headingComponents,
           p({ children }: any) {
             const text = childrenToText(children);
-            const matched = matchCitationsForBlock(text);
             return (
               <p>
                 {children}
-                {matched.length > 0 && onOpenCitation ? (
-                  <CitationChip citations={citationList} matchedIndices={matched} onOpen={onOpenCitation} />
-                ) : null}
+                <LazyCitationMatcher
+                  blockText={text}
+                  citationList={citationList}
+                  citationTokens={citationTokens}
+                  onOpenCitation={onOpenCitation}
+                />
               </p>
             );
           },
           li({ children }: any) {
             const text = childrenToText(children);
-            const matched = matchCitationsForBlock(text);
             return (
               <li>
                 {children}
-                {matched.length > 0 && onOpenCitation ? (
-                  <CitationChip citations={citationList} matchedIndices={matched} onOpen={onOpenCitation} />
-                ) : null}
+                <LazyCitationMatcher
+                  blockText={text}
+                  citationList={citationList}
+                  citationTokens={citationTokens}
+                  onOpenCitation={onOpenCitation}
+                />
               </li>
             );
           },
           blockquote({ children }: any) {
             const text = childrenToText(children);
-            const matched = matchCitationsForBlock(text);
             return (
               <blockquote>
                 {children}
-                {matched.length > 0 && onOpenCitation ? (
-                  <CitationChip citations={citationList} matchedIndices={matched} onOpen={onOpenCitation} />
-                ) : null}
+                <LazyCitationMatcher
+                  blockText={text}
+                  citationList={citationList}
+                  citationTokens={citationTokens}
+                  onOpenCitation={onOpenCitation}
+                />
               </blockquote>
             );
           },

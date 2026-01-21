@@ -97,12 +97,48 @@ public class ChatRunsController : ControllerBase
             }
         }
 
+        var gid = (session.GroupId ?? string.Empty).Trim();
+        var skipAiReply = request.SkipAiReply == true;
+
+        // 跳过 AI 回复模式：仅保存用户消息，不创建 run/AI 占位消息
+        if (skipAiReply && !string.IsNullOrWhiteSpace(gid))
+        {
+            var userMessageId = Guid.NewGuid().ToString("N");
+            var userGroupSeq = await _groupMessageSeqService.NextAsync(gid, ct);
+            var userMessage = new Message
+            {
+                Id = userMessageId,
+                SessionId = sid,
+                GroupId = gid,
+                GroupSeq = userGroupSeq,
+                RunId = null,
+                SenderId = userId,
+                Role = MessageRole.User,
+                Content = request.Content ?? "",
+                ViewRole = effectiveAnswerRole,
+                Timestamp = DateTime.UtcNow
+            };
+            await _messageRepository.InsertManyAsync(new[] { userMessage });
+            _groupMessageStreamHub.Publish(userMessage);
+
+            _logger.LogInformation("Created user message (skip AI reply): messageId={MessageId}, groupSeq={GroupSeq}",
+                userMessageId, userGroupSeq);
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                runId = (string?)null,
+                userMessageId,
+                assistantMessageId = (string?)null,
+                groupSeq = userGroupSeq,
+                skippedAiReply = true
+            }));
+        }
+
         var runId = Guid.NewGuid().ToString("N");
         var assistantMessageId = Guid.NewGuid().ToString("N");
-        var userMessageId = Guid.NewGuid().ToString("N");
+        var userMessageId2 = Guid.NewGuid().ToString("N");
 
         // run meta：Queued
-        var gid = (session.GroupId ?? string.Empty).Trim();
         var meta = new RunMeta
         {
             RunId = runId,
@@ -111,7 +147,7 @@ public class ChatRunsController : ControllerBase
             GroupId = string.IsNullOrWhiteSpace(gid) ? null : gid,
             SessionId = sid,
             CreatedByUserId = userId,
-            UserMessageId = userMessageId,
+            UserMessageId = userMessageId2,
             AssistantMessageId = assistantMessageId,
             CreatedAt = DateTime.UtcNow,
             LastSeq = 0,
@@ -131,18 +167,18 @@ public class ChatRunsController : ControllerBase
         await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
 
         // 立即创建用户消息和 AI 占位消息（确保顺序正确：用户消息先，AI 占位后）
-        long? userGroupSeq = null;
+        long? userGroupSeq2 = null;
         long? assistantGroupSeq = null;
         if (!string.IsNullOrWhiteSpace(gid))
         {
             // 1. 创建用户消息（分配 seq）
-            userGroupSeq = await _groupMessageSeqService.NextAsync(gid, ct);
+            userGroupSeq2 = await _groupMessageSeqService.NextAsync(gid, ct);
             var userMessage = new Message
             {
-                Id = userMessageId,
+                Id = userMessageId2,
                 SessionId = sid,
                 GroupId = gid,
-                GroupSeq = userGroupSeq,
+                GroupSeq = userGroupSeq2,
                 RunId = runId,
                 SenderId = userId,
                 Role = MessageRole.User,
@@ -152,10 +188,10 @@ public class ChatRunsController : ControllerBase
             };
             await _messageRepository.InsertManyAsync(new[] { userMessage });
             _groupMessageStreamHub.Publish(userMessage);
-            
+
             _logger.LogInformation("Created user message: runId={RunId}, messageId={MessageId}, groupSeq={GroupSeq}",
-                runId, userMessageId, userGroupSeq);
-            
+                runId, userMessageId2, userGroupSeq2);
+
             // 2. 创建 AI 占位消息（分配下一个 seq）
             var botUsername = effectiveAnswerRole switch
             {
@@ -164,11 +200,11 @@ public class ChatRunsController : ControllerBase
                 _ => "bot_pm"
             };
             var botUser = await _db.Users.Find(u => u.Username == botUsername).FirstOrDefaultAsync(ct);
-            
+
             if (botUser != null)
             {
                 assistantGroupSeq = await _groupMessageSeqService.NextAsync(gid, ct);
-                
+
                 var placeholderMessage = new Message
                 {
                     Id = assistantMessageId,
@@ -182,10 +218,10 @@ public class ChatRunsController : ControllerBase
                     ViewRole = effectiveAnswerRole,
                     Timestamp = DateTime.UtcNow
                 };
-                
+
                 await _messageRepository.InsertManyAsync(new[] { placeholderMessage });
                 _groupMessageStreamHub.Publish(placeholderMessage);
-                
+
                 _logger.LogInformation("Created AI placeholder message: runId={RunId}, messageId={MessageId}, bot={Bot}, groupSeq={GroupSeq}",
                     runId, assistantMessageId, botUsername, assistantGroupSeq);
             }
@@ -196,7 +232,7 @@ public class ChatRunsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             runId,
-            userMessageId,
+            userMessageId = userMessageId2,
             assistantMessageId,
             groupSeq = assistantGroupSeq
         }));

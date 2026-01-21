@@ -167,6 +167,11 @@ html, body {
   .border-border { border-color: var(--color-border); }
   .bg-surface { background-color: var(--color-surface); }
   .bg-background { background-color: var(--color-background); }
+
+  /* 消息气泡性能优化：使用 CSS contain 限制重绘/重排范围 */
+  .message-item-contain {
+    contain: layout style paint;
+  }
 }
 
 /* =========================================

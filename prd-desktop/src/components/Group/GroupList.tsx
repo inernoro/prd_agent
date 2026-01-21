@@ -41,11 +41,13 @@ export default function GroupList() {
 
   useEffect(() => {
     // 有群组时默认选中第一个群组
+    // 注意：只在 activeGroupId 为空时才自动选中，避免 loadGroups 刷新时打断当前群组
     if (!activeGroupId && groups.length > 0) {
       void openGroup(groups[0]);
     }
-    // eslint-disable-next-line
-  }, [groups, activeGroupId, user?.userId]);
+    // 只依赖 activeGroupId 和 groups.length，避免 groups 引用变化导致不必要的重新执行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups.length, activeGroupId]);
 
   const openGroup = async (group: (typeof groups)[number]) => {
     // 切换群组：先重置消息/分页/滚动状态，再切换 session/document，避免残留状态导致：

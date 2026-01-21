@@ -32,6 +32,11 @@ public class SendMessageRequest
     /// </summary>
     public string? PromptKey { get; set; }
 
+    /// <summary>
+    /// 跳过 AI 回复（可选）：启用时仅保存用户消息，不触发 AI 回复（普通群聊模式）
+    /// </summary>
+    public bool? SkipAiReply { get; set; }
+
     /// <summary>验证请求</summary>
     public (bool IsValid, string? ErrorMessage) Validate()
     {

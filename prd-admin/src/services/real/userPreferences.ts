@@ -14,7 +14,7 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 export const updateNavOrderReal: UpdateNavOrderContract = async (navOrder: string[]): Promise<ApiResponse<void>> => {
   const res = await apiRequest<void>(api.dashboard.userPreferences.navOrder(), {
     method: 'PUT',
-    body: JSON.stringify({ navOrder }),
+    body: { navOrder },
   });
   if (!res.success) return res;
   return ok(undefined);

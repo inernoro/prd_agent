@@ -28,7 +28,9 @@
       "Bash(powershell.exe -ExecutionPolicy Bypass -File \"quick.ps1\" ci)",
       "Bash(cargo fmt:*)",
       "Bash(pnpm exec tsc:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(pnpm add:*)",
+      "Bash(xargs cat:*)"
     ]
   }
 }

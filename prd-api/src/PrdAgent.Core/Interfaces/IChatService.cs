@@ -70,6 +70,11 @@ public class ChatStreamEvent
     /// 结构化引用（type=citations 时下发；也可附带在 done 前后事件里）
     /// </summary>
     public List<DocCitation>? Citations { get; set; }
+
+    /// <summary>
+    /// 是否跳过了 AI 回复（普通群聊模式）
+    /// </summary>
+    public bool? SkippedAiReply { get; set; }
 }
 
 /// <summary>

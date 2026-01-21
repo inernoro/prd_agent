@@ -210,16 +210,19 @@ struct SendMessageRequest {
     prompt_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attachment_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skip_ai_reply: Option<bool>,
 }
 
 #[derive(Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateChatRunResponse {
-    pub run_id: String,
+    pub run_id: Option<String>,
     pub user_message_id: String,
-    pub assistant_message_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assistant_message_id: Option<String>,
     pub group_seq: Option<i64>,
+    #[serde(default)]
+    pub skipped_ai_reply: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -406,6 +409,7 @@ pub async fn send_message(
     role: Option<String>,
     prompt_key: Option<String>,
     attachment_ids: Option<Vec<String>>,
+    skip_ai_reply: Option<bool>,
 ) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
     let url = format!("{}/api/v1/sessions/{}/messages", base_url, session_id);
@@ -416,6 +420,7 @@ pub async fn send_message(
         role,
         prompt_key,
         attachment_ids,
+        skip_ai_reply,
     };
 
     let token = cancel.new_message_token();
@@ -500,6 +505,7 @@ pub async fn create_chat_run(
     role: Option<String>,
     prompt_key: Option<String>,
     attachment_ids: Option<Vec<String>>,
+    skip_ai_reply: Option<bool>,
 ) -> Result<ApiResponse<CreateChatRunResponse>, String> {
     let client = ApiClient::new();
     let request = SendMessageRequest {
@@ -507,6 +513,7 @@ pub async fn create_chat_run(
         role,
         prompt_key,
         attachment_ids,
+        skip_ai_reply,
     };
     client
         .post(&format!("/sessions/{}/messages/run", session_id), &request)
@@ -638,6 +645,7 @@ pub async fn resend_message(
     role: Option<String>,
     prompt_key: Option<String>,
     attachment_ids: Option<Vec<String>>,
+    skip_ai_reply: Option<bool>,
 ) -> Result<(), String> {
     let base_url = api_client::get_api_base_url();
     let mid = message_id.trim().to_string();
@@ -655,6 +663,7 @@ pub async fn resend_message(
         role,
         prompt_key,
         attachment_ids,
+        skip_ai_reply,
     };
 
     let token = cancel.new_message_token();

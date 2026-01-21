@@ -65,6 +65,9 @@ export default function DocumentUpload() {
           return;
         }
 
+        // 先设置 activeGroupId，避免 loadGroups 后 GroupList 自动选择第一个群组导致重复切换
+        useSessionStore.getState().setActiveGroupId(createResp.data.groupId);
+
         // 创建群组后强制刷新列表，确保新群组立即显示
         await loadGroups({ force: true });
 
@@ -97,12 +100,20 @@ export default function DocumentUpload() {
 
         setSession(session, response.data.document);
 
-        // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
+        // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 3 秒）
         // 在后台执行，不阻塞用户操作
+        // 注意：首次延迟 5 秒，避免刚创建群组时立即刷新导致订阅被打断
+        const newGroupId = createResp.data.groupId;
         (async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5000)); // 首次等待 5 秒
           for (let i = 0; i < 3; i++) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            // 检查当前是否仍在该群组，避免用户已切换群组时继续刷新
+            const currentGroupId = useSessionStore.getState().activeGroupId;
+            if (currentGroupId !== newGroupId) break;
             await loadGroups({ force: true });
+            if (i < 2) {
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
           }
         })();
       } else {

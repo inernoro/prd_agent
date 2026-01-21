@@ -11,6 +11,7 @@ import { readSseStream } from '@/lib/sse';
 import { apiRequest } from '@/services/real/apiClient';
 import { MessageSquare, Paperclip, Plus, Send, Square } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -86,21 +87,6 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
       {content}
     </ReactMarkdown>
-  );
-});
-
-const LiveTail = memo(function LiveTail({ text }: { text: string }) {
-  const t = String(text || '');
-  if (!t) return null;
-  const lines = t.split('\n');
-  const last = lines[lines.length - 1] ?? '';
-  const prefix = lines.length > 1 ? lines.slice(0, -1).join('\n') + '\n' : '';
-  return (
-    <div className="prd-md-stream-live" aria-label="流式输出预览">
-      {prefix ? <span className="prd-md-stream-live-prefix">{prefix}</span> : null}
-      <span className="prd-md-stream-live-last">{last}</span>
-      <span className="prd-md-stream-caret" aria-hidden="true" />
-    </div>
   );
 });
 
@@ -313,101 +299,23 @@ export default function AiChatPage() {
   const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string>('');
   const abortRef = useRef<AbortController | null>(null);
 
-  // -------- Streaming smoothing（高帧率“尾巴” + 低频提交 Markdown）--------
-  // - delta 很碎时，如果每个 delta 都 setMessages，会导致 ReactMarkdown 频繁 parse + 版式重排（“颗粒感”）
-  // - 这里改为：delta 写入 buffer；rAF 高频刷新“灰度尾巴”；低频把 chunk 提交到 message.content
-  const rafSchedule: (cb: FrameRequestCallback) => number =
-    typeof requestAnimationFrame === 'function'
-      ? (cb) => requestAnimationFrame(cb)
-      : (cb) => (setTimeout(() => cb(Date.now()), 16) as unknown as number);
+  // -------- 简化后的流式状态（借鉴文学创作的 flushSync 方式）--------
+  // 不再需要复杂的缓冲逻辑，直接用 flushSync 强制同步刷新
+  const pendingByMessageRef = useRef<Map<string, string>>(new Map());
+  const liveTailByMessageRef = useRef<Map<string, string>>(new Map());
+  const flushRafRef = useRef<number | null>(null);
+  const flushTimeoutRef = useRef<number | null>(null);
+  const lastStreamingAssistantIdRef = useRef<string>('');
 
   const rafCancel: (id: number) => void =
     typeof cancelAnimationFrame === 'function'
       ? (id) => cancelAnimationFrame(id)
       : (id) => clearTimeout(id as unknown as any);
 
-  // Markdown parse/重排比较重：降低提交频率，减少“闪烁/颗粒感”
-  const COMMIT_INTERVAL_MS = 120;
-  const LIVE_TAIL_MAX_CHARS = 480;
-
-  const pendingByMessageRef = useRef<Map<string, string>>(new Map());
-  const liveTailByMessageRef = useRef<Map<string, string>>(new Map());
-  const [liveTailById, setLiveTailById] = useState<Record<string, string>>({});
-  const flushRafRef = useRef<number | null>(null);
-  const flushTimeoutRef = useRef<number | null>(null);
-  const lastCommitAtRef = useRef(0);
-  const stopAfterDrainRef = useRef(false);
-  const lastStreamingAssistantIdRef = useRef<string>('');
-
-  const takeCommitChunk = (buf: string) => {
-    const s = String(buf || '');
-    if (!s) return '';
-    // 尽量“按边界提交”：避免同一行在 Markdown/纯文本之间来回切换导致闪烁
-    const max = Math.max(80, Math.min(520, Math.ceil(s.length / 3)));
-    const slice = s.slice(0, max);
-
-    const sliceLines = slice.split('\n');
-
-    const looksLikeTableSep = (line: string) => {
-      const l = String(line || '').trim();
-      if (!l) return false;
-      // 典型：|---|---| 或 ---|---（允许对齐冒号）
-      return /^(\|?\s*:?-{3,}:?\s*)+(\|\s*:?-{3,}:?\s*)+\|?$/.test(l);
-    };
-
-    const hasTableHeaderAndSep = () => {
-      // 只在“本段开头”附近检测（uncommitted buffer 从上次边界开始）
-      if (sliceLines.length < 2) return false;
-      const a = (sliceLines[0] || '').trim();
-      const b = (sliceLines[1] || '').trim();
-      if (!a.includes('|')) return false;
-      return looksLikeTableSep(b);
-    };
-
-    // 表格：不要按单行 commit，否则会破坏 Markdown table 解析，导致“像纯文本”
-    if (hasTableHeaderAndSep()) {
-      // 只有当表格块“结束”（出现空行）才 commit 整块
-      const blankIdx = sliceLines.findIndex((x, i) => i >= 2 && String(x).trim() === '');
-      if (blankIdx >= 0) {
-        const upto = sliceLines.slice(0, blankIdx + 1).join('\n');
-        return upto + '\n';
-      }
-      return '';
-    }
-
-    // 1) 优先按“段落边界”提交（最稳定：ReactMarkdown 结构更少抖动）
-    const pp = slice.lastIndexOf('\n\n');
-    if (pp >= 0) return slice.slice(0, pp + 2);
-
-    // 2) 次优按换行提交（列表/标题/段落更稳定）
-    const nl = slice.lastIndexOf('\n');
-    if (nl >= 0) {
-      const line = slice.slice(0, nl);
-      // 如果这一行看起来“收尾了”（有标点/够长），就提交；否则继续留在 tail 里等它完整
-      if (/[。！？.!?；;：:]\s*$/.test(line) || line.length >= 140) return slice.slice(0, nl + 1);
-      return '';
-    }
-
-    // 次优：按句子/空格/标点边界提交（没有换行的长段落也能渐进显示）
-    const boundaries = ['。', '！', '？', '.', '!', '?', '，', ',', '；', ';', '：', ':', ' '];
-    let best = -1;
-    for (const b of boundaries) {
-      const idx = slice.lastIndexOf(b);
-      if (idx > best) best = idx;
-    }
-    if (best >= 0) return slice.slice(0, best + 1);
-
-    // 3) 兜底：没有任何边界，只有 buffer 很大时才提交一小段，避免 UI 完全不动
-    if (s.length >= 800) return slice.slice(0, Math.min(slice.length, 160));
-    return '';
-  };
-
+  // 简化后的清理函数（借鉴文学创作的方式，不再需要复杂缓冲逻辑）
   const clearStreamingBuffers = useCallback(() => {
     pendingByMessageRef.current.clear();
     liveTailByMessageRef.current.clear();
-    setLiveTailById({});
-    stopAfterDrainRef.current = false;
-    lastCommitAtRef.current = 0;
     lastStreamingAssistantIdRef.current = '';
     if (flushRafRef.current != null) {
       rafCancel(flushRafRef.current);
@@ -418,109 +326,6 @@ export default function AiChatPage() {
       flushTimeoutRef.current = null;
     }
   }, []);
-
-  const flushStreamingBuffers = useCallback((opts?: { forceAll?: boolean }) => {
-    const forceAll = !!opts?.forceAll;
-    const pending = pendingByMessageRef.current;
-
-    if (pending.size === 0) {
-      // 可能出现“短暂没 delta”的空窗：此时也应清理 tail，避免残影
-      if (liveTailByMessageRef.current.size > 0) {
-        liveTailByMessageRef.current.clear();
-        setLiveTailById({});
-      }
-      if (stopAfterDrainRef.current) {
-        stopAfterDrainRef.current = false;
-        // streaming 结束：把 mdParts 合并回整段渲染，避免 table/list 因分块丢上下文
-        const lastId = lastStreamingAssistantIdRef.current;
-        if (lastId) {
-          setMessages((prev) => prev.map((m) => (m.id === lastId ? { ...m, mdParts: undefined } : m)));
-        }
-        clearStreamingBuffers();
-        setIsStreaming(false);
-        setStreamingAssistantMessageId('');
-      }
-      return;
-    }
-
-    // 1) 先做“低频提交”（会修改 pending），避免同一帧里 tail+markdown 出现重复字符导致闪烁
-    const now = Date.now();
-    const canCommit = forceAll || now - (lastCommitAtRef.current || 0) >= COMMIT_INTERVAL_MS;
-    if (canCommit) {
-      lastCommitAtRef.current = now;
-      const chunksById = new Map<string, string>();
-      for (const [id, buf] of pending.entries()) {
-        const chunk = forceAll ? buf : takeCommitChunk(buf);
-        if (!chunk) continue;
-        chunksById.set(id, (chunksById.get(id) ?? '') + chunk);
-        const rest = buf.slice(chunk.length);
-        if (rest) pending.set(id, rest);
-        else pending.delete(id);
-      }
-      if (chunksById.size > 0) {
-        setMessages((prev) =>
-          prev.map((m) => {
-            const c = chunksById.get(m.id);
-            if (!c) return m;
-            const nextContent = (m.content ?? '') + c;
-            const prevParts = Array.isArray(m.mdParts) ? m.mdParts : null;
-            const nextParts = prevParts ? [...prevParts, c] : prevParts;
-            return { ...m, content: nextContent, ...(nextParts ? { mdParts: nextParts } : null) };
-          })
-        );
-      }
-    }
-
-    // 2) 再刷新 live tail（此时 pending 已是最新）
-    let tailsChanged = false;
-    const activeIds = new Set<string>();
-    for (const id of pending.keys()) activeIds.add(id);
-    for (const k of Array.from(liveTailByMessageRef.current.keys())) {
-      if (!activeIds.has(k)) {
-        liveTailByMessageRef.current.delete(k);
-        tailsChanged = true;
-      }
-    }
-    pending.forEach((buf, id) => {
-      const tail = buf.length > LIVE_TAIL_MAX_CHARS ? buf.slice(-LIVE_TAIL_MAX_CHARS) : buf;
-      const prevTail = liveTailByMessageRef.current.get(id) ?? '';
-      if (prevTail !== tail) {
-        liveTailByMessageRef.current.set(id, tail);
-        tailsChanged = true;
-      }
-    });
-    if (tailsChanged) {
-      const obj: Record<string, string> = {};
-      liveTailByMessageRef.current.forEach((v, k) => {
-        if (v) obj[k] = v;
-      });
-      setLiveTailById(obj);
-    }
-
-    // 继续调度（rAF + 兜底 timeout，避免后台 tab 节流）
-    if (!forceAll && (pending.size > 0 || stopAfterDrainRef.current)) {
-      if (flushRafRef.current == null) {
-        flushRafRef.current = rafSchedule(() => {
-          flushRafRef.current = null;
-          flushStreamingBuffers();
-        });
-      }
-      if (flushTimeoutRef.current == null) {
-        flushTimeoutRef.current = setTimeout(() => {
-          flushTimeoutRef.current = null;
-          flushStreamingBuffers();
-        }, 50) as any;
-      }
-    }
-  }, [clearStreamingBuffers]);
-
-  const scheduleStreamingFlush = useCallback(() => {
-    if (flushRafRef.current != null) return;
-    flushRafRef.current = rafSchedule(() => {
-      flushRafRef.current = null;
-      flushStreamingBuffers();
-    });
-  }, [flushStreamingBuffers]);
 
   const [composer, setComposer] = useState('');
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -847,9 +652,7 @@ export default function AiChatPage() {
   const stopStreaming = () => {
     abortRef.current?.abort();
     abortRef.current = null;
-    // 用户取消：强制结束（不等待 tail drain）
-    // 先尽量把 pending 写入内容，避免丢字；然后清空状态
-    flushStreamingBuffers({ forceAll: true });
+    // 用户取消：清空状态
     clearStreamingBuffers();
     setIsStreaming(false);
     setStreamingAssistantMessageId('');
@@ -881,23 +684,19 @@ export default function AiChatPage() {
       const id = String(evt.messageId || `assistant-${Date.now()}`);
       setStreamingAssistantMessageId(id);
       lastStreamingAssistantIdRef.current = id;
-      // 新一轮：清理该 message 的残留 buffer/tail（避免串帧）
+      // 新一轮：清理该 message 的残留 buffer（避免串帧）
       pendingByMessageRef.current.delete(id);
       liveTailByMessageRef.current.delete(id);
-      setLiveTailById((prev) => {
-        if (!prev[id]) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === id)) return prev;
-        return prev.concat({
-          id,
-          role: 'Assistant',
-          content: '',
-          mdParts: [],
-          timestamp: Date.now(),
+      // 使用 flushSync 强制立即刷新，借鉴文学创作的流畅体验
+      flushSync(() => {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === id)) return prev;
+          return prev.concat({
+            id,
+            role: 'Assistant',
+            content: '',
+            timestamp: Date.now(),
+          });
         });
       });
       return;
@@ -930,29 +729,29 @@ export default function AiChatPage() {
     }
 
     if (t === 'done') {
-      // done：让尾巴吐完再结束，避免最后一段“瞬间刷出来”
-      stopAfterDrainRef.current = true;
-      scheduleStreamingFlush();
-      // 安全兜底：最多 2s 后强制把剩余全部提交并结束
-      setTimeout(() => {
-        if (!stopAfterDrainRef.current) return;
-        flushStreamingBuffers({ forceAll: true });
-      }, 2000);
+      // done：清理缓冲状态并结束流式
+      clearStreamingBuffers();
+      setIsStreaming(false);
+      setStreamingAssistantMessageId('');
       if (activeSessionId) {
         // 关键：刷新一次历史，把本地临时 user id 替换成服务端落库 id，
-        // 这样“刚发送的消息”也可以立即使用“重发”。
+        // 这样"刚发送的消息"也可以立即使用"重发"。
         void refreshHistory(activeSessionId);
       }
       return;
     }
 
-    // 统一把流式文本写入目标 message（messageId）
+    // 统一把流式文本写入目标 message（messageId）- 借鉴文学创作的 flushSync 方式
     const targetId = String(evt.messageId || '');
     const delta = evt.content ? String(evt.content) : '';
     if (!targetId || !delta) return;
-    const pending = pendingByMessageRef.current;
-    pending.set(targetId, (pending.get(targetId) ?? '') + delta);
-    scheduleStreamingFlush();
+
+    // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
+    flushSync(() => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === targetId ? { ...m, content: (m.content ?? '') + delta } : m))
+      );
+    });
   };
 
   const sendMessage = async () => {
@@ -1437,7 +1236,6 @@ export default function AiChatPage() {
             messages.map((m) => {
               const isUser = m.role === 'User';
               const isThisStreaming = !isUser && !!streamingAssistantMessageId && m.id === streamingAssistantMessageId;
-              const liveTail = isThisStreaming ? (liveTailById[m.id] || '') : '';
               return (
                 <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                   <div
@@ -1542,18 +1340,8 @@ export default function AiChatPage() {
                           .prd-md-block-enter { animation: prd-md-block-in 160ms ease-out both; }
                           @keyframes prd-md-block-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
                         `}</style>
-                        {Array.isArray(m.mdParts) && m.mdParts.length > 0 ? (
-                          <div className="space-y-2">
-                            {m.mdParts.map((part, idx) => (
-                              <div key={`${m.id}-mdp-${idx}-${part.length}`} className="prd-md-block-enter">
-                                <AssistantMarkdown content={unwrapMarkdownFences(part)} />
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
-                        )}
-                        {isThisStreaming && liveTail ? <LiveTail text={liveTail} /> : null}
+                        {/* 简化渲染：直接渲染 content，借鉴文学创作的流畅体验 */}
+                        <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
                         {isThisStreaming ? (
                           <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                             输出中

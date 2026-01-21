@@ -24,6 +24,7 @@ public class MessagesController : ControllerBase
     private readonly IMessageRepository _messageRepository;
     private readonly ICacheManager _cache;
     private readonly IGroupMessageStreamHub _groupMessageStreamHub;
+    private readonly IGroupMessageSeqService _groupMessageSeqService;
     private readonly ISessionService _sessionService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MessagesController> _logger;
@@ -34,6 +35,7 @@ public class MessagesController : ControllerBase
         IMessageRepository messageRepository,
         ICacheManager cache,
         IGroupMessageStreamHub groupMessageStreamHub,
+        IGroupMessageSeqService groupMessageSeqService,
         ISessionService sessionService,
         IConfiguration configuration,
         MongoDbContext db,
@@ -43,6 +45,7 @@ public class MessagesController : ControllerBase
         _messageRepository = messageRepository;
         _cache = cache;
         _groupMessageStreamHub = groupMessageStreamHub;
+        _groupMessageSeqService = groupMessageSeqService;
         _sessionService = sessionService;
         _configuration = configuration;
         _db = db;
@@ -141,7 +144,59 @@ public class MessagesController : ControllerBase
         }
         catch
         {
-            // ignore：不因为“角色计算失败”中断对话；交由 ChatService 使用 session.CurrentRole 兜底
+            // ignore：不因为"角色计算失败"中断对话；交由 ChatService 使用 session.CurrentRole 兜底
+        }
+
+        // 跳过 AI 回复模式：仅保存用户消息，不调用 LLM
+        if (request.SkipAiReply == true)
+        {
+            try
+            {
+                var sid = (sessionId ?? string.Empty).Trim();
+                var session = await _sessionService.GetByIdAsync(sid);
+                var gid = (session?.GroupId ?? string.Empty).Trim();
+
+                if (!string.IsNullOrWhiteSpace(gid))
+                {
+                    var userMessageId = Guid.NewGuid().ToString("N");
+                    var userGroupSeq = await _groupMessageSeqService.NextAsync(gid, cancellationToken);
+                    var userMessage = new Message
+                    {
+                        Id = userMessageId,
+                        SessionId = sid,
+                        GroupId = gid,
+                        GroupSeq = userGroupSeq,
+                        RunId = null,
+                        SenderId = userId,
+                        Role = MessageRole.User,
+                        Content = request.Content ?? "",
+                        ViewRole = answerAsRole ?? session?.CurrentRole ?? UserRole.PM,
+                        Timestamp = DateTime.UtcNow
+                    };
+                    await _messageRepository.InsertManyAsync(new[] { userMessage });
+                    _groupMessageStreamHub.Publish(userMessage);
+
+                    _logger.LogInformation("Created user message (skip AI reply, SSE): messageId={MessageId}, groupSeq={GroupSeq}",
+                        userMessageId, userGroupSeq);
+
+                    // 返回 done 事件
+                    var doneEvent = new ChatStreamEvent
+                    {
+                        Type = "done",
+                        MessageId = userMessageId,
+                        SkippedAiReply = true
+                    };
+                    var doneData = JsonSerializer.Serialize(doneEvent, AppJsonContext.Default.ChatStreamEvent);
+                    await Response.WriteAsync($"event: message\n", cancellationToken);
+                    await Response.WriteAsync($"data: {doneData}\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving user message (skip AI reply) for session {SessionId}", sessionId);
+            }
         }
 
         try

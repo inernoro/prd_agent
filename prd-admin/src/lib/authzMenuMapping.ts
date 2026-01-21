@@ -87,6 +87,12 @@ export const menuList: MenuDef[] = [
     permissions: ['open-platform.manage'],
   },
   {
+    appKey: 'settings',
+    label: '系统设置',
+    icon: 'Settings',
+    permissions: ['settings.read', 'settings.write'],
+  },
+  {
     appKey: 'authz',
     label: '权限管理',
     icon: 'UserCog',

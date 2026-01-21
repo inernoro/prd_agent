@@ -15,6 +15,27 @@ import { AvatarWithFallback } from './AvatarWithFallback';
 
 type MsgStoreState = ReturnType<typeof useMessageStore.getState>;
 
+// 消息内容预处理缓存（避免重复执行 unwrapMarkdownFences + injectSectionNumberLinks + injectSourceLines）
+const processedContentCache = new Map<string, string>();
+const MAX_PROCESSED_CACHE_SIZE = 300;
+
+function getProcessedContent(messageId: string, content: string, processor: (raw: string) => string): string {
+  const key = `${messageId}::${content.length}`;
+  const cached = processedContentCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const processed = processor(content);
+
+  // LRU 淘汰
+  if (processedContentCache.size >= MAX_PROCESSED_CACHE_SIZE) {
+    const firstKey = processedContentCache.keys().next().value;
+    if (firstKey) processedContentCache.delete(firstKey);
+  }
+
+  processedContentCache.set(key, processed);
+  return processed;
+}
+
 // 注意：阶段文案（如“正在接收信息…”）会造成“AI 回复未带头像/昵称”的割裂观感。
 // 这里改为：阶段仅用动画表达，避免在 UI 中出现多处状态文案。
 
@@ -757,8 +778,13 @@ function MessageListInner() {
         const assistantCitations =
           message.role === 'Assistant' && Array.isArray(message.citations) ? message.citations : [];
 
+        // 使用缓存的预处理内容
         const renderedAssistantContent = message.role === 'Assistant'
-          ? injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(message.content)))
+          ? getProcessedContent(
+              message.id,
+              message.content,
+              (raw) => injectSourceLines(injectSectionNumberLinks(unwrapMarkdownFences(raw)))
+            )
           : message.content;
 
         const navNumbers = message.role === 'Assistant' ? extractNavNumbers(renderedAssistantContent) : [];
@@ -817,7 +843,7 @@ function MessageListInner() {
         return (
           <div
         data-msg-id={message.id}
-            className={`flex ${
+            className={`flex message-item-contain ${
               message.role === 'User'
                 ? (isMine ? 'justify-end' : 'justify-start')
                 : 'justify-start'
