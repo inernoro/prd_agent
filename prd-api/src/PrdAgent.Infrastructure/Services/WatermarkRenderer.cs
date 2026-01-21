@@ -49,16 +49,21 @@ public class WatermarkRenderer
         var gap = textHeight / 4d;
         var iconWidth = config.IconEnabled ? textHeight + gap : 0d;
         var padding = (config.BackgroundEnabled || config.BorderEnabled) ? textHeight * 0.3d : 0d;
-        var watermarkWidth = textWidth + iconWidth + padding * 2d;
-        var watermarkHeight = textHeight + padding * 2d;
+        // 计算边框占用的额外空间（边框完全在外面）
+        var scale = image.Width / (double)config.BaseCanvasWidth;
+        var borderExtra = config.BorderEnabled ? config.BorderWidth * scale * 2d : 0d;
+        var watermarkWidth = textWidth + iconWidth + padding * 2d + borderExtra;
+        var watermarkHeight = textHeight + padding * 2d + borderExtra;
         var (watermarkLeft, watermarkTop) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(
             config,
             image.Width,
             image.Height,
             watermarkWidth,
             watermarkHeight);
-        var textLeft = (float)(watermarkLeft + iconWidth + padding);
-        var textTop = (float)(watermarkTop + padding);
+        // 内部元素需要偏移边框宽度
+        var borderOffset = borderExtra / 2d;
+        var textLeft = (float)(watermarkLeft + iconWidth + padding + borderOffset);
+        var textTop = (float)(watermarkTop + padding + borderOffset);
 
         var textColor = ResolveColorHex(config.TextColor, config.Opacity);
         var borderColor = ResolveColorHex(config.BorderColor ?? config.TextColor, config.Opacity);
@@ -66,20 +71,21 @@ public class WatermarkRenderer
 
         image.Mutate(ctx =>
         {
-            var backgroundRect = new RectangleF(
-                (float)watermarkLeft,
-                (float)watermarkTop,
-                (float)watermarkWidth,
-                (float)watermarkHeight);
-
             // 计算缩放后的圆角半径
-            var scale = image.Width / (double)config.BaseCanvasWidth;
             var scaledCornerRadius = (float)(config.CornerRadius * scale);
             var hasRoundedCorner = scaledCornerRadius > 0;
             var hasBackground = config.BackgroundEnabled || hasRoundedCorner;
 
             // 计算缩放后的边框宽度
             var scaledBorderWidth = (float)(config.BorderWidth * scale);
+
+            // 背景矩形（不包含边框，边框在外面）
+            // watermarkWidth/Height 包含了边框，所以背景需要减去边框并向内偏移
+            var backgroundRect = new RectangleF(
+                (float)(watermarkLeft + borderOffset),
+                (float)(watermarkTop + borderOffset),
+                (float)(watermarkWidth - borderExtra),
+                (float)(watermarkHeight - borderExtra));
 
             if (hasRoundedCorner)
             {
@@ -93,7 +99,15 @@ public class WatermarkRenderer
 
                 if (config.BorderEnabled)
                 {
-                    ctx.Draw(borderColor, scaledBorderWidth, roundedPath);
+                    // 边框绘制在背景外边缘（Draw 是居中绘制，所以矩形向外扩展半个边框宽度）
+                    var halfBorder = scaledBorderWidth / 2f;
+                    var borderRect = new RectangleF(
+                        backgroundRect.X - halfBorder,
+                        backgroundRect.Y - halfBorder,
+                        backgroundRect.Width + scaledBorderWidth,
+                        backgroundRect.Height + scaledBorderWidth);
+                    var borderPath = CreateRoundedRectanglePath(borderRect, scaledCornerRadius + halfBorder);
+                    ctx.Draw(borderColor, scaledBorderWidth, borderPath);
                 }
             }
             else if (config.BackgroundEnabled || config.BorderEnabled)
@@ -106,7 +120,14 @@ public class WatermarkRenderer
 
                 if (config.BorderEnabled)
                 {
-                    ctx.Draw(borderColor, scaledBorderWidth, backgroundRect);
+                    // 边框绘制在背景外边缘
+                    var halfBorder = scaledBorderWidth / 2f;
+                    var borderRect = new RectangleF(
+                        backgroundRect.X - halfBorder,
+                        backgroundRect.Y - halfBorder,
+                        backgroundRect.Width + scaledBorderWidth,
+                        backgroundRect.Height + scaledBorderWidth);
+                    ctx.Draw(borderColor, scaledBorderWidth, borderRect);
                 }
             }
 
@@ -124,9 +145,9 @@ public class WatermarkRenderer
                     var targetSize = (int)Math.Round(textHeight);
                     if (targetSize > 0)
                     {
-                        var scale = targetSize / (double)Math.Max(icon.Width, icon.Height);
-                        var drawW = Math.Max(1, (int)Math.Round(icon.Width * scale));
-                        var drawH = Math.Max(1, (int)Math.Round(icon.Height * scale));
+                        var iconScale = targetSize / (double)Math.Max(icon.Width, icon.Height);
+                        var drawW = Math.Max(1, (int)Math.Round(icon.Width * iconScale));
+                        var drawH = Math.Max(1, (int)Math.Round(icon.Height * iconScale));
                         var dx = (targetSize - drawW) / 2;
                         var dy = (targetSize - drawH) / 2;
 
@@ -140,8 +161,8 @@ public class WatermarkRenderer
                         canvas.Mutate(ctx => ctx.DrawImage(resized, new Point(dx, dy), 1f));
                         canvas.Mutate(ctx => ctx.Opacity((float)config.Opacity));
 
-                        var iconLeft = (float)(watermarkLeft + padding);
-                        var iconTop = (float)(watermarkTop + padding);
+                        var iconLeft = (float)(watermarkLeft + padding + borderOffset);
+                        var iconTop = (float)(watermarkTop + padding + borderOffset);
                         image.Mutate(ctx => ctx.DrawImage(canvas, new Point((int)iconLeft, (int)iconTop), 1f));
                     }
                 }
