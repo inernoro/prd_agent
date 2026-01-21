@@ -381,7 +381,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       }
 
       const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
-      const url = `${API_BASE}/data/init/default-apps`;
+      const url = `${API_BASE}/settings/init/default-apps`;
 
       const response = await fetch(url, {
         method: 'POST',
