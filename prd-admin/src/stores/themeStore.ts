@@ -66,18 +66,29 @@ export const useThemeStore = create<ThemeState>()(
           if (res.success && res.data?.themeConfig) {
             // 合并后端配置与默认值（兼容新字段），转换 string 为枚举类型
             const parsedConfig = parseThemeConfigResponse(res.data.themeConfig);
-            const config: ThemeConfig = { ...DEFAULT_THEME_CONFIG, ...parsedConfig };
-            set({ config, loaded: true });
-            applyThemeToDOM(config);
+            const serverConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, ...parsedConfig };
+            const currentConfig = get().config;
+
+            // 只在配置真正不同时才更新 DOM，避免闪烁
+            const isDifferent =
+              serverConfig.colorDepth !== currentConfig.colorDepth ||
+              serverConfig.opacity !== currentConfig.opacity ||
+              serverConfig.enableGlow !== currentConfig.enableGlow ||
+              serverConfig.sidebarGlass !== currentConfig.sidebarGlass;
+
+            if (isDifferent) {
+              set({ config: serverConfig, loaded: true });
+              applyThemeToDOM(serverConfig);
+            } else {
+              set({ loaded: true });
+            }
           } else {
-            // 后端没有配置，使用本地缓存或默认值
+            // 后端没有配置，使用本地缓存或默认值，不需要重新应用 DOM
             set({ loaded: true });
-            applyThemeToDOM(get().config);
           }
         } catch {
           // 加载失败，使用本地缓存或默认值
           set({ loaded: true });
-          applyThemeToDOM(get().config);
         }
       },
 

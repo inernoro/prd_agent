@@ -328,12 +328,21 @@ export default function RecursiveGridBackdrop({
       if (!finished) {
         if (isVisible) raf = requestAnimationFrame(tick);
       } else {
-        // 结束时清零 raf，允许后续 start/stop 重新 kick（否则会出现“看起来瞬停/无法继续刹车”的错觉）
-        raf = 0;
         // 完全停止：仅在外部 stop 模式下回调（用于 stopped 事件）
         if (sr != null && externalStop && !stoppedNotified) {
           stoppedNotified = true;
           onFullyStoppedRef.current?.(activeStopId);
+        }
+        // 动画停止后，保持低频 RAF 循环（每秒约 4 帧），避免页面渲染节奏突然中断导致其他动画卡顿
+        // 使用 setTimeout + RAF 的方式降低 CPU 占用
+        raf = 0;
+        if (isVisible) {
+          setTimeout(() => {
+            if (!shouldRunRef.current && kickRef.current) {
+              // 仅在仍处于停止状态时才继续低频循环
+              raf = requestAnimationFrame(tick);
+            }
+          }, 250); // 250ms = 4fps
         }
       }
     };

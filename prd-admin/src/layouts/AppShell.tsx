@@ -86,7 +86,6 @@ export default function AppShell() {
   const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
   const backdropRunning = backdropCount > 0;
-  const backdropStopping = !backdropRunning && !!pendingStopId;
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
@@ -296,7 +295,7 @@ export default function AppShell() {
         <div
           className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
           style={{
-            background: 'rgba(18, 18, 22, 0.95)',
+            background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
             border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
             boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
             backdropFilter: 'blur(18px)',
@@ -362,21 +361,22 @@ export default function AppShell() {
         }}
         persistKey="prd-recgrid-rot"
         persistMode="readwrite"
-        // 刹车前更实，刹车瞬间变淡并缓慢“刹停”
-        strokeRunning={backdropRunning || backdropStopping ? 'rgba(231, 206, 151, 1)' : 'rgba(231, 206, 151, 0.30)'}
-        strokeBraking={'rgba(231, 206, 151, 0.30)'}
-        // 刹车阶段按 2s 渐隐，更符合“缓慢结束”的体感
+        // 统一使用较淡的线条颜色，避免状态切换时的突变闪烁
+        // 刹车时内部会按 brakeStrokeFadeMs 渐变到 strokeBraking
+        strokeRunning={'rgba(231, 206, 151, 0.65)'}
+        strokeBraking={'rgba(231, 206, 151, 0.25)'}
+        // 刹车阶段按 2s 渐隐，更符合"缓慢结束"的体感
         brakeStrokeFadeMs={2000}
         brakeDecelerationRate={0.965}
         brakeMinSpeedDegPerSec={0.015}
       />
-      {/* 运行态高亮：解析/任务运行时让背景整体更“亮”一点 */}
+      {/* 运行态高亮：解析/任务运行时让背景整体更"亮"一点 */}
       <div
-        className="pointer-events-none absolute inset-0 transition-opacity duration-300"
+        className="pointer-events-none absolute inset-0 transition-opacity duration-[2000ms] ease-out"
         style={{
-          opacity: backdropRunning ? 1 : backdropStopping ? 0.35 : 0,
+          opacity: backdropRunning ? 0.8 : 0,
           background:
-            'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.18) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.055) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.045) 0%, transparent 70%)',
+            'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.12) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.04) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.03) 0%, transparent 70%)',
         }}
       />
 
@@ -484,9 +484,9 @@ export default function AppShell() {
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
                 style={{
-                  backgroundColor: '#151518',
-                  backgroundImage: 'linear-gradient(135deg, rgba(22,22,26,1) 0%, rgba(16,16,19,1) 100%)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  backgroundColor: 'var(--bg-elevated, #121216)',
+                  backgroundImage: 'var(--panel, linear-gradient(180deg, rgba(18, 18, 22, 0.92) 0%, rgba(18, 18, 22, 0.78) 100%))',
+                  border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))',
                   boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
                   backdropFilter: 'blur(16px)',
                   WebkitBackdropFilter: 'blur(16px)',
@@ -634,10 +634,8 @@ export default function AppShell() {
               className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
               style={{
                 height: 32,
-                background: useSidebarGlass
-                  ? 'linear-gradient(to bottom, rgba(15, 15, 18, 0.95) 0%, rgba(15, 15, 18, 0.6) 40%, transparent 100%)'
-                  : 'linear-gradient(to bottom, rgba(18, 18, 22, 0.98) 0%, rgba(18, 18, 22, 0.7) 35%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atTop ? 1 : 0,
+                background: 'linear-gradient(to bottom, var(--bg-elevated, #121216) 0%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
               }}
             />
             
@@ -700,10 +698,8 @@ export default function AppShell() {
               className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
               style={{
                 height: 40,
-                background: useSidebarGlass
-                  ? 'linear-gradient(to top, rgba(15, 15, 18, 0.95) 0%, rgba(15, 15, 18, 0.6) 45%, transparent 100%)'
-                  : 'linear-gradient(to top, rgba(18, 18, 22, 0.98) 0%, rgba(18, 18, 22, 0.7) 40%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 1 : 0,
+                background: 'linear-gradient(to top, var(--bg-elevated, #121216) 0%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
               }}
             />
           </div>
