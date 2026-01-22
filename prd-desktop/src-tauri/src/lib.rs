@@ -205,6 +205,7 @@ pub fn run() {
             commands::preview_ask_history::get_preview_ask_history_stats,
             commands::updater::get_updater_platform_info,
             commands::updater::check_for_update,
+            commands::updater::fetch_update_manifests,
             commands::devtools::open_devtools,
         ])
         .build(tauri::generate_context!())

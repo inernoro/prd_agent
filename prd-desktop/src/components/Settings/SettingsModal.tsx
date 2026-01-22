@@ -259,48 +259,52 @@ export default function SettingsModal() {
       '[Updater] Note: In our build pipeline, {{target}} is set to Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
     );
     
-    // 手动测试 fetch manifest（绕过 Tauri updater；仅用于诊断网络/404/HTML）
+    // 通过 Tauri 后端 fetch manifest（绕过浏览器 CORS 限制）
     try {
-      const platform = await invoke<{ target: string; arch: string; jsonTarget: string }>('get_updater_platform_info');
-      const target = platform?.target || 'unknown';
-      console.log('[Updater] Platform info:', platform);
+      interface ManifestFetchResult {
+        url: string;
+        status: number;
+        statusText: string;
+        ok: boolean;
+        body: string | null;
+        error: string | null;
+      }
+      interface FetchManifestsResult {
+        target: string;
+        results: ManifestFetchResult[];
+      }
 
-      const candidates = [
-        `https://github.com/inernoro/prd_agent/releases/latest/download/latest-${target}.json`,
-        `https://github.com/inernoro/prd_agent/releases/latest/download/latest.json`,
-      ];
-      console.log('[Updater] Testing direct fetch candidates:');
-      candidates.forEach((u, idx) => console.log(`  ${idx + 1}. ${u}`));
+      const manifestResult = await invoke<FetchManifestsResult>('fetch_update_manifests');
+      console.log('[Updater] Platform target:', manifestResult.target);
+      console.log('[Updater] Testing manifest fetch via Tauri backend:');
 
-      for (const u of candidates) {
-        console.log('[Updater] Direct fetch ->', u);
-        try {
-          const resp = await fetch(u, { headers: { Accept: 'application/json' } });
-          console.log('[Updater] status:', resp.status, resp.statusText);
-          if (!resp.ok) {
-            const text = await resp.text();
-            console.log('[Updater] response (non-OK):', text.slice(0, 800));
-            continue;
-          }
-          const json = await resp.json();
-          console.log('[Updater] response (json):', JSON.stringify(json, null, 2).slice(0, 2000));
-          // 如果是静态 manifest 格式，打印当前平台的下载 URL（下载 404 时最关键）
-          try {
-            const plats = (json as any)?.platforms;
-            const p = plats?.[target];
-            if (p?.url) {
-              console.log('[Updater] manifest.platforms[target].url:', String(p.url));
-            }
-          } catch {
-            // ignore
-          }
-          break;
-        } catch (err) {
-          console.error('[Updater] fetch error:', err);
+      for (const r of manifestResult.results) {
+        console.log('[Updater] Fetch ->', r.url);
+        console.log('[Updater] status:', r.status, r.statusText);
+        if (r.error) {
+          console.error('[Updater] error:', r.error);
+          continue;
         }
+        if (!r.ok) {
+          console.log('[Updater] response (non-OK):', r.body?.slice(0, 800));
+          continue;
+        }
+        console.log('[Updater] response (json):', r.body?.slice(0, 2000));
+        // 如果是静态 manifest 格式，打印当前平台的下载 URL
+        try {
+          const json = JSON.parse(r.body || '{}');
+          const plats = json?.platforms;
+          const p = plats?.[manifestResult.target];
+          if (p?.url) {
+            console.log('[Updater] manifest.platforms[target].url:', String(p.url));
+          }
+        } catch {
+          // ignore parse error
+        }
+        break;
       }
     } catch (e) {
-      console.warn('[Updater] Unable to get platform info for direct fetch debug:', e);
+      console.warn('[Updater] Unable to fetch manifests via backend:', e);
     }
     
     try {

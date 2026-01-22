@@ -31,7 +31,10 @@
       "Bash(git log:*)",
       "Bash(pnpm add:*)",
       "Bash(xargs cat:*)",
-      "Bash(dir %TEMP%*rounded*.png %TEMP%watermark*.png)"
+      "Bash(dir %TEMP%*rounded*.png %TEMP%watermark*.png)",
+      "Bash(git stash push:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(__NEW_LINE_1bf279d0ec47c95e__ echo \"\")"
     ]
   }
 }

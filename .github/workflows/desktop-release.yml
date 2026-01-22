@@ -630,6 +630,8 @@ jobs:
           echo "[INFO] Upload complete for $TARGET"
 
       # 生成并上传 updater manifest (latest-{target}.json)
+      # 重要：此步骤在上传 .sig 文件后执行，从 GitHub Release 下载已上传的 .sig 文件
+      # 以确保 manifest 中的签名与实际可下载的 .sig 文件完全一致
       - name: Generate and upload updater manifest
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -641,9 +643,9 @@ jobs:
           TARGET="${{ matrix.target }}"
           BUNDLE_DIR="src-tauri/target/$TARGET/release/bundle"
           REPO="${{ github.repository }}"
-          
+
           echo "[INFO] Generating updater manifest for $TARGET"
-          
+
           # 确定 updater 使用的文件和 URL
           # Tauri 2.0 platform 标识符：使用 target triple 作为 key
           # 参考: https://v2.tauri.app/plugin/updater/
@@ -651,67 +653,124 @@ jobs:
             aarch64-apple-darwin)
               PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
-              SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+              LOCAL_SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
+              SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
               ;;
             x86_64-apple-darwin)
               PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
-              SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+              LOCAL_SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
+              SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
               ;;
             x86_64-pc-windows-msvc)
               PLATFORM="$TARGET"
               # Windows updater 使用 NSIS
               TARGZ=$(find "$BUNDLE_DIR/nsis" -name "*.exe" 2>/dev/null | head -1)
-              SIG=$(find "$BUNDLE_DIR/nsis" -name "*.exe.sig" 2>/dev/null | head -1)
+              LOCAL_SIG=$(find "$BUNDLE_DIR/nsis" -name "*.exe.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
+              SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
               ;;
             x86_64-unknown-linux-gnu)
               PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" 2>/dev/null | head -1)
-              SIG=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.sig" 2>/dev/null | head -1)
+              LOCAL_SIG=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.sig" 2>/dev/null | head -1)
               FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
+              SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
               ;;
             *)
               echo "::warning::Unknown target: $TARGET"
               exit 0
               ;;
           esac
-          
-          if [[ -z "$TARGZ" || -z "$SIG" || ! -f "$TARGZ" || ! -f "$SIG" ]]; then
+
+          if [[ -z "$TARGZ" || -z "$LOCAL_SIG" || ! -f "$TARGZ" || ! -f "$LOCAL_SIG" ]]; then
             echo "::warning::Missing updater files for $TARGET"
             echo "  TARGZ: $TARGZ"
-            echo "  SIG: $SIG"
+            echo "  LOCAL_SIG: $LOCAL_SIG"
             exit 0
           fi
-          
-          # 读取签名内容
-          SIGNATURE=$(cat "$SIG")
-          
+
+          # URL 编码文件名（处理特殊字符）
+          ENCODED_FILENAME=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$FILENAME")
+          ENCODED_SIG_FILENAME=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$SIG_FILENAME")
+
+          # 从 GitHub Release 下载已上传的 .sig 文件，确保签名与实际文件一致
+          # 这是防止签名不匹配的关键步骤
+          echo "[INFO] Downloading .sig from GitHub Release to ensure consistency..."
+          SIG_URL="https://github.com/$REPO/releases/download/$TAG/$ENCODED_SIG_FILENAME"
+          DOWNLOADED_SIG="/tmp/downloaded.sig"
+
+          # 等待 GitHub CDN 传播（上传后需要一点时间才能下载）
+          echo "[INFO] Waiting 5 seconds for GitHub CDN propagation..."
+          sleep 5
+
+          # 重试下载（最多 10 次，每次间隔 5 秒，总共约 50 秒）
+          DOWNLOAD_SUCCESS=false
+          for i in {1..10}; do
+            echo "[INFO] Attempt $i/10: Downloading $SIG_URL"
+            if curl -sL -f -o "$DOWNLOADED_SIG" "$SIG_URL"; then
+              echo "[OK] Downloaded .sig file successfully"
+              DOWNLOAD_SUCCESS=true
+              break
+            else
+              echo "[WARN] Download failed, waiting 5 seconds before retry..."
+              sleep 5
+            fi
+          done
+
+          if [[ "$DOWNLOAD_SUCCESS" != "true" ]]; then
+            echo "[WARN] Failed to download .sig from Release after 10 attempts"
+            echo "[FALLBACK] Using local .sig file instead"
+            echo "[INFO] This is safe because the local .sig was just uploaded in the previous step"
+            cp "$LOCAL_SIG" "$DOWNLOADED_SIG"
+          else
+            # 验证下载的签名与本地签名一致（额外的安全检查）
+            LOCAL_SIG_CONTENT=$(cat "$LOCAL_SIG")
+            DOWNLOADED_SIG_CONTENT=$(cat "$DOWNLOADED_SIG")
+            if [[ "$LOCAL_SIG_CONTENT" != "$DOWNLOADED_SIG_CONTENT" ]]; then
+              echo "::warning::Downloaded .sig differs from local .sig!"
+              echo "[INFO] Local sig (first 100 chars): ${LOCAL_SIG_CONTENT:0:100}"
+              echo "[INFO] Downloaded sig (first 100 chars): ${DOWNLOADED_SIG_CONTENT:0:100}"
+              echo "[INFO] Using downloaded .sig (it's what users will get)"
+            fi
+          fi
+
+          # 读取签名内容（从下载的文件）
+          SIGNATURE=$(cat "$DOWNLOADED_SIG")
+
+          # 验证签名内容非空
+          if [[ -z "$SIGNATURE" ]]; then
+            echo "::error::Signature is empty!"
+            exit 1
+          fi
+
+          # 显示签名信息（用于调试）
+          echo "[INFO] Signature preview (first 100 chars): ${SIGNATURE:0:100}..."
+
           # 获取当前时间 (ISO 8601 格式)
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          
-          # URL 编码文件名（处理特殊字符）
-          # 使用 Python 进行标准 URL 编码（所有 runner 都有 Python）
-          ENCODED_FILENAME=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$FILENAME")
-          
+
           # 构建下载 URL
           DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ENCODED_FILENAME"
-          
+
           # 生成 latest-{target}.json
           MANIFEST_FILE="latest-$TARGET.json"
           printf '{\n  "version": "%s",\n  "notes": "Release %s",\n  "pub_date": "%s",\n  "platforms": {\n    "%s": {\n      "signature": "%s",\n      "url": "%s"\n    }\n  }\n}\n' \
             "$VERSION" "$TAG" "$PUB_DATE" "$PLATFORM" "$SIGNATURE" "$DOWNLOAD_URL" > "$MANIFEST_FILE"
-          
+
           echo "[INFO] Generated manifest:"
           cat "$MANIFEST_FILE"
-          
+
           # 上传 manifest
           echo "[INFO] Uploading $MANIFEST_FILE"
           gh release upload "$TAG" "$MANIFEST_FILE" --clobber
-          
+
           echo "[INFO] Manifest uploaded successfully"
+
+          # 清理临时文件
+          rm -f "$DOWNLOADED_SIG"
 
       # 诊断：验证签名文件生成
       - name: Verify build artifacts

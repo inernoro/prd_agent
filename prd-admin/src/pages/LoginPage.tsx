@@ -81,12 +81,23 @@ export default function LoginPage() {
           backdropMotionController.markStopped(id);
         }}
         persistKey="prd-recgrid-rot"
-        // 必须 readwrite：登出回登录页要读取主页面保存的角度，实现“续着以前的状态”
+        // 必须 readwrite：登出回登录页要读取主页面保存的角度，实现"续着以前的状态"
         persistMode="readwrite"
-        // 登录页 idle 也希望更“深”：除非明确刹车（shouldRun===false），否则用实色
+        // 登录页 idle 也希望更"深"：除非明确刹车（shouldRun===false），否则用实色
         strokeRunning={shouldRun === false ? 'rgba(231, 206, 151, 0.30)' : 'rgba(231, 206, 151, 1)'}
         strokeBraking={'rgba(231, 206, 151, 0.30)'}
         brakeStrokeFadeMs={2000}
+      />
+
+      {/* 隔离层：阻断 backdrop-filter 对 Canvas 动画的实时采样，避免模糊重算导致卡顿 */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: 'rgba(5, 5, 7, 0.15)',
+          // 关键：这层有自己的 will-change，形成独立合成层，让上层 backdrop-filter 采样到的是这个静态层
+          willChange: 'transform',
+          transform: 'translateZ(0)',
+        }}
       />
 
       {/* overlay: lift behind the card */}

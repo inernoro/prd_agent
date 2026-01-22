@@ -14,6 +14,26 @@ pub struct UpdateInfo {
     pub body: Option<String>,
 }
 
+/// 单个 manifest fetch 结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestFetchResult {
+    pub url: String,
+    pub status: u16,
+    pub status_text: String,
+    pub ok: bool,
+    pub body: Option<String>,
+    pub error: Option<String>,
+}
+
+/// fetch_update_manifests 的返回结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchManifestsResult {
+    pub target: String,
+    pub results: Vec<ManifestFetchResult>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdaterPlatformInfo {
@@ -94,4 +114,71 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
         }),
         Err(e) => Err(format!("检查更新失败: {}", e)),
     }
+}
+
+/// 在后端 fetch 更新 manifest（绕过浏览器 CORS 限制）
+/// 用于诊断更新源是否可访问、返回内容是否正确
+#[tauri::command]
+pub async fn fetch_update_manifests() -> Result<FetchManifestsResult, String> {
+    let target = get_updater_target_triple().to_string();
+
+    let candidates = vec![
+        format!(
+            "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{}.json",
+            target
+        ),
+        "https://github.com/inernoro/prd_agent/releases/latest/download/latest.json".to_string(),
+    ];
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let mut results = Vec::new();
+
+    for url in candidates {
+        let result = match client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let status_text = resp
+                    .status()
+                    .canonical_reason()
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let ok = resp.status().is_success();
+
+                let body = match resp.text().await {
+                    Ok(text) => Some(text),
+                    Err(e) => Some(format!("[读取响应体失败: {}]", e)),
+                };
+
+                ManifestFetchResult {
+                    url: url.clone(),
+                    status,
+                    status_text,
+                    ok,
+                    body,
+                    error: None,
+                }
+            }
+            Err(e) => ManifestFetchResult {
+                url: url.clone(),
+                status: 0,
+                status_text: "Request Failed".to_string(),
+                ok: false,
+                body: None,
+                error: Some(e.to_string()),
+            },
+        };
+
+        results.push(result);
+    }
+
+    Ok(FetchManifestsResult { target, results })
 }

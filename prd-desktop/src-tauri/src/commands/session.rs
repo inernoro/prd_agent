@@ -401,6 +401,7 @@ pub async fn switch_role(
 }
 
 #[command]
+#[allow(clippy::too_many_arguments)]
 pub async fn send_message(
     app: AppHandle,
     cancel: State<'_, StreamCancelState>,

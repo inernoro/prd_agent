@@ -370,6 +370,15 @@ export default function AppShell() {
         brakeDecelerationRate={0.965}
         brakeMinSpeedDegPerSec={0.015}
       />
+      {/* 隔离层：阻断 backdrop-filter 对 Canvas 动画的实时采样，避免模糊重算导致卡顿 */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: 'rgba(5, 5, 7, 0.15)',
+          willChange: 'transform',
+          transform: 'translateZ(0)',
+        }}
+      />
       {/* 运行态高亮：解析/任务运行时让背景整体更"亮"一点 */}
       <div
         className="pointer-events-none absolute inset-0 transition-opacity duration-[2000ms] ease-out"
