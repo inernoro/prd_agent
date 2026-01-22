@@ -69,18 +69,16 @@ export function GlassCard({
       subtle: 0.7,
     };
 
-    // 计算光晕颜色 - 柔和的光晕效果，避免出现明显光条
+    // 计算光晕颜色 - 增强可见度的光晕效果
     let glowColor = 'rgba(255, 255, 255, 0.05)';
     if (glow) {
-      if (variant === 'gold' || accentHue === undefined) {
-        if (variant === 'gold') {
-          glowColor = 'rgba(214, 178, 106, 0.12)';
-        } else {
-          glowColor = 'rgba(255, 255, 255, 0.08)';
-        }
+      if (variant === 'gold') {
+        glowColor = 'rgba(214, 178, 106, 0.25)'; // 金色光晕，更明显
+      } else if (accentHue !== undefined) {
+        // 使用自定义色相，透明度提高到 0.2
+        glowColor = `hsla(${accentHue}, 70%, 65%, 0.2)`;
       } else {
-        // 使用自定义色相
-        glowColor = `hsla(${accentHue}, 60%, 70%, 0.1)`;
+        glowColor = 'rgba(255, 255, 255, 0.15)'; // 白色光晕
       }
     }
 
@@ -91,9 +89,9 @@ export function GlassCard({
     let background = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`;
 
     if (glow) {
-      // 更柔和的光晕：椭圆更小、渐变更长、位置更居中
+      // 更明显的光晕：椭圆更大、渐变更柔和
       background = `
-        radial-gradient(ellipse 80% 35% at 50% 0%, ${glowColor} 0%, transparent 70%),
+        radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 60%),
         ${background}
       `;
     }

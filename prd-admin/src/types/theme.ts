@@ -122,6 +122,8 @@ export const COLOR_DEPTH_MAP: Record<
     bgBase: string;
     bgElevated: string;
     bgCard: string;
+    /** 玻璃效果亮度倍数（影响玻璃的白色透明度） */
+    glassBrightness: number;
     label: string;
   }
 > = {
@@ -129,18 +131,21 @@ export const COLOR_DEPTH_MAP: Record<
     bgBase: '#050507',
     bgElevated: '#0a0a0c',
     bgCard: 'rgba(255, 255, 255, 0.02)',
+    glassBrightness: 0.7, // 深色：玻璃更暗
     label: '深色',
   },
   default: {
     bgBase: '#0b0b0d',
     bgElevated: '#121216',
     bgCard: 'rgba(255, 255, 255, 0.03)',
+    glassBrightness: 1.0, // 默认
     label: '默认',
   },
   lighter: {
     bgBase: '#121216',
     bgElevated: '#1a1a1e',
     bgCard: 'rgba(255, 255, 255, 0.04)',
+    glassBrightness: 1.4, // 浅色：玻璃更亮
     label: '浅色',
   },
 };

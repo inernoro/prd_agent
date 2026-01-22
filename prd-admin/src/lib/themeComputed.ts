@@ -48,12 +48,20 @@ export function computeThemeVars(config: ThemeConfig): ComputedThemeVars {
   // 边框透明度基于 opacity 配置调整
   const borderMultiplier = opacity.border / 0.14; // 相对于默认值的倍数
 
-  // 获取内嵌块样式配置
-  const nestedBgAlpha = NESTED_BLOCK_STYLES.bgAlpha[config.opacity];
-  const nestedBorderAlpha = NESTED_BLOCK_STYLES.borderAlpha[config.opacity];
-  const listItemBgAlpha = NESTED_BLOCK_STYLES.listItemBgAlpha[config.opacity];
-  const listItemBorderAlpha = NESTED_BLOCK_STYLES.listItemBorderAlpha[config.opacity];
-  const hoverBgAlpha = NESTED_BLOCK_STYLES.hoverBgAlpha[config.opacity];
+  // 玻璃亮度倍数（受色深影响）
+  const glassBrightness = depth.glassBrightness;
+
+  // 计算最终的玻璃透明度值（透明度 × 亮度倍数）
+  const glassStartAlpha = Math.min(1, opacity.glassStart * glassBrightness);
+  const glassEndAlpha = Math.min(1, opacity.glassEnd * glassBrightness);
+  const glassBorderAlpha = Math.min(1, opacity.border * glassBrightness);
+
+  // 获取内嵌块样式配置（同样受亮度影响）
+  const nestedBgAlpha = Math.min(1, NESTED_BLOCK_STYLES.bgAlpha[config.opacity] * glassBrightness);
+  const nestedBorderAlpha = Math.min(1, NESTED_BLOCK_STYLES.borderAlpha[config.opacity] * glassBrightness);
+  const listItemBgAlpha = Math.min(1, NESTED_BLOCK_STYLES.listItemBgAlpha[config.opacity] * glassBrightness);
+  const listItemBorderAlpha = Math.min(1, NESTED_BLOCK_STYLES.listItemBorderAlpha[config.opacity] * glassBrightness);
+  const hoverBgAlpha = Math.min(1, NESTED_BLOCK_STYLES.hoverBgAlpha[config.opacity] * glassBrightness);
 
   return {
     // 背景色
@@ -61,16 +69,16 @@ export function computeThemeVars(config: ThemeConfig): ComputedThemeVars {
     '--bg-elevated': depth.bgElevated,
     '--bg-card': depth.bgCard,
 
-    // 玻璃效果参数
-    '--glass-bg-start': `rgba(255, 255, 255, ${opacity.glassStart})`,
-    '--glass-bg-end': `rgba(255, 255, 255, ${opacity.glassEnd})`,
-    '--glass-border': `rgba(255, 255, 255, ${opacity.border})`,
+    // 玻璃效果参数（受色深和透明度双重影响）
+    '--glass-bg-start': `rgba(255, 255, 255, ${glassStartAlpha.toFixed(4)})`,
+    '--glass-bg-end': `rgba(255, 255, 255, ${glassEndAlpha.toFixed(4)})`,
+    '--glass-border': `rgba(255, 255, 255, ${glassBorderAlpha.toFixed(4)})`,
 
-    // 边框
-    '--border-subtle': `rgba(255, 255, 255, ${(0.08 * borderMultiplier).toFixed(3)})`,
-    '--border-default': `rgba(255, 255, 255, ${(0.12 * borderMultiplier).toFixed(3)})`,
-    '--border-hover': `rgba(255, 255, 255, ${(0.18 * borderMultiplier).toFixed(3)})`,
-    '--border-faint': `rgba(255, 255, 255, ${(0.05 * borderMultiplier).toFixed(3)})`,
+    // 边框（受色深和透明度双重影响）
+    '--border-subtle': `rgba(255, 255, 255, ${(0.08 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-default': `rgba(255, 255, 255, ${(0.12 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-hover': `rgba(255, 255, 255, ${(0.18 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-faint': `rgba(255, 255, 255, ${(0.05 * borderMultiplier * glassBrightness).toFixed(4)})`,
 
     // 内嵌块样式（用于页面内的子容器）
     '--nested-block-bg': `rgba(255, 255, 255, ${nestedBgAlpha})`,

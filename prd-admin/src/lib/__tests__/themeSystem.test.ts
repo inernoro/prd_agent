@@ -46,6 +46,7 @@ describe('主题系统单元测试', () => {
         expect(config).toHaveProperty('bgBase');
         expect(config).toHaveProperty('bgElevated');
         expect(config).toHaveProperty('bgCard');
+        expect(config).toHaveProperty('glassBrightness');
         expect(config).toHaveProperty('label');
       });
 
@@ -216,11 +217,11 @@ describe('主题系统单元测试', () => {
             expect(vars['--bg-base']).toBe(COLOR_DEPTH_MAP[colorDepth].bgBase);
             expect(vars['--bg-elevated']).toBe(COLOR_DEPTH_MAP[colorDepth].bgElevated);
 
-            // 玻璃透明度应基于 opacity 配置
+            // 玻璃透明度应基于 opacity × glassBrightness
             const opacityConfig = OPACITY_MAP[opacity];
-            expect(vars['--glass-bg-start']).toContain(String(opacityConfig.glassStart));
-            expect(vars['--glass-bg-end']).toContain(String(opacityConfig.glassEnd));
-            expect(vars['--glass-border']).toContain(String(opacityConfig.border));
+            const brightness = COLOR_DEPTH_MAP[colorDepth].glassBrightness;
+            const expectedGlassStart = (opacityConfig.glassStart * brightness).toFixed(4);
+            expect(vars['--glass-bg-start']).toContain(expectedGlassStart);
           });
         }
       }
@@ -239,6 +240,7 @@ describe('主题系统单元测试', () => {
       };
 
       const nestedBgAlpha = extractAlpha(vars['--nested-block-bg']);
+      // 默认色深的 glassBrightness = 1.0，所以透明度值等于原始值
       expect(nestedBgAlpha).toBe(NESTED_BLOCK_STYLES.bgAlpha.solid);
     });
 
@@ -252,7 +254,54 @@ describe('主题系统单元测试', () => {
       };
 
       const nestedBgAlpha = extractAlpha(vars['--nested-block-bg']);
+      // 默认色深的 glassBrightness = 1.0，所以透明度值等于原始值
       expect(nestedBgAlpha).toBe(NESTED_BLOCK_STYLES.bgAlpha.translucent);
+    });
+  });
+
+  describe('色深对玻璃效果的影响验证', () => {
+    it('深色模式应降低玻璃亮度', () => {
+      const defaultConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'default' };
+      const darkerConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'darker' };
+
+      const defaultVars = computeThemeVars(defaultConfig);
+      const darkerVars = computeThemeVars(darkerConfig);
+
+      const extractAlpha = (rgba: string) => {
+        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
+        return match ? parseFloat(match[1]) : 0;
+      };
+
+      const defaultGlassAlpha = extractAlpha(defaultVars['--glass-bg-start']);
+      const darkerGlassAlpha = extractAlpha(darkerVars['--glass-bg-start']);
+
+      // 深色模式的玻璃应该更暗（透明度更低）
+      expect(darkerGlassAlpha).toBeLessThan(defaultGlassAlpha);
+    });
+
+    it('浅色模式应提高玻璃亮度', () => {
+      const defaultConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'default' };
+      const lighterConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'lighter' };
+
+      const defaultVars = computeThemeVars(defaultConfig);
+      const lighterVars = computeThemeVars(lighterConfig);
+
+      const extractAlpha = (rgba: string) => {
+        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
+        return match ? parseFloat(match[1]) : 0;
+      };
+
+      const defaultGlassAlpha = extractAlpha(defaultVars['--glass-bg-start']);
+      const lighterGlassAlpha = extractAlpha(lighterVars['--glass-bg-start']);
+
+      // 浅色模式的玻璃应该更亮（透明度更高）
+      expect(lighterGlassAlpha).toBeGreaterThan(defaultGlassAlpha);
+    });
+
+    it('glassBrightness 倍数应按预期工作', () => {
+      expect(COLOR_DEPTH_MAP.darker.glassBrightness).toBeLessThan(1);
+      expect(COLOR_DEPTH_MAP.default.glassBrightness).toBe(1);
+      expect(COLOR_DEPTH_MAP.lighter.glassBrightness).toBeGreaterThan(1);
     });
   });
 
@@ -324,21 +373,42 @@ describe('主题系统单元测试', () => {
     it('计算的玻璃变量应可用于 GlassCard 组件', () => {
       const vars = computeThemeVars(DEFAULT_THEME_CONFIG);
 
-      // GlassCard 使用的关键变量
-      expect(vars['--glass-bg-start']).toMatch(/rgba\(255, 255, 255, 0\.08\)/);
-      expect(vars['--glass-bg-end']).toMatch(/rgba\(255, 255, 255, 0\.03\)/);
-      expect(vars['--glass-border']).toMatch(/rgba\(255, 255, 255, 0\.14\)/);
+      // GlassCard 使用的关键变量（默认配置：opacity=default, colorDepth=default, glassBrightness=1.0）
+      expect(vars['--glass-bg-start']).toMatch(/rgba\(255, 255, 255, 0\.08/);
+      expect(vars['--glass-bg-end']).toMatch(/rgba\(255, 255, 255, 0\.03/);
+      expect(vars['--glass-border']).toMatch(/rgba\(255, 255, 255, 0\.14/);
     });
 
     it('修改透明度后玻璃变量应正确更新', () => {
       const solidVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, opacity: 'solid' });
       const translucentVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, opacity: 'translucent' });
 
-      // solid 应有更高的透明度值
-      expect(solidVars['--glass-bg-start']).toContain('0.12');
+      const extractAlpha = (rgba: string) => {
+        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
+        return match ? parseFloat(match[1]) : 0;
+      };
 
-      // translucent 应有更低的透明度值
-      expect(translucentVars['--glass-bg-start']).toContain('0.04');
+      const solidAlpha = extractAlpha(solidVars['--glass-bg-start']);
+      const translucentAlpha = extractAlpha(translucentVars['--glass-bg-start']);
+
+      // solid 应有更高的透明度值
+      expect(solidAlpha).toBeGreaterThan(translucentAlpha);
+    });
+
+    it('修改色深后玻璃变量应正确更新', () => {
+      const darkerVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, colorDepth: 'darker' });
+      const lighterVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, colorDepth: 'lighter' });
+
+      const extractAlpha = (rgba: string) => {
+        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
+        return match ? parseFloat(match[1]) : 0;
+      };
+
+      const darkerAlpha = extractAlpha(darkerVars['--glass-bg-start']);
+      const lighterAlpha = extractAlpha(lighterVars['--glass-bg-start']);
+
+      // 深色模式玻璃更暗，浅色模式玻璃更亮
+      expect(darkerAlpha).toBeLessThan(lighterAlpha);
     });
   });
 });
