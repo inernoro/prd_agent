@@ -3616,7 +3616,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setViewport(1, { x: newCamX, y: newCamY }, { syncUi: true });
   }, [setViewport, stageSize.h, stageSize.w]);
 
-  /** 自动排列：网格布局 */
+  /** 自动排列：紧凑网格布局（最大化利用空间） */
   const arrangeGrid = useCallback(() => {
     const items = canvasRef.current.filter(
       (it) =>
@@ -3627,50 +3627,78 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     );
     if (items.length === 0) return;
 
-    // 按创建时间排序
+    // 按创建时间排序（旧→新，左上→右下）
     const sorted = [...items].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 
-    // 计算平均尺寸作为网格单元基准
-    let totalW = 0, totalH = 0;
-    for (const it of sorted) {
-      totalW += it.w ?? 320;
-      totalH += it.h ?? 220;
-    }
-    const avgW = totalW / sorted.length;
-    const avgH = totalH / sorted.length;
-
-    // 计算列数：根据视口宽度和元素平均宽度
-    const gap = 40; // 元素间距
+    const gap = 5; // 紧凑间距
     const viewW = stageSize.w || 1200;
-    const cols = Math.max(1, Math.floor((viewW * 0.8) / (avgW + gap)));
-
-    // 计算起始位置（以当前视口中心为基准）
     const currentCam = cameraRef.current;
     const currentZoom = zoomRef.current;
+
+    // 计算可用宽度（视口宽度的80%）
+    const availableW = (viewW * 0.85) / currentZoom;
+
+    // 桌面图标式紧凑布局算法：
+    // 1. 按行堆叠，每行高度取该行最高元素
+    // 2. 从左到右放置，超出宽度则换行
+    // 3. 一次性计算所有位置
+    type RowItem = { item: typeof sorted[0]; x: number };
+    const rows: { items: RowItem[]; maxH: number }[] = [];
+    let currentRow: RowItem[] = [];
+    let currentRowX = 0;
+    let currentRowMaxH = 0;
+
+    for (const it of sorted) {
+      const w = it.w ?? 320;
+      const h = it.h ?? 220;
+
+      // 检查是否需要换行
+      if (currentRow.length > 0 && currentRowX + w > availableW) {
+        // 保存当前行
+        rows.push({ items: [...currentRow], maxH: currentRowMaxH });
+        currentRow = [];
+        currentRowX = 0;
+        currentRowMaxH = 0;
+      }
+
+      // 添加到当前行
+      currentRow.push({ item: it, x: currentRowX });
+      currentRowX += w + gap;
+      currentRowMaxH = Math.max(currentRowMaxH, h);
+    }
+
+    // 保存最后一行
+    if (currentRow.length > 0) {
+      rows.push({ items: currentRow, maxH: currentRowMaxH });
+    }
+
+    // 计算总高度和总宽度
+    let totalH = 0;
+    let maxRowW = 0;
+    for (const row of rows) {
+      totalH += row.maxH + gap;
+      const rowW = row.items.length > 0
+        ? row.items[row.items.length - 1].x + (row.items[row.items.length - 1].item.w ?? 320)
+        : 0;
+      maxRowW = Math.max(maxRowW, rowW);
+    }
+    totalH -= gap; // 去掉最后一个gap
+
+    // 计算起点（以视口中心为基准）
     const viewCenterX = (stageSize.w / 2 - currentCam.x) / currentZoom;
     const viewCenterY = (stageSize.h / 2 - currentCam.y) / currentZoom;
+    const startX = viewCenterX - maxRowW / 2;
+    const startY = viewCenterY - totalH / 2;
 
-    // 计算网格总尺寸
-    const rows = Math.ceil(sorted.length / cols);
-    const gridW = cols * (avgW + gap) - gap;
-    const gridH = rows * (avgH + gap) - gap;
-
-    // 起点：网格左上角
-    const startX = viewCenterX - gridW / 2;
-    const startY = viewCenterY - gridH / 2;
-
-    // 分配位置
+    // 分配所有位置（一次性计算）
     const updates: Record<string, { x: number; y: number }> = {};
-    let col = 0, row = 0;
-    for (const it of sorted) {
-      const x = startX + col * (avgW + gap);
-      const y = startY + row * (avgH + gap);
-      updates[it.key] = { x, y };
-      col++;
-      if (col >= cols) {
-        col = 0;
-        row++;
+    let currentY = startY;
+
+    for (const row of rows) {
+      for (const { item, x } of row.items) {
+        updates[item.key] = { x: startX + x, y: currentY };
       }
+      currentY += row.maxH + gap;
     }
 
     // 更新画布
@@ -5697,10 +5725,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 右侧：浮动对话面板（液态大玻璃效果） */}
           <div
-            className="absolute right-3 top-3 z-30 flex flex-col"
+            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col"
             style={{
-              width: 260,
-              maxHeight: 'calc(100% - 24px)',
+              width: 280,
+              maxHeight: 'calc(85% - 24px)',
             }}
           >
             <div
@@ -5747,7 +5775,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
-            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1" style={{ maxHeight: 280 }}>
+            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5" style={{ maxHeight: 360 }}>
               {messages.map((m) => {
                 const isUser = m.role === 'User';
                 // 过滤历史遗留的“本次使用模型/直连模式...”提示（用户要求移除）
@@ -5764,7 +5792,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="group relative max-w-[95%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
+                      className="group relative max-w-[95%] rounded-[10px] px-2.5 pt-1.5 pb-4 text-[12px] leading-[16px]"
                       style={{
                         background: isUser
                           ? 'rgba(214, 178, 106, 0.12)'
@@ -5775,10 +5803,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         wordBreak: 'break-word',
                       }}
                     >
-                      {/* 悬浮时显示时间 */}
+                      {/* 悬浮时显示时间（底部留出空间避免重叠） */}
                       <span
-                        className="pointer-events-none absolute bottom-1 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] tabular-nums select-none"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+                        className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
                       >
                         {formatMsgTimestamp(m.ts)}
                       </span>

@@ -134,9 +134,9 @@ export default function SettingsPage() {
       {/* 左右分栏布局：左侧 1/4 导航顺序，右侧 3/4 皮肤编辑 */}
       <div className="flex-1 min-h-0 grid grid-cols-4 gap-5">
         {/* 左侧：导航顺序设置 */}
-        <div className="col-span-1 min-h-0 overflow-y-auto">
-          <GlassCard glow accentHue={210} className="h-full">
-            <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="col-span-1 min-h-0 flex flex-col">
+          <GlassCard glow accentHue={210} className="h-full flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
               <div>
                 <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
                   导航顺序
@@ -153,64 +153,108 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="space-y-1.5">
-              {sortedItems.map((item, index) => (
-                <div
-                  key={item.key}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={(e) => handleDrop(e, index)}
-                  onDragEnd={handleDragEnd}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing transition-all duration-150"
-                  style={{
-                    background:
-                      dragOverIndex === index
-                        ? 'rgba(59,130,246,0.15)'
-                        : draggingIndex === index
-                          ? 'rgba(255,255,255,0.08)'
-                          : 'rgba(255,255,255,0.03)',
-                    border:
-                      dragOverIndex === index
-                        ? '1px solid rgba(59,130,246,0.4)'
-                        : '1px solid rgba(255,255,255,0.06)',
-                    opacity: draggingIndex === index ? 0.5 : 1,
-                    transform: dragOverIndex === index ? 'scale(1.02)' : 'scale(1)',
-                  }}
-                >
-                  <div
-                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    <GripVertical size={14} />
-                  </div>
-                  <div
-                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
-                    style={{
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    {getIcon(item.icon, 16)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                      {item.label}
-                    </div>
-                  </div>
-                  <div
-                    className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
-                    style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    {index + 1}
-                  </div>
+            {/* 列表容器：隐藏滚动条 + 底部阴影渐隐 */}
+            <div className="relative flex-1 min-h-0">
+              <div
+                className="h-full overflow-y-auto pr-1"
+                style={{
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none',
+                }}
+              >
+                <style>{`
+                  .nav-order-list::-webkit-scrollbar { display: none; }
+                `}</style>
+                <div className="nav-order-list space-y-1.5 pb-6">
+                  {sortedItems.map((item, index) => {
+                    // Apple 风格挤压动画：当拖拽项经过时，其他项向上或向下移动
+                    const isDragging = draggingIndex === index;
+                    const isDropTarget = dragOverIndex === index;
+                    let translateY = 0;
+                    if (draggingIndex !== null && dragOverIndex !== null && !isDragging) {
+                      // 如果拖拽项从上方来，目标及其下方项下移
+                      // 如果拖拽项从下方来，目标及其上方项上移
+                      if (draggingIndex < dragOverIndex) {
+                        // 向下拖：源位置到目标位置之间的项上移
+                        if (index > draggingIndex && index <= dragOverIndex) {
+                          translateY = -48; // 约一个item高度
+                        }
+                      } else if (draggingIndex > dragOverIndex) {
+                        // 向上拖：目标位置到源位置之间的项下移
+                        if (index >= dragOverIndex && index < draggingIndex) {
+                          translateY = 48;
+                        }
+                      }
+                    }
+
+                    return (
+                      <div
+                        key={item.key}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleDrop(e, index)}
+                        onDragEnd={handleDragEnd}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing"
+                        style={{
+                          background: isDragging
+                            ? 'rgba(214,178,106,0.18)'
+                            : isDropTarget
+                              ? 'rgba(214,178,106,0.08)'
+                              : 'rgba(255,255,255,0.03)',
+                          border: isDragging
+                            ? '1px solid rgba(214,178,106,0.4)'
+                            : '1px solid rgba(255,255,255,0.06)',
+                          opacity: isDragging ? 0.85 : 1,
+                          transform: isDragging ? 'scale(1.03)' : `translateY(${translateY}px)`,
+                          transition: isDragging ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0, 0, 1), background 0.15s, border 0.15s',
+                          zIndex: isDragging ? 10 : 1,
+                          boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,0.3)' : 'none',
+                        }}
+                      >
+                        <div
+                          className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          <GripVertical size={14} />
+                        </div>
+                        <div
+                          className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
+                          style={{
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          {getIcon(item.icon, 16)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            {item.label}
+                          </div>
+                        </div>
+                        <div
+                          className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
+                          style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            color: 'var(--text-muted)',
+                          }}
+                        >
+                          {index + 1}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+              {/* 底部阴影渐隐遮罩 */}
+              <div
+                className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none"
+                style={{
+                  background: 'linear-gradient(to top, var(--card-bg, rgba(30,30,35,0.95)) 0%, transparent 100%)',
+                }}
+              />
             </div>
 
             {sortedItems.length === 0 && (
