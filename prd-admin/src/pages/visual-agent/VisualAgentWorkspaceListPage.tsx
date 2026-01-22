@@ -1,4 +1,4 @@
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -825,9 +825,11 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'rgba(28, 24, 20, 0.95)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.5)',
+                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                         }}
                       >
                         {(['1k', '2k', '4k'] as const).map((tier) => {
@@ -918,9 +920,11 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'rgba(28, 24, 20, 0.95)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.5)',
+                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                         }}
                       >
                         {ASPECT_OPTIONS.map((opt) => {
@@ -1657,11 +1661,11 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 错误提示 */}
       {error ? (
         <div className="px-5 mt-4">
-          <Card>
+          <GlassCard glow>
             <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
               {error}
             </div>
-          </Card>
+          </GlassCard>
         </div>
       ) : null}
 

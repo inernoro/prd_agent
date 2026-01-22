@@ -43,6 +43,16 @@ export function clearThemeFromDOM(): void {
     '--border-default',
     '--border-hover',
     '--border-faint',
+    // 内嵌块样式变量
+    '--nested-block-bg',
+    '--nested-block-border',
+    '--list-item-bg',
+    '--list-item-border',
+    '--list-item-hover-bg',
+    // 表格样式变量
+    '--table-header-bg',
+    '--table-row-border',
+    '--table-row-hover-bg',
   ];
 
   varsToRemove.forEach((key) => {

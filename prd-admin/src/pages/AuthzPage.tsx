@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Plus, RefreshCw, ChevronDown, User, X, UserCog, ShieldCheck } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
@@ -309,7 +309,7 @@ export default function AuthzPage() {
       <TabBar title="权限管理" icon={<Shield size={16} />} actions={tabBarActions} />
 
       {/* 权限矩阵 - 占满剩余高度 */}
-      <Card className="flex-1 min-h-0 overflow-hidden">
+      <GlassCard glow className="flex-1 min-h-0 overflow-hidden">
         <PermissionMatrix
           roles={roles}
           highlightRoleKey={highlightRoleKey}
@@ -320,7 +320,7 @@ export default function AuthzPage() {
           saving={saving}
           readOnly={!!activeUser}
         />
-      </Card>
+      </GlassCard>
 
       {/* 菜单权限预览弹窗 */}
       <MenuPermissionDialog

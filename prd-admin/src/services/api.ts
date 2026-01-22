@@ -36,6 +36,7 @@ export const api = {
   users: {
     list: () => '/api/users',
     byId: (userId: string) => `/api/users/${userId}`,
+    profile: (userId: string) => `/api/users/${userId}/profile`,
     role: (userId: string) => `/api/users/${userId}/role`,
     status: (userId: string) => `/api/users/${userId}/status`,
     password: (userId: string) => `/api/users/${userId}/password`,

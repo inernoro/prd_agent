@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
-import { useNavOrderStore, mergeNavOrder } from '@/stores/navOrderStore';
+import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
 import { GripVertical, Settings, RefreshCw, RotateCcw } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -12,17 +12,6 @@ interface NavItem {
   key: string;
   label: string;
   icon: string;
-  perm?: string;
-}
-
-// 从后端菜单目录构建导航项
-function buildNavItems(menuCatalog: Array<{ appKey: string; label: string; icon: string }>): NavItem[] {
-  return menuCatalog.map((m) => ({
-    key: m.appKey,
-    label: m.label,
-    icon: m.icon,
-    perm: m.appKey === 'dashboard' ? 'access' : `${m.appKey}.read`,
-  }));
 }
 
 // 动态获取 Lucide 图标
@@ -37,15 +26,32 @@ function getIcon(name: string, size = 16) {
 
 export default function SettingsPage() {
   const { navOrder, loaded, saving, loadFromServer, setNavOrder, reset } = useNavOrderStore();
-  const permissions = useAuthStore((s) => s.permissions);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
 
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  // 构建导航项列表
-  const allItems = buildNavItems(menuCatalog);
-  const sortedItems = mergeNavOrder(allItems, navOrder, permissions);
+  // 从后端菜单目录构建导航项
+  const sortedItems: NavItem[] = useMemo(() => {
+    if (!Array.isArray(menuCatalog) || menuCatalog.length === 0) return [];
+
+    const items = menuCatalog.map((m) => ({
+      key: m.appKey,
+      label: m.label,
+      icon: m.icon,
+    }));
+
+    if (navOrder.length > 0) {
+      const orderMap = new Map(navOrder.map((k, i) => [k, i]));
+      items.sort((a, b) => {
+        const aOrder = orderMap.get(a.key) ?? 9999;
+        const bOrder = orderMap.get(b.key) ?? 9999;
+        return aOrder - bOrder;
+      });
+    }
+
+    return items;
+  }, [menuCatalog, navOrder]);
 
   // 首次加载
   useEffect(() => {
@@ -54,26 +60,21 @@ export default function SettingsPage() {
     }
   }, [loaded, loadFromServer]);
 
-  // 拖拽开始
+  // 简单拖拽处理
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     setDraggingIndex(index);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(index));
   }, []);
 
-  // 拖拽经过
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    setDragOverIndex(index);
-  }, []);
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
+  }, [dragOverIndex]);
 
-  // 拖拽离开
-  const handleDragLeave = useCallback(() => {
-    setDragOverIndex(null);
-  }, []);
-
-  // 放下
   const handleDrop = useCallback(
     (e: React.DragEvent, targetIndex: number) => {
       e.preventDefault();
@@ -91,13 +92,11 @@ export default function SettingsPage() {
     [draggingIndex, sortedItems, setNavOrder]
   );
 
-  // 拖拽结束
   const handleDragEnd = useCallback(() => {
     setDraggingIndex(null);
     setDragOverIndex(null);
   }, []);
 
-  // 重置为默认顺序
   const handleReset = useCallback(() => {
     reset();
     void loadFromServer();
@@ -126,9 +125,9 @@ export default function SettingsPage() {
       {/* 左右分栏布局：左侧 1/4 导航顺序，右侧 3/4 皮肤编辑 */}
       <div className="flex-1 min-h-0 grid grid-cols-4 gap-5">
         {/* 左侧：导航顺序设置 */}
-        <div className="col-span-1 min-h-0 overflow-y-auto">
-          <GlassCard glow accentHue={210} className="h-full">
-            <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="col-span-1 min-h-0 flex flex-col">
+          <GlassCard glow accentHue={210} className="h-full flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
               <div>
                 <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
                   导航顺序
@@ -145,64 +144,88 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="space-y-1.5">
-              {sortedItems.map((item, index) => (
-                <div
-                  key={item.key}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={(e) => handleDrop(e, index)}
-                  onDragEnd={handleDragEnd}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing transition-all duration-150"
-                  style={{
-                    background:
-                      dragOverIndex === index
-                        ? 'rgba(59,130,246,0.15)'
-                        : draggingIndex === index
-                          ? 'rgba(255,255,255,0.08)'
-                          : 'rgba(255,255,255,0.03)',
-                    border:
-                      dragOverIndex === index
-                        ? '1px solid rgba(59,130,246,0.4)'
-                        : '1px solid rgba(255,255,255,0.06)',
-                    opacity: draggingIndex === index ? 0.5 : 1,
-                    transform: dragOverIndex === index ? 'scale(1.02)' : 'scale(1)',
-                  }}
-                >
-                  <div
-                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    <GripVertical size={14} />
-                  </div>
-                  <div
-                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
-                    style={{
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    {getIcon(item.icon, 16)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                      {item.label}
-                    </div>
-                  </div>
-                  <div
-                    className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
-                    style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    {index + 1}
-                  </div>
+            {/* 列表容器：隐藏滚动条 + 底部阴影渐隐 */}
+            <div className="relative flex-1 min-h-0">
+              <div
+                className="h-full overflow-y-auto pr-1"
+                style={{
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none',
+                }}
+              >
+                <style>{`
+                  .nav-order-list::-webkit-scrollbar { display: none; }
+                `}</style>
+                <div className="nav-order-list space-y-1.5 pb-6">
+                  {sortedItems.map((item, index) => {
+                    const isDragging = draggingIndex === index;
+                    const isDropTarget = dragOverIndex === index && draggingIndex !== index;
+
+                    return (
+                      <div
+                        key={item.key}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDrop={(e) => handleDrop(e, index)}
+                        onDragEnd={handleDragEnd}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing"
+                        style={{
+                          background: isDragging
+                            ? 'rgba(214,178,106,0.15)'
+                            : isDropTarget
+                              ? 'rgba(214,178,106,0.08)'
+                              : 'rgba(255,255,255,0.03)',
+                          border: isDragging
+                            ? '2px solid rgba(214,178,106,0.5)'
+                            : isDropTarget
+                              ? '2px dashed rgba(214,178,106,0.5)'
+                              : '1px solid rgba(255,255,255,0.06)',
+                          opacity: isDragging ? 0.6 : 1,
+                        }}
+                      >
+                        <div
+                          className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          <GripVertical size={14} />
+                        </div>
+                        <div
+                          className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
+                          style={{
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          {getIcon(item.icon, 16)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            {item.label}
+                          </div>
+                        </div>
+                        <div
+                          className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
+                          style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            color: 'var(--text-muted)',
+                          }}
+                        >
+                          {index + 1}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+              {/* 底部阴影渐隐遮罩 */}
+              <div
+                className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none"
+                style={{
+                  background: 'linear-gradient(to top, var(--card-bg, rgba(30,30,35,0.95)) 0%, transparent 100%)',
+                }}
+              />
             </div>
 
             {sortedItems.length === 0 && (

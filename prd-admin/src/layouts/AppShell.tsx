@@ -496,12 +496,11 @@ export default function AppShell() {
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
                 style={{
-                  backgroundColor: 'var(--bg-elevated, #121216)',
-                  backgroundImage: 'var(--panel, linear-gradient(180deg, rgba(18, 18, 22, 0.92) 0%, rgba(18, 18, 22, 0.78) 100%))',
-                  border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))',
-                  boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
-                  backdropFilter: 'blur(16px)',
-                  WebkitBackdropFilter: 'blur(16px)',
+                  background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                  boxShadow: '0 18px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                 }}
                 sideOffset={8}
                 side="bottom"
@@ -667,9 +666,11 @@ export default function AppShell() {
                     type="button"
                     onClick={() => navigate(it.key)}
                     className={cn(
-                      'relative flex items-center gap-3 rounded-[12px] transition-[background-color,border-color,color] duration-200',
-                      'hover:bg-white/5',
-                      collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
+                      'group/nav relative flex items-center gap-3 rounded-[12px]',
+                      'transition-all duration-200 ease-out',
+                      collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2',
+                      // 使用 CSS 类处理 hover，避免 JS 残影问题
+                      !active && 'nav-item-hover'
                     )}
                     style={{
                       background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
@@ -678,15 +679,15 @@ export default function AppShell() {
                     }}
                     title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                   >
-                    <span 
-                      className="inline-flex items-center justify-center shrink-0 transition-colors duration-200"
+                    <span
+                      className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
                       style={{ color: active ? 'var(--accent-gold)' : undefined }}
                     >
                       {it.icon}
                     </span>
                     {!collapsed && (
                       <div className="min-w-0 flex-1 text-left">
-                        <div className="text-sm font-medium truncate">{it.label}</div>
+                        <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
                         {it.description && (
                           <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
                             {it.description}

@@ -220,7 +220,115 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// 更新用户头像（仅保存“头像文件名”，不保存域名/完整URL）
+    /// 获取用户简要资料（用于卡片悬浮展示）
+    /// </summary>
+    [HttpGet("{userId}/profile")]
+    public async Task<IActionResult> GetUserProfile(string userId, CancellationToken ct)
+    {
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        // 查询用户加入的群组（通过 GroupMembers 集合）
+        var memberGroups = await _db.GroupMembers
+            .Find(m => m.UserId == userId)
+            .ToListAsync(ct);
+
+        var groupIds = memberGroups.Select(m => m.GroupId).ToList();
+        var groups = new List<UserProfileGroupItem>();
+        if (groupIds.Count > 0)
+        {
+            // 获取群组基本信息
+            var groupDocs = await _db.Groups.Find(g => groupIds.Contains(g.GroupId)).ToListAsync(ct);
+
+            // 统计每个群组的成员数
+            var memberCounts = await _db.GroupMembers.Aggregate()
+                .Match(Builders<GroupMember>.Filter.In(m => m.GroupId, groupIds))
+                .Group(m => m.GroupId, g => new { GroupId = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+            var countMap = memberCounts.ToDictionary(x => x.GroupId, x => x.Count);
+
+            groups = groupDocs.Select(g => new UserProfileGroupItem
+            {
+                GroupId = g.GroupId,
+                Name = g.GroupName ?? g.GroupId,
+                MemberCount = countMap.GetValueOrDefault(g.GroupId, 0)
+            }).ToList();
+        }
+
+        // 查询用户使用的 Agent 统计（按 appKey 分组，最近30天）- 从 ImageGenRuns 获取
+        var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+        var agentUsageFilter = Builders<ImageGenRun>.Filter.And(
+            Builders<ImageGenRun>.Filter.Eq(r => r.OwnerAdminId, userId),
+            Builders<ImageGenRun>.Filter.Gte(r => r.CreatedAt, thirtyDaysAgo),
+            Builders<ImageGenRun>.Filter.Ne(r => r.AppKey, null)
+        );
+
+        var agentStats = await _db.ImageGenRuns.Aggregate()
+            .Match(agentUsageFilter)
+            .Group(r => r.AppKey, g => new
+            {
+                AppKey = g.Key,
+                Count = g.Count()
+            })
+            .SortByDescending(x => x.Count)
+            .Limit(5)
+            .ToListAsync(ct);
+
+        var agentUsage = agentStats
+            .Where(x => !string.IsNullOrEmpty(x.AppKey))
+            .Select(x => new UserProfileAgentUsageItem
+            {
+                AppKey = x.AppKey!,
+                UsageCount = x.Count
+            })
+            .ToList();
+
+        // 统计生图任务总数（最近30天）
+        var runCountFilter = Builders<ImageGenRun>.Filter.And(
+            Builders<ImageGenRun>.Filter.Eq(r => r.OwnerAdminId, userId),
+            Builders<ImageGenRun>.Filter.Gte(r => r.CreatedAt, thirtyDaysAgo)
+        );
+        var totalRunCount = (int)await _db.ImageGenRuns.CountDocumentsAsync(runCountFilter, cancellationToken: ct);
+
+        // 统计生成的图片总数（最近30天）
+        var imageCountFilter = Builders<ImageGenRunItem>.Filter.And(
+            Builders<ImageGenRunItem>.Filter.Eq(i => i.OwnerAdminId, userId),
+            Builders<ImageGenRunItem>.Filter.Gte(i => i.CreatedAt, thirtyDaysAgo)
+        );
+        var totalImageCount = (int)await _db.ImageGenRunItems.CountDocumentsAsync(imageCountFilter, cancellationToken: ct);
+
+        var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(user.Username);
+
+        var profile = new UserProfileResponse
+        {
+            UserId = user.UserId,
+            Username = user.Username,
+            DisplayName = user.DisplayName,
+            Role = user.Role.ToString(),
+            Status = user.Status.ToString(),
+            UserType = user.UserType.ToString(),
+            BotKind = user.UserType == UserType.Bot ? user.BotKind?.ToString() : null,
+            AvatarFileName = user.AvatarFileName,
+            AvatarUrl = BuildAvatarUrl(user),
+            CreatedAt = user.CreatedAt,
+            LastLoginAt = user.LastLoginAt,
+            LastActiveAt = user.LastActiveAt,
+            IsLocked = remaining > 0,
+            Groups = groups,
+            AgentUsage = agentUsage,
+            TotalImageCount = totalImageCount,
+            TotalRunCount = totalRunCount
+        };
+
+        return Ok(ApiResponse<UserProfileResponse>.Ok(profile));
+    }
+
+    /// <summary>
+    /// 更新用户头像（仅保存"头像文件名"，不保存域名/完整URL）
     /// </summary>
     [HttpPut("{userId}/avatar")]
     public async Task<IActionResult> UpdateUserAvatar(string userId, [FromBody] UpdateAvatarRequest request, CancellationToken ct)

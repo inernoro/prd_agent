@@ -55,8 +55,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          background: 'rgba(255, 255, 255, 0.1)',
-          border: '1px solid rgba(255, 255, 255, 0.2)',
+          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -64,10 +66,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
           transition: 'all 0.2s',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+          e.currentTarget.style.background = 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)';
         }}
       >
         <X size={20} style={{ color: 'white' }} />
@@ -88,9 +90,11 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
         <div
           className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-full text-sm font-medium"
           style={{
-            background: 'rgba(0, 0, 0, 0.6)',
+            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
             color: 'white',
-            backdropFilter: 'blur(10px)',
+            backdropFilter: 'blur(40px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           }}
         >
           {currentIndex + 1} / {images.length}
@@ -106,8 +110,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
+                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                backdropFilter: 'blur(40px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -115,10 +121,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
                 transition: 'all 0.2s',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.background = 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)';
               }}
             >
               <ChevronLeft size={24} style={{ color: 'white' }} />
@@ -131,8 +137,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
+                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                backdropFilter: 'blur(40px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -140,10 +148,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
                 transition: 'all 0.2s',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.background = 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)';
               }}
             >
               <ChevronRight size={24} style={{ color: 'white' }} />

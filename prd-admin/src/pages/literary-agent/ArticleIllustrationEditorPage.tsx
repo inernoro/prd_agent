@@ -1,4 +1,4 @@
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
@@ -1537,7 +1537,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     <div className="h-full min-h-0 flex gap-4">
       {/* 左侧：文章编辑器 */}
       <div className="flex-1 min-w-0 flex flex-col gap-4">
-        <Card className="flex-1 min-h-0 flex flex-col">
+        <GlassCard glow className="flex-1 min-h-0 flex flex-col">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FileText size={16} style={{ color: 'var(--text-primary)' }} />
@@ -1753,13 +1753,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
           </div>
-        </Card>
+        </GlassCard>
       </div>
 
       {/* 右侧：工作台 */}
       <div className="w-96 flex flex-col gap-4">
         {/* 顶部操作按钮 */}
-        <Card>
+        <GlassCard glow>
           <WorkflowProgressBar
             steps={phaseSteps}
             currentStep={phase}
@@ -1782,11 +1782,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {isBusy ? '生成中...' : activeButton.label}
             </Button>
           )}
-        </Card>
+        </GlassCard>
 
         {/* 配图标记列表（含生图结果/重生成） */}
         {phase === 2 && ( // MarkersGenerated
-          <Card className="flex-1 min-h-0 flex flex-col">
+          <GlassCard glow className="flex-1 min-h-0 flex flex-col">
             <div className="mb-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2162,7 +2162,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
               点击“一键生图”将按顺序逐条解析 JSON 并生成图片；也可在单条卡片内编辑后重生成
             </div>
-          </Card>
+          </GlassCard>
         )}
       </div>
 
@@ -2418,7 +2418,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
                   <div className="grid grid-cols-1 gap-3">
                     {allPrompts.map((prompt) => (
-                      <Card key={prompt.id} className="p-0 overflow-hidden">
+                      <GlassCard glow key={prompt.id} className="p-0 overflow-hidden">
                         <div className="group relative flex flex-col h-full">
                           {/* 上栏：标题区 */}
                           <div className="p-2 pb-1 flex-shrink-0">
@@ -2569,7 +2569,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
                         </div>
-                      </Card>
+                      </GlassCard>
                     ))}
                   </div>
                 </div>

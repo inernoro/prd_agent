@@ -19,6 +19,8 @@ import type {
   CreateAdminUserResponse,
   BulkCreateAdminUsersItem,
   BulkCreateAdminUsersResponse,
+  GetUserProfileContract,
+  UserProfileResponse,
 } from '@/services/contracts/adminUsers';
 import type { AdminUser, PagedResult, UserRole, UserStatus } from '@/types/admin';
 
@@ -176,5 +178,10 @@ export const bulkCreateUsersReal: BulkCreateAdminUsersContract = async (
     },
     headers: { 'Idempotency-Key': newIdempotencyKey() },
   });
+  return res;
+};
+
+export const getUserProfileReal: GetUserProfileContract = async (userId: string): Promise<ApiResponse<UserProfileResponse>> => {
+  const res = await apiRequest<UserProfileResponse>(api.users.profile(userId));
   return res;
 };

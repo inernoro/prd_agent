@@ -1,6 +1,6 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
@@ -1095,7 +1095,7 @@ export default function LlmLogsPage() {
         }
       />
 
-      <Card className="p-4">
+      <GlassCard glow className="p-4">
         <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
           <Select
             value={qProvider}
@@ -1218,9 +1218,9 @@ export default function LlmLogsPage() {
             </Button>
           </div>
         </div>
-      </Card>
+      </GlassCard>
 
-      <Card className="p-0 overflow-hidden">
+      <GlassCard glow className="p-0 overflow-hidden">
         <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>请求列表</div>
         </div>
@@ -1422,9 +1422,11 @@ export default function LlmLogsPage() {
                                   className="rounded-[12px] p-2 min-w-[260px] max-w-[520px]"
                                   style={{
                                     zIndex: 120,
-                                    background: 'var(--bg-elevated)',
-                                    border: '1px solid var(--border-subtle)',
-                                    boxShadow: 'var(--shadow-lg)',
+                                    background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                                    border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                                    boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                                    backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                    WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                 >
@@ -1453,7 +1455,6 @@ export default function LlmLogsPage() {
                                       </div>
                                     </div>
                                   ) : null}
-                                  <DropdownMenu.Arrow className="fill-[var(--bg-elevated)]" />
                                 </DropdownMenu.Content>
                               </DropdownMenu.Portal>
                             </DropdownMenu.Root>
@@ -1512,7 +1513,7 @@ export default function LlmLogsPage() {
           </Button>
           </div>
         </div>
-      </Card>
+      </GlassCard>
 
       <Dialog
         open={detailOpen}
@@ -1540,7 +1541,7 @@ export default function LlmLogsPage() {
             <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
           ) : (
             <div className="h-full min-h-0 grid gap-3 md:grid-cols-2">
-              <Card className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
                   <div className="flex items-center gap-2">
@@ -1706,9 +1707,9 @@ export default function LlmLogsPage() {
                     );
                   })()}
                 </div>
-              </Card>
+              </GlassCard>
 
-              <Card className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
                   {autoRefreshing ? (
@@ -2146,7 +2147,7 @@ export default function LlmLogsPage() {
                     )}
                   </div>
                 </div>
-              </Card>
+              </GlassCard>
             </div>
           )
         }

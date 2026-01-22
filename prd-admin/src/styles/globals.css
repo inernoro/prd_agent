@@ -84,6 +84,13 @@ select optgroup {
   display: none; /* Chrome/Safari/Opera */
 }
 
+/* 侧边栏导航项：hover 效果（纯 CSS，避免 JS 残影） */
+.nav-item-hover:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(214, 178, 106, 0.25) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(214, 178, 106, 0.12) inset;
+}
+
 /* 图片上传：海浪透明遮罩（用于 syncStatus=pending 的画布图片） */
 @keyframes prdUploadWaveMove {
   0% { transform: translateX(-28%); opacity: 0.55; }

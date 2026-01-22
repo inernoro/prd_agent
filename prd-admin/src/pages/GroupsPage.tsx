@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
@@ -247,7 +247,7 @@ export default function GroupsPage() {
         icon={<FolderKanban size={16} />}
       />
 
-      <Card className="flex-1 min-h-0 flex flex-col">
+      <GlassCard glow className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-[240px]">
             <div className="relative">
@@ -370,7 +370,7 @@ export default function GroupsPage() {
             </Button>
           </div>
         </div>
-      </Card>
+      </GlassCard>
 
       <Dialog
         open={open}

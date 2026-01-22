@@ -1,4 +1,4 @@
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import AdvancedVisualAgentTab from '@/pages/ai-chat/AdvancedVisualAgentTab';
 import { useParams, Link } from 'react-router-dom';
 import { useRef } from 'react';
@@ -11,11 +11,11 @@ export default function VisualAgentWorkspaceEditorPage() {
   if (!workspaceId) {
     return (
       <div ref={wrapRef} className="h-full min-h-0 flex flex-col">
-        <Card>
+        <GlassCard glow>
           <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
             workspaceId 为空。请从 <Link to="/visual-agent">视觉创作 Agent</Link> 选择一个项目进入。
           </div>
-        </Card>
+        </GlassCard>
       </div>
     );
   }

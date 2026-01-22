@@ -1,6 +1,6 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { Select } from '@/components/design/Select';
 import { TabBar } from '@/components/design/TabBar';
@@ -1107,7 +1107,7 @@ export default function ModelManagePage() {
 
       <div className={`grid gap-5 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格） */}
-        <Card className="p-0 overflow-hidden flex flex-col">
+        <GlassCard glow className="p-0 overflow-hidden flex flex-col">
           {/* 折叠/展开按钮 */}
           <div className="p-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             {!platformSidebarCollapsed && (
@@ -1278,7 +1278,7 @@ export default function ModelManagePage() {
           </div>
             </>
           )}
-        </Card>
+        </GlassCard>
 
         {/* 平台右键菜单 */}
         {platformCtxMenu.open && (
@@ -1332,7 +1332,7 @@ export default function ModelManagePage() {
         )}
 
         {/* 右侧：平台详情 + 模型列表 */}
-        <Card variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
+        <GlassCard glow variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
           <div className="p-4 flex items-start justify-between gap-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
@@ -1949,9 +1949,11 @@ export default function ModelManagePage() {
                                           className="rounded-[12px] p-1 min-w-[140px]"
                                           style={{
                                             zIndex: 90,
-                                            background: 'var(--bg-elevated)',
-                                            border: '1px solid var(--border-subtle)',
-                                            boxShadow: 'var(--shadow-lg)',
+                                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                                           }}
                                           onClick={(e) => e.stopPropagation()}
                                         >
@@ -1990,10 +1992,6 @@ export default function ModelManagePage() {
                                               删除
                                             </button>
                                           </ConfirmTip>
-                                          <DropdownMenu.Arrow
-                                            className="fill-[color:var(--bg-elevated)]"
-                                            style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }}
-                                          />
                                         </DropdownMenu.Content>
                                       </DropdownMenu.Portal>
                                     </DropdownMenu.Root>
@@ -2074,7 +2072,7 @@ export default function ModelManagePage() {
               </ConfirmTip>
             )}
           </div>
-        </Card>
+        </GlassCard>
       </div>
 
       <Dialog

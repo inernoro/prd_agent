@@ -1,6 +1,6 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Dialog } from '@/components/ui/Dialog';
 import { getApiLogDetail, getApiLogs, getApiLogsMeta } from '@/services';
 import type { ApiLogsListItem, ApiRequestLog } from '@/services/contracts/apiLogs';
@@ -175,7 +175,7 @@ export default function SystemLogsTab() {
         </div>
       </div>
 
-      <Card className="p-4">
+      <GlassCard glow className="p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 请求日志</div>
           <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
@@ -346,7 +346,7 @@ export default function SystemLogsTab() {
             </button>
           ))}
         </div>
-      </Card>
+      </GlassCard>
 
       <Dialog
         open={detailOpen}
