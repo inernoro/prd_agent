@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Select } from '@/components/design/Select';
 import { adminImpersonate, getUsers } from '@/services';
@@ -430,7 +430,7 @@ export default function DesktopLabTab() {
 
       <div className="grid gap-5" style={{ gridTemplateColumns: '420px 1fr' }}>
         <div className="space-y-5">
-          <Card>
+          <GlassCard glow>
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 演员（冒充用户）
@@ -514,9 +514,9 @@ export default function DesktopLabTab() {
                 </div>
               ) : null}
             </div>
-          </Card>
+          </GlassCard>
 
-          <Card>
+          <GlassCard glow>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               群组
             </div>
@@ -558,9 +558,9 @@ export default function DesktopLabTab() {
                   ))}
               </div>
             </div>
-          </Card>
+          </GlassCard>
 
-          <Card>
+          <GlassCard glow>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               PRD（上传与绑定）
             </div>
@@ -589,11 +589,11 @@ export default function DesktopLabTab() {
             <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
               uploadSessionId：{uploadSessionId || '-'}
             </div>
-          </Card>
+          </GlassCard>
         </div>
 
         <div className="space-y-5">
-          <Card>
+          <GlassCard glow>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -659,9 +659,9 @@ export default function DesktopLabTab() {
                 </pre>
               </div>
             </div>
-          </Card>
+          </GlassCard>
 
-          <Card>
+          <GlassCard glow>
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 内容缺失（Gaps）
@@ -684,16 +684,16 @@ export default function DesktopLabTab() {
                 {gapSummaryJson || '（暂无）'}
               </pre>
             </div>
-          </Card>
+          </GlassCard>
 
-          <Card>
+          <GlassCard glow>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               原始返回（最近一次）
             </div>
             <pre className="mt-3 text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
               {groupInfoJson || '（暂无）'}
             </pre>
-          </Card>
+          </GlassCard>
         </div>
       </div>
     </div>

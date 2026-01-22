@@ -1,4 +1,4 @@
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
@@ -388,7 +388,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const renderCard = (ws: VisualAgentWorkspace) => (
-    <Card key={ws.id} className="p-0 overflow-hidden">
+    <GlassCard glow key={ws.id} className="p-0 overflow-hidden">
       <div
         role="button"
         tabIndex={0}
@@ -470,7 +470,7 @@ export default function LiteraryAgentWorkspaceListPage() {
           </div>
         </div>
       </div>
-    </Card>
+    </GlassCard>
   );
 
   const renderFolderGroup = (group: FolderGroup) => {
@@ -540,25 +540,25 @@ export default function LiteraryAgentWorkspaceListPage() {
       />
 
       {error && (
-        <Card className="py-2 px-3">
+        <GlassCard glow className="py-2 px-3">
           <div className="text-[12px]" style={{ color: 'rgba(255,120,120,0.95)' }}>{error}</div>
-        </Card>
+        </GlassCard>
       )}
 
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
-          <Card className="py-2 px-3">
+          <GlassCard glow className="py-2 px-3">
             <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-          </Card>
+          </GlassCard>
         ) : items.length === 0 ? (
-          <Card className="py-6 px-3">
+          <GlassCard glow className="py-6 px-3">
             <div className="text-center">
               <FileText size={36} className="mx-auto mb-2" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
               <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 暂无文章，右键可创建文件夹或文章。
               </div>
             </div>
-          </Card>
+          </GlassCard>
         ) : (
           <div className="max-w-[1680px]">
             {groups.map(renderFolderGroup)}
