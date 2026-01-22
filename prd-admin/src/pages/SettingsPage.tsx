@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
-import { useNavOrderStore, mergeNavOrder } from '@/stores/navOrderStore';
+import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
 import { GripVertical, Settings, RefreshCw, RotateCcw } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -12,17 +12,6 @@ interface NavItem {
   key: string;
   label: string;
   icon: string;
-  perm?: string;
-}
-
-// 从后端菜单目录构建导航项
-function buildNavItems(menuCatalog: Array<{ appKey: string; label: string; icon: string }>): NavItem[] {
-  return menuCatalog.map((m) => ({
-    key: m.appKey,
-    label: m.label,
-    icon: m.icon,
-    perm: m.appKey === 'dashboard' ? 'access' : `${m.appKey}.read`,
-  }));
 }
 
 // 动态获取 Lucide 图标
@@ -37,15 +26,34 @@ function getIcon(name: string, size = 16) {
 
 export default function SettingsPage() {
   const { navOrder, loaded, saving, loadFromServer, setNavOrder, reset } = useNavOrderStore();
-  const permissions = useAuthStore((s) => s.permissions);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
 
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  // 构建导航项列表
-  const allItems = buildNavItems(menuCatalog);
-  const sortedItems = mergeNavOrder(allItems, navOrder, permissions);
+  // 从后端菜单目录构建导航项（menuCatalog 已经是后端根据用户权限过滤后的结果，无需二次过滤）
+  const sortedItems: NavItem[] = useMemo(() => {
+    if (!Array.isArray(menuCatalog) || menuCatalog.length === 0) return [];
+
+    // 构建导航项
+    const items = menuCatalog.map((m) => ({
+      key: m.appKey,
+      label: m.label,
+      icon: m.icon,
+    }));
+
+    // 如果有用户自定义顺序，按该顺序排列
+    if (navOrder.length > 0) {
+      const orderMap = new Map(navOrder.map((k, i) => [k, i]));
+      items.sort((a, b) => {
+        const aOrder = orderMap.get(a.key) ?? 9999;
+        const bOrder = orderMap.get(b.key) ?? 9999;
+        return aOrder - bOrder;
+      });
+    }
+
+    return items;
+  }, [menuCatalog, navOrder]);
 
   // 首次加载
   useEffect(() => {

@@ -668,7 +668,6 @@ export default function AppShell() {
                     className={cn(
                       'group/nav relative flex items-center gap-3 rounded-[12px]',
                       'transition-all duration-200 ease-out',
-                      'hover:bg-white/6 hover:scale-[1.02] hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)]',
                       collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
                     )}
                     style={{
@@ -677,17 +676,33 @@ export default function AppShell() {
                       color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                       transformOrigin: 'left center',
                     }}
+                    onMouseEnter={(e) => {
+                      if (!active) {
+                        e.currentTarget.style.transform = 'scale(1.03) translateX(2px)';
+                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                        e.currentTarget.style.borderColor = 'rgba(214, 178, 106, 0.25)';
+                        e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3), 0 0 0 1px rgba(214, 178, 106, 0.15) inset';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!active) {
+                        e.currentTarget.style.transform = '';
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.borderColor = 'transparent';
+                        e.currentTarget.style.boxShadow = '';
+                      }
+                    }}
                     title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                   >
                     <span
-                      className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-[1.08]"
+                      className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
                       style={{ color: active ? 'var(--accent-gold)' : undefined }}
                     >
                       {it.icon}
                     </span>
                     {!collapsed && (
                       <div className="min-w-0 flex-1 text-left">
-                        <div className="text-sm font-medium truncate">{it.label}</div>
+                        <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
                         {it.description && (
                           <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
                             {it.description}
