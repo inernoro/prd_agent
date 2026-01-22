@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -31,6 +31,11 @@ export default function SettingsPage() {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
+  // 用于节流的 ref
+  const lastDragOverTimeRef = useRef<number>(0);
+  const pendingDragOverIndexRef = useRef<number | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+
   // 从后端菜单目录构建导航项（menuCatalog 已经是后端根据用户权限过滤后的结果，无需二次过滤）
   const sortedItems: NavItem[] = useMemo(() => {
     if (!Array.isArray(menuCatalog) || menuCatalog.length === 0) return [];
@@ -62,6 +67,15 @@ export default function SettingsPage() {
     }
   }, [loaded, loadFromServer]);
 
+  // 清理 RAF（组件卸载时）
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, []);
+
   // 拖拽开始
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     setDraggingIndex(index);
@@ -69,16 +83,43 @@ export default function SettingsPage() {
     e.dataTransfer.setData('text/plain', String(index));
   }, []);
 
-  // 拖拽经过（添加防抖，避免频繁状态更新导致抖动）
+  // 拖拽经过（使用节流 + RAF，避免频繁状态更新导致抖动）
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    // 仅在索引变化时更新，避免频繁 setState 造成抖动
-    setDragOverIndex((prev) => (prev === index ? prev : index));
+
+    // 记录待处理的目标索引
+    pendingDragOverIndexRef.current = index;
+
+    // 节流：至少间隔 50ms 才更新一次
+    const now = performance.now();
+    if (now - lastDragOverTimeRef.current < 50) {
+      return;
+    }
+
+    // 使用 RAF 批量更新，避免在同一帧内多次 setState
+    if (rafIdRef.current !== null) {
+      return;
+    }
+
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      const targetIndex = pendingDragOverIndexRef.current;
+      if (targetIndex !== null) {
+        lastDragOverTimeRef.current = performance.now();
+        setDragOverIndex((prev) => (prev === targetIndex ? prev : targetIndex));
+      }
+    });
   }, []);
 
   // 拖拽离开
   const handleDragLeave = useCallback(() => {
+    // 取消待处理的 RAF
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    pendingDragOverIndexRef.current = null;
     setDragOverIndex(null);
   }, []);
 
@@ -102,6 +143,13 @@ export default function SettingsPage() {
 
   // 拖拽结束
   const handleDragEnd = useCallback(() => {
+    // 取消待处理的 RAF
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    pendingDragOverIndexRef.current = null;
+    lastDragOverTimeRef.current = 0;
     setDraggingIndex(null);
     setDragOverIndex(null);
   }, []);
