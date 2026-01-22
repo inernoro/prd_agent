@@ -543,6 +543,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 上传构建产物到 Release
+      # 重要：macOS 的 .app.tar.gz 需要重命名以包含架构信息，避免 aarch64 和 x86_64 互相覆盖
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -553,26 +554,49 @@ jobs:
           VERSION="${TAG#v}"
           TARGET="${{ matrix.target }}"
           BUNDLE_DIR="src-tauri/target/$TARGET/release/bundle"
-          
+
           echo "[INFO] Uploading assets for $TAG (target: $TARGET)"
-          
+
           # 根据平台确定要上传的文件
           case "$TARGET" in
             *-apple-darwin)
               # macOS: 上传 .dmg 和 .app.tar.gz + .sig
+              # 注意：.app.tar.gz 需要重命名以包含架构信息，避免不同架构互相覆盖
               DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" 2>/dev/null | head -1)
               TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
               SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
-              
+
               if [[ -n "$DMG" ]]; then
                 echo "[INFO] Uploading DMG: $DMG"
                 gh release upload "$TAG" "$DMG" --clobber
               fi
-              
+
               if [[ -n "$TARGZ" && -n "$SIG" ]]; then
-                echo "[INFO] Uploading tar.gz: $TARGZ"
-                echo "[INFO] Uploading sig: $SIG"
-                gh release upload "$TAG" "$TARGZ" "$SIG" --clobber
+                # 重命名文件以包含架构信息
+                # PRD.Agent.app.tar.gz -> PRD.Agent_aarch64.app.tar.gz 或 PRD.Agent_x64.app.tar.gz
+                ARCH_SUFFIX=""
+                case "$TARGET" in
+                  aarch64-apple-darwin) ARCH_SUFFIX="_aarch64" ;;
+                  x86_64-apple-darwin)  ARCH_SUFFIX="_x64" ;;
+                esac
+
+                BASENAME=$(basename "$TARGZ" .app.tar.gz)
+                NEW_TARGZ_NAME="${BASENAME}${ARCH_SUFFIX}.app.tar.gz"
+                NEW_SIG_NAME="${BASENAME}${ARCH_SUFFIX}.app.tar.gz.sig"
+
+                # 复制并重命名文件
+                UPLOAD_DIR="/tmp/upload_assets"
+                mkdir -p "$UPLOAD_DIR"
+                cp "$TARGZ" "$UPLOAD_DIR/$NEW_TARGZ_NAME"
+                cp "$SIG" "$UPLOAD_DIR/$NEW_SIG_NAME"
+
+                echo "[INFO] Uploading tar.gz as: $NEW_TARGZ_NAME"
+                echo "[INFO] Uploading sig as: $NEW_SIG_NAME"
+                gh release upload "$TAG" "$UPLOAD_DIR/$NEW_TARGZ_NAME" "$UPLOAD_DIR/$NEW_SIG_NAME" --clobber
+
+                # 保存新文件名供后续 manifest 生成使用
+                echo "$NEW_TARGZ_NAME" > /tmp/uploaded_targz_name.txt
+                echo "$NEW_SIG_NAME" > /tmp/uploaded_sig_name.txt
               else
                 echo "::warning::Missing tar.gz or sig file for macOS updater"
               fi
@@ -650,19 +674,24 @@ jobs:
           # Tauri 2.0 platform 标识符：使用 target triple 作为 key
           # 参考: https://v2.tauri.app/plugin/updater/
           case "$TARGET" in
-            aarch64-apple-darwin)
+            aarch64-apple-darwin|x86_64-apple-darwin)
               PLATFORM="$TARGET"
               TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
               LOCAL_SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
-              FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
-              SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
-              ;;
-            x86_64-apple-darwin)
-              PLATFORM="$TARGET"
-              TARGZ=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" 2>/dev/null | head -1)
-              LOCAL_SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
-              FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
-              SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
+
+              # 使用上传时重命名后的文件名（从临时文件读取）
+              if [[ -f /tmp/uploaded_targz_name.txt && -f /tmp/uploaded_sig_name.txt ]]; then
+                FILENAME=$(cat /tmp/uploaded_targz_name.txt)
+                SIG_FILENAME=$(cat /tmp/uploaded_sig_name.txt)
+                echo "[INFO] Using renamed filenames from upload step:"
+                echo "  FILENAME: $FILENAME"
+                echo "  SIG_FILENAME: $SIG_FILENAME"
+              else
+                # Fallback: 使用原始文件名（不应该发生）
+                FILENAME=$(basename "$TARGZ" 2>/dev/null || echo "")
+                SIG_FILENAME=$(basename "$LOCAL_SIG" 2>/dev/null || echo "")
+                echo "::warning::Could not find renamed filenames, using original names"
+              fi
               ;;
             x86_64-pc-windows-msvc)
               PLATFORM="$TARGET"
