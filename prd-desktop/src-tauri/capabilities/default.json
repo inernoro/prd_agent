@@ -13,7 +13,8 @@
     "shell:allow-open",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-write-image",
-    "updater:default"
+    "updater:default",
+    "dialog:default"
   ]
 }
 

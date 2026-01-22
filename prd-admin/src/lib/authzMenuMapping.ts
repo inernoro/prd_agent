@@ -46,7 +46,7 @@ export const menuList: MenuDef[] = [
   },
   {
     appKey: 'prd-agent',
-    label: 'PRD Agent',
+    label: '米多智能体平台',
     icon: 'MessagesSquare',
     permissions: ['prd-agent.use'],
   },
@@ -162,7 +162,7 @@ export const allPermissions: PermissionDef[] = [
   { key: 'authz.manage', label: '权限管理', description: '管理系统角色和用户权限', category: 'manage' },
 
   // Agent 权限（独立）
-  { key: 'prd-agent.use', label: 'PRD Agent', description: 'PRD 智能解读与问答', category: 'use' },
+  { key: 'prd-agent.use', label: '米多智能体平台', description: '智能解读与问答', category: 'use' },
   { key: 'visual-agent.use', label: '视觉创作 Agent', description: '高级视觉创作工作区', category: 'use' },
   { key: 'literary-agent.use', label: '文学创作 Agent', description: '文章配图智能生成', category: 'use' },
 

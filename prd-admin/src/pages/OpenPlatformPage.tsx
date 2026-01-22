@@ -8,6 +8,7 @@ import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
 import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil, Plug } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import type { OpenPlatformApp, CreateAppRequest, UpdateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
@@ -78,7 +79,7 @@ export default function OpenPlatformPage() {
       setApps(res.items);
       setTotal(res.total);
     } catch (err) {
-      await systemDialog.alert({ title: '加载失败', message: String(err) });
+      toast.error('加载失败', String(err));
     } finally {
       setLoading(false);
     }
@@ -96,7 +97,7 @@ export default function OpenPlatformPage() {
       setCreateDialogOpen(false);
       loadApps();
     } catch (err) {
-      await systemDialog.alert({ title: '创建失败', message: String(err) });
+      toast.error('创建失败', String(err));
     }
   };
 
@@ -109,12 +110,12 @@ export default function OpenPlatformPage() {
     if (!editingApp) return;
     try {
       await openPlatformService.updateApp(editingApp.id, request);
-      await systemDialog.alert('更新成功');
+      toast.success('更新成功');
       setEditDialogOpen(false);
       setEditingApp(null);
       loadApps();
     } catch (err) {
-      await systemDialog.alert({ title: '更新失败', message: String(err) });
+      toast.error('更新失败', String(err));
     }
   };
 
@@ -128,10 +129,10 @@ export default function OpenPlatformPage() {
 
     try {
       await openPlatformService.deleteApp(id);
-      await systemDialog.alert('删除成功');
+      toast.success('删除成功');
       loadApps();
     } catch (err) {
-      await systemDialog.alert({ title: '删除失败', message: String(err) });
+      toast.error('删除失败', String(err));
     }
   };
 
@@ -147,19 +148,19 @@ export default function OpenPlatformPage() {
       const res = await openPlatformService.regenerateKey(id);
       setNewApiKey(res.apiKey);
       setApiKeyDialogOpen(true);
-      await systemDialog.alert('密钥已重新生成');
+      toast.success('密钥已重新生成');
     } catch (err) {
-      await systemDialog.alert({ title: '操作失败', message: String(err) });
+      toast.error('操作失败', String(err));
     }
   };
 
   const handleToggleStatus = async (id: string) => {
     try {
       await openPlatformService.toggleAppStatus(id);
-      await systemDialog.alert('状态已切换');
+      toast.success('状态已切换');
       loadApps();
     } catch (err) {
-      await systemDialog.alert({ title: '操作失败', message: String(err) });
+      toast.error('操作失败', String(err));
     }
   };
 
@@ -186,7 +187,7 @@ export default function OpenPlatformPage() {
       setLogsTotal(statusFilter ? filteredItems.length : res.total);
       setLogsPage(p);
     } catch (err) {
-      await systemDialog.alert({ title: '加载日志失败', message: String(err) });
+      toast.error('加载日志失败', String(err));
     } finally {
       setLogsLoading(false);
     }
@@ -491,13 +492,13 @@ function CreateAppDialog({
     try {
       const res = await getUsers({ page: 1, pageSize: 100 });
       if (!res.success) {
-        await systemDialog.alert({ title: '加载用户失败', message: res.error?.message || '未知错误' });
+        toast.error('加载用户失败', res.error?.message || '未知错误');
         setUsers([]);
         return;
       }
       setUsers(res.data?.items || []);
     } catch (err) {
-      await systemDialog.alert({ title: '加载用户失败', message: String(err) });
+      toast.error('加载用户失败', String(err));
       setUsers([]);
     } finally {
       setLoadingUsers(false);
@@ -509,13 +510,13 @@ function CreateAppDialog({
     try {
       const res = await getAdminGroups({ page: 1, pageSize: 100 });
       if (!res.success) {
-        await systemDialog.alert({ title: '加载群组失败', message: res.error?.message || '未知错误' });
+        toast.error('加载群组失败', res.error?.message || '未知错误');
         setGroups([]);
         return;
       }
       setGroups(res.data?.items || []);
     } catch (err) {
-      await systemDialog.alert({ title: '加载群组失败', message: String(err) });
+      toast.error('加载群组失败', String(err));
       setGroups([]);
     } finally {
       setLoadingGroups(false);
@@ -524,15 +525,15 @@ function CreateAppDialog({
 
   const handleSubmit = async () => {
     if (!appName.trim()) {
-      await systemDialog.alert({ title: '验证失败', message: '应用名称不能为空' });
+      toast.warning('验证失败', '应用名称不能为空');
       return;
     }
     if (!boundGroupId) {
-      await systemDialog.alert({ title: '验证失败', message: '必须绑定群组' });
+      toast.warning('验证失败', '必须绑定群组');
       return;
     }
     if (!boundUserId) {
-      await systemDialog.alert({ title: '验证失败', message: '必须绑定用户' });
+      toast.warning('验证失败', '必须绑定用户');
       return;
     }
 
@@ -763,13 +764,13 @@ function EditAppDialog({
     try {
       const res = await getUsers({ page: 1, pageSize: 100 });
       if (!res.success) {
-        await systemDialog.alert({ title: '加载用户失败', message: res.error?.message || '未知错误' });
+        toast.error('加载用户失败', res.error?.message || '未知错误');
         setUsers([]);
         return;
       }
       setUsers(res.data?.items || []);
     } catch (err) {
-      await systemDialog.alert({ title: '加载用户失败', message: String(err) });
+      toast.error('加载用户失败', String(err));
       setUsers([]);
     } finally {
       setLoadingUsers(false);
@@ -781,13 +782,13 @@ function EditAppDialog({
     try {
       const res = await getAdminGroups({ page: 1, pageSize: 100 });
       if (!res.success) {
-        await systemDialog.alert({ title: '加载群组失败', message: res.error?.message || '未知错误' });
+        toast.error('加载群组失败', res.error?.message || '未知错误');
         setGroups([]);
         return;
       }
       setGroups(res.data?.items || []);
     } catch (err) {
-      await systemDialog.alert({ title: '加载群组失败', message: String(err) });
+      toast.error('加载群组失败', String(err));
       setGroups([]);
     } finally {
       setLoadingGroups(false);
@@ -796,15 +797,15 @@ function EditAppDialog({
 
   const handleSubmit = async () => {
     if (!appName.trim()) {
-      await systemDialog.alert({ title: '验证失败', message: '应用名称不能为空' });
+      toast.warning('验证失败', '应用名称不能为空');
       return;
     }
     if (!boundGroupId) {
-      await systemDialog.alert({ title: '验证失败', message: '必须绑定群组' });
+      toast.warning('验证失败', '必须绑定群组');
       return;
     }
     if (!boundUserId) {
-      await systemDialog.alert({ title: '验证失败', message: '必须绑定用户' });
+      toast.warning('验证失败', '必须绑定用户');
       return;
     }
 
@@ -983,7 +984,7 @@ function EditAppDialog({
 function ApiKeyDialog({ open, onClose, apiKey }: { open: boolean; onClose: () => void; apiKey: string }) {
   const copyKey = async () => {
     navigator.clipboard.writeText(apiKey);
-    await systemDialog.alert('已复制到剪贴板');
+    toast.success('已复制到剪贴板');
   };
 
   return (
@@ -1366,7 +1367,7 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
       await new Promise(resolve => setTimeout(resolve, 100));
       // 只复制纯净的 curl 命令，不包含注释
       navigator.clipboard.writeText(curlCommand);
-      await systemDialog.alert('已复制到剪贴板');
+      toast.success('已复制到剪贴板');
     } finally {
       setIsCopyingCurl(false);
     }

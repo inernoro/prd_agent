@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LLM;
@@ -55,6 +56,12 @@ internal static class LlmLogRedactor
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
+
+    /// <summary>
+    /// 对 API Key 进行部分脱敏，保留前后各 4 个字符，中间用 *** 替代
+    /// 委托给 ApiKeyCrypto.Mask 实现
+    /// </summary>
+    public static string RedactApiKey(string? apiKey) => ApiKeyCrypto.Mask(apiKey);
 
     private static void WriteElement(Utf8JsonWriter writer, JsonElement el)
     {

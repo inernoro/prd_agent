@@ -3,6 +3,7 @@ import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import {
   createVisualAgentWorkspace,
   deleteVisualAgentWorkspace,
@@ -479,7 +480,7 @@ function FloatingToolbar(props: {
 
 // ============ 场景标签定义 ============
 const SCENARIO_TAGS = [
-  { key: 'pro', label: 'PRD Agent Pro', icon: Sparkles, prompt: '', isPro: true },
+  { key: 'pro', label: 'MAP Pro', icon: Sparkles, prompt: '', isPro: true },
   { key: 'design', label: '平面设计', icon: LayoutGrid, prompt: '帮我设计一张' },
   { key: 'branding', label: '品牌设计', icon: Star, prompt: '帮我设计一个品牌视觉，包括' },
   { key: 'illustration', label: '插画创作', icon: PenTool, prompt: '帮我创作一幅插画，主题是' },
@@ -633,7 +634,7 @@ function QuickInputBox(props: {
     if (file) {
       // 验证文件类型
       if (!file.type.startsWith('image/')) {
-        void systemDialog.alert('请选择图片文件');
+        toast.warning('请选择图片文件');
         e.target.value = '';
         return;
       }
@@ -1408,7 +1409,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     if (title == null) return;
     const res = await createVisualAgentWorkspace({ title: title.trim() || '未命名', idempotencyKey: `ws_create_${Date.now()}` });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '创建失败');
+      toast.error(res.error?.message || '创建失败');
       return;
     }
     const ws = res.data.workspace;
@@ -1428,7 +1429,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         idempotencyKey: `ws_quick_${Date.now()}`,
       });
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '创建失败');
+        toast.error(res.error?.message || '创建失败');
         return;
       }
       const ws = res.data.workspace;
@@ -1456,7 +1457,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           imageToken = buildInlineImageToken(asset.url, selectedImage.file.name || asset.prompt || '参考图');
         } else {
           // 图片上传失败，但仍然继续（只使用文本提示）
-          await systemDialog.alert(`图片上传失败：${uploadRes.error?.message || '未知错误'}\n\n将仅使用文本提示创建项目。`);
+          toast.error('图片上传失败', `${uploadRes.error?.message || '未知错误'}。将仅使用文本提示创建项目。`);
         }
       }
 
@@ -1497,7 +1498,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     // 验证文件大小（例如限制为 10MB）
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (file.size > maxSize) {
-      await systemDialog.alert('图片文件过大，请选择小于 10MB 的图片');
+      toast.warning('图片文件过大，请选择小于 10MB 的图片');
       return;
     }
     const dim = await readImageSizeFromFile(file);
@@ -1539,7 +1540,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     });
     if (folderName == null) return;
     // TODO: 后端尚未支持文件夹功能，暂时提示
-    await systemDialog.alert(`文件夹功能正在开发中，将创建名为「${folderName.trim() || '新文件夹'}」的文件夹。`);
+    toast.info(`文件夹功能正在开发中，将创建名为「${folderName.trim() || '新文件夹'}」的文件夹。`);
   };
 
   const onRename = async (ws: VisualAgentWorkspace) => {
@@ -1557,7 +1558,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       idempotencyKey: `ws_rename_${Date.now()}`,
     });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '重命名失败');
+      toast.error(res.error?.message || '重命名失败');
       return;
     }
     await reload();
@@ -1574,7 +1575,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     if (!ok) return;
     const res = await deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `ws_del_${Date.now()}` });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '删除失败');
+      toast.error(res.error?.message || '删除失败');
       return;
     }
     await reload();
@@ -1606,7 +1607,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       idempotencyKey: `ws_share_${Date.now()}`,
     });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '保存共享失败');
+      toast.error(res.error?.message || '保存共享失败');
       return;
     }
     setShareOpen(false);

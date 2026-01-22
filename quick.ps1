@@ -6,11 +6,15 @@
 #   .\quick.ps1 all      - Start all services together
 #   .\quick.ps1 check    - Run desktop CI checks
 #   .\quick.ps1 ci       - Run full CI checks
+#   .\quick.ps1 version  - Show recent 10 versions
+#   .\quick.ps1 version v1.2.3 - Sync version + git tag + git push origin tag
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("", "admin", "desktop", "all", "check", "ci", "help")]
-    [string]$Command = ""
+    [ValidateSet("", "admin", "desktop", "all", "check", "ci", "version", "help")]
+    [string]$Command = "",
+    [Parameter(Position=1)]
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +48,154 @@ function Write-Warn {
 function Write-Err {
     param([string]$Message)
     Write-Host "[ERROR] $Message" -ForegroundColor Red
+}
+
+function Get-NormalizedVersion {
+    param([string]$RawVersion)
+    if ([string]::IsNullOrWhiteSpace($RawVersion)) {
+        throw "Version is required."
+    }
+
+    $v = $RawVersion.Trim()
+    if ($v.StartsWith("v")) {
+        $v = $v.Substring(1)
+    }
+
+    if ($v -notmatch '^\d+\.\d+\.\d+([\-+][0-9A-Za-z\.\-]+)?$') {
+        throw "Invalid version: '$RawVersion' (expected like v1.2.3 / 1.2.3)"
+    }
+
+    return $v
+}
+
+function Sync-DesktopVersion {
+    param([Parameter(Mandatory=$true)][string]$Version)
+
+    $tauriConf = Join-Path $ScriptDir "prd-desktop\src-tauri\tauri.conf.json"
+    $cargoToml = Join-Path $ScriptDir "prd-desktop\src-tauri\Cargo.toml"
+    $pkgJson = Join-Path $ScriptDir "prd-desktop\package.json"
+
+    foreach ($p in @($tauriConf, $cargoToml, $pkgJson)) {
+        if (-not (Test-Path $p)) {
+            throw "Missing file: $p"
+        }
+    }
+
+    Write-Info "Syncing desktop version to $Version..."
+
+    $tauriData = Get-Content -Path $tauriConf -Raw | ConvertFrom-Json
+    $tauriData.version = $Version
+    $tauriData | ConvertTo-Json -Depth 100 | Set-Content -Path $tauriConf -Encoding utf8
+
+    $pkgData = Get-Content -Path $pkgJson -Raw | ConvertFrom-Json
+    $pkgData.version = $Version
+    $pkgData | ConvertTo-Json -Depth 100 | Set-Content -Path $pkgJson -Encoding utf8
+
+    $lines = Get-Content -Path $cargoToml
+    $inPackage = $false
+    $done = $false
+    $out = New-Object System.Collections.Generic.List[string]
+
+    foreach ($line in $lines) {
+        $trim = $line.Trim()
+        if ($trim.StartsWith("[") -and $trim.EndsWith("]")) {
+            $inPackage = ($trim -eq "[package]")
+        }
+
+        if ($inPackage -and -not $done -and $line -match '^\s*version\s*=\s*".*"\s*$') {
+            $out.Add("version = `"$Version`"")
+            $done = $true
+            continue
+        }
+
+        $out.Add($line)
+    }
+
+    if (-not $done) {
+        throw "Failed to update Cargo.toml: could not find [package].version"
+    }
+
+    Set-Content -Path $cargoToml -Value $out -Encoding utf8
+    Write-Success "Desktop version synced!"
+}
+
+function Show-RecentVersions {
+    Write-Info "Recent 10 versions:"
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Err "git is not available"
+        exit 1
+    }
+
+    Push-Location $ScriptDir
+    try {
+        & git rev-parse --git-dir *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "Not a git repository: $ScriptDir"
+            exit 1
+        }
+
+        $tags = & git tag --sort=-creatordate --list "v*" 2>$null | Select-Object -First 10
+        if (-not $tags) {
+            $tags = & git tag --sort=-creatordate 2>$null | Select-Object -First 10
+        }
+
+        if (-not $tags) {
+            Write-Warn "No tags found."
+            return
+        }
+
+        $tags | ForEach-Object { Write-Host $_ }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+function Publish-VersionTag {
+    param([Parameter(Mandatory=$true)][string]$RawVersion)
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Err "git is not available"
+        exit 1
+    }
+
+    $version = Get-NormalizedVersion -RawVersion $RawVersion
+    $tagName = "v$version"
+
+    Push-Location $ScriptDir
+    try {
+        & git rev-parse --git-dir *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "Not a git repository: $ScriptDir"
+            exit 1
+        }
+
+        & git rev-parse $tagName *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Err "Tag '$tagName' already exists!"
+            Write-Info "To delete it: git tag -d $tagName && git push origin :refs/tags/$tagName"
+            exit 1
+        }
+
+        Sync-DesktopVersion -Version $version
+
+        & git diff --quiet *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Working tree has uncommitted changes; tag will point to current HEAD."
+        }
+
+        Write-Info "Creating tag $tagName..."
+        & git tag $tagName
+
+        Write-Info "Pushing tag $tagName..."
+        & git push origin $tagName
+
+        Write-Success "Version published: $tagName"
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 function Ensure-PnpmInstalled {
@@ -257,6 +409,7 @@ function Show-Help {
     Write-Host "  all        Start backend + admin + desktop together (single console output)"
     Write-Host "  check      Run desktop CI-equivalent checks"
     Write-Host "  ci         Run local CI checks (server + admin + desktop)"
+    Write-Host "  version    Show recent 10 versions; pass a version to sync+tag+push"
     Write-Host "  help       Show this help message"
     Write-Host ""
 }
@@ -269,6 +422,13 @@ switch ($Command) {
     "all" { Start-All }
     "check" { Check-Desktop }
     "ci" { Check-CI }
+    "version" {
+        if ([string]::IsNullOrWhiteSpace($Version)) {
+            Show-RecentVersions
+        } else {
+            Publish-VersionTag -RawVersion $Version
+        }
+    }
     "help" { Show-Help }
     default {
         Write-Err "Unknown command: $Command"

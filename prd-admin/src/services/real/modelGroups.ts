@@ -79,6 +79,7 @@ export class ModelGroupsService implements IModelGroupsService {
       modelType: String(request.modelType ?? '').trim(),
       isDefaultForType: !!request.isDefaultForType,
       description: request.description ?? undefined,
+      models: request.models ?? [],
     };
     const res = await fetch(api.mds.modelGroups.list(), {
       method: 'POST',

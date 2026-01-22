@@ -7,9 +7,9 @@ type UiPrefsState = {
   increaseAssistantFont: () => void;
   decreaseAssistantFont: () => void;
   resetAssistantFont: () => void;
-  /** 跳过 AI 回复（仅普通群聊模式） */
-  skipAiReply: boolean;
-  toggleSkipAiReply: () => void;
+  /** AI 回复开关：true = 总是回复，false = 跳过回复 */
+  aiAnyway: boolean;
+  toggleAiAnyway: () => void;
 };
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -31,22 +31,28 @@ export const useUiPrefsStore = create<UiPrefsState>()(
         assistantFontScale: clamp(Number((s.assistantFontScale ?? DEFAULT_SCALE)) - STEP, MIN_SCALE, MAX_SCALE),
       })),
       resetAssistantFont: () => set(() => ({ assistantFontScale: DEFAULT_SCALE })),
-      skipAiReply: false,
-      toggleSkipAiReply: () => set((s) => ({ skipAiReply: !s.skipAiReply })),
+      aiAnyway: true,
+      toggleAiAnyway: () => set((s) => ({ aiAnyway: !s.aiAnyway })),
     }),
     {
       name: 'ui-prefs-storage',
       version: 2,
       partialize: (s) => ({
         assistantFontScale: s.assistantFontScale,
-        skipAiReply: s.skipAiReply,
+        aiAnyway: s.aiAnyway,
       }),
       merge: (persisted: any, current) => {
         const p = (persisted as any) || {};
         const raw = Number(p?.assistantFontScale ?? (current as any)?.assistantFontScale ?? DEFAULT_SCALE);
         const safe = Number.isFinite(raw) ? clamp(raw, MIN_SCALE, MAX_SCALE) : DEFAULT_SCALE;
-        const skipAi = typeof p?.skipAiReply === 'boolean' ? p.skipAiReply : false;
-        return { ...current, assistantFontScale: safe, skipAiReply: skipAi } as UiPrefsState;
+        // 兼容旧版本：skipAiReply 取反 = aiAnyway
+        let aiAnyway = true;
+        if (typeof p?.aiAnyway === 'boolean') {
+          aiAnyway = p.aiAnyway;
+        } else if (typeof p?.skipAiReply === 'boolean') {
+          aiAnyway = !p.skipAiReply; // 旧数据迁移
+        }
+        return { ...current, assistantFontScale: safe, aiAnyway } as UiPrefsState;
       },
     }
   )

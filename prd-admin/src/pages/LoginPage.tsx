@@ -117,10 +117,10 @@ export default function LoginPage() {
               className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
               style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
             >
-              PRD
+              MAP
             </div>
             <div className="min-w-0">
-              <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>PRD Admin</div>
+              <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>MAP Admin</div>
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>使用管理员账号登录</div>
             </div>
           </div>

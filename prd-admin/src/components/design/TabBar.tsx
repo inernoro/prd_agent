@@ -23,8 +23,9 @@ interface TabBarProps {
 export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
   const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
-  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
+  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
   const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const [isReady, setIsReady] = useState(false);
 
   const handleChange = (key: string) => {
     setInternalKey(key);
@@ -35,7 +36,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   const hasTabs = items && items.length > 0;
 
   // 更新滑块位置
-  useEffect(() => {
+  const updateIndicator = () => {
     if (!hasTabs) return;
     const activeButton = buttonsRef.current.get(currentKey);
     if (activeButton) {
@@ -46,10 +47,31 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
         setIndicatorStyle({
           left: buttonRect.left - containerRect.left,
           width: buttonRect.width,
+          opacity: 1,
         });
+        if (!isReady) setIsReady(true);
       }
     }
+  };
+
+  // 初始化和 currentKey 变化时更新
+  useEffect(() => {
+    // 使用 requestAnimationFrame 确保 DOM 已完成布局
+    const raf = requestAnimationFrame(() => {
+      updateIndicator();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [currentKey, items, hasTabs]);
+
+  // 监听字体加载完成后重新计算
+  useEffect(() => {
+    if (!hasTabs) return;
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        requestAnimationFrame(updateIndicator);
+      });
+    }
+  }, [hasTabs]);
 
   return (
     <div
@@ -79,8 +101,9 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
               style={{
                 left: indicatorStyle.left,
                 width: indicatorStyle.width,
-                // 平滑的弹性动画
-                transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                opacity: indicatorStyle.opacity,
+                // 平滑的弹性动画，初始化时不使用动画
+                transition: isReady ? 'left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease-out' : 'opacity 0.2s ease-out',
                 // 多层背景效果
                 background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
                 border: '1px solid rgba(255, 255, 255, 0.18)',

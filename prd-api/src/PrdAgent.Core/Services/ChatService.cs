@@ -11,7 +11,7 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class ChatService : IChatService
 {
-    private readonly ILLMClient _llmClient;
+    private readonly ISmartModelScheduler _modelScheduler;
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
     private readonly ICacheManager _cache;
@@ -26,8 +26,13 @@ public class ChatService : IChatService
     private readonly IIdGenerator _idGenerator;
     private static readonly TimeSpan ChatHistoryExpiry = TimeSpan.FromMinutes(30);
 
+    // 应用标识常量（用于专属模型配置查询）
+    // 使用 AppCallerRegistry 中定义的完整标识符
+    private const string AppCallerCode = AppCallerRegistry.Desktop.Chat.SendMessageChat; // "prd-agent-desktop.chat.sendmessage::chat"
+    private const string ModelType = "chat";
+
     public ChatService(
-        ILLMClient llmClient,
+        ISmartModelScheduler modelScheduler,
         ISessionService sessionService,
         IDocumentService documentService,
         ICacheManager cache,
@@ -41,7 +46,7 @@ public class ChatService : IChatService
         ILLMRequestContextAccessor llmRequestContext,
         IIdGenerator idGenerator)
     {
-        _llmClient = llmClient;
+        _modelScheduler = modelScheduler;
         _sessionService = sessionService;
         _documentService = documentService;
         _cache = cache;
@@ -303,7 +308,9 @@ public class ChatService : IChatService
         var botUser = await _userService.GetByUsernameAsync(botUsername);
         var botUserId = botUser?.UserId;
 
-        var enumerator = _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        // 通过 SmartModelScheduler 获取专属模型客户端（支持专属模型配置）
+        var llmClient = await _modelScheduler.GetClientAsync(AppCallerCode, ModelType, cancellationToken);
+        var enumerator = llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
             while (true)

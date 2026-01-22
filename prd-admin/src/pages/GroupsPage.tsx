@@ -20,6 +20,7 @@ import {
 } from '@/services';
 import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send, FolderKanban } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -427,15 +428,9 @@ export default function GroupsPage() {
                       try {
                         const res = await simulateStreamMessages({ groupId: selected.groupId });
                         if (res.success) {
-                          systemDialog.alert({
-                            title: '发送成功',
-                            message: res.data.message || '已启动模拟流式发送',
-                          });
+                          toast.success('发送成功', res.data.message || '已启动模拟流式发送');
                         } else {
-                          systemDialog.alert({
-                            title: '发送失败',
-                            message: res.error?.message || '未知错误',
-                          });
+                          toast.error('发送失败', res.error?.message || '未知错误');
                         }
                       } finally {
                         setActionBusy(false);
@@ -753,10 +748,7 @@ export default function GroupsPage() {
                                 // 刷新群组列表的 messageCount/lastMessageAt
                                 await load();
                               } else {
-                                systemDialog.alert({
-                                  title: '清空失败',
-                                  message: res.error?.message || '未知错误',
-                                });
+                                toast.error('清空失败', res.error?.message || '未知错误');
                               }
                             } finally {
                               setMessagesClearing(false);
@@ -975,18 +967,12 @@ export default function GroupsPage() {
                       triggerAiReply: simulateTriggerAi,
                     });
                     if (res.success) {
-                      systemDialog.alert({
-                        title: '发送成功',
-                        message: `消息已发送，seq=${res.data.groupSeq}${res.data.triggerAiReply ? '，AI 回复已触发（异步）' : ''}`,
-                      });
+                      toast.success('发送成功', `消息已发送，seq=${res.data.groupSeq}${res.data.triggerAiReply ? '，AI 回复已触发（异步）' : ''}`);
                       setSimulateDialogOpen(false);
                       setSimulateContent('');
                       setSimulateTriggerAi(false);
                     } else {
-                      systemDialog.alert({
-                        title: '发送失败',
-                        message: res.error?.message || '未知错误',
-                      });
+                      toast.error('发送失败', res.error?.message || '未知错误');
                     }
                   } finally {
                     setSimulateBusy(false);

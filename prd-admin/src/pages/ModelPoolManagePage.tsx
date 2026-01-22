@@ -15,6 +15,7 @@ import {
 import type { ModelGroup, ModelGroupItem, Platform } from '@/types';
 import { ModelHealthStatus } from '@/types/modelGroup';
 import {
+  Copy,
   Database,
   Edit,
   Plus,
@@ -24,6 +25,7 @@ import {
 import { useEffect, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
+// Note: systemDialog 仅用于 confirm 确认框，toast 用于轻量级提示
 import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
 
 const MODEL_TYPES = [
@@ -87,7 +89,7 @@ export function ModelPoolManagePage() {
         setPlatforms(platformsData.data);
       }
     } catch (error) {
-      systemDialog.error('加载失败', String(error));
+      toast.error('加载失败', String(error));
     } finally {
       setLoading(false);
     }
@@ -121,6 +123,26 @@ export function ModelPoolManagePage() {
     setShowPoolDialog(true);
   };
 
+  const handleCopyPool = (pool: ModelGroup) => {
+    setEditingPool(null);
+    setPoolForm({
+      name: '',
+      code: '',
+      priority: 50,
+      modelType: pool.modelType || 'chat',
+      isDefaultForType: false,
+      description: '',
+      models: (pool.models || []).map((m, idx) => ({
+        ...m,
+        priority: idx + 1,
+        healthStatus: ModelHealthStatus.Healthy,
+        consecutiveFailures: 0,
+        consecutiveSuccesses: 0,
+      })),
+    });
+    setShowPoolDialog(true);
+  };
+
   const handleDeletePool = async (pool: ModelGroup) => {
     const confirmed = await systemDialog.confirm({
       title: '确认删除',
@@ -133,21 +155,21 @@ export function ModelPoolManagePage() {
       toast.success('删除成功');
       await loadData();
     } catch (error) {
-      systemDialog.error('删除失败', String(error));
+      toast.error('删除失败', String(error));
     }
   };
 
   const handleSavePool = async () => {
     if (!poolForm.name.trim()) {
-      systemDialog.error('验证失败', '模型池名称不能为空');
+      toast.warning('验证失败', '模型池名称不能为空');
       return;
     }
     if (!editingPool && !poolForm.code.trim()) {
-      systemDialog.error('验证失败', '模型池代码不能为空');
+      toast.warning('验证失败', '模型池代码不能为空');
       return;
     }
     if (!poolForm.modelType.trim()) {
-      systemDialog.error('验证失败', '模型类型不能为空');
+      toast.warning('验证失败', '模型类型不能为空');
       return;
     }
 
@@ -175,7 +197,7 @@ export function ModelPoolManagePage() {
       await loadData();
       setShowPoolDialog(false);
     } catch (error) {
-      systemDialog.error('保存失败', String(error));
+      toast.error('保存失败', String(error));
     }
   };
 
@@ -285,6 +307,14 @@ export function ModelPoolManagePage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
+                        <Tooltip content="复制为新模型池">
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                            onClick={() => handleCopyPool(pool)}
+                          >
+                            <Copy size={14} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        </Tooltip>
                         <Tooltip content="编辑模型池">
                           <button
                             className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"

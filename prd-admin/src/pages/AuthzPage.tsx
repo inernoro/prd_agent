@@ -6,6 +6,7 @@ import { Card } from '@/components/design/Card';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import {
   createSystemRole,
   deleteSystemRole,
@@ -72,7 +73,7 @@ export default function AuthzPage() {
     const [rolesRes, usersRes] = await Promise.all([getSystemRoles(), getUsers({ page: 1, pageSize: 100 })]);
 
     if (!rolesRes.success) {
-      systemDialog.error(rolesRes.error?.message || '加载角色失败');
+      toast.error('加载角色失败', rolesRes.error?.message);
       setLoading(false);
       return;
     }
@@ -97,13 +98,13 @@ export default function AuthzPage() {
     });
 
     if (!res.success) {
-      systemDialog.error(res.error?.message || '保存失败');
+      toast.error('保存失败', res.error?.message);
       setSaving(false);
       return;
     }
 
     setRoles((prev) => prev.map((r) => (r.key === roleKey ? res.data : r)));
-    systemDialog.success('已保存');
+    toast.success('已保存');
     setSaving(false);
   };
 
@@ -123,12 +124,12 @@ export default function AuthzPage() {
 
     const res = await deleteSystemRole(roleKey);
     if (!res.success) {
-      systemDialog.error(res.error?.message || '删除失败');
+      toast.error('删除失败', res.error?.message);
       return;
     }
 
     setRoles((prev) => prev.filter((r) => r.key !== roleKey));
-    systemDialog.success('已删除');
+    toast.success('已删除');
   };
 
   // 创建角色
@@ -138,19 +139,19 @@ export default function AuthzPage() {
     const name = String(createName || '').trim();
 
     if (!key || !name) {
-      systemDialog.error('请填写角色 key 与名称');
+      toast.warning('请填写角色 key 与名称');
       return;
     }
     if (!/^[a-z][a-z0-9_-]{1,32}$/.test(key)) {
-      systemDialog.error('key 不合法：建议使用小写字母开头，长度 2-33，仅 a-z0-9_-');
+      toast.warning('key 不合法', '建议使用小写字母开头，长度 2-33，仅 a-z0-9_-');
       return;
     }
     if (key === 'root') {
-      systemDialog.error('key 不合法');
+      toast.warning('key 不合法');
       return;
     }
     if (roles.some((r) => r.key === key)) {
-      systemDialog.error('该 key 已存在');
+      toast.warning('该 key 已存在');
       return;
     }
 
@@ -158,7 +159,7 @@ export default function AuthzPage() {
     const res = await createSystemRole({ key, name, permissions: [] });
 
     if (!res.success) {
-      systemDialog.error(res.error?.message || '创建失败');
+      toast.error('创建失败', res.error?.message);
       setCreateSubmitting(false);
       return;
     }
@@ -176,7 +177,7 @@ export default function AuthzPage() {
     setCreateOpen(false);
     setCreateKey('');
     setCreateName('');
-    systemDialog.success('已创建');
+    toast.success('已创建');
     setCreateSubmitting(false);
   };
 
@@ -196,7 +197,7 @@ export default function AuthzPage() {
     const res = await resetBuiltInSystemRoles();
 
     if (!res.success) {
-      systemDialog.error(res.error?.message || '刷新失败');
+      toast.error('刷新失败', res.error?.message);
       setResetSubmitting(false);
       return;
     }
@@ -209,7 +210,7 @@ export default function AuthzPage() {
       setPermissions(me.data.effectivePermissions || []);
     }
 
-    systemDialog.success('已刷新');
+    toast.success('已刷新');
     setResetSubmitting(false);
   };
 
@@ -577,7 +578,7 @@ export default function AuthzPage() {
                         });
 
                         if (!res.success) {
-                          systemDialog.error(res.error?.message || '赋权失败');
+                          toast.error('赋权失败', res.error?.message);
                           setAssignRoleSubmitting(false);
                           return;
                         }
@@ -591,7 +592,7 @@ export default function AuthzPage() {
                           )
                         );
 
-                        systemDialog.success(`已将 ${activeUser.displayName || activeUser.username} 的角色设为 ${role.name}`);
+                        toast.success(`已将 ${activeUser.displayName || activeUser.username} 的角色设为 ${role.name}`);
                         setAssignRoleSubmitting(false);
                         setAssignRoleOpen(false);
                       }}

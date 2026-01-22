@@ -383,8 +383,9 @@ public class OpenAIImageClient
                     RequestHeadersRedacted: new Dictionary<string, string>
                     {
                         ["content-type"] = initImageBase64 == null ? "application/json" : "multipart/form-data",
-                        // 统一使用标准 Header 名，避免某些 curl 生成/回放工具把不同大小写当作“两个头”
-                        ["Authorization"] = "Bearer ***"
+                        // 统一使用标准 Header 名，避免某些 curl 生成/回放工具把不同大小写当作"两个头"
+                        // 部分脱敏，保留前后4字符便于调试
+                        ["Authorization"] = $"Bearer {LlmLogRedactor.RedactApiKey(apiKey)}"
                     },
                     RequestBodyRedacted: reqLogJson,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),

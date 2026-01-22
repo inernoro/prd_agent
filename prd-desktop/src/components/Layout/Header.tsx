@@ -35,8 +35,8 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const increaseAssistantFont = useUiPrefsStore((s) => s.increaseAssistantFont);
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
   const resetAssistantFont = useUiPrefsStore((s) => s.resetAssistantFont);
-  const skipAiReply = useUiPrefsStore((s) => s.skipAiReply);
-  const toggleSkipAiReply = useUiPrefsStore((s) => s.toggleSkipAiReply);
+  const aiAnyway = useUiPrefsStore((s) => s.aiAnyway);
+  const toggleAiAnyway = useUiPrefsStore((s) => s.toggleAiAnyway);
   const openSettingsModal = useSettingsStore((s) => s.openModal);
   const isAdmin = user?.role === 'ADMIN';
   const desktopName = useDesktopBrandingStore((s) => s.branding.desktopName);
@@ -235,12 +235,12 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
                     className="flex items-center justify-between px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none text-text-secondary hover:text-text-primary"
                     onSelect={(e) => {
                       e.preventDefault();
-                      toggleSkipAiReply();
+                      toggleAiAnyway();
                     }}
                   >
-                    <span>无需 AI 回复</span>
-                    <span className={`ml-2 w-8 h-4 rounded-full transition-colors ${skipAiReply ? 'bg-primary-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
-                      <span className={`block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform ${skipAiReply ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                    <span>AI Anyway</span>
+                    <span className={`ml-2 w-8 h-4 rounded-full transition-colors ${aiAnyway ? 'bg-primary-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                      <span className={`block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform ${aiAnyway ? 'translate-x-4' : 'translate-x-0.5'}`} />
                     </span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-black/10 dark:bg-white/10" />

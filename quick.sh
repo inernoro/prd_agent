@@ -8,7 +8,8 @@
 #   ./quick.sh all      - 同时启动后端 + Web管理后台 + 桌面端（统一输出到同一控制台）
 #   ./quick.sh check    - 桌面端本地 CI 等价检查（对齐 .github/workflows/ci.yml 的 desktop-check；不包含 tag/release 打包与签名）
 #   ./quick.sh ci       - 本地跑一遍 CI（server + admin + desktop），尽量在提交前暴露问题
-#   ./quick.sh version  - 同步桌面端版本号（用于让 Tauri 打包资产文件名跟随 git tag / CI tag）
+#   ./quick.sh version  - 查看最近 10 个版本（git tags）
+#   ./quick.sh version v1.2.3 - 同步版本号 + git tag + git push origin tag
 
 set -e
 
@@ -268,6 +269,92 @@ sync_desktop_version() {
     log_success "Desktop version synced!"
 }
 
+# 查看最近 10 个版本
+show_recent_versions() {
+    log_info "Recent 10 versions:"
+    cd "$SCRIPT_DIR"
+
+    if ! command -v git >/dev/null 2>&1; then
+        log_error "git is not available"
+        exit 1
+    fi
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        log_error "Not a git repository: $SCRIPT_DIR"
+        exit 1
+    fi
+
+    local tags=""
+    tags="$(git tag --sort=-creatordate --list 'v*' 2>/dev/null | head -n 10 || true)"
+    if [ -z "$tags" ]; then
+        tags="$(git tag --sort=-creatordate | head -n 10 || true)"
+    fi
+
+    if [ -z "$tags" ]; then
+        log_warn "No tags found."
+        return 0
+    fi
+
+    echo "$tags"
+}
+
+# 发布版本：同步版本号 -> tag -> push tag
+# - 用法：./quick.sh version v1.2.3
+publish_version_tag() {
+    local raw_version="${1:-}"
+
+    if [ -z "$raw_version" ]; then
+        log_error "Usage: ./quick.sh version <version>"
+        log_error "Example: ./quick.sh version v1.2.3"
+        exit 1
+    fi
+
+    if ! command -v git >/dev/null 2>&1; then
+        log_error "git is not available"
+        exit 1
+    fi
+
+    cd "$SCRIPT_DIR"
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        log_error "Not a git repository: $SCRIPT_DIR"
+        exit 1
+    fi
+
+    # 规范化版本号（去掉 v 前缀用于文件，保留用于 tag）
+    local version="$raw_version"
+    if [[ "$version" == v* ]]; then
+        version="${version:1}"
+    fi
+    local tag_name="v$version"
+
+    # 验证版本号格式
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z\.\-]+)?$ ]]; then
+        log_error "Invalid version: '$raw_version' (expected like v1.2.3 / 1.2.3)"
+        exit 1
+    fi
+
+    # 检查 tag 是否已存在
+    if git rev-parse "$tag_name" >/dev/null 2>&1; then
+        log_error "Tag '$tag_name' already exists!"
+        log_info "To delete it: git tag -d $tag_name && git push origin :refs/tags/$tag_name"
+        exit 1
+    fi
+
+    log_info "Syncing desktop version to $version..."
+    sync_desktop_version "$version"
+
+    if ! git diff --quiet 2>/dev/null; then
+        log_warn "Working tree has uncommitted changes; tag will point to current HEAD."
+    fi
+
+    log_info "Creating tag $tag_name..."
+    git tag "$tag_name"
+
+    log_info "Pushing tag $tag_name..."
+    git push origin "$tag_name"
+
+    log_success "Version published: $tag_name"
+}
+
 # 发布新版本：同步版本号 -> commit -> tag -> push
 # - 用法：./quick.sh release 1.4.32
 # - 一气呵成：同步版本 -> git commit -> git tag -> git push
@@ -412,7 +499,7 @@ show_help() {
     echo "  all        Start backend + admin + desktop together (single console output)"
     echo "  check      Run desktop CI-equivalent checks (same as ci.yml desktop-check; excludes desktop-release packaging/signing)"
     echo "  ci         Run local CI checks (server + admin + desktop)"
-    echo "  version    Sync desktop version (tauri.conf.json/Cargo.toml/package.json) from arg/env/git tag"
+    echo "  version    Show recent 10 versions; pass a version to sync+tag+push"
     echo "  help       Show this help message"
     echo ""
 }
@@ -438,7 +525,11 @@ case "${1:-}" in
         check_ci
         ;;
     "version")
-        sync_desktop_version "${2:-}"
+        if [ -z "${2:-}" ]; then
+            show_recent_versions
+        else
+            publish_version_tag "${2:-}"
+        fi
         ;;
     "help"|"-h"|"--help")
         show_help

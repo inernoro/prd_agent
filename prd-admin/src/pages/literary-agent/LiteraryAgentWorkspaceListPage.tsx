@@ -3,6 +3,7 @@ import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import {
   createVisualAgentWorkspace,
   deleteVisualAgentWorkspace,
@@ -170,7 +171,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       idempotencyKey: `create-literary-${Date.now()}`,
     });
     if (!res.success) {
-      await systemDialog.alert({ title: '创建失败', message: res.error?.message || '未知错误', confirmText: '确定' });
+      toast.error('创建失败', res.error?.message || '未知错误');
       return;
     }
     // 如果指定了文件夹，设置 folderName
@@ -267,7 +268,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     if (!title || title === ws.title) return;
     const res = await updateVisualAgentWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
     if (!res.success) {
-      await systemDialog.alert({ title: '重命名失败', message: res.error?.message || '未知错误', confirmText: '确定' });
+      toast.error('重命名失败', res.error?.message || '未知错误');
       return;
     }
     await reload();
@@ -284,7 +285,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     if (!ok) return;
     const res = await deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
     if (!res.success) {
-      await systemDialog.alert({ title: '删除失败', message: res.error?.message || '未知错误', confirmText: '确定' });
+      toast.error('删除失败', res.error?.message || '未知错误');
       return;
     }
     await reload();

@@ -35,7 +35,14 @@
       "Bash(git stash push:*)",
       "Bash(git rev-parse:*)",
       "Bash(__NEW_LINE_1bf279d0ec47c95e__ echo \"\")",
-      "Bash(gh release view:*)"
+      "Bash(gh release view:*)",
+      "Bash(head -c 100 echo \"...\" echo \"\" echo \"=== 从 .sig 文件获取签名 ===\" curl -sL \"https://github.com/inernoro/prd_agent/releases/download/v1.6.4/PRD.Agent_aarch64.app.tar.gz.sig\" cat /tmp/actual_sig.txt)",
+      "Bash(then echo \"✓ 签名一致！\" else echo \"✗ 签名不一致\" fi)",
+      "Bash(__NEW_LINE_0c8baa26745bc21d__ echo \"\")",
+      "Bash(__NEW_LINE_a145bd1eef0104b0__ echo \"\")",
+      "Bash(xxd:*)",
+      "Bash(echo:*)",
+      "Bash(fi)"
     ]
   }
 }

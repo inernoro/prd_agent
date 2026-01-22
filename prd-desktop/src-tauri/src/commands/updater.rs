@@ -122,13 +122,10 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
 pub async fn fetch_update_manifests() -> Result<FetchManifestsResult, String> {
     let target = get_updater_target_triple().to_string();
 
-    let candidates = vec![
-        format!(
-            "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{}.json",
-            target
-        ),
-        "https://github.com/inernoro/prd_agent/releases/latest/download/latest.json".to_string(),
-    ];
+    let candidates = vec![format!(
+        "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{}.json",
+        target
+    )];
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))

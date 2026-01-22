@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -79,7 +80,7 @@ public class SmartModelScheduler : ISmartModelScheduler
 
         if (group == null || group.Models.Count == 0)
         {
-            throw new InvalidOperationException($"未找到可用的模型分组（类型：{modelType}）");
+            throw new InvalidOperationException($"未找到可用的模型分组（appCallerCode: {appCallerCode}, 类型: {modelType}）");
         }
 
         // 从分组中选择最佳模型
@@ -87,7 +88,7 @@ public class SmartModelScheduler : ISmartModelScheduler
 
         if (bestModel == null)
         {
-            throw new InvalidOperationException($"分组中没有可用的模型（类型：{modelType}）");
+            throw new InvalidOperationException($"分组中没有可用的模型（appCallerCode: {appCallerCode}, 类型: {modelType}, 分组: {group.Name}）");
         }
 
         // 检查测试桩配置（用于故障模拟）
@@ -239,18 +240,30 @@ public class SmartModelScheduler : ISmartModelScheduler
         ModelSchedulerConfig config,
         CancellationToken ct)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == modelItem.ModelId).FirstOrDefaultAsync(ct);
-        if (model == null)
+        // 直接通过 platformId 查询平台信息，不依赖 LLMModels 表
+        if (string.IsNullOrEmpty(modelItem.PlatformId))
         {
-            _logger.LogWarning("健康检查失败，模型不存在: {ModelId}", modelItem.ModelId);
+            _logger.LogWarning("健康检查失败，模型配置缺少平台ID: {ModelId}", modelItem.ModelId);
+            return false;
+        }
+
+        var platform = await _db.LLMPlatforms.Find(p => p.Id == modelItem.PlatformId).FirstOrDefaultAsync(ct);
+        if (platform == null)
+        {
+            _logger.LogWarning("健康检查失败，平台不存在: platformId={PlatformId}, modelId={ModelId}", modelItem.PlatformId, modelItem.ModelId);
             return false;
         }
 
         var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+        var apiUrl = platform.ApiUrl;
+        var apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+        var platformType = platform.PlatformType?.ToLowerInvariant();
+        var platformId = platform.Id;
+        var platformName = platform.Name;
+
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
-            _logger.LogWarning("健康检查失败，模型 API 配置不完整: {ModelId}", modelItem.ModelId);
+            _logger.LogWarning("健康检查失败，平台 API 配置不完整: platformId={PlatformId}, modelId={ModelId}", modelItem.PlatformId, modelItem.ModelId);
             return false;
         }
 
@@ -286,14 +299,15 @@ public class SmartModelScheduler : ISmartModelScheduler
         {
             ["content-type"] = "application/json"
         };
+        // 部分脱敏，保留前后4字符便于调试
         if (isAnthropic)
         {
-            headers["x-api-key"] = "***";
+            headers["x-api-key"] = LlmLogRedactor.RedactApiKey(apiKey);
             headers["anthropic-version"] = "2023-06-01";
         }
         else
         {
-            headers["Authorization"] = "Bearer ***";
+            headers["Authorization"] = $"Bearer {LlmLogRedactor.RedactApiKey(apiKey)}";
         }
 
         var logId = await _logWriter.StartAsync(new LlmLogStart(
@@ -550,34 +564,50 @@ public class SmartModelScheduler : ISmartModelScheduler
         string groupId,
         CancellationToken ct)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == modelItem.ModelId).FirstOrDefaultAsync(ct);
-        if (model == null)
+        // 直接通过 platformId 查询平台信息，不依赖 LLMModels 表（LLMModels 只是收藏夹）
+        // modelItem.ModelId 存储的是模型名称（如 deepseek-ai/DeepSeek-R1-Distill-Qwen-32B）
+        // modelItem.PlatformId 存储的是平台 ID
+
+        if (string.IsNullOrEmpty(modelItem.PlatformId))
         {
-            throw new InvalidOperationException($"模型不存在: {modelItem.ModelId}");
+            throw new InvalidOperationException($"模型配置缺少平台ID: modelId={modelItem.ModelId}");
+        }
+
+        var platform = await _db.LLMPlatforms.Find(p => p.Id == modelItem.PlatformId).FirstOrDefaultAsync(ct);
+        if (platform == null)
+        {
+            throw new InvalidOperationException($"平台不存在: platformId={modelItem.PlatformId}");
         }
 
         var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-
-        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+        var apiUrl = platform.ApiUrl;
+        var apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+        var platformType = platform.PlatformType?.ToLowerInvariant();
+        var platformId = platform.Id;
+        var platformName = platform.Name;
 
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
-            throw new InvalidOperationException("模型 API 配置不完整");
+            throw new InvalidOperationException($"平台 API 配置不完整: platformId={modelItem.PlatformId}, platformName={platformName}");
         }
 
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         var apiUrlTrim = apiUrl.Trim();
         httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
 
-        var enablePromptCache = model.EnablePromptCache ?? true;
-        var maxTokens = model.MaxTokens.HasValue && model.MaxTokens.Value > 0 ? model.MaxTokens.Value : 4096;
+        // 默认配置（不再依赖 LLMModels 表）
+        var enablePromptCache = true;
+        var maxTokens = 4096;
+
+        // 模型名称直接使用 modelItem.ModelId
+        var modelName = modelItem.ModelId;
 
         if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
         {
             return new ClaudeClient(
                 httpClient,
                 apiKey,
-                model.ModelName,
+                modelName,
                 maxTokens,
                 0.2,
                 enablePromptCache,
@@ -595,7 +625,7 @@ public class SmartModelScheduler : ISmartModelScheduler
         return new OpenAIClient(
             httpClient,
             apiKey,
-            model.ModelName,
+            modelName,
             maxTokens,
             0.2,
             enablePromptCache,
@@ -604,53 +634,6 @@ public class SmartModelScheduler : ISmartModelScheduler
             chatEndpointOrPath,
             platformId,
             platformName);
-    }
-
-    private async Task<(string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName)>
-        ResolveApiConfigForModelAsync(LLMModel model, string jwtSecret, CancellationToken ct)
-    {
-        string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
-        string? platformType = null;
-        string? platformId = model.PlatformId;
-        string? platformName = null;
-
-        if (model.PlatformId != null)
-        {
-            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
-            platformType = platform?.PlatformType?.ToLowerInvariant();
-            platformName = platform?.Name;
-
-            if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
-            {
-                apiUrl ??= platform.ApiUrl;
-                apiKey ??= DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
-            }
-        }
-
-        return (apiUrl, apiKey, platformType, platformId, platformName);
-    }
-
-    private string DecryptApiKey(string encrypted, string secret)
-    {
-        try
-        {
-            var keyBytes = System.Text.Encoding.UTF8.GetBytes(secret.PadRight(32).Substring(0, 32));
-            using var aes = System.Security.Cryptography.Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = new byte[16];
-            aes.Mode = System.Security.Cryptography.CipherMode.CBC;
-            aes.Padding = System.Security.Cryptography.PaddingMode.PKCS7;
-
-            using var decryptor = aes.CreateDecryptor();
-            var encryptedBytes = Convert.FromBase64String(encrypted);
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-            return System.Text.Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return encrypted;
-        }
     }
 
     private async Task<ModelSchedulerConfig> GetConfigAsync(CancellationToken ct)

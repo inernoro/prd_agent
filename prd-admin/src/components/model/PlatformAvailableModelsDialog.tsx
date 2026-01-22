@@ -11,6 +11,7 @@ import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanE
 import { matchAdapterConfig } from '@/lib/vveaiAdapterConfigs';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 
 export type AvailableModel = {
   /** 平台侧模型 ID（业务语义 modelId；后端字段名为 ModelName，前端历史命名为 modelName） */
@@ -272,7 +273,7 @@ export function PlatformAvailableModelsDialog({
         return;
       }
       const d = r.data as { updatedCount?: number; configuredCount?: number; availableCount?: number } | null;
-      void systemDialog.alert(`主模型分类完成：更新 ${d?.updatedCount ?? 0} 个（已配置 ${d?.configuredCount ?? 0} / 可用 ${d?.availableCount ?? 0}）`);
+      toast.success(`主模型分类完成：更新 ${d?.updatedCount ?? 0} 个（已配置 ${d?.configuredCount ?? 0} / 可用 ${d?.availableCount ?? 0}）`);
       if (onAfterWriteBack) await onAfterWriteBack();
       await fetchAvailableModels({ refresh: true });
     } finally {

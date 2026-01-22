@@ -11,6 +11,7 @@ import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigate } from 'react-router-dom';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 
 type UserRow = {
@@ -433,7 +434,7 @@ export default function UsersPage() {
     try {
       const res = await adminImpersonate(u.userId, 3600); // 1小时有效期
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '切换用户失败');
+        toast.error(res.error?.message || '切换用户失败');
         return;
       }
       
@@ -453,10 +454,10 @@ export default function UsersPage() {
       setMenuCatalogLoaded(false);
 
       // 提示并跳转到首页
-      await systemDialog.alert(`已切换到用户 "${res.data.user.displayName}" (${res.data.user.username})\n\n请注意：当前以该用户身份登录，会话有效期约 ${Math.floor(res.data.expiresIn / 60)} 分钟。`);
+      toast.info(`已切换到用户 "${res.data.user.displayName}" (${res.data.user.username})`, `会话有效期约 ${Math.floor(res.data.expiresIn / 60)} 分钟`);
       navigate('/');
     } catch (error) {
-      await systemDialog.alert(error instanceof Error ? error.message : '切换用户时发生错误');
+      toast.error(error instanceof Error ? error.message : '切换用户时发生错误');
     } finally {
       setSwitchingUserId(null);
     }
@@ -464,7 +465,7 @@ export default function UsersPage() {
 
   const openUserAuthz = async (u: UserRow) => {
     if (!canAuthzManage) {
-      await systemDialog.alert('无权限：需要 authz.manage');
+      toast.warning('无权限：需要 authz.manage');
       return;
     }
     setAuthzUser(u);
@@ -473,17 +474,17 @@ export default function UsersPage() {
     try {
       const [rolesRes, snapRes, catalogRes] = await Promise.all([getSystemRoles(), getUserAuthz(u.userId), getAdminPermissionCatalog()]);
       if (!rolesRes.success) {
-        await systemDialog.alert(rolesRes.error?.message || '加载系统角色失败');
+        toast.error(rolesRes.error?.message || '加载系统角色失败');
         setAuthzOpen(false);
         return;
       }
       if (!snapRes.success) {
-        await systemDialog.alert(snapRes.error?.message || '加载用户权限失败');
+        toast.error(snapRes.error?.message || '加载用户权限失败');
         setAuthzOpen(false);
         return;
       }
       if (!catalogRes.success) {
-        await systemDialog.alert(catalogRes.error?.message || '加载权限清单失败');
+        toast.error(catalogRes.error?.message || '加载权限清单失败');
         setAuthzOpen(false);
         return;
       }
@@ -528,10 +529,10 @@ export default function UsersPage() {
         permDeny: Array.from(authzDenySet).sort(),
       });
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '保存失败');
+        toast.error(res.error?.message || '保存失败');
         return;
       }
-      await systemDialog.alert('已保存该用户的后台权限');
+      toast.success('已保存该用户的后台权限');
       setAuthzOpen(false);
       await load();
     } finally {
@@ -547,7 +548,7 @@ export default function UsersPage() {
     try {
       const res = await getUserRateLimit(u.userId);
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '加载限流配置失败');
+        toast.error(res.error?.message || '加载限流配置失败');
         setRateLimitOpen(false);
         return;
       }
@@ -574,10 +575,10 @@ export default function UsersPage() {
         maxConcurrentRequests: rateLimitUseCustom ? rateLimitMaxConcurrent : undefined,
       });
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '保存失败');
+        toast.error(res.error?.message || '保存失败');
         return;
       }
-      await systemDialog.alert('已保存用户限流配置');
+      toast.success('已保存用户限流配置');
       setRateLimitOpen(false);
     } finally {
       setRateLimitSaving(false);
@@ -740,28 +741,16 @@ export default function UsersPage() {
       const res = await initializeUsers();
       
       if (!res.success) {
-        await systemDialog.alert({
-          title: '初始化失败',
-          message: res.error?.message || '初始化用户失败',
-          tone: 'danger',
-        });
+        toast.error('初始化失败', res.error?.message || '初始化用户失败');
         return;
       }
 
-      await systemDialog.alert({
-        title: '初始化成功',
-        message: `已删除 ${res.data.deletedCount} 个用户，创建了管理员账号（admin/admin）和 ${res.data.botUserIds.length} 个机器人账号`,
-        tone: 'neutral',
-      });
+      toast.success('初始化成功', `已删除 ${res.data.deletedCount} 个用户，创建了管理员账号（admin/admin）和 ${res.data.botUserIds.length} 个机器人账号`);
 
       await load();
     } catch (error) {
       console.error('Initialize users error:', error);
-      await systemDialog.alert({
-        title: '初始化失败',
-        message: '初始化用户时发生错误',
-        tone: 'danger',
-      });
+      toast.error('初始化失败', '初始化用户时发生错误');
     }
   };
 

@@ -16,7 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
-import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import { getAdminPrompts, getAdminSystemPrompts } from '@/services';
 import { useLocation } from 'react-router-dom';
 
@@ -394,7 +394,7 @@ export default function AiChatPage() {
         const res = await apiRequest<{ items: any[] }>(`/api/v1/sessions${suffix}`, { method: 'GET' });
         if (!res.success) {
           if (!args?.silent) {
-            void systemDialog.alert(res.error?.message || '获取会话列表失败');
+            toast.error(res.error?.message || '获取会话列表失败');
           }
           // fallback：兼容旧版本本地缓存
           const loaded = loadSessions(userId);
@@ -437,7 +437,7 @@ export default function AiChatPage() {
         }
       } catch {
         if (!args?.silent) {
-          void systemDialog.alert('获取会话列表失败（网络错误）');
+          toast.error('获取会话列表失败（网络错误）');
         }
       }
     },
@@ -463,7 +463,7 @@ export default function AiChatPage() {
           if (expiredNotifiedSessionIdRef.current !== sid) {
             expiredNotifiedSessionIdRef.current = sid;
             if (!args?.silent) {
-              void systemDialog.alert('当前会话已过期，请重新上传 PRD 创建新会话');
+              toast.warning('当前会话已过期，请重新上传 PRD 创建新会话');
             }
           }
         }
@@ -766,7 +766,7 @@ export default function AiChatPage() {
       return;
     }
     if (!token) {
-      await systemDialog.alert('未登录');
+      toast.warning('未登录');
       return;
     }
     if (isStreaming) return;
@@ -777,13 +777,12 @@ export default function AiChatPage() {
       attachmentText: pendingAttachmentText,
     });
     if (!limited.ok) {
-      await systemDialog.alert(limited.reason || `内容过长（上限 ${MAX_MESSAGE_CHARS} 字符）`);
+      toast.warning(limited.reason || `内容过长（上限 ${MAX_MESSAGE_CHARS} 字符）`);
       return;
     }
     if (limited.truncated) {
       // 轻提示：不阻塞发送，只告知发生截断
-      // 禁止 emoji
-      void systemDialog.alert('附件内容过长，已自动截断后发送');
+      toast.info('附件内容过长，已自动截断后发送');
     }
     const finalText = limited.finalText;
     const resendId = resendTargetMessageId ? String(resendTargetMessageId) : '';
@@ -873,7 +872,7 @@ export default function AiChatPage() {
   const onPickPrdFile = async (file: File) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.md')) {
-      await systemDialog.alert('仅支持 .md 文件');
+      toast.warning('仅支持 .md 文件');
       return;
     }
     const content = await file.text();
@@ -884,11 +883,11 @@ export default function AiChatPage() {
   const createSession = async () => {
     const content = prdText.trim();
     if (!content) {
-      await systemDialog.alert('请粘贴或选择 PRD 内容');
+      toast.warning('请粘贴或选择 PRD 内容');
       return;
     }
     if (!userId) {
-      await systemDialog.alert('未登录');
+      toast.warning('未登录');
       return;
     }
 
@@ -900,7 +899,7 @@ export default function AiChatPage() {
       setCreateBusy(false);
     }
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '上传失败');
+      toast.error(res.error?.message || '上传失败');
       return;
     }
 
@@ -909,7 +908,7 @@ export default function AiChatPage() {
     const docTitleRaw = String(res.data.document?.title || '');
     const docTitle = docTitleRaw.trim();
     if (!sid) {
-      await systemDialog.alert('后端未返回 sessionId');
+      toast.error('后端未返回 sessionId');
       return;
     }
 
@@ -960,7 +959,7 @@ export default function AiChatPage() {
     const fileName = normalizeFileName(file.name || '');
     const ext = getLowerExt(fileName);
     if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
-      await systemDialog.alert(`暂仅支持文本附件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+      toast.warning(`暂仅支持文本附件：${ALLOWED_TEXT_EXTS.join(', ')}`);
       return;
     }
 
@@ -968,7 +967,7 @@ export default function AiChatPage() {
     try {
       text = await file.text();
     } catch {
-      await systemDialog.alert('读取文件失败，请重试');
+      toast.error('读取文件失败，请重试');
       return;
     }
 
@@ -1551,7 +1550,7 @@ export default function AiChatPage() {
       : `/api/v1/sessions/${encodeURIComponent(id)}/unarchive`;
     const res = await apiRequest(path, { method: 'POST' });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '操作失败');
+      toast.error(res.error?.message || '操作失败');
       return;
     }
     void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
@@ -1564,7 +1563,7 @@ export default function AiChatPage() {
     if (!ok) return;
     const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', emptyResponseData: true as any });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '删除失败');
+      toast.error(res.error?.message || '删除失败');
       return;
     }
     if (activeSessionId === id) {

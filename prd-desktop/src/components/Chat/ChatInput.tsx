@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef, KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef, KeyboardEvent, useLayoutEffect } from 'react';
 import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
@@ -56,8 +56,12 @@ export default function ChatInput() {
   const { user } = useAuthStore();
   const connectionStatus = useConnectionStore((s) => s.status);
   const isDisconnected = connectionStatus === 'disconnected';
-  const skipAiReply = useUiPrefsStore((s) => s.skipAiReply);
+  const aiAnyway = useUiPrefsStore((s) => s.aiAnyway);
+  const toggleAiAnyway = useUiPrefsStore((s) => s.toggleAiAnyway);
   const [content, setContent] = useState('');
+  const [showAllPrompts, setShowAllPrompts] = useState(false);
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const promptsContainerRef = useRef<HTMLDivElement>(null);
   const [resendTargetMessageId, setResendTargetMessageId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [inputHeight, setInputHeight] = useState(36);
@@ -144,7 +148,7 @@ export default function ChatInput() {
       const runId = resp?.success ? String((resp as any).data?.runId || '') : '';
       if (runId) {
         ackPendingUserMessageRunId({ runId });
-        await invoke('subscribe_chat_run', { runId, afterSeq: 0 });
+        // 注意：不再调用 subscribe_chat_run，流式输出统一通过群组广播流（group-message）处理
       }
     } catch (err) {
       console.error('Failed to send prompt explain:', err);
@@ -182,14 +186,14 @@ export default function ChatInput() {
           messageId: target,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
-          skipAiReply: skipAiReply || undefined,
+          skipAiReply: !aiAnyway || undefined,
         });
       } else {
         const resp = await invoke<ApiResponse<any>>('create_chat_run', {
           sessionId,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
-          skipAiReply: skipAiReply || undefined,
+          skipAiReply: !aiAnyway || undefined,
         });
         const data = resp?.success ? (resp as any).data : null;
         const runId = data?.runId ? String(data.runId) : '';
@@ -257,27 +261,98 @@ export default function ChatInput() {
     return () => cancelAnimationFrame(raf);
   }, [content, adjustTextareaHeight]);
 
+  // 检测提示词区域是否溢出
+  const checkPromptsOverflow = useCallback(() => {
+    const container = promptsContainerRef.current;
+    if (!container) return;
+    // 只在非展开状态下检测溢出
+    if (!showAllPrompts) {
+      setHasOverflow(container.scrollWidth > container.clientWidth);
+    }
+  }, [showAllPrompts]);
+
+  // 监听窗口大小变化和提示词变化，重新检测溢出
+  useLayoutEffect(() => {
+    checkPromptsOverflow();
+    window.addEventListener('resize', checkPromptsOverflow);
+    return () => window.removeEventListener('resize', checkPromptsOverflow);
+  }, [checkPromptsOverflow, promptsForRole]);
+
+  // 收起时重新检测溢出
+  useEffect(() => {
+    if (!showAllPrompts) {
+      // 延迟一帧确保 DOM 已更新
+      requestAnimationFrame(checkPromptsOverflow);
+    }
+  }, [showAllPrompts, checkPromptsOverflow]);
+
   return (
     <div className="border-t ui-glass-bar">
       {/* 提示词栏：按当前角色展示 */}
       {canChat && document?.id && (
-        <div className="px-3 py-2 flex items-center gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
-          <div className="text-xs text-text-secondary flex-shrink-0">提示词</div>
-          <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none">
-            {promptsForRole.map((p) => (
-              <button
-                key={p.promptKey}
-                onClick={() => handlePromptExplain(p)}
-                disabled={isStreaming || isSubmitting || isDisconnected}
-                className={`flex-shrink-0 px-2.5 py-1.5 text-xs ui-chip transition-colors ${
-                  isStreaming || isSubmitting || isDisconnected ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                } text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5`}
-                title={p.title}
+        <div className="px-3 py-2 flex items-start gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+          {/* 左侧：提示词区域 */}
+          <div className="flex-1 min-w-0 flex items-start gap-2">
+            <div className="text-xs text-text-secondary flex-shrink-0 py-1.5">提示词</div>
+            <div className="flex-1 min-w-0 flex items-center gap-1">
+              <div
+                ref={promptsContainerRef}
+                className={`flex items-center gap-1 ${
+                  showAllPrompts ? 'flex-wrap flex-1' : 'overflow-hidden'
+                }`}
               >
-                <span className="hidden sm:inline">{p.title}</span>
-                <span className="sm:hidden">{p.order}</span>
-              </button>
-            ))}
+                {promptsForRole.map((p) => (
+                  <button
+                    key={p.promptKey}
+                    onClick={() => handlePromptExplain(p)}
+                    disabled={isStreaming || isSubmitting || isDisconnected}
+                    className={`flex-shrink-0 px-2.5 py-1.5 text-xs ui-chip transition-colors ${
+                      isStreaming || isSubmitting || isDisconnected ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                    } text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5`}
+                    title={p.title}
+                  >
+                    <span className="hidden sm:inline">{p.title}</span>
+                    <span className="sm:hidden">{p.order}</span>
+                  </button>
+                ))}
+                {/* 展开时收起按钮放在末尾 */}
+                {showAllPrompts && (
+                  <button
+                    onClick={() => setShowAllPrompts(false)}
+                    className="flex-shrink-0 px-2 py-1.5 text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
+                  >
+                    收起
+                  </button>
+                )}
+              </div>
+              {/* 未展开时更多按钮显示在行尾 */}
+              {hasOverflow && !showAllPrompts && (
+                <button
+                  onClick={() => setShowAllPrompts(true)}
+                  className="flex-shrink-0 px-2 py-1.5 text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
+                >
+                  更多
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 右侧：AI Anyway 开关 */}
+          <div className="flex-shrink-0 flex items-center gap-1.5 py-0.5">
+            <span className="text-xs text-text-secondary whitespace-nowrap">AI Anyway</span>
+            <button
+              onClick={toggleAiAnyway}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                aiAnyway ? 'bg-primary-500' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+              aria-label="AI Anyway"
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  aiAnyway ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
           </div>
         </div>
       )}

@@ -6,7 +6,7 @@ import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
 import { Copy, Download, Loader2, Maximize2, Square, Wand2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 
 type ImageItem = {
   key: string;
@@ -83,7 +83,7 @@ async function copyImageToClipboard(src: string) {
   // 2) 降级：复制链接/dataURL（用户可手动粘贴到支持的地方）
   try {
     await copyToClipboard(s);
-    await systemDialog.alert('当前环境不支持直接复制图片，已改为复制图片链接/数据。');
+    toast.info('当前环境不支持直接复制图片，已改为复制图片链接/数据。');
   } catch {
     // ignore
   }
@@ -192,7 +192,7 @@ export default function ImageGenPanel() {
   const runSingle = async () => {
     setSingleError('');
     if (!activeModel) {
-      await systemDialog.alert('请先选择生图模型');
+      toast.warning('请先选择生图模型');
       return;
     }
     const p = prompt.trim();
@@ -235,7 +235,7 @@ export default function ImageGenPanel() {
     try {
       const res = await planImageGen({ text: prompt.trim(), maxItems: 10 });
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '解析失败');
+        toast.error(res.error?.message || '解析失败');
         return;
       }
       setPlanResult(res.data ?? null);
@@ -246,11 +246,11 @@ export default function ImageGenPanel() {
 
   const startBatch = async () => {
     if (!activeModel) {
-      await systemDialog.alert('请先选择生图模型');
+      toast.warning('请先选择生图模型');
       return;
     }
     if (!planResult || !Array.isArray(planResult.items) || planResult.items.length === 0) {
-      await systemDialog.alert('请先生成批量计划');
+      toast.warning('请先生成批量计划');
       return;
     }
     if (batchRunning) return;

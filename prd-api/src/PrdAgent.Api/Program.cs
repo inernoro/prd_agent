@@ -790,7 +790,7 @@ builder.Services.AddScoped<IGapDetectionService>(sp =>
 
 builder.Services.AddScoped<IChatService>(sp =>
 {
-    var llmClient = sp.GetRequiredService<ILLMClient>();
+    var modelScheduler = sp.GetRequiredService<ISmartModelScheduler>();
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
     var cache = sp.GetRequiredService<ICacheManager>();
@@ -803,7 +803,7 @@ builder.Services.AddScoped<IChatService>(sp =>
     var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new ChatService(llmClient, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
+    return new ChatService(modelScheduler, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>

@@ -200,7 +200,8 @@ public class ClaudeClient : ILLMClient
             var headers = new Dictionary<string, string>
             {
                 ["content-type"] = "application/json",
-                ["x-api-key"] = "***",
+                // 部分脱敏，保留前后4字符便于调试
+                ["x-api-key"] = LlmLogRedactor.RedactApiKey(_apiKey),
                 ["anthropic-version"] = "2023-06-01"
             };
             if (enablePromptCache) headers["anthropic-beta"] = "prompt-caching-2024-07-31";

@@ -52,7 +52,7 @@ const anchorLabelMap: Record<WatermarkAnchor, string> = {
 const appKeyLabelMap: Record<string, string> = {
   'literary-agent': '文学创作',
   'visual-agent': '视觉创作',
-  'prd-agent': 'PRD Agent',
+  'prd-agent': '米多智能体平台',
 };
 
 const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {

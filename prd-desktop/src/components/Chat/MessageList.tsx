@@ -1002,7 +1002,7 @@ function MessageListInner() {
                       }}
                     />
                   ) : (
-                    <div className="space-y-2" style={assistantContentStyle}>
+                    <div className="space-y-2">
                       {message.blocks.map((b: MessageBlock) => {
                         return (
                           <div key={b.id} className="prose prose-sm dark:prose-invert max-w-none" style={assistantContentStyle}>
@@ -1044,10 +1044,7 @@ function MessageListInner() {
                               // 流式过程中 markdown 语法常常未闭合（列表/表格/引用等），会导致样式"缺一截"
                               // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
                               b.isComplete === false ? (
-                                <p 
-                                  className="whitespace-pre-wrap break-words not-prose" 
-                                  style={assistantContentStyle}
-                                >
+                                <p className="whitespace-pre-wrap break-words">
                                   {b.content}
                                 </p>
                               ) : (

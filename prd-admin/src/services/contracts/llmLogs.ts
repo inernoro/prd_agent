@@ -42,11 +42,13 @@ export type GetLlmModelStatsParams = {
   provider?: string;
   model?: string;
   status?: string;
+  platformId?: string;
 };
 
 export type LlmModelStatsItem = {
   provider: string;
   model: string;
+  platformId?: string;
   requestCount: number;
   avgDurationMs?: number | null;
   avgTtfbMs?: number | null;

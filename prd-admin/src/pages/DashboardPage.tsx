@@ -248,7 +248,7 @@ export default function DashboardPage() {
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <LayoutDashboard size={48} className="mb-4" style={{ color: 'var(--text-muted)' }} />
             <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-              欢迎使用 PRD Agent
+              欢迎使用米多智能体平台
             </h2>
             <p className="text-sm max-w-md" style={{ color: 'var(--text-secondary)' }}>
               请从左侧菜单选择功能开始使用。如需查看统计数据，请联系管理员获取相应权限。

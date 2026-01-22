@@ -260,7 +260,7 @@ public class LlmLogsController : ControllerBase
     }
 
     /// <summary>
-    /// 按模型聚合的近 N 天统计（用于模型管理页展示“请求次数/平均耗时/首字延迟/token”等）
+    /// 按模型聚合的近 N 天统计（用于模型管理页展示"请求次数/平均耗时/首字延迟/token"等）
     /// 说明：LLMRequestLogs 默认 TTL 为 7 天，因此该接口也主要用于近 7 天。
     /// </summary>
     [HttpGet("model-stats")]
@@ -268,7 +268,8 @@ public class LlmLogsController : ControllerBase
         [FromQuery] int days = 7,
         [FromQuery] string? provider = null,
         [FromQuery] string? model = null,
-        [FromQuery] string? status = null)
+        [FromQuery] string? status = null,
+        [FromQuery] string? platformId = null)
     {
         days = Math.Clamp(days, 1, 30);
         var from = DateTime.UtcNow.AddDays(-days);
@@ -277,6 +278,7 @@ public class LlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(provider)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Provider, provider);
         if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+        if (!string.IsNullOrWhiteSpace(platformId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.PlatformId, platformId);
 
         // 用聚合管道避免把大量日志拉回内存
         var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
@@ -290,6 +292,7 @@ public class LlmLogsController : ControllerBase
             {
                 { "provider", "$Provider" },
                 { "model", "$Model" },
+                { "platformId", "$PlatformId" },
                 { "durationMs", "$DurationMs" },
                 { "inputTokens", "$InputTokens" },
                 { "outputTokens", "$OutputTokens" },
@@ -309,7 +312,7 @@ public class LlmLogsController : ControllerBase
             }),
             new BsonDocument("$group", new BsonDocument
             {
-                { "_id", new BsonDocument { { "provider", "$provider" }, { "model", "$model" } } },
+                { "_id", new BsonDocument { { "provider", "$provider" }, { "model", "$model" }, { "platformId", "$platformId" } } },
                 { "requestCount", new BsonDocument("$sum", 1) },
                 { "avgDurationMs", new BsonDocument("$avg", "$durationMs") },
                 { "avgTtfbMs", new BsonDocument("$avg", "$ttfbMs") },
@@ -336,6 +339,7 @@ public class LlmLogsController : ControllerBase
                 { "_id", 0 },
                 { "provider", "$_id.provider" },
                 { "model", "$_id.model" },
+                { "platformId", "$_id.platformId" },
                 { "requestCount", 1 },
                 // round to int for UI friendliness
                 { "avgDurationMs", new BsonDocument("$round", new BsonArray { "$avgDurationMs", 0 }) },
@@ -363,6 +367,7 @@ public class LlmLogsController : ControllerBase
         {
             d.TryGetValue("provider", out var p);
             d.TryGetValue("model", out var m);
+            d.TryGetValue("platformId", out var pid);
             d.TryGetValue("requestCount", out var rc);
             d.TryGetValue("avgDurationMs", out var avgDur);
             d.TryGetValue("avgTtfbMs", out var avgTtfb);
@@ -375,6 +380,7 @@ public class LlmLogsController : ControllerBase
             {
                 provider = (ToDotNet(p) ?? string.Empty)?.ToString(),
                 model = (ToDotNet(m) ?? string.Empty)?.ToString(),
+                platformId = (ToDotNet(pid) ?? string.Empty)?.ToString(),
                 requestCount = ToDotNet(rc),
                 avgDurationMs = ToDotNet(avgDur),
                 avgTtfbMs = ToDotNet(avgTtfb),

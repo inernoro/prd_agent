@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { invoke, listen } from './lib/tauri';
+import { invoke, isTauri, listen } from './lib/tauri';
 import { useSessionStore } from './stores/sessionStore';
 import { useAuthStore } from './stores/authStore';
 import { useGroupListStore } from './stores/groupListStore';
@@ -120,6 +120,27 @@ function App() {
     return () => {
       unlistenPromise.then((fn) => fn()).catch(() => {});
     };
+  }, []);
+
+  // 使用 F12 或 Cmd/Ctrl+Shift+I 打开开发者工具（仅桌面端）
+  useEffect(() => {
+    if (!isTauri()) return () => {};
+    let lastOpenAt = 0;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isDevToolsShortcut =
+        e.key === 'F12' ||
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'i');
+      if (!isDevToolsShortcut) return;
+      e.preventDefault();
+      const now = Date.now();
+      if (now - lastOpenAt < 400) return;
+      lastOpenAt = now;
+      invoke('open_devtools').catch((err) => {
+        console.error('打开开发者工具失败:', err);
+      });
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
   const effectiveRole: UserRole = useMemo(() => {
@@ -442,4 +463,3 @@ function App() {
 }
 
 export default App;
-

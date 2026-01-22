@@ -30,6 +30,7 @@ import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor
 import { useDebounce } from '@/hooks/useDebounce';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
 
@@ -376,9 +377,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       // 上传后直接进入编辑模式并启用预览
       setPhase(1); // Editing
     } catch {
-      await systemDialog.alert('文件读取失败');
+      toast.error('文件读取失败');
     }
-    
+
     // 重置 input，允许重新上传同一文件
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -414,7 +415,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // 检查文件类型
     const fileName = file.name.toLowerCase();
     if (!fileName.endsWith('.md') && !fileName.endsWith('.txt')) {
-      await systemDialog.alert('仅支持 .md 和 .txt 格式的文件');
+      toast.warning('仅支持 .md 和 .txt 格式的文件');
       return;
     }
 
@@ -433,7 +434,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       // 上传后直接进入编辑模式
       setPhase(1); // Editing
     } catch {
-      await systemDialog.alert('文件读取失败');
+      toast.error('文件读取失败');
     }
   }, [workspaceId]);
 
@@ -444,12 +445,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const handleGenerateMarkers = async () => {
     if (!articleContent.trim()) {
-      await systemDialog.alert('请先输入文章内容');
+      toast.warning('请先输入文章内容');
       return;
     }
 
     if (!selectedPrompt) {
-      await systemDialog.alert('请先选择一个提示词模板');
+      toast.warning('请先选择一个提示词模板');
       return;
     }
 
@@ -763,10 +764,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     } catch (error) {
       console.error('Generate markers error:', error);
-      await systemDialog.alert({ 
-        title: '生成失败', 
-        message: error instanceof Error ? error.message : '未知错误' 
-      });
+      toast.error('生成失败', error instanceof Error ? error.message : '未知错误');
       setMarkers([]);
       setPhase(1); // Editing
     } finally {
@@ -882,18 +880,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const runSingleMarker = async (markerIndex: number) => {
     if (isStreamingRef.current) {
-      await systemDialog.alert('标记正在生成中，请稍后再试');
+      toast.warning('标记正在生成中，请稍后再试');
       return;
     }
     if (!imageGenModel) {
-      await systemDialog.alert(imageGenModelError || '未选择生图模型');
+      toast.error(imageGenModelError || '未选择生图模型');
       return;
     }
     const current = markerRunItems.find((x) => x.markerIndex === markerIndex) ?? null;
     if (!current) return;
     const text = String(current.draftText || current.markerText || '').trim();
     if (!text) {
-      await systemDialog.alert('提示词为空');
+      toast.warning('提示词为空');
       return;
     }
 
@@ -1136,15 +1134,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const handleBatchGenerate = async () => {
     if (!imageGenModel) {
-      await systemDialog.alert(imageGenModelError || '未选择生图模型');
+      toast.error(imageGenModelError || '未选择生图模型');
       return;
     }
     if (markers.length === 0) {
-      await systemDialog.alert('暂无配图标记');
+      toast.warning('暂无配图标记');
       return;
     }
     if (!articleWithMarkers.trim()) {
-      await systemDialog.alert('请先生成配图标记');
+      toast.warning('请先生成配图标记');
       return;
     }
 
@@ -1171,7 +1169,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setPhase(2); // MarkersGenerated
       
       if (anyError && !ac.signal.aborted) {
-        await systemDialog.alert('部分配图生成失败：可在右侧逐条修改并重新生成');
+        toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
     } catch (error) {
       console.error('Batch generate error:', error);
@@ -1250,7 +1248,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       // 使用与预览相同的逻辑：精确替换标记为图片
       const base = String(articleWithMarkers || articleContent || '');
       if (!base) {
-        await systemDialog.alert({ title: '导出失败', message: '文章内容为空' });
+        toast.error('导出失败', '文章内容为空');
         return;
       }
 
@@ -1304,13 +1302,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       link.click();
       URL.revokeObjectURL(url);
 
-      await systemDialog.alert({ 
-        title: '导出成功', 
-        message: `已导出 ${patches.length} 张配图到文章中` 
-      });
+      toast.success('导出成功', `已导出 ${patches.length} 张配图到文章中`);
     } catch (error) {
       console.error('Export error:', error);
-      await systemDialog.alert('导出失败');
+      toast.error('导出失败');
     }
   };
 
@@ -1352,11 +1347,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         setSelectedPrompt(newPrompt);
         setCreatingPrompt(null);
       } else {
-        await systemDialog.alert({ title: '创建失败', message: res.error?.message || '未知错误' });
+        toast.error('创建失败', res.error?.message || '未知错误');
       }
     } catch (error) {
       console.error('Failed to create prompt:', error);
-      await systemDialog.alert('创建失败');
+      toast.error('创建失败');
     }
   };
 
@@ -1405,11 +1400,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
         setEditingPrompt(null);
       } else {
-        await systemDialog.alert({ title: '保存失败', message: res.error?.message || '未知错误' });
+        toast.error('保存失败', res.error?.message || '未知错误');
       }
     } catch (error) {
       console.error('Failed to update prompt:', error);
-      await systemDialog.alert('保存失败');
+      toast.error('保存失败');
     }
   };
 
@@ -1420,7 +1415,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 删除提示词模板
   const handleDeletePrompt = async (prompt: PromptTemplate) => {
     if (prompt.isSystem) {
-      await systemDialog.alert('系统预置模板不可删除');
+      toast.warning('系统预置模板不可删除');
       return;
     }
 
@@ -1442,11 +1437,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           setSelectedPrompt(updated.length > 0 ? updated[0] : null);
         }
       } else {
-        await systemDialog.alert({ title: '删除失败', message: res.error?.message || '未知错误' });
+        toast.error('删除失败', res.error?.message || '未知错误');
       }
     } catch (error) {
       console.error('Failed to delete prompt:', error);
-      await systemDialog.alert('删除失败');
+      toast.error('删除失败');
     }
   };
 
@@ -1809,7 +1804,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const doneItems = markerRunItems.filter(x => x.status === 'done' && (x.assetUrl || x.url || x.base64));
                       
                       if (doneItems.length === 0) {
-                        await systemDialog.alert({ title: '无可下载图片', message: '还没有已完成的配图' });
+                        toast.warning('无可下载图片', '还没有已完成的配图');
                         return;
                       }
                       
@@ -1877,7 +1872,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }
                       
                       if (successCount === 0) {
-                        await systemDialog.alert({ title: '下载失败', message: '所有图片下载失败，可能是跨域限制导致' });
+                        toast.error('下载失败', '所有图片下载失败，可能是跨域限制导致');
                         return;
                       }
                       
@@ -1888,13 +1883,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       link.click();
                       URL.revokeObjectURL(link.href);
                       
-                      await systemDialog.alert({ 
-                        title: '下载完成', 
-                        message: `已打包 ${successCount} 张图片${successCount < doneItems.length ? `（${doneItems.length - successCount} 张失败）` : ''}` 
-                      });
+                      toast.success('下载完成', `已打包 ${successCount} 张图片${successCount < doneItems.length ? `（${doneItems.length - successCount} 张失败）` : ''}`);
                     } catch (error) {
                       console.error('Batch download failed:', error);
-                      await systemDialog.alert({ title: '下载失败', message: '批量下载图片时出错' });
+                      toast.error('下载失败', '批量下载图片时出错');
                     }
                   }}
                   title="下载所有已生成的图片（ZIP 格式）"
@@ -2084,7 +2076,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               onClick={async () => {
                                 try {
                                   await navigator.clipboard.writeText(src);
-                                  await systemDialog.alert({ title: '已复制', message: '图片链接已复制到剪贴板' });
+                                  toast.success('已复制', '图片链接已复制到剪贴板');
                                 } catch (error) {
                                   console.error('Copy failed:', error);
                                 }

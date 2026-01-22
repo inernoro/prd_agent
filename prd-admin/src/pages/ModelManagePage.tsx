@@ -43,6 +43,7 @@ import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
 import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import { formatDuration } from '@/lib/formatStats';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 
 type PlatformForm = {
   name: string;
@@ -404,7 +405,7 @@ export default function ModelManagePage() {
     const res = await clearVisionModel();
     if (!res.success) {
       await load({ silent: true });
-      await systemDialog.alert(res.error?.message || '取消图片识别模型失败');
+      toast.error(res.error?.message || '取消图片识别模型失败');
       return;
     }
     await load({ silent: true });
@@ -417,7 +418,7 @@ export default function ModelManagePage() {
     const res = await clearImageGenModel();
     if (!res.success) {
       await load({ silent: true });
-      await systemDialog.alert(res.error?.message || '取消图片生成模型失败');
+      toast.error(res.error?.message || '取消图片生成模型失败');
       return;
     }
     await load({ silent: true });
@@ -551,7 +552,7 @@ export default function ModelManagePage() {
       const updates = idsInOrder.map((id, idx) => ({ id, priority: idx + 1 }));
       const res = await updateModelPriorities(updates);
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '保存排序失败');
+        toast.error(res.error?.message || '保存排序失败');
         return;
       }
       await load({ silent: true });
@@ -609,7 +610,7 @@ export default function ModelManagePage() {
         enablePromptCache: true,
       });
       if (!res.success) {
-        await systemDialog.alert(res.error?.message || '批量添加失败');
+        toast.error(res.error?.message || '批量添加失败');
         break;
       }
     }
@@ -627,7 +628,7 @@ export default function ModelManagePage() {
     // 检查是否已存在桩平台
     const existingStub = platforms.find((p) => p.name === 'Stub 开发桩' || p.apiUrl?.includes('/api/v1/stub'));
     if (existingStub) {
-      systemDialog.alert({ title: '桩平台已存在', message: '已存在名为 "Stub 开发桩" 的平台，无需重复创建。' });
+      toast.warning('桩平台已存在', '已存在名为 "Stub 开发桩" 的平台，无需重复创建。');
       return;
     }
 
@@ -647,7 +648,7 @@ export default function ModelManagePage() {
       });
 
       if (!platformRes.success) {
-        systemDialog.alert({ title: '创建失败', message: `创建桩平台失败：${platformRes.error?.message || '未知错误'}` });
+        toast.error('创建失败', `创建桩平台失败：${platformRes.error?.message || '未知错误'}`);
         return;
       }
 
@@ -673,9 +674,9 @@ export default function ModelManagePage() {
 
       // 3. 刷新列表
       await load();
-      systemDialog.alert({ title: '创建成功', message: '已成功创建桩平台和 4 个桩模型（聊天、意图、识图、生图）。' });
+      toast.success('创建成功', '已成功创建桩平台和 4 个桩模型（聊天、意图、识图、生图）。');
     } catch (err) {
-      systemDialog.alert({ title: '创建失败', message: `创建桩平台时发生错误：${err instanceof Error ? err.message : '未知错误'}` });
+      toast.error('创建失败', `创建桩平台时发生错误：${err instanceof Error ? err.message : '未知错误'}`);
     } finally {
       setStubCreating(false);
     }
@@ -826,7 +827,7 @@ export default function ModelManagePage() {
     if (!res.success) {
       // 显示具体的错误信息
       const errorMsg = res.error?.message || '删除失败';
-      systemDialog.alert({ title: '删除失败', message: errorMsg, tone: 'danger' });
+      toast.error('删除失败', errorMsg);
       return;
     }
     if (selectedPlatformId === p.id) setSelectedPlatformId('');

@@ -3,7 +3,6 @@ import { Button } from '@/components/design/Button';
 import { Card } from '@/components/design/Card';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
-import { Tooltip } from '@/components/ui/Tooltip';
 import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
 import type { AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import {
@@ -20,7 +19,9 @@ import {
   // simulateRecover, // 暂时未使用
   getSchedulerConfig,
   updateSchedulerConfig,
+  getLlmModelStats,
 } from '@/services';
+import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
@@ -34,15 +35,22 @@ import type {
 import type { Platform } from '@/types/admin';
 import {
   Activity,
+  Box,
+  ChevronDown,
   ChevronRight,
-  Pencil,
+  Circle,
+  Eye,
+  Layers,
+  Link2,
   Plus,
   RefreshCw,
   Search,
+  Server,
   Settings,
   Trash2,
   Zap,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -86,16 +94,22 @@ const HEALTH_STATUS_MAP = {
 
 export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (actions: React.ReactNode) => void }) {
   const token = useAuthStore((s) => s.token);
+  const navigate = useNavigate();
   const [appCallers, setAppCallers] = useState<LLMAppCaller[]>([]);
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [modelTypeFilter, setModelTypeFilter] = useState('all');
+  // 模型调用统计数据 (key: platformId:modelId)
+  const [modelStats, setModelStats] = useState<Record<string, LlmModelStatsItem>>({});
   
   // 树形结构状态
   const [, setAppGroups] = useState<AppGroup[]>([]);
   const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
+
+  // 功能模型列表折叠状态（默认全部展开）
+  const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
 
   // 弹窗状态
   const [showConfigDialog, setShowConfigDialog] = useState(false);
@@ -120,6 +134,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false);
   const [bindingTarget, setBindingTarget] = useState<{ appId: string; modelType: string; currentIds: string[] } | null>(null);
   const [bindingSelectedIds, setBindingSelectedIds] = useState<string[]>([]);
+  const [bindingShowOnlyMatching, setBindingShowOnlyMatching] = useState(true);
 
   // 表单状态
   const [groupForm, setGroupForm] = useState({
@@ -153,6 +168,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   useEffect(() => {
     loadData();
+    loadModelStats();
   }, []);
 
   useEffect(() => {
@@ -205,7 +221,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         setSelectedAppId(apps[0].id);
       }
     } catch (error) {
-      systemDialog.error('加载失败', String(error));
+      toast.error('加载失败', String(error));
     }
   };
 
@@ -231,6 +247,38 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       })
     );
     setMonitoringData(data);
+
+    // 同时加载模型统计数据
+    loadModelStats();
+  };
+
+  // 加载模型调用统计数据
+  const loadModelStats = async () => {
+    try {
+      const res = await getLlmModelStats({ days: 7 });
+      if (res.success && res.data?.items) {
+        const statsMap: Record<string, LlmModelStatsItem> = {};
+        for (const item of res.data.items) {
+          // 使用 platformId:model 作为 key
+          const key = `${item.platformId || ''}:${item.model}`.toLowerCase();
+          // 如果同一个 key 已存在，累加统计
+          if (statsMap[key]) {
+            statsMap[key].requestCount += item.requestCount;
+            if (item.totalInputTokens) {
+              statsMap[key].totalInputTokens = (statsMap[key].totalInputTokens || 0) + item.totalInputTokens;
+            }
+            if (item.totalOutputTokens) {
+              statsMap[key].totalOutputTokens = (statsMap[key].totalOutputTokens || 0) + item.totalOutputTokens;
+            }
+          } else {
+            statsMap[key] = { ...item };
+          }
+        }
+        setModelStats(statsMap);
+      }
+    } catch (error) {
+      console.error('Failed to load model stats:', error);
+    }
   };
 
   const keyOfGroupModel = (m: Pick<ModelGroupItem, 'platformId' | 'modelId'>) =>
@@ -277,6 +325,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const openBindingDialog = (appId: string, modelType: string, currentIds: string[]) => {
     setBindingTarget({ appId, modelType, currentIds });
     setBindingSelectedIds([...currentIds]);
+    setBindingShowOnlyMatching(true); // 默认只显示最佳适配
     setBindingDialogOpen(true);
   };
 
@@ -312,7 +361,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         await loadMonitoringForApp(selectedAppId);
       }
     } catch (error) {
-      systemDialog.error('绑定失败', error instanceof Error ? error.message : String(error));
+      toast.error('绑定失败', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -346,7 +395,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       const r = await updateModelGroup(g.id, { models });
       if (!r.success) throw new Error(r.error?.message || '保存失败');
 
-      systemDialog.success('保存成功');
+      toast.success('保存成功');
       // 刷新模型池列表
       const groups = await getModelGroups();
       setModelGroups(groups);
@@ -359,7 +408,39 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       }
       setGroupModelsOpen(false);
     } catch (error) {
-      systemDialog.error('保存失败', error instanceof Error ? error.message : String(error));
+      toast.error('保存失败', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  // 从模型池中删除单个模型
+  const handleRemoveModelFromPool = async (poolGroup: ModelGroup, platformId: string, modelId: string) => {
+    const confirmed = await systemDialog.confirm({
+      title: '确认移除',
+      message: `确定从「${poolGroup.name}」中移除模型「${modelId}」吗？`,
+    });
+    if (!confirmed) return;
+
+    try {
+      const updatedModels = (poolGroup.models || []).filter(
+        m => !(m.platformId === platformId && m.modelId === modelId)
+      );
+
+      const r = await updateModelGroup(poolGroup.id, { models: updatedModels });
+      if (!r.success) throw new Error(r.error?.message || '移除失败');
+
+      toast.success('模型已移除');
+      // 刷新模型池列表
+      const groups = await getModelGroups();
+      setModelGroups(groups);
+      // 刷新监控数据
+      try {
+        const monitoring = await getGroupMonitoring(poolGroup.id);
+        setMonitoringData((prev) => ({ ...prev, [poolGroup.id]: monitoring }));
+      } catch (e) {
+        console.error('[RemoveModel] 刷新监控失败:', e);
+      }
+    } catch (error) {
+      toast.error('移除失败', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -488,12 +569,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         description: selectedApp.description,
         modelRequirements: updatedReqs,
       });
-      systemDialog.success('保存成功');
+      toast.success('保存成功');
       await loadData();
       setShowRequirementDialog(false);
       setEditingRequirement(null);
     } catch (error) {
-      systemDialog.error('保存失败', String(error));
+      toast.error('保存失败', String(error));
     }
   };
 
@@ -535,15 +616,15 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   const handleSaveGroup = async () => {
     if (!groupForm.name.trim()) {
-      systemDialog.error('验证失败', '模型池名称不能为空');
+      toast.warning('验证失败', '模型池名称不能为空');
       return;
     }
     if (!editingGroup && !groupForm.code.trim()) {
-      systemDialog.error('验证失败', '模型池代码不能为空');
+      toast.warning('验证失败', '模型池代码不能为空');
       return;
     }
     if (!groupForm.modelType.trim()) {
-      systemDialog.error('验证失败', '模型类型不能为空');
+      toast.warning('验证失败', '模型类型不能为空');
       return;
     }
 
@@ -564,11 +645,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           models: groupForm.models,
         });
       }
-      systemDialog.success('保存成功');
+      toast.success('保存成功');
       await loadData();
       _setShowGroupDialog(false);
     } catch (error) {
-      systemDialog.error('保存失败', String(error));
+      toast.error('保存失败', String(error));
     }
   };
 
@@ -590,11 +671,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const handleSaveConfig = async () => {
     try {
       await updateSchedulerConfig(configForm);
-      systemDialog.success('保存成功');
+      toast.success('保存成功');
       await loadData();
       setShowConfigDialog(false);
     } catch (error) {
-      systemDialog.error('保存失败', String(error));
+      toast.error('保存失败', String(error));
     }
   };
 
@@ -749,16 +830,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   // 检查这个应用组中是否有被选中的项
                   const isSelected = appGroup.features.some(f => f.items.some(i => i.id === selectedAppId));
                   const totalItems = appGroup.features.reduce((sum, f) => sum + f.items.length, 0);
-                  
-                  // 计算应用组的统计数据
-                  const totalCalls = appGroup.features.reduce((sum, f) => 
-                    sum + f.items.reduce((s, i) => s + i.stats.totalCalls, 0), 0
-                  );
-                  const successCalls = appGroup.features.reduce((sum, f) => 
-                    sum + f.items.reduce((s, i) => s + i.stats.successCalls, 0), 0
-                  );
-                  const successRate = totalCalls > 0 ? ((successCalls / totalCalls) * 100).toFixed(1) : '0';
-                  
+
                   return (
                     <div
                       key={appGroup.app}
@@ -769,10 +841,20 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                           setSelectedAppId(firstItem.id);
                         }
                       }}
-                      className="px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      className="px-3 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
                       style={isSelected ? { background: 'rgba(255,255,255,0.06)' } : undefined}
                     >
-                      <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-3">
+                        {/* 应用图标 */}
+                        <div
+                          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+                          style={{
+                            background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.06)',
+                            border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(255,255,255,0.08)',
+                          }}
+                        >
+                          <Layers size={18} style={{ color: isSelected ? 'rgba(59, 130, 246, 0.9)' : 'var(--text-muted)' }} />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -785,16 +867,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                           <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
                             {appGroup.app}
                           </div>
-                          {totalCalls > 0 && (
-                            <div className="mt-2 flex items-center gap-3 text-[11px]">
-                              <span style={{ color: 'var(--text-secondary)' }}>
-                                调用 {totalCalls.toLocaleString()}
-                              </span>
-                              <span style={{ color: parseFloat(successRate) >= 95 ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }}>
-                                成功率 {successRate}%
-                              </span>
-                            </div>
-                          )}
                         </div>
                         {isSelected && <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
                       </div>
@@ -854,11 +926,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               </Card>
 
               {/* 功能列表 */}
-              <Card className="flex-1 min-h-0 p-4 overflow-auto">
-                <h4 className="text-[14px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                  功能与模型配置
-                </h4>
-
+              <Card className="flex-1 min-h-0 overflow-auto p-0">
                 {selectedAppFeatures.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center py-12">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>
@@ -867,164 +935,312 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="divide-y divide-white/[0.06]">
                     {selectedAppFeatures.map((featureItem, idx: number) => {
                       const app = appCallers.find(a => a.id === featureItem.id);
                       if (!app) return null;
-                      
+
                       const req = app.modelRequirements[0]; // 每个功能项只有一个需求
                       const boundGroupIds = req?.modelGroupIds || [];
-                      const group = boundGroupIds.length > 0 ? modelGroups.find((g) => boundGroupIds.includes(g.id)) : undefined;
-                      const monitoring = boundGroupIds.length > 0 ? monitoringData[boundGroupIds[0]] : undefined;
+                      // 获取所有绑定的模型池
+                      const boundGroups = boundGroupIds
+                        .map(id => modelGroups.find(g => g.id === id))
+                        .filter((g): g is ModelGroup => !!g);
                       const ModelTypeIcon = getModelTypeIcon(featureItem.parsed.modelType);
                       const modelTypeLabel = getModelTypeDisplayName(featureItem.parsed.modelType);
                       const featureDescription = getFeatureDescription(featureItem.parsed);
-                      const successRate = featureItem.stats.totalCalls > 0 
-                        ? ((featureItem.stats.successCalls / featureItem.stats.totalCalls) * 100).toFixed(1) 
-                        : '0';
-                      
-                      // 判断是否使用默认模型池
-                      const isDefaultGroup = !group;
-                      const groupLabel = isDefaultGroup 
-                        ? `默认${modelTypeLabel}` 
-                        : `专属${modelTypeLabel}`;
+
+                      // 判断是否使用默认模型池（未绑定专属模型池）
+                      const isDefaultGroup = boundGroups.length === 0;
+
+                      // 判断模型列表是否折叠
+                      const featureKey = `${app.id}-${idx}`;
+                      const isCollapsed = collapsedFeatures.has(featureKey);
+
+                      // 切换折叠状态
+                      const toggleCollapse = () => {
+                        setCollapsedFeatures(prev => {
+                          const next = new Set(prev);
+                          if (next.has(featureKey)) {
+                            next.delete(featureKey);
+                          } else {
+                            next.add(featureKey);
+                          }
+                          return next;
+                        });
+                      };
+
+                      // 计算所有模型池的总模型数
+                      const totalModelsCount = boundGroups.reduce((sum, g) => {
+                        const mon = monitoringData[g.id];
+                        const models = mon?.models && mon.models.length > 0 ? mon.models : (g.models || []);
+                        return sum + models.length;
+                      }, 0);
+
+                      // 获取平台名称
+                      const getPlatformName = (platformId: string) => {
+                        const platform = platforms.find(p => p.id === platformId);
+                        return platform?.name || platformId;
+                      };
 
                       return (
-                        <Card key={idx} className="p-0 overflow-hidden">
-                          {/* 功能头部 */}
-                          <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <span className="shrink-0" style={{ color: 'var(--text-secondary)' }} title={modelTypeLabel}>
-                                <ModelTypeIcon size={16} />
-                              </span>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                  {featureDescription}
-                                </div>
-                                <div className="mt-0.5 flex items-center gap-2">
-                                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                    模型：{featureItem.appCallerKey}
-                                  </span>
-                                  <button
-                                    className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                                    style={{
-                                      background: isDefaultGroup ? 'rgba(34, 197, 94, 0.12)' : 'rgba(59, 130, 246, 0.12)',
-                                      border: isDefaultGroup ? '1px solid rgba(34, 197, 94, 0.28)' : '1px solid rgba(59, 130, 246, 0.28)',
-                                      color: isDefaultGroup ? 'rgba(34, 197, 94, 0.95)' : 'rgba(59, 130, 246, 0.95)',
-                                    }}
-                                    title={isDefaultGroup ? '使用默认模型池' : `使用专属模型池：${group?.name}`}
-                                  >
-                                    {groupLabel}
-                                  </button>
-                                </div>
-                              </div>
-                              {featureItem.stats.totalCalls > 0 && (
-                                <div className="flex items-center gap-3 text-[11px]">
-                                  <span style={{ color: 'var(--text-secondary)' }}>
-                                    {featureItem.stats.totalCalls}次
-                                  </span>
-                                  <span style={{ color: parseFloat(successRate) >= 95 ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }}>
-                                    {successRate}%
-                                  </span>
-                                </div>
+                        <div key={idx} className="p-4">
+                          {/* 功能头部 - 左侧竖线指示器 */}
+                          <div className="flex items-start gap-3">
+                            {/* 功能类型图标 - 未绑定专属模型池用灰色，已绑定用蓝色 */}
+                            <div
+                              className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+                              style={{
+                                background: isDefaultGroup ? 'rgba(255, 255, 255, 0.05)' : 'rgba(59, 130, 246, 0.1)',
+                                border: isDefaultGroup ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(59, 130, 246, 0.2)',
+                              }}
+                            >
+                              {isDefaultGroup ? (
+                                <Circle size={20} style={{ color: 'var(--text-muted)' }} />
+                              ) : (
+                                <ModelTypeIcon size={20} style={{ color: 'rgba(59, 130, 246, 0.9)' }} />
                               )}
-                              {/* 添加模型按钮 - 始终显示 */}
-                              <Button
-                                variant="secondary"
-                                size="xs"
-                                className="ml-2 shrink-0"
-                                onClick={() => {
-                                  if (group) {
-                                    // 已绑定专属模型池：直接打开模型编辑器
-                                    openGroupModelsEditor(group);
-                                  } else {
-                                    // 未绑定模型池：打开绑定对话框
-                                    openBindingDialog(
+                            </div>
+
+                            {/* 功能信息 */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      {featureDescription}
+                                    </span>
+                                    {isDefaultGroup ? (
+                                      <span
+                                        className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
+                                        style={{
+                                          background: 'rgba(255, 255, 255, 0.06)',
+                                          color: 'var(--text-muted)',
+                                        }}
+                                      >
+                                        使用默认 {modelTypeLabel}
+                                      </span>
+                                    ) : (
+                                      boundGroups.map((g) => (
+                                        <span
+                                          key={g.id}
+                                          className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
+                                          style={{
+                                            background: 'rgba(59, 130, 246, 0.12)',
+                                            color: 'rgba(59, 130, 246, 0.95)',
+                                          }}
+                                        >
+                                          {g.name}
+                                        </span>
+                                      ))
+                                    )}
+                                    {/* 折叠/展开按钮 - 只在有模型池时显示 */}
+                                    {boundGroups.length > 0 && totalModelsCount > 0 && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleCollapse();
+                                        }}
+                                        className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-white/10 transition-colors"
+                                        title={isCollapsed ? '展开模型列表' : '折叠模型列表'}
+                                      >
+                                        {isCollapsed ? (
+                                          <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                                        ) : (
+                                          <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    {featureItem.appCallerKey}
+                                    {boundGroups.length > 0 && totalModelsCount > 0 && (
+                                      <span className="ml-2">· {boundGroups.length} 个模型池 · {totalModelsCount} 个模型</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {/* 已绑定模型池时显示添加模型按钮 */}
+                                  {boundGroups.length === 1 && (
+                                    <Button
+                                      variant="secondary"
+                                      size="xs"
+                                      onClick={() => openGroupModelsEditor(boundGroups[0])}
+                                      title="添加模型到模型池"
+                                    >
+                                      <Plus size={12} />
+                                      添加模型
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant={boundGroups.length > 0 ? 'ghost' : 'secondary'}
+                                    size="xs"
+                                    onClick={() => openBindingDialog(
                                       app.id,
                                       req?.modelType || featureItem.parsed.modelType,
                                       req?.modelGroupIds || []
-                                    );
-                                  }
-                                }}
-                              >
-                                <Plus size={12} />
-                                {group ? '添加模型' : '绑定模型池'}
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* 模型配置 - 仅绑定专属模型池时显示 */}
-                          {group && (
-                            <div className="p-4">
-                              <div className="mb-3">
-                                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                                  已配置模型
+                                    )}
+                                    title={boundGroups.length > 0 ? '管理绑定的模型池' : '绑定模型池'}
+                                  >
+                                    <Link2 size={12} />
+                                    {boundGroups.length > 0 ? '管理模型池' : '绑定模型池'}
+                                  </Button>
                                 </div>
                               </div>
 
-                              {/* 模型负载列表 */}
-                              {monitoring && monitoring.models.length > 0 ? (
-                                <div className="space-y-2">
-                                  {monitoring.models.map((model: any, modelIdx: number) => {
-                                    const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP];
+                              {/* 模型列表 - 按模型池分组显示 */}
+                              {boundGroups.length > 0 && !isCollapsed && (
+                                <div className="mt-3 space-y-3">
+                                  {boundGroups.map((poolGroup) => {
+                                    const poolMonitoring = monitoringData[poolGroup.id];
+                                    const poolModels = poolMonitoring?.models && poolMonitoring.models.length > 0
+                                      ? poolMonitoring.models
+                                      : (poolGroup.models || []).map(m => ({ ...m, healthScore: 100 }));
+
                                     return (
                                       <div
-                                        key={`${model.platformId}-${model.modelId}`}
-                                        className="rounded-[12px] p-3 border border-white/10"
-                                        style={{ background: 'rgba(255,255,255,0.03)' }}
+                                        key={poolGroup.id}
+                                        className="pl-3 space-y-1"
+                                        style={{ borderLeft: '2px solid rgba(59, 130, 246, 0.3)' }}
                                       >
-                                        <div className="flex items-start justify-between gap-3">
-                                          <div className="min-w-0 flex-1">
+                                        {/* 模型池标题 - 只在绑定多个模型池时显示 */}
+                                        {boundGroups.length > 1 && (
+                                          <div className="flex items-center justify-between gap-2 py-1">
                                             <div className="flex items-center gap-2">
-                                              <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-                                                #{modelIdx + 1}
+                                              <span className="text-[11px] font-medium" style={{ color: 'rgba(59, 130, 246, 0.8)' }}>
+                                                {poolGroup.name}
                                               </span>
-                                              <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                                {model.modelId}
+                                              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                                {poolModels.length} 个模型
+                                              </span>
+                                            </div>
+                                            <Button
+                                              variant="ghost"
+                                              size="xs"
+                                              className="h-5 px-1.5 opacity-60 hover:opacity-100"
+                                              onClick={() => openGroupModelsEditor(poolGroup)}
+                                              title="编辑此模型池的模型"
+                                            >
+                                              <Plus size={10} />
+                                              添加模型
+                                            </Button>
+                                          </div>
+                                        )}
+                                        {poolModels.length > 0 ? (
+                                          poolModels.map((model: any, modelIdx: number) => {
+                                            const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                                            const platformName = getPlatformName(model.platformId);
+                                            // 获取模型统计数据
+                                            const statsKey = `${model.platformId}:${model.modelId}`.toLowerCase();
+                                            const stats = modelStats[statsKey];
+                                            return (
+                                              <div
+                                                key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
+                                                className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
+                                                style={{
+                                                  background: 'rgba(255, 255, 255, 0.02)',
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                  e.currentTarget.style.background = 'rgba(251, 191, 36, 0.08)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                                                }}
+                                              >
+                                                {/* 序号 */}
+                                                <span className="text-[10px] font-medium w-5 text-center shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                  {modelIdx + 1}
+                                                </span>
+                                                {/* 平台 */}
+                                                <span
+                                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
+                                                  style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
+                                                >
+                                                  <Server size={10} />
+                                                  {platformName}
+                                                </span>
+                                                {/* 模型名 */}
+                                                <div className="flex items-center gap-1 min-w-0 flex-1">
+                                                  <Box size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
+                                                  <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                                    {model.modelId}
+                                                  </span>
+                                                </div>
+                                                {/* 调用统计 */}
+                                                {stats ? (
+                                                  <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                    <span title="近7天请求次数">
+                                                      {stats.requestCount.toLocaleString()}次
+                                                    </span>
+                                                    {stats.avgDurationMs != null && (
+                                                      <span title="平均耗时">
+                                                        {stats.avgDurationMs}ms
+                                                      </span>
+                                                    )}
+                                                    {stats.avgTtfbMs != null && (
+                                                      <span title="首字延迟(TTFB)">
+                                                        TTFB:{stats.avgTtfbMs}ms
+                                                      </span>
+                                                    )}
+                                                    {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
+                                                      <span title="输入/输出Token">
+                                                        {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                    暂无统计
+                                                  </span>
+                                                )}
+                                                {/* 状态 */}
+                                                <span
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                  style={{ background: status.bg, color: status.color }}
+                                                >
+                                                  {status.label}
+                                                </span>
+                                                {/* 操作按钮 - hover 显示 */}
+                                                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                  {/* 查看日志 */}
+                                                  <button
+                                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
+                                                    onClick={() => {
+                                                      // 跳转到日志页，带上筛选参数
+                                                      const params = new URLSearchParams();
+                                                      params.set('tab', 'llm');
+                                                      if (model.platformId) params.set('provider', platformName);
+                                                      if (model.modelId) params.set('model', model.modelId);
+                                                      navigate(`/logs?${params.toString()}`);
+                                                    }}
+                                                    title="查看该模型的调用日志"
+                                                  >
+                                                    <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                                  </button>
+                                                  <button
+                                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
+                                                    onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
+                                                    title="从模型池中移除"
+                                                  >
+                                                    <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
+                                                  </button>
+                                                </div>
                                               </div>
-                                              <span
-                                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                                                style={{ background: status.bg, border: `1px solid ${status.border}`, color: status.color }}
-                                              >
-                                                {status.label}
-                                              </span>
-                                            </div>
-                                            <div className="mt-2 flex items-center gap-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                              <span>平台: <span style={{ color: 'var(--text-secondary)' }}>{model.platformId}</span></span>
-                                              <span>优先级: <span style={{ color: 'var(--text-secondary)' }}>{model.priority}</span></span>
-                                              <span>连续失败: <span style={{ color: model.consecutiveFailures > 0 ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)' }}>{model.consecutiveFailures}</span></span>
-                                              <span>健康分: <span style={{ color: 'var(--text-secondary)' }}>{model.healthScore.toFixed(0)}</span></span>
-                                            </div>
+                                            );
+                                          })
+                                        ) : (
+                                          <div className="py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                            模型池中暂无模型，点击"添加"配置
                                           </div>
-                                          <div className="flex items-center gap-1">
-                                            <Tooltip content="编辑">
-                                              <button
-                                                className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                                              >
-                                                <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
-                                              </button>
-                                            </Tooltip>
-                                            <Tooltip content="删除">
-                                              <button
-                                                className="h-8 w-8 inline-flex items-center justify-center rounded-[10px] hover:bg-white/5"
-                                              >
-                                                <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
-                                              </button>
-                                            </Tooltip>
-                                          </div>
-                                        </div>
+                                        )}
                                       </div>
                                     );
                                   })}
                                 </div>
-                              ) : (
-                                <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
-                                  <div className="text-[12px]">模型池中暂无模型</div>
-                                </div>
                               )}
                             </div>
-                          )}
-                        </Card>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -1069,7 +1285,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     size="sm"
                     onClick={() => {
                       if (!availablePlatformId) {
-                        void systemDialog.alert('请先选择平台');
+                        toast.warning('请先选择平台');
                         return;
                       }
                       setAvailableOpen(true);
@@ -1558,105 +1774,167 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       )}
 
       {/* 模型池绑定弹窗 */}
-      {bindingDialogOpen && bindingTarget && (
-        <Dialog
-          open={bindingDialogOpen}
-          onOpenChange={(open) => {
-            setBindingDialogOpen(open);
-            if (!open) {
-              setBindingTarget(null);
-              setBindingSelectedIds([]);
-            }
-          }}
-          title="绑定模型池"
-          description="选择要绑定的模型池（可多选）"
-          maxWidth={640}
-          content={
-            <div className="space-y-4">
-              <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
-                可用模型池（{modelGroups.filter(g => g.modelType === bindingTarget.modelType).length}）
-              </div>
+      {bindingDialogOpen && bindingTarget && (() => {
+        const targetModelTypeLabel = getModelTypeDisplayName(bindingTarget.modelType);
+        const filteredGroups = bindingShowOnlyMatching
+          ? modelGroups.filter(g => g.modelType === bindingTarget.modelType)
+          : modelGroups;
+        const matchingCount = modelGroups.filter(g => g.modelType === bindingTarget.modelType).length;
 
-              <div
-                className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
-                style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
-              >
-                {modelGroups.filter(g => g.modelType === bindingTarget.modelType).length === 0 ? (
-                  <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    暂无可用模型池，请先在"模型池管理"中创建
-                    <div className="mt-4">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => window.location.href = '/mds?tab=pools'}
-                      >
-                        <Plus size={12} />
-                        新建模型池
-                      </Button>
+        return (
+          <Dialog
+            open={bindingDialogOpen}
+            onOpenChange={(open) => {
+              setBindingDialogOpen(open);
+              if (!open) {
+                setBindingTarget(null);
+                setBindingSelectedIds([]);
+              }
+            }}
+            title="绑定专属模型池"
+            description={`为「${targetModelTypeLabel}」功能选择模型池（可多选）`}
+            maxWidth={640}
+            content={
+              <div className="space-y-4">
+                {/* 过滤开关 */}
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={bindingShowOnlyMatching}
+                      onChange={(e) => setBindingShowOnlyMatching(e.target.checked)}
+                      className="h-4 w-4 rounded"
+                    />
+                    <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                      只显示最佳适配（{targetModelTypeLabel}）
+                    </span>
+                  </label>
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    共 {filteredGroups.length} 个模型池
+                  </span>
+                </div>
+
+                <div
+                  className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
+                  style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
+                >
+                  {filteredGroups.length === 0 ? (
+                    <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                      {bindingShowOnlyMatching
+                        ? `暂无「${targetModelTypeLabel}」类型的模型池`
+                        : '暂无可用模型池'}
+                      <div className="mt-2 text-[11px]">
+                        {bindingShowOnlyMatching && matchingCount === 0 && (
+                          <span>取消勾选上方选项可查看全部模型池</span>
+                        )}
+                      </div>
+                      <div className="mt-4">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => window.location.href = '/mds?tab=pools'}
+                        >
+                          <Plus size={12} />
+                          新建模型池
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {modelGroups
-                      .filter(g => g.modelType === bindingTarget.modelType)
-                      .sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50))
-                      .map((g) => {
-                        const isSelected = bindingSelectedIds.includes(g.id);
-                        return (
-                          <div
-                            key={g.id}
-                            onClick={() => toggleBindingPool(g.id)}
-                            className="flex items-center justify-between gap-3 px-3 py-3 rounded-lg cursor-pointer transition-colors"
-                            style={{
-                              background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255,255,255,0.04)',
-                              border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid transparent',
-                            }}
-                          >
-                            <div className="flex items-center gap-3 min-w-0 flex-1">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleBindingPool(g.id)}
-                                className="h-4 w-4 rounded"
-                              />
-                              <div className="min-w-0 flex-1">
-                                <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                  {g.name}
-                                </div>
-                                <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                  Code: {g.code || '-'} | 优先级: {g.priority ?? 50} | 模型数: {g.models?.length || 0}
+                  ) : (
+                    <div className="space-y-2">
+                      {filteredGroups
+                        .sort((a, b) => {
+                          // 最佳适配的排在前面
+                          const aMatch = a.modelType === bindingTarget.modelType;
+                          const bMatch = b.modelType === bindingTarget.modelType;
+                          if (aMatch !== bMatch) return aMatch ? -1 : 1;
+                          return (a.priority ?? 50) - (b.priority ?? 50);
+                        })
+                        .map((g) => {
+                          const isSelected = bindingSelectedIds.includes(g.id);
+                          const isMatching = g.modelType === bindingTarget.modelType;
+                          const groupTypeLabel = getModelTypeDisplayName(g.modelType);
+
+                          return (
+                            <div
+                              key={g.id}
+                              onClick={() => toggleBindingPool(g.id)}
+                              className="flex items-center justify-between gap-3 px-3 py-3 rounded-lg cursor-pointer transition-colors"
+                              style={{
+                                background: isSelected
+                                  ? 'rgba(59, 130, 246, 0.12)'
+                                  : isMatching
+                                    ? 'rgba(34, 197, 94, 0.06)'
+                                    : 'rgba(255,255,255,0.04)',
+                                border: isSelected
+                                  ? '1px solid rgba(59, 130, 246, 0.4)'
+                                  : isMatching
+                                    ? '1px solid rgba(34, 197, 94, 0.2)'
+                                    : '1px solid transparent',
+                              }}
+                            >
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleBindingPool(g.id)}
+                                  className="h-4 w-4 rounded"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                      {g.name}
+                                    </span>
+                                    {isMatching && (
+                                      <span
+                                        className="px-1.5 py-0.5 rounded text-[10px] shrink-0"
+                                        style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                                      >
+                                        最佳适配
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                    类型: {groupTypeLabel} | Code: {g.code || '-'} | 优先级: {g.priority ?? 50} | 模型数: {g.models?.length || 0}
+                                  </div>
                                 </div>
                               </div>
+                              {g.isDefaultForType && (
+                                <span className="px-2 py-0.5 rounded text-[10px] shrink-0" style={{ background: 'rgba(251,191,36,0.12)', color: 'rgba(251,191,36,0.95)' }}>
+                                  默认
+                                </span>
+                              )}
                             </div>
-                            {g.isDefaultForType && (
-                              <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
-                                默认
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
-              </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
 
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                已选择 {bindingSelectedIds.length} 个模型池
-                {bindingSelectedIds.length > 1 && '（多个模型池时将随机选择）'}
-              </div>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  已选择 {bindingSelectedIds.length} 个模型池
+                  {bindingSelectedIds.length > 1 && '（多个模型池时将按优先级选择）'}
+                  {!bindingShowOnlyMatching && bindingSelectedIds.some(id =>
+                    modelGroups.find(g => g.id === id)?.modelType !== bindingTarget.modelType
+                  ) && (
+                    <span style={{ color: 'rgba(251,191,36,0.95)' }}>
+                      {' '}· 包含非最佳适配类型
+                    </span>
+                  )}
+                </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => setBindingDialogOpen(false)}>
-                  取消
-                </Button>
-                <Button variant="primary" size="sm" onClick={saveBindings}>
-                  确认绑定
-                </Button>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="secondary" size="sm" onClick={() => setBindingDialogOpen(false)}>
+                    取消
+                  </Button>
+                  <Button variant="primary" size="sm" onClick={saveBindings}>
+                    确认绑定
+                  </Button>
+                </div>
               </div>
-            </div>
-          }
-        />
-      )}
+            }
+          />
+        );
+      })()}
     </div>
   );
 }

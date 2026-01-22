@@ -118,7 +118,7 @@ public class ModelGroupsController : ControllerBase
             ModelType = request.ModelType,
             IsDefaultForType = request.IsDefaultForType,
             Description = request.Description,
-            Models = new List<ModelGroupItem>(),
+            Models = request.Models ?? new List<ModelGroupItem>(),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -246,6 +246,8 @@ public class CreateModelGroupRequest
     public string ModelType { get; set; } = string.Empty;
     public bool IsDefaultForType { get; set; } = false;
     public string? Description { get; set; }
+    /// <summary>模型列表</summary>
+    public List<ModelGroupItem>? Models { get; set; }
 }
 
 public class UpdateModelGroupRequest

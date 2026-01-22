@@ -22,6 +22,7 @@ import {
 } from '@/services';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import {
   buildInlineImageToken,
@@ -1401,7 +1402,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       new Set([splitKey, modelPrefKey, directPromptKey].map((x) => String(x ?? '').trim()).filter(Boolean))
     );
     if (keys.length === 0) {
-      await systemDialog.alert('当前账号暂无可清理的本地缓存');
+      toast.info('当前账号暂无可清理的本地缓存');
       return;
     }
 
@@ -1431,7 +1432,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const def = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, fallback));
     setRightWidth(def);
 
-    await systemDialog.alert('已清理本地缓存。若仍异常，建议刷新页面。');
+    toast.success('已清理本地缓存。若仍异常，建议刷新页面。');
   }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, modelPrefKey, splitKey]);
 
   const [busy, setBusy] = useState(false);
@@ -1612,7 +1613,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
       const failed = results.find((r) => !r.success) ?? null;
       if (failed) {
-        await systemDialog.alert(failed.error?.message || '删除失败');
+        toast.error(failed.error?.message || '删除失败');
         await reloadWorkspace();
       }
     },

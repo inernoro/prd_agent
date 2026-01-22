@@ -6,7 +6,7 @@ import { adminImpersonate, getUsers } from '@/services';
 import type { AdminUser, UserRole } from '@/types/admin';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
-import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 
 type Actor = {
   userId: string;
@@ -141,7 +141,7 @@ export default function DesktopLabTab() {
   const addActor = async (u: AdminUser) => {
     const res = await adminImpersonate(u.userId, 900);
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '冒充失败');
+      toast.error(res.error?.message || '冒充失败');
       return;
     }
 
@@ -164,7 +164,7 @@ export default function DesktopLabTab() {
 
   const createGroup = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
 
@@ -185,7 +185,7 @@ export default function DesktopLabTab() {
 
   const joinGroupAsActor = async (a: Actor) => {
     if (!groupId || !inviteCode) {
-      await systemDialog.alert('请先创建群组');
+      toast.warning('请先创建群组');
       return;
     }
     const res = await apiRequestWithToken<any>(a.token, '/api/v1/groups/join', {
@@ -193,7 +193,7 @@ export default function DesktopLabTab() {
       body: { inviteCode, userRole: a.role },
     });
     if (!res.success) {
-      await systemDialog.alert(res.error?.message || '加入失败');
+      toast.error(res.error?.message || '加入失败');
       return;
     }
     setGroupInfoJson(JSON.stringify(res, null, 2));
@@ -201,7 +201,7 @@ export default function DesktopLabTab() {
 
   const uploadPrd = async () => {
     if (!prdContent.trim()) {
-      await systemDialog.alert('请粘贴 PRD 内容');
+      toast.warning('请粘贴 PRD 内容');
       return;
     }
 
@@ -220,15 +220,15 @@ export default function DesktopLabTab() {
 
   const bindPrdToGroup = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!groupId) {
-      await systemDialog.alert('请先创建群组');
+      toast.warning('请先创建群组');
       return;
     }
     if (!documentId) {
-      await systemDialog.alert('请先上传 PRD');
+      toast.warning('请先上传 PRD');
       return;
     }
 
@@ -241,11 +241,11 @@ export default function DesktopLabTab() {
 
   const unbindPrdFromGroup = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!groupId) {
-      await systemDialog.alert('请先创建群组');
+      toast.warning('请先创建群组');
       return;
     }
     const res = await apiRequestWithToken<any>(activeActor.token, `/api/v1/groups/${encodeURIComponent(groupId)}/prd`, {
@@ -256,11 +256,11 @@ export default function DesktopLabTab() {
 
   const openSession = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!groupId) {
-      await systemDialog.alert('请先创建群组');
+      toast.warning('请先创建群组');
       return;
     }
 
@@ -280,11 +280,11 @@ export default function DesktopLabTab() {
 
   const sendChat = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!sessionId) {
-      await systemDialog.alert('请先打开会话');
+      toast.warning('请先打开会话');
       return;
     }
     if (!chatInput.trim()) return;
@@ -341,11 +341,11 @@ export default function DesktopLabTab() {
 
   const startGuide = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!sessionId) {
-      await systemDialog.alert('请先打开会话');
+      toast.warning('请先打开会话');
       return;
     }
 
@@ -384,11 +384,11 @@ export default function DesktopLabTab() {
 
   const loadGaps = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!groupId) {
-      await systemDialog.alert('请先创建群组');
+      toast.warning('请先创建群组');
       return;
     }
     const res = await apiRequestWithToken<any>(activeActor.token, `/api/v1/groups/${encodeURIComponent(groupId)}/gaps?page=1&pageSize=50`, {
@@ -399,11 +399,11 @@ export default function DesktopLabTab() {
 
   const generateGapSummary = async () => {
     if (!activeActor) {
-      await systemDialog.alert('请先选择一个演员');
+      toast.warning('请先选择一个演员');
       return;
     }
     if (!groupId) {
-      await systemDialog.alert('请先创建群组');
+      toast.warning('请先创建群组');
       return;
     }
     // 后端会从 group 读取 PRD 文档内容，如果未绑定会返回文档不存在
