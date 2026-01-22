@@ -35,6 +35,8 @@ export default function SettingsPage() {
   const lastDragOverTimeRef = useRef<number>(0);
   const pendingDragOverIndexRef = useRef<number | null>(null);
   const rafIdRef = useRef<number | null>(null);
+  // 列表容器 ref（用于锁定高度防止抖动）
+  const listContainerRef = useRef<HTMLDivElement>(null);
 
   // 从后端菜单目录构建导航项（menuCatalog 已经是后端根据用户权限过滤后的结果，无需二次过滤）
   const sortedItems: NavItem[] = useMemo(() => {
@@ -78,6 +80,11 @@ export default function SettingsPage() {
 
   // 拖拽开始
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    // 锁定容器高度：当前高度 + 一个条目高度（~54px），防止插入指示器导致容器扩展引起抖动
+    if (listContainerRef.current) {
+      const currentHeight = listContainerRef.current.offsetHeight;
+      listContainerRef.current.style.minHeight = `${currentHeight + 54}px`;
+    }
     setDraggingIndex(index);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(index));
@@ -148,6 +155,10 @@ export default function SettingsPage() {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
+    // 释放容器高度锁定
+    if (listContainerRef.current) {
+      listContainerRef.current.style.minHeight = '';
+    }
     pendingDragOverIndexRef.current = null;
     lastDragOverTimeRef.current = 0;
     setDraggingIndex(null);
@@ -214,7 +225,7 @@ export default function SettingsPage() {
                 <style>{`
                   .nav-order-list::-webkit-scrollbar { display: none; }
                 `}</style>
-                <div className="nav-order-list pb-6">
+                <div ref={listContainerRef} className="nav-order-list pb-6">
                   {sortedItems.map((item, index) => {
                     const isDragging = draggingIndex === index;
                     // 显示插入指示器：在目标位置之前显示空隙
