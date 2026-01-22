@@ -214,27 +214,11 @@ export default function SettingsPage() {
                 <style>{`
                   .nav-order-list::-webkit-scrollbar { display: none; }
                 `}</style>
-                <div className="nav-order-list space-y-1.5 pb-6">
+                <div className="nav-order-list pb-6">
                   {sortedItems.map((item, index) => {
-                    // Apple 风格挤压动画：当拖拽项经过时，其他项向上或向下移动
+                    // Apple 风格：拖拽项"让出空间"，其他项自然填充
                     const isDragging = draggingIndex === index;
                     const isDropTarget = dragOverIndex === index;
-                    let translateY = 0;
-                    if (draggingIndex !== null && dragOverIndex !== null && !isDragging) {
-                      // 如果拖拽项从上方来，目标及其下方项下移
-                      // 如果拖拽项从下方来，目标及其上方项上移
-                      if (draggingIndex < dragOverIndex) {
-                        // 向下拖：源位置到目标位置之间的项上移
-                        if (index > draggingIndex && index <= dragOverIndex) {
-                          translateY = -48; // 约一个item高度
-                        }
-                      } else if (draggingIndex > dragOverIndex) {
-                        // 向上拖：目标位置到源位置之间的项下移
-                        if (index >= dragOverIndex && index < draggingIndex) {
-                          translateY = 48;
-                        }
-                      }
-                    }
 
                     return (
                       <div
@@ -245,62 +229,59 @@ export default function SettingsPage() {
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(e, index)}
                         onDragEnd={handleDragEnd}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing"
+                        className="cursor-grab active:cursor-grabbing"
                         style={{
-                          background: isDragging
-                            ? 'rgba(214,178,106,0.18)'
-                            : isDropTarget
-                              ? 'rgba(214,178,106,0.08)'
-                              : 'rgba(255,255,255,0.03)',
-                          border: isDragging
-                            ? '1px solid rgba(214,178,106,0.4)'
-                            : '1px solid rgba(255,255,255,0.06)',
-                          opacity: isDragging ? 0.9 : 1,
-                          // 使用 translate3d 启用 GPU 加速，避免抖动
-                          transform: isDragging
-                            ? 'translate3d(0, 0, 0)'
-                            : `translate3d(0, ${translateY}px, 0)`,
-                          // 使用 will-change 预告浏览器即将变化的属性，优化渲染性能
-                          willChange: draggingIndex !== null ? 'transform' : 'auto',
-                          // 使用更平滑的过渡曲线（spring-like）
-                          transition: isDragging
-                            ? 'opacity 0.15s ease, background 0.15s ease, border 0.15s ease, box-shadow 0.15s ease'
-                            : 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), background 0.15s ease, border 0.15s ease',
-                          zIndex: isDragging ? 10 : 1,
-                          boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,0.3)' : 'none',
-                          // 隔离合成层，减少重绘范围
-                          isolation: 'isolate',
+                          // 拖拽项"折叠"让出空间
+                          height: isDragging ? 0 : 'auto',
+                          padding: isDragging ? 0 : undefined,
+                          marginBottom: isDragging ? 0 : 6,
+                          overflow: 'hidden',
+                          opacity: isDragging ? 0 : 1,
+                          transition: 'height 0.25s cubic-bezier(0.32, 0.72, 0, 1), margin 0.25s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.15s ease',
                         }}
                       >
                         <div
-                          className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
-                          <GripVertical size={14} />
-                        </div>
-                        <div
-                          className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-[10px]"
                           style={{
-                            background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            color: 'var(--text-secondary)',
+                            background: isDropTarget
+                              ? 'rgba(214,178,106,0.12)'
+                              : 'rgba(255,255,255,0.03)',
+                            border: isDropTarget
+                              ? '1px solid rgba(214,178,106,0.3)'
+                              : '1px solid rgba(255,255,255,0.06)',
+                            transition: 'background 0.15s ease, border 0.15s ease',
                           }}
                         >
-                          {getIcon(item.icon, 16)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                            {item.label}
+                          <div
+                            className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
+                            <GripVertical size={14} />
                           </div>
-                        </div>
-                        <div
-                          className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
-                          style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            color: 'var(--text-muted)',
-                          }}
-                        >
-                          {index + 1}
+                          <div
+                            className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
+                            style={{
+                              background: 'rgba(255,255,255,0.05)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              color: 'var(--text-secondary)',
+                            }}
+                          >
+                            {getIcon(item.icon, 16)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                              {item.label}
+                            </div>
+                          </div>
+                          <div
+                            className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
+                            style={{
+                              background: 'rgba(255,255,255,0.04)',
+                              color: 'var(--text-muted)',
+                            }}
+                          >
+                            {index + 1}
+                          </div>
                         </div>
                       </div>
                     );
