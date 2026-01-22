@@ -216,40 +216,58 @@ export default function SettingsPage() {
                 `}</style>
                 <div className="nav-order-list pb-6">
                   {sortedItems.map((item, index) => {
-                    // Apple 风格：拖拽项"让出空间"，其他项自然填充
                     const isDragging = draggingIndex === index;
-                    const isDropTarget = dragOverIndex === index;
+                    // 显示插入指示器：在目标位置之前显示空隙
+                    const showGapBefore =
+                      draggingIndex !== null &&
+                      dragOverIndex !== null &&
+                      dragOverIndex === index &&
+                      draggingIndex !== index &&
+                      draggingIndex !== index - 1;
 
                     return (
-                      <div
-                        key={item.key}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, index)}
-                        onDragOver={(e) => handleDragOver(e, index)}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, index)}
-                        onDragEnd={handleDragEnd}
-                        className="cursor-grab active:cursor-grabbing"
-                        style={{
-                          // 拖拽项"折叠"让出空间
-                          height: isDragging ? 0 : 'auto',
-                          padding: isDragging ? 0 : undefined,
-                          marginBottom: isDragging ? 0 : 6,
-                          overflow: 'hidden',
-                          opacity: isDragging ? 0 : 1,
-                          transition: 'height 0.25s cubic-bezier(0.32, 0.72, 0, 1), margin 0.25s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.15s ease',
-                        }}
-                      >
+                      <div key={item.key}>
+                        {/* 插入指示器：空隙 + 线条 */}
                         <div
-                          className="flex items-center gap-3 px-3 py-2.5 rounded-[10px]"
                           style={{
-                            background: isDropTarget
-                              ? 'rgba(214,178,106,0.12)'
+                            height: showGapBefore ? 48 : 0,
+                            marginBottom: showGapBefore ? 6 : 0,
+                            transition: 'height 0.2s cubic-bezier(0.32, 0.72, 0, 1), margin 0.2s cubic-bezier(0.32, 0.72, 0, 1)',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {showGapBefore && (
+                            <div
+                              className="rounded-[10px] w-full h-full"
+                              style={{
+                                background: 'rgba(214,178,106,0.08)',
+                                border: '2px dashed rgba(214,178,106,0.4)',
+                              }}
+                            />
+                          )}
+                        </div>
+                        {/* 实际的项目 */}
+                        <div
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, index)}
+                          onDragOver={(e) => handleDragOver(e, index)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, index)}
+                          onDragEnd={handleDragEnd}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing"
+                          style={{
+                            background: isDragging
+                              ? 'rgba(214,178,106,0.15)'
                               : 'rgba(255,255,255,0.03)',
-                            border: isDropTarget
+                            border: isDragging
                               ? '1px solid rgba(214,178,106,0.3)'
                               : '1px solid rgba(255,255,255,0.06)',
-                            transition: 'background 0.15s ease, border 0.15s ease',
+                            opacity: isDragging ? 0.5 : 1,
+                            marginBottom: 6,
+                            transition: 'background 0.15s ease, border 0.15s ease, opacity 0.15s ease',
                           }}
                         >
                           <div
@@ -286,6 +304,26 @@ export default function SettingsPage() {
                       </div>
                     );
                   })}
+                  {/* 末尾插入指示器：当拖到最后一个之后 */}
+                  {draggingIndex !== null && dragOverIndex === sortedItems.length - 1 && draggingIndex !== sortedItems.length - 1 && (
+                    <div
+                      style={{
+                        height: 48,
+                        marginTop: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <div
+                        className="rounded-[10px] w-full h-full"
+                        style={{
+                          background: 'rgba(214,178,106,0.08)',
+                          border: '2px dashed rgba(214,178,106,0.4)',
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
               {/* 底部阴影渐隐遮罩 */}
