@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
@@ -91,6 +92,11 @@ export default function App() {
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
+
+  // 初始化主题（应用启动时立即执行）
+  useEffect(() => {
+    initializeTheme();
+  }, []);
 
   // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
   useEffect(() => {

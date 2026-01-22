@@ -14,11 +14,17 @@
   /* sticky/表头等需要更稳定的底色 */
   --panel-solid: rgba(18, 18, 22, 0.92);
 
+  --border-faint: rgba(255, 255, 255, 0.05);
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-default: rgba(255, 255, 255, 0.12);
   --border-hover: rgba(255, 255, 255, 0.18);
   /* 避免使用 color-mix()，直接用 rgba 计算值 (gold #d6b26a at 55% opacity) */
   --border-focus: rgba(214, 178, 106, 0.55);
+
+  /* 玻璃效果变量（默认值，可被主题系统覆盖） */
+  --glass-bg-start: rgba(255, 255, 255, 0.08);
+  --glass-bg-end: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.14);
 
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.72);

@@ -1,7 +1,7 @@
 import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
 import { Badge } from '@/components/design/Badge';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { KpiCard } from '@/components/design/KpiCard';
 import { Select } from '@/components/design/Select';
 import { TabBar } from '@/components/design/TabBar';
@@ -244,7 +244,7 @@ export default function DashboardPage() {
     return (
       <div className="space-y-6">
         <TabBar title="仪表盘" icon={<LayoutDashboard size={16} />} />
-        <Card>
+        <GlassCard glow>
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <LayoutDashboard size={48} className="mb-4" style={{ color: 'var(--text-muted)' }} />
             <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
@@ -254,7 +254,7 @@ export default function DashboardPage() {
               请从左侧菜单选择功能开始使用。如需查看统计数据，请联系管理员获取相应权限。
             </p>
           </div>
-        </Card>
+        </GlassCard>
       </div>
     );
   }
@@ -281,7 +281,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <Card>
+        <GlassCard glow>
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>LLM 关键指标</div>
             <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
@@ -330,9 +330,9 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-        </Card>
+        </GlassCard>
 
-        <Card className="lg:col-span-2">
+        <GlassCard glow className="lg:col-span-2">
           <div className="flex items-center justify-between gap-3 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>消息趋势</div>
             <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
@@ -355,9 +355,9 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        </Card>
+        </GlassCard>
 
-        <Card>
+        <GlassCard glow>
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>Token 用量</div>
             <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
@@ -393,11 +393,11 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        </Card>
+        </GlassCard>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card>
+        <GlassCard glow>
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>内容缺失</div>
             <div className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(245,158,11,0.1)', color: 'rgba(245,158,11,0.9)' }}>
@@ -420,9 +420,9 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        </Card>
+        </GlassCard>
 
-        <Card className="lg:col-span-2">
+        <GlassCard glow className="lg:col-span-2">
           <div className="flex items-center justify-between gap-3 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>活跃群组</div>
             <Badge variant="subtle" size="sm">TOP 8</Badge>
@@ -469,7 +469,7 @@ export default function DashboardPage() {
               </tbody>
             </table>
           </div>
-        </Card>
+        </GlassCard>
       </div>
  
     </div>

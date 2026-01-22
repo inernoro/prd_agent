@@ -145,7 +145,7 @@ import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
-import type { GetUserPreferencesContract, UpdateNavOrderContract } from '@/services/contracts/userPreferences';
+import type { GetUserPreferencesContract, UpdateNavOrderContract, UpdateThemeConfigContract } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
   GetWatermarksContract,
@@ -319,7 +319,7 @@ import { OpenPlatformService } from '@/services/real/openPlatform';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
-import { getUserPreferencesReal, updateNavOrderReal } from '@/services/real/userPreferences';
+import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
@@ -572,6 +572,7 @@ export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService
 
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
 export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
+export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);

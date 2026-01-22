@@ -6,6 +6,7 @@ import { useNavOrderStore, mergeNavOrder } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
 import { GripVertical, Settings, RefreshCw, RotateCcw } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
+import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
 
 interface NavItem {
   key: string;
@@ -122,8 +123,8 @@ export default function SettingsPage() {
         }
       />
 
-      {/* 左右分栏布局：左侧 1/3 导航顺序，右侧 2/3 预留（皮肤编辑等） */}
-      <div className="flex-1 min-h-0 grid grid-cols-3 gap-5">
+      {/* 左右分栏布局：左侧 1/4 导航顺序，右侧 3/4 皮肤编辑 */}
+      <div className="flex-1 min-h-0 grid grid-cols-4 gap-5">
         {/* 左侧：导航顺序设置 */}
         <div className="col-span-1 min-h-0 overflow-y-auto">
           <GlassCard glow accentHue={210} className="h-full">
@@ -215,26 +216,9 @@ export default function SettingsPage() {
           </GlassCard>
         </div>
 
-        {/* 右侧：皮肤编辑（待实现） */}
-        <div className="col-span-2 min-h-0 overflow-y-auto">
-          <GlassCard glow accentHue={45} className="h-full">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
-                  皮肤设置
-                </h2>
-                <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  自定义界面外观与主题配色
-                </p>
-              </div>
-            </div>
-            <div
-              className="flex items-center justify-center h-[200px] rounded-[12px] border border-dashed"
-              style={{ borderColor: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-            >
-              <span className="text-sm">皮肤编辑功能开发中...</span>
-            </div>
-          </GlassCard>
+        {/* 右侧：皮肤编辑 */}
+        <div className="col-span-3 min-h-0 overflow-y-auto">
+          <ThemeSkinEditor />
         </div>
       </div>
     </div>

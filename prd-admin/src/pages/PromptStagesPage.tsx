@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
@@ -909,7 +909,7 @@ export default function PromptStagesPage() {
 
       {showUserPrompts && (
         <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>
-        <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+        <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>快捷指令</div>
             <div className="shrink-0">
@@ -1044,9 +1044,9 @@ export default function PromptStagesPage() {
               );
             })}
           </div>
-        </Card>
+        </GlassCard>
 
-        <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+        <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -1219,7 +1219,7 @@ export default function PromptStagesPage() {
               小建议：更推荐写“要关注什么、按什么结构输出、缺失要如何标注”。保存后约 5 分钟全端生效（后端有缓存）。
             </div>
           </div>
-        </Card>
+        </GlassCard>
       </div>
       )}
 
@@ -1233,7 +1233,7 @@ export default function PromptStagesPage() {
               className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
               style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
             >
-              <Card className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+              <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
               <div className="shrink-0">
@@ -1306,9 +1306,9 @@ export default function PromptStagesPage() {
                 );
               })}
             </div>
-          </Card>
+          </GlassCard>
 
-              <Card className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+              <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-3">
@@ -1404,7 +1404,7 @@ export default function PromptStagesPage() {
             <div className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               生效范围：仅 PRD 问答（会话问答 / 本章提问）。不影响 gaps/分析等需要 JSON 输出的内部任务。
             </div>
-          </Card>
+          </GlassCard>
             </div>
           </div>
         </div>
@@ -1419,7 +1419,7 @@ export default function PromptStagesPage() {
             </div>
           )}
 
-          <Card className="p-5 flex-shrink-0">
+          <GlassCard glow className="p-5 flex-shrink-0">
             <div className="flex items-center justify-between gap-3 mb-4">
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>文学创作提示词</div>
@@ -1453,7 +1453,7 @@ export default function PromptStagesPage() {
 
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
               {literaryPrompts.map((prompt) => (
-                <Card key={prompt.id} className="p-4">
+                <GlassCard glow key={prompt.id} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1502,7 +1502,7 @@ export default function PromptStagesPage() {
                       </Button>
                     )}
                   </div>
-                </Card>
+                </GlassCard>
               ))}
             </div>
 
@@ -1511,7 +1511,7 @@ export default function PromptStagesPage() {
                 暂无提示词，点击「新建」创建第一个模板
               </div>
             )}
-          </Card>
+          </GlassCard>
 
           <div className="min-h-0 flex-1 flex flex-col">
             <WatermarkSettingsPanel appKey="literary-agent" columns={3} />
@@ -1624,7 +1624,7 @@ export default function PromptStagesPage() {
             </div>
 
             <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <Card className="p-4 min-h-0 flex flex-col">
+              <GlassCard glow className="p-4 min-h-0 flex flex-col">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>原文</div>
                 <textarea
                   value={optOriginal}
@@ -1639,9 +1639,9 @@ export default function PromptStagesPage() {
                       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                   }}
                 />
-              </Card>
+              </GlassCard>
 
-              <Card className="p-4 min-h-0 flex flex-col" variant="gold">
+              <GlassCard glow className="p-4 min-h-0 flex flex-col" variant="gold">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>优化结果（流式）</div>
                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -1661,7 +1661,7 @@ export default function PromptStagesPage() {
                       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                   }}
                 />
-              </Card>
+              </GlassCard>
             </div>
           </div>
         }

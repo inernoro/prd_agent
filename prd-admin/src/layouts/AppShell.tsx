@@ -28,6 +28,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/authStore';
+import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
@@ -213,6 +214,12 @@ export default function AppShell() {
   
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
+
+  // 读取主题配置中的侧边栏玻璃效果设置
+  const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
+  // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
+  const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
+
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
   // 专注模式（fullBleedMain）下隐藏侧栏，主区最大化
@@ -388,17 +395,17 @@ export default function AppShell() {
             zIndex: 20,
             borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
-            // 实验室页面使用液态玻璃效果，其他页面保持原样式
-            ...(isLabPage ? {
-              background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
+            // 根据主题配置决定是否使用液态玻璃效果
+            ...(useSidebarGlass ? {
+              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
+              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
               backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
               WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
               boxShadow: '0 12px 48px -8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 2px 0 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.15) inset',
             } : {
-              backgroundColor: '#121216',
+              backgroundColor: 'var(--bg-elevated, #121216)',
               backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
-              border: '1px solid rgba(255, 255, 255, 0.05)',
+              border: '1px solid var(--border-faint, rgba(255, 255, 255, 0.05))',
               boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
               backdropFilter: 'blur(12px)',
               WebkitBackdropFilter: 'blur(12px)',
@@ -627,7 +634,7 @@ export default function AppShell() {
               className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
               style={{
                 height: 32,
-                background: isLabPage
+                background: useSidebarGlass
                   ? 'linear-gradient(to bottom, rgba(15, 15, 18, 0.95) 0%, rgba(15, 15, 18, 0.6) 40%, transparent 100%)'
                   : 'linear-gradient(to bottom, rgba(18, 18, 22, 0.98) 0%, rgba(18, 18, 22, 0.7) 35%, transparent 100%)',
                 opacity: navScrollState.canScroll && !navScrollState.atTop ? 1 : 0,
@@ -693,7 +700,7 @@ export default function AppShell() {
               className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
               style={{
                 height: 40,
-                background: isLabPage
+                background: useSidebarGlass
                   ? 'linear-gradient(to top, rgba(15, 15, 18, 0.95) 0%, rgba(15, 15, 18, 0.6) 45%, transparent 100%)'
                   : 'linear-gradient(to top, rgba(18, 18, 22, 0.98) 0%, rgba(18, 18, 22, 0.7) 40%, transparent 100%)',
                 opacity: navScrollState.canScroll && !navScrollState.atBottom ? 1 : 0,

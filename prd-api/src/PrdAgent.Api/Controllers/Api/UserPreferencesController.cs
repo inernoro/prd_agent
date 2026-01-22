@@ -46,7 +46,8 @@ public class UserPreferencesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            navOrder = prefs?.NavOrder ?? new List<string>()
+            navOrder = prefs?.NavOrder ?? new List<string>(),
+            themeConfig = prefs?.ThemeConfig
         }));
     }
 
@@ -74,9 +75,39 @@ public class UserPreferencesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { }));
     }
+
+    /// <summary>
+    /// 更新主题配置
+    /// </summary>
+    [HttpPut("theme")]
+    public async Task<IActionResult> UpdateThemeConfig([FromBody] UpdateThemeConfigRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        if (request.ThemeConfig == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "themeConfig 不能为空"));
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ThemeConfig, request.ThemeConfig)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
 }
 
 public class UpdateNavOrderRequest
 {
     public List<string>? NavOrder { get; set; }
+}
+
+public class UpdateThemeConfigRequest
+{
+    public ThemeConfig? ThemeConfig { get; set; }
 }

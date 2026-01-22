@@ -222,6 +222,7 @@ export const api = {
     userPreferences: {
       get: () => '/api/dashboard/user-preferences',
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
+      theme: () => '/api/dashboard/user-preferences/theme',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
