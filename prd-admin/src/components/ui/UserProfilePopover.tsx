@@ -3,7 +3,8 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { getUserProfile } from '@/services';
 import type { UserProfileResponse } from '@/services/contracts/adminUsers';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
-import { Users2, Zap, Clock } from 'lucide-react';
+import { Users2, Zap, Clock, Image, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 type UserProfilePopoverProps = {
   userId: string;
@@ -58,6 +59,7 @@ export function UserProfilePopover({
   avatarUrl,
   children,
 }: UserProfilePopoverProps) {
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +169,26 @@ export function UserProfilePopover({
                   </div>
                 )}
 
+                {/* 创作统计（近30天） */}
+                {(profile.totalImageCount > 0 || profile.totalRunCount > 0) && (
+                  <div className="flex items-center gap-3 px-2 py-1.5 rounded-[8px]" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <div className="flex items-center gap-1.5">
+                      <Image size={12} style={{ color: 'var(--accent-gold)' }} />
+                      <span className="text-[11px]" style={{ color: 'var(--text-primary)' }}>
+                        {profile.totalImageCount}
+                      </span>
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>张图</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Zap size={12} style={{ color: 'var(--accent-gold)' }} />
+                      <span className="text-[11px]" style={{ color: 'var(--text-primary)' }}>
+                        {profile.totalRunCount}
+                      </span>
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>次任务</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* 群组列表 */}
                 {profile.groups.length > 0 && (
                   <div>
@@ -229,11 +251,24 @@ export function UserProfilePopover({
                 )}
 
                 {/* 空状态 */}
-                {profile.groups.length === 0 && profile.agentUsage.length === 0 && (
+                {profile.groups.length === 0 && profile.agentUsage.length === 0 && profile.totalImageCount === 0 && (
                   <div className="text-center py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    暂无群组和使用记录
+                    暂无使用记录
                   </div>
                 )}
+
+                {/* 底部操作：查看日志 */}
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-[6px] text-[11px] transition-colors hover:bg-white/5"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onClick={() => navigate(`/logs?userId=${profile.userId}`)}
+                  >
+                    <Eye size={12} />
+                    <span>查看用户日志</span>
+                  </button>
+                </div>
               </div>
             )}
           </Tooltip.Content>

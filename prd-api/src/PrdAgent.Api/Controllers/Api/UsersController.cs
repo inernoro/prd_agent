@@ -287,6 +287,20 @@ public class UsersController : ControllerBase
             })
             .ToList();
 
+        // 统计生图任务总数（最近30天）
+        var runCountFilter = Builders<ImageGenRun>.Filter.And(
+            Builders<ImageGenRun>.Filter.Eq(r => r.OwnerAdminId, userId),
+            Builders<ImageGenRun>.Filter.Gte(r => r.CreatedAt, thirtyDaysAgo)
+        );
+        var totalRunCount = (int)await _db.ImageGenRuns.CountDocumentsAsync(runCountFilter, cancellationToken: ct);
+
+        // 统计生成的图片总数（最近30天）
+        var imageCountFilter = Builders<ImageGenRunItem>.Filter.And(
+            Builders<ImageGenRunItem>.Filter.Eq(i => i.OwnerAdminId, userId),
+            Builders<ImageGenRunItem>.Filter.Gte(i => i.CreatedAt, thirtyDaysAgo)
+        );
+        var totalImageCount = (int)await _db.ImageGenRunItems.CountDocumentsAsync(imageCountFilter, cancellationToken: ct);
+
         var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(user.Username);
 
         var profile = new UserProfileResponse
@@ -305,7 +319,9 @@ public class UsersController : ControllerBase
             LastActiveAt = user.LastActiveAt,
             IsLocked = remaining > 0,
             Groups = groups,
-            AgentUsage = agentUsage
+            AgentUsage = agentUsage,
+            TotalImageCount = totalImageCount,
+            TotalRunCount = totalRunCount
         };
 
         return Ok(ApiResponse<UserProfileResponse>.Ok(profile));

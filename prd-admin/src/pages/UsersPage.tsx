@@ -1101,7 +1101,6 @@ export default function UsersPage() {
                         <div
                           className="relative h-9 w-9 rounded-[8px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all"
                           onClick={() => openChangeAvatar(u)}
-                          title="悬浮查看详情 / 点击修改头像"
                         >
                           {(() => {
                             const url = resolveAvatarUrl({

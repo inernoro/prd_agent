@@ -89,6 +89,10 @@ public class UserProfileResponse
     public List<UserProfileGroupItem> Groups { get; set; } = new();
     /// <summary>用户使用的 Agent 统计（最近30天）</summary>
     public List<UserProfileAgentUsageItem> AgentUsage { get; set; } = new();
+    /// <summary>生成的图片总数（最近30天）</summary>
+    public int TotalImageCount { get; set; }
+    /// <summary>生图任务总数（最近30天）</summary>
+    public int TotalRunCount { get; set; }
 }
 
 /// <summary>

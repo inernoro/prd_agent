@@ -80,6 +80,10 @@ export type UserProfileResponse = {
   isLocked: boolean;
   groups: UserProfileGroupItem[];
   agentUsage: UserProfileAgentUsageItem[];
+  /** 生成的图片总数（最近30天） */
+  totalImageCount: number;
+  /** 生图任务总数（最近30天） */
+  totalRunCount: number;
 };
 
 export type GetUserProfileContract = (userId: string) => Promise<ApiResponse<UserProfileResponse>>;

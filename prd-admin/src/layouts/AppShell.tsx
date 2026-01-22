@@ -674,6 +674,8 @@ export default function AppShell() {
                       background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
                       border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                       color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      // 确保 active 状态下清除悬浮时添加的 boxShadow
+                      boxShadow: active ? 'none' : undefined,
                     }}
                     onMouseEnter={(e) => {
                       if (!active) {
@@ -683,11 +685,10 @@ export default function AppShell() {
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (!active) {
-                        e.currentTarget.style.background = 'transparent';
-                        e.currentTarget.style.borderColor = 'transparent';
-                        e.currentTarget.style.boxShadow = '';
-                      }
+                      // 始终清除 hover 样式，让 style prop 控制最终状态
+                      e.currentTarget.style.background = '';
+                      e.currentTarget.style.borderColor = '';
+                      e.currentTarget.style.boxShadow = '';
                     }}
                     title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                   >
