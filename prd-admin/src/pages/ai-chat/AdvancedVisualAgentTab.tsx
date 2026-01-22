@@ -5046,8 +5046,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 );
                               })}
                           </div>
-                          <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
-                        </DropdownMenu.Content>
+                                                  </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
 
@@ -5303,8 +5302,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <span style={{ color: 'rgba(0,0,0,0.35)' }}>M</span>
                         </span>
                       </button>
-                      <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
-                    </DropdownMenu.Content>
+                                          </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
@@ -5428,8 +5426,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </span>
                         </button>
                       </div>
-                      <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
-                    </DropdownMenu.Content>
+                                          </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
@@ -5570,8 +5567,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
                         <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
                       </div>
-                      <DropdownMenu.Arrow className="fill-white" style={{ filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.08))' }} />
-                    </DropdownMenu.Content>
+                                          </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
@@ -6552,8 +6548,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           )}
                         </div>
 
-                        <DropdownMenu.Arrow className="fill-(--bg-elevated)" style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }} />
-                      </DropdownMenu.Content>
+                                              </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 

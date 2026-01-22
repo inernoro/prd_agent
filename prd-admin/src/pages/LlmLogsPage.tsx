@@ -1455,7 +1455,6 @@ export default function LlmLogsPage() {
                                       </div>
                                     </div>
                                   ) : null}
-                                  <DropdownMenu.Arrow className="fill-[var(--bg-elevated)]" />
                                 </DropdownMenu.Content>
                               </DropdownMenu.Portal>
                             </DropdownMenu.Root>

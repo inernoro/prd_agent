@@ -1148,10 +1148,6 @@ export default function UsersPage() {
                               >
                                 查看 系统请求日志
                               </DropdownMenu.Item>
-                              <DropdownMenu.Arrow
-                                className="fill-[color:var(--bg-elevated)]"
-                                style={{ filter: 'drop-shadow(0 1px 0 rgba(255,255,255,0.10))' }}
-                              />
                             </DropdownMenu.Content>
                           </DropdownMenu.Portal>
                           </DropdownMenu.Root>
