@@ -128,6 +128,9 @@ export function GlassCard({
       backdropFilter: blur,
       WebkitBackdropFilter: blur,
       boxShadow: shadowLayers.join(', '),
+      // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
+      transform: 'translateZ(0)',
+      willChange: 'transform',
       ...style,
     };
   };

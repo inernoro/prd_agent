@@ -273,14 +273,14 @@ export default function DashboardPage() {
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 grid-rows-[auto]">
         <KpiCard title="总用户数" value={overview?.totalUsers ?? 0} loading={loadingBase} accent="gold" />
         <KpiCard title="活跃用户" value={overview?.activeUsers ?? 0} loading={loadingBase} accent="green" />
         <KpiCard title="群组数" value={overview?.totalGroups ?? 0} loading={loadingBase} accent="blue" />
         <KpiCard title="今日消息" value={overview?.todayMessages ?? 0} loading={loadingBase} accent="purple" />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4" style={{ minHeight: 360 }}>
         <GlassCard glow>
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>LLM 关键指标</div>
@@ -313,21 +313,20 @@ export default function DashboardPage() {
               <div className="text-[24px] font-bold tabular-nums" style={{ color: 'var(--accent-green)' }}>
                 {loadingBase ? '—' : fmtPct01(obs?.cacheHitRate ?? null)}
               </div>
-              {(obs?.typeCounts?.length ?? 0) > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {(obs?.typeCounts ?? []).map((x) => (
-                    <span
-                      key={x.type}
-                      className="inline-flex items-center gap-1.5 rounded-[8px] px-2 h-[22px] text-[10px] font-semibold"
-                      style={{ background: 'rgba(214,178,106,0.08)', border: '1px solid rgba(214,178,106,0.15)', color: 'var(--accent-gold)' }}
-                      title={x.type}
-                    >
-                      <span>{x.type}</span>
-                      <span style={{ color: 'var(--text-muted)' }}>{x.count}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
+              {/* 固定最小高度，避免标签加载后布局跳动 */}
+              <div className="mt-3 min-h-[48px] flex flex-wrap gap-1.5 content-start">
+                {(obs?.typeCounts ?? []).map((x) => (
+                  <span
+                    key={x.type}
+                    className="inline-flex items-center gap-1.5 rounded-[8px] px-2 h-[22px] text-[10px] font-semibold"
+                    style={{ background: 'rgba(214,178,106,0.08)', border: '1px solid rgba(214,178,106,0.15)', color: 'var(--accent-gold)' }}
+                    title={x.type}
+                  >
+                    <span>{x.type}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{x.count}</span>
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         </GlassCard>
@@ -396,7 +395,7 @@ export default function DashboardPage() {
         </GlassCard>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" style={{ minHeight: 380 }}>
         <GlassCard glow>
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="text-[14px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>内容缺失</div>

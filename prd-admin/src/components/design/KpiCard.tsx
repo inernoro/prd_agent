@@ -31,7 +31,7 @@ export function KpiCard({
   const colors = accentColors[accent];
 
   return (
-    <Card>
+    <Card className="min-h-[100px]">
       <div className="flex items-start justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
           {title}
@@ -48,7 +48,7 @@ export function KpiCard({
       </div>
       <div className="mt-3 flex items-baseline gap-2">
         <div
-          className="text-[28px] font-bold tracking-[-0.03em] leading-none tabular-nums"
+          className="text-[28px] font-bold tracking-[-0.03em] leading-none tabular-nums min-h-[28px]"
           style={{ color: colors.text }}
         >
           {loading ? (

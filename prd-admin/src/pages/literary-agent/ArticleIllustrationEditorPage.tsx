@@ -1583,28 +1583,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     还没有提示词模板
                   </div>
                 ) : selectedPrompt ? (
-                  <div>
-                    <style>{`
-                      .prompt-marquee{position:relative;overflow:hidden;white-space:nowrap;min-width:0;width:100%}
-                      .prompt-marquee__track{display:flex;align-items:center;gap:16px;width:max-content;will-change:transform}
-                      .prompt-marquee__track--animate{animation:prompt-marquee-scroll 10s linear infinite}
-                      .prompt-marquee__track--static{animation:none;width:100%}
-                      .prompt-marquee__item{display:inline-block;white-space:nowrap}
-                      @keyframes prompt-marquee-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-                      @media (prefers-reduced-motion: reduce){.prompt-marquee__track--animate{animation:none}}
-                    `}</style>
-                    <div className="prompt-marquee">
-                      <div className={`prompt-marquee__track ${selectedPrompt.title.length > 30 ? 'prompt-marquee__track--animate' : 'prompt-marquee__track--static'}`}>
-                        <span className="prompt-marquee__item text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {selectedPrompt.title}
-                        </span>
-                        {selectedPrompt.title.length > 30 && (
-                          <span className="prompt-marquee__item text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                            {selectedPrompt.title}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                  <div
+                    className="text-sm font-semibold"
+                    title={selectedPrompt.title}
+                    style={{
+                      color: 'var(--text-primary)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                    }}
+                  >
+                    {selectedPrompt.title}
                   </div>
                 ) : null}
               </div>
@@ -2440,29 +2430,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <div className="group relative flex flex-col h-full">
                           {/* 上栏：标题区 */}
                           <div className="p-2 pb-1 flex-shrink-0">
-                            <style>{`
-                              .modal-prompt-marquee{position:relative;overflow:hidden;white-space:nowrap;min-width:0;width:100%}
-                              .modal-prompt-marquee__track{display:flex;align-items:center;gap:16px;width:max-content;will-change:transform}
-                              .modal-prompt-marquee__track--animate{animation:modal-prompt-scroll 12s linear infinite}
-                              .modal-prompt-marquee__track--static{animation:none;width:100%}
-                              .modal-prompt-marquee__item{display:inline-block;white-space:nowrap}
-                              @keyframes modal-prompt-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-                              @media (prefers-reduced-motion: reduce){.modal-prompt-marquee__track--animate{animation:none}}
-                            `}</style>
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1 flex items-center gap-1.5">
                                 <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
-                                <div className="modal-prompt-marquee flex-1">
-                                  <div className={`modal-prompt-marquee__track ${prompt.title.length > 20 ? 'modal-prompt-marquee__track--animate' : 'modal-prompt-marquee__track--static'}`}>
-                                    <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                                      {prompt.title}
-                                    </span>
-                                    {prompt.title.length > 20 && (
-                                      <span className="modal-prompt-marquee__item font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                                        {prompt.title}
-                                      </span>
-                                    )}
-                                  </div>
+                                <div
+                                  className="flex-1 font-semibold text-[13px]"
+                                  title={prompt.title}
+                                  style={{
+                                    color: 'var(--text-primary)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    minWidth: 0,
+                                  }}
+                                >
+                                  {prompt.title}
                                 </div>
                               </div>
 

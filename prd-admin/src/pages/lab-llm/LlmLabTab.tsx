@@ -641,9 +641,15 @@ function normalizeSavedMode(m: unknown): LabMode {
   return 'intent';
 }
 
-const HMARQUEE_GAP_PX = 28;
-const HMARQUEE_SPEED_PX_PER_SEC = 64;
-
+/**
+ * InlineMarquee - 简化版预览文本组件
+ *
+ * 之前使用 CSS 跑马灯动画，但超长文本（4000+px）会导致：
+ * 1. 与 backdrop-filter（液态玻璃）产生 GPU 合成层冲突
+ * 2. 页面闪烁和渲染抖动
+ *
+ * 现改为纯静态 ellipsis 截断，用户可通过 hover title 或点击"展开"查看完整内容。
+ */
 function InlineMarquee({
   text,
   title,
@@ -655,98 +661,22 @@ function InlineMarquee({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const measureRef = useRef<HTMLSpanElement | null>(null);
-  const [enabled, setEnabled] = useState(false);
-  const [shiftPx, setShiftPx] = useState(0);
-  const [durationSec, setDurationSec] = useState(0);
-  const [paused, setPaused] = useState(false);
-
   const normalized = (text ?? '').replace(/\s+/g, ' ').trim() || '（无输出）';
-
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    const measure = measureRef.current;
-    if (!container || !measure) return;
-
-    const recompute = () => {
-      const containerW = container.clientWidth;
-      const contentW = measure.offsetWidth;
-      const need = contentW > containerW + 2;
-      const shift = contentW + HMARQUEE_GAP_PX;
-      setEnabled(need);
-      setShiftPx(shift);
-      setDurationSec(Math.max(6, shift / HMARQUEE_SPEED_PX_PER_SEC));
-    };
-
-    recompute();
-    const ro = new ResizeObserver(() => recompute());
-    ro.observe(container);
-    return () => ro.disconnect();
-  }, [normalized]);
-
-  const vars = useMemo(() => {
-    const v: Record<'--prd-hmarquee-shift' | '--prd-hmarquee-duration' | '--prd-hmarquee-gap', string> = {
-      '--prd-hmarquee-shift': `${shiftPx}px`,
-      '--prd-hmarquee-duration': `${durationSec}s`,
-      '--prd-hmarquee-gap': `${HMARQUEE_GAP_PX}px`,
-    };
-    return v as unknown as React.CSSProperties;
-  }, [durationSec, shiftPx]);
 
   return (
     <div
-      ref={containerRef}
       className={className}
       title={title || normalized}
       style={{
         minWidth: 0,
         width: '100%',
         overflow: 'hidden',
-        ...vars,
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
         ...style,
       }}
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
     >
-      <style>{`
-@keyframes prd-hmarquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(calc(-1 * var(--prd-hmarquee-shift))); }
-}
-`}</style>
-
-      {enabled ? (
-        <div
-          style={{
-            display: 'flex',
-            gap: `var(--prd-hmarquee-gap)`,
-            whiteSpace: 'nowrap',
-            animation: 'prd-hmarquee var(--prd-hmarquee-duration) linear infinite',
-            animationPlayState: paused ? 'paused' : 'running',
-            willChange: 'transform',
-          }}
-        >
-          <span ref={measureRef} style={{ whiteSpace: 'nowrap' }}>
-            {normalized}
-          </span>
-          <span aria-hidden style={{ whiteSpace: 'nowrap' }}>
-            {normalized}
-          </span>
-        </div>
-      ) : (
-        <div
-          style={{
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span ref={measureRef} style={{ whiteSpace: 'nowrap' }}>
-            {normalized}
-          </span>
-        </div>
-      )}
+      {normalized}
     </div>
   );
 }

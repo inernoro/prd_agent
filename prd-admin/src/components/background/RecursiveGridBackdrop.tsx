@@ -333,17 +333,9 @@ export default function RecursiveGridBackdrop({
           stoppedNotified = true;
           onFullyStoppedRef.current?.(activeStopId);
         }
-        // 动画停止后，保持低频 RAF 循环（每秒约 4 帧），避免页面渲染节奏突然中断导致其他动画卡顿
-        // 使用 setTimeout + RAF 的方式降低 CPU 占用
+        // 动画完全停止，清零 raf，允许后续 start/stop 重新 kick
+        // 不再使用低频 RAF 循环，因为这会导致页面其他元素的合成层频繁重建，造成文字闪烁
         raf = 0;
-        if (isVisible) {
-          setTimeout(() => {
-            if (!shouldRunRef.current && kickRef.current) {
-              // 仅在仍处于停止状态时才继续低频循环
-              raf = requestAnimationFrame(tick);
-            }
-          }, 250); // 250ms = 4fps
-        }
       }
     };
 

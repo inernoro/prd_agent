@@ -10,7 +10,7 @@ import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, l
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { getFeatureDescriptionFromRequestPurpose } from '@/lib/appCallerUtils';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -600,9 +600,12 @@ function buildCurlFromLog(detail: LlmRequestLog): string {
 
 // rawSse 已移除：管理后台仅展示最终 AnswerText 与统计信息
 
-const MARQUEE_GAP_PX = 28;
-const MARQUEE_SPEED_PX_PER_SEC = 64;
-
+/**
+ * NewsMarquee - 简化版预览文本组件
+ *
+ * 之前使用 CSS 跑马灯动画，但超长文本会导致与 backdrop-filter（液态玻璃）
+ * 产生 GPU 合成层冲突，造成页面闪烁。现改为纯静态 ellipsis 截断。
+ */
 function NewsMarquee({
   text,
   title,
@@ -616,65 +619,23 @@ function NewsMarquee({
   style?: React.CSSProperties;
   className?: string;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const measureRef = useRef<HTMLSpanElement | null>(null);
-  const [enabled, setEnabled] = useState(false);
-  const [shiftPx, setShiftPx] = useState(0);
-  const [durationSec, setDurationSec] = useState(0);
-
   const normalized = (text ?? '').replace(/\s+/g, ' ').trim();
-
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    const measure = measureRef.current;
-    if (!container || !measure) return;
-
-    const recompute = () => {
-      const containerW = container.clientWidth;
-      const contentW = measure.offsetWidth;
-      const need = contentW > containerW + 2; // 避免临界抖动
-      const shift = contentW + MARQUEE_GAP_PX;
-      setEnabled(need);
-      setShiftPx(shift);
-      setDurationSec(Math.max(6, shift / MARQUEE_SPEED_PX_PER_SEC));
-    };
-
-    recompute();
-    const ro = new ResizeObserver(() => recompute());
-    ro.observe(container);
-    return () => ro.disconnect();
-  }, [normalized]);
-
-  const vars = useMemo(
-    () => {
-      const v: Record<'--prd-marquee-shift' | '--prd-marquee-duration' | '--prd-marquee-gap', string> = {
-        '--prd-marquee-shift': `${shiftPx}px`,
-        '--prd-marquee-duration': `${durationSec}s`,
-        '--prd-marquee-gap': `${MARQUEE_GAP_PX}px`,
-      };
-      return v as unknown as React.CSSProperties;
-    },
-    [durationSec, shiftPx]
-  );
 
   return (
     <div
-      ref={containerRef}
-      className={['prd-marquee', align === 'right' ? 'prd-marquee--right' : '', className || ''].filter(Boolean).join(' ')}
+      className={className}
       title={title || normalized}
-      // 关键：在 Grid/Flex 内必须允许收缩，否则超长不换行内容会撑爆布局
-      style={{ minWidth: 0, width: '100%', ...vars, ...style }}
+      style={{
+        minWidth: 0,
+        width: '100%',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        textAlign: align,
+        ...style,
+      }}
     >
-      <div className={enabled ? 'prd-marquee__track' : 'prd-marquee__track prd-marquee__track--static'}>
-        <span ref={measureRef} className="prd-marquee__item">
-          {normalized || '—'}
-        </span>
-        {enabled ? (
-          <span aria-hidden className="prd-marquee__item">
-            {normalized || '—'}
-          </span>
-        ) : null}
-      </div>
+      {normalized || '—'}
     </div>
   );
 }
@@ -1117,15 +1078,6 @@ export default function LlmLogsPage() {
 
   return (
     <div className="space-y-4">
-      <style>{`
-        .prd-marquee{position:relative;overflow:hidden;white-space:nowrap}
-        .prd-marquee__track{display:flex;align-items:center;gap:var(--prd-marquee-gap);width:max-content;will-change:transform;animation:prd-marquee var(--prd-marquee-duration) linear infinite}
-        .prd-marquee__track--static{animation:none;width:100%}
-        .prd-marquee--right .prd-marquee__track--static{justify-content:flex-end}
-        .prd-marquee__item{display:inline-block;white-space:nowrap;font-size:inherit;line-height:inherit;color:inherit;font-family:inherit}
-        @keyframes prd-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--prd-marquee-shift)))}}
-        @media (prefers-reduced-motion: reduce){.prd-marquee__track{animation:none}}
-      `}</style>
       <TabBar
         items={tabs}
         activeKey={tab}

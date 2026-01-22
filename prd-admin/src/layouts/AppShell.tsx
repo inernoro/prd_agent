@@ -396,6 +396,9 @@ export default function AppShell() {
             borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
             // 根据主题配置决定是否使用液态玻璃效果
+            // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
+            transform: 'translateZ(0)',
+            willChange: 'transform',
             ...(useSidebarGlass ? {
               background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
               border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
