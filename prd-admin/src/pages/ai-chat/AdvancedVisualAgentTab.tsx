@@ -57,6 +57,7 @@ import {
   Minimize2,
   MousePointer2,
   Paperclip,
+  Plus,
   SlidersHorizontal,
   Sparkles,
   Square,
@@ -6918,6 +6919,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         open={watermarkSettingsOpen}
         onOpenChange={setWatermarkSettingsOpen}
         title="水印设置"
+        titleAction={
+          <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
+            <Plus size={14} />
+            新增配置
+          </Button>
+        }
         content={
           <div className="flex flex-col h-full min-h-0">
             <div className="text-[12px] mb-3" style={{ color: 'var(--text-muted)' }}>

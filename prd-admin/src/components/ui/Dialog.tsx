@@ -10,6 +10,7 @@ export function Dialog({
   maxWidth,
   contentClassName,
   contentStyle,
+  titleAction,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -22,6 +23,8 @@ export function Dialog({
   contentClassName?: string;
   /** 追加到 Dialog 内容容器的 style */
   contentStyle?: React.CSSProperties;
+  /** 标题栏右侧的操作按钮（在关闭按钮左侧） */
+  titleAction?: React.ReactNode;
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -55,13 +58,16 @@ export function Dialog({
                 </DialogPrimitive.Description>
               )}
             </div>
-            <DialogPrimitive.Close
-              className="h-9 w-9 inline-flex items-center justify-center rounded-[12px] hover:bg-white/5"
-              style={{ color: 'var(--text-secondary)' }}
-              aria-label="关闭"
-            >
-              <X size={18} />
-            </DialogPrimitive.Close>
+            <div className="flex items-center gap-2">
+              {titleAction}
+              <DialogPrimitive.Close
+                className="h-9 w-9 inline-flex items-center justify-center rounded-[12px] hover:bg-white/5"
+                style={{ color: 'var(--text-secondary)' }}
+                aria-label="关闭"
+              >
+                <X size={18} />
+              </DialogPrimitive.Close>
+            </div>
           </div>
 
           <div className="mt-5 flex-1 min-h-0">{content}</div>

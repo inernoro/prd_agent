@@ -78,9 +78,29 @@ public class WatermarkConfig
     public bool BorderEnabled { get; set; }
 
     /// <summary>
+    /// 边框颜色
+    /// </summary>
+    public string? BorderColor { get; set; }
+
+    /// <summary>
+    /// 边框宽度（像素）
+    /// </summary>
+    public double BorderWidth { get; set; } = 2;
+
+    /// <summary>
     /// 是否启用背景
     /// </summary>
     public bool BackgroundEnabled { get; set; }
+
+    /// <summary>
+    /// 是否启用圆角背景
+    /// </summary>
+    public bool RoundedBackgroundEnabled { get; set; }
+
+    /// <summary>
+    /// 圆角半径（像素），默认为0表示无圆角
+    /// </summary>
+    public double CornerRadius { get; set; }
 
     /// <summary>
     /// 基准画布宽度（用于响应式缩放）
