@@ -1,6 +1,6 @@
 import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { KpiCard } from '@/components/design/KpiCard';
 import { Select } from '@/components/design/Select';
 import { TabBar } from '@/components/design/TabBar';
@@ -164,7 +164,7 @@ export default function StatsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <GlassCard glow className="lg:col-span-2">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             消息趋势（近{days}天）
           </div>
@@ -186,9 +186,9 @@ export default function StatsPage() {
               </div>
             )}
           </div>
-        </Card>
+        </GlassCard>
 
-        <Card>
+        <GlassCard glow>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             内容缺失统计（共{gapStats?.total ?? 0}条）
           </div>
@@ -210,10 +210,10 @@ export default function StatsPage() {
               </div>
             )}
           </div>
-        </Card>
+        </GlassCard>
       </div>
 
-      <Card>
+      <GlassCard glow>
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           活跃群组 TOP 10
         </div>
@@ -261,7 +261,7 @@ export default function StatsPage() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </GlassCard>
     </div>
   );
 }

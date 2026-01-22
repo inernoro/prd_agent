@@ -1,6 +1,6 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
@@ -1095,7 +1095,7 @@ export default function LlmLogsPage() {
         }
       />
 
-      <Card className="p-4">
+      <GlassCard glow className="p-4">
         <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
           <Select
             value={qProvider}
@@ -1218,9 +1218,9 @@ export default function LlmLogsPage() {
             </Button>
           </div>
         </div>
-      </Card>
+      </GlassCard>
 
-      <Card className="p-0 overflow-hidden">
+      <GlassCard glow className="p-0 overflow-hidden">
         <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>请求列表</div>
         </div>
@@ -1512,7 +1512,7 @@ export default function LlmLogsPage() {
           </Button>
           </div>
         </div>
-      </Card>
+      </GlassCard>
 
       <Dialog
         open={detailOpen}
@@ -1540,7 +1540,7 @@ export default function LlmLogsPage() {
             <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
           ) : (
             <div className="h-full min-h-0 grid gap-3 md:grid-cols-2">
-              <Card className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
                   <div className="flex items-center gap-2">
@@ -1706,9 +1706,9 @@ export default function LlmLogsPage() {
                     );
                   })()}
                 </div>
-              </Card>
+              </GlassCard>
 
-              <Card className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
                   {autoRefreshing ? (
@@ -2146,7 +2146,7 @@ export default function LlmLogsPage() {
                     )}
                   </div>
                 </div>
-              </Card>
+              </GlassCard>
             </div>
           )
         }

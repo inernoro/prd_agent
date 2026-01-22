@@ -61,20 +61,12 @@ export function GlassCard({
       subtle: 'blur(24px) saturate(160%) brightness(1.05)',
     };
 
-    // 背景色 - 增强透明度使玻璃效果更明显
-    const bgOpacity = {
-      default: { start: 0.08, end: 0.03 },
-      gold: { start: 0.1, end: 0.05 },
-      frost: { start: 0.12, end: 0.05 },
-      subtle: { start: 0.05, end: 0.02 },
-    };
-
-    // 边框透明度
-    const borderOpacity = {
-      default: 0.14,
-      gold: 0.18,
-      frost: 0.2,
-      subtle: 0.1,
+    // 边框透明度系数（相对于全局变量的倍数）
+    const borderMultiplier = {
+      default: 1,
+      gold: 1.3,
+      frost: 1.4,
+      subtle: 0.7,
     };
 
     // 计算光晕颜色 - 柔和的光晕效果，避免出现明显光条
@@ -92,13 +84,12 @@ export function GlassCard({
       }
     }
 
-    const opacity = bgOpacity[variant];
     const blur = blurValues[variant];
-    const border = borderOpacity[variant];
+    const borderMult = borderMultiplier[variant];
 
-    // 构建背景 - 增强渐变效果
-    let background = `linear-gradient(180deg, rgba(255, 255, 255, ${opacity.start}) 0%, rgba(255, 255, 255, ${opacity.end}) 100%)`;
-    
+    // 构建背景 - 使用全局 CSS 变量，支持系统设置调控
+    let background = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`;
+
     if (glow) {
       // 更柔和的光晕：椭圆更小、渐变更长、位置更居中
       background = `
@@ -111,7 +102,7 @@ export function GlassCard({
     const shadowLayers = [
       '0 8px 32px -4px rgba(0, 0, 0, 0.35)',
       '0 4px 16px -2px rgba(0, 0, 0, 0.25)',
-      `0 0 0 1px rgba(255, 255, 255, ${border * 0.6}) inset`,
+      `0 0 0 1px rgba(255, 255, 255, ${0.14 * borderMult * 0.6}) inset`,
       '0 1px 0 0 rgba(255, 255, 255, 0.15) inset',
       '0 -1px 0 0 rgba(0, 0, 0, 0.12) inset',
     ];
@@ -124,7 +115,8 @@ export function GlassCard({
 
     return {
       background,
-      border: `1px solid rgba(255, 255, 255, ${border})`,
+      // 使用全局 CSS 变量的边框
+      border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
       backdropFilter: blur,
       WebkitBackdropFilter: blur,
       boxShadow: shadowLayers.join(', '),

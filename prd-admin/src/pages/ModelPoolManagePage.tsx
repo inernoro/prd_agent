@@ -1,5 +1,5 @@
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
@@ -267,17 +267,17 @@ export function ModelPoolManagePage() {
       {/* 模型池列表 */}
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
-          <Card className="p-12 text-center">
+          <GlassCard glow className="p-12 text-center">
             <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
-          </Card>
+          </GlassCard>
         ) : filteredPools.length === 0 ? (
-          <Card className="p-12 text-center">
+          <GlassCard glow className="p-12 text-center">
             <div style={{ color: 'var(--text-muted)' }}>
               <Database size={48} className="mx-auto mb-4 opacity-40" />
               <div className="text-sm">暂无模型池</div>
               <div className="mt-2 text-xs">点击"新建模型池"创建你的第一个模型池</div>
             </div>
-          </Card>
+          </GlassCard>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredPools.map((pool) => {
@@ -285,7 +285,7 @@ export function ModelPoolManagePage() {
               const modelTypeLabel = getModelTypeDisplayName(pool.modelType || 'chat');
 
               return (
-                <Card key={pool.id} className="p-0 overflow-hidden">
+                <GlassCard glow key={pool.id} className="p-0 overflow-hidden">
                   <div className="p-4 border-b border-white/10">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -373,7 +373,7 @@ export function ModelPoolManagePage() {
                       </div>
                     )}
                   </div>
-                </Card>
+                </GlassCard>
               );
             })}
           </div>

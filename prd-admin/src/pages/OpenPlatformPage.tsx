@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
@@ -254,7 +254,7 @@ export default function OpenPlatformPage() {
         }
       />
 
-      <Card className="mt-6">
+      <GlassCard glow className="mt-6">
         <div className="p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
           <input
             type="text"
@@ -424,7 +424,7 @@ export default function OpenPlatformPage() {
             </div>
           </div>
         )}
-      </Card>
+      </GlassCard>
 
       <CreateAppDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} onCreate={handleCreate} />
       <EditAppDialog 

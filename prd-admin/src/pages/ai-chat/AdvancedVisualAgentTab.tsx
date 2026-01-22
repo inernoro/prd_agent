@@ -1,5 +1,5 @@
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
@@ -3862,7 +3862,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <Card className="h-full min-h-0 overflow-hidden p-0!">
+      <GlassCard glow className="h-full min-h-0 overflow-hidden p-0!">
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
@@ -6913,7 +6913,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           </div>
         }
       />
-      </Card>
+      </GlassCard>
 
       {/* 水印设置对话框 */}
       <Dialog

@@ -1,4 +1,4 @@
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -1657,11 +1657,11 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 错误提示 */}
       {error ? (
         <div className="px-5 mt-4">
-          <Card>
+          <GlassCard glow>
             <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
               {error}
             </div>
-          </Card>
+          </GlassCard>
         </div>
       ) : null}
 

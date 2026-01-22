@@ -41,6 +41,79 @@ export const DEFAULT_THEME_CONFIG: ThemeConfig = {
 };
 
 /**
+ * 内嵌 div 块样式配置（用于页面内的子容器）
+ * 基于主题配置动态计算
+ */
+export const NESTED_BLOCK_STYLES = {
+  /** 内嵌块背景透明度 */
+  bgAlpha: {
+    solid: 0.04,
+    default: 0.02,
+    translucent: 0.015,
+  },
+  /** 内嵌块边框透明度 */
+  borderAlpha: {
+    solid: 0.08,
+    default: 0.06,
+    translucent: 0.04,
+  },
+  /** 列表项背景透明度 */
+  listItemBgAlpha: {
+    solid: 0.05,
+    default: 0.03,
+    translucent: 0.02,
+  },
+  /** 列表项边框透明度 */
+  listItemBorderAlpha: {
+    solid: 0.08,
+    default: 0.06,
+    translucent: 0.04,
+  },
+  /** hover 状态背景透明度 */
+  hoverBgAlpha: {
+    solid: 0.1,
+    default: 0.06,
+    translucent: 0.04,
+  },
+} as const;
+
+/**
+ * 强调色样式配置（用于不同状态的色块）
+ */
+export const ACCENT_STYLES = {
+  /** 蓝色强调 */
+  blue: {
+    bg: 'rgba(59, 130, 246, 0.04)',
+    border: 'rgba(59, 130, 246, 0.1)',
+    text: 'rgba(59, 130, 246, 0.95)',
+  },
+  /** 绿色强调 */
+  green: {
+    bg: 'rgba(34, 197, 94, 0.04)',
+    border: 'rgba(34, 197, 94, 0.1)',
+    text: 'rgba(34, 197, 94, 0.95)',
+  },
+  /** 金色强调 */
+  gold: {
+    bg: 'rgba(214, 178, 106, 0.04)',
+    border: 'rgba(214, 178, 106, 0.1)',
+    text: 'rgba(214, 178, 106, 0.95)',
+  },
+  /** 紫色强调 */
+  purple: {
+    bg: 'rgba(168, 85, 247, 0.04)',
+    border: 'rgba(168, 85, 247, 0.1)',
+    text: 'rgba(168, 85, 247, 0.95)',
+  },
+  /** 红色强调（危险操作） */
+  red: {
+    bg: 'rgba(239, 68, 68, 0.04)',
+    border: 'rgba(239, 68, 68, 0.12)',
+    text: 'rgba(239, 68, 68, 0.95)',
+  },
+} as const;
+
+/**
  * 色深配置映射
  */
 export const COLOR_DEPTH_MAP: Record<

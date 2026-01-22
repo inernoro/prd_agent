@@ -1,6 +1,6 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
@@ -780,7 +780,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
       <div className="grid gap-4 flex-1 min-h-0 transition-all lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
-        <Card className="flex flex-col min-h-0 p-0 overflow-hidden">
+        <GlassCard glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <div className="p-4 border-b border-white/10">
             <div className="flex items-center gap-2">
               <div className="w-[140px] shrink-0">
@@ -876,21 +876,21 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               </div>
             )}
           </div>
-        </Card>
+        </GlassCard>
 
         {/* 右侧：功能与模型池配置 */}
         <div className="flex flex-col gap-4 min-h-0">
           {!selectedAppGroup ? (
-            <Card className="flex-1 flex items-center justify-center">
+            <GlassCard glow className="flex-1 flex items-center justify-center">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={48} className="mx-auto mb-4 opacity-40" />
                 <div className="text-sm">请选择一个应用</div>
               </div>
-            </Card>
+            </GlassCard>
           ) : (
             <>
               {/* 应用信息卡片 */}
-              <Card className="p-4">
+              <GlassCard glow className="p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -923,10 +923,10 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     </div>
                   </div>
                 </div>
-              </Card>
+              </GlassCard>
 
               {/* 功能列表 */}
-              <Card className="flex-1 min-h-0 overflow-auto p-0">
+              <GlassCard glow className="flex-1 min-h-0 overflow-auto p-0">
                 {selectedAppFeatures.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center py-12">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>
@@ -1245,7 +1245,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     })}
                   </div>
                 )}
-              </Card>
+              </GlassCard>
             </>
           )}
         </div>

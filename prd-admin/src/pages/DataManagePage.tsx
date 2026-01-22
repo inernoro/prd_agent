@@ -146,18 +146,20 @@ function DomainCard({
     <div
       className="rounded-[16px] overflow-hidden transition-all duration-200"
       style={{
-        backgroundColor: '#121216',
-        backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: '0 4px 24px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+        // 使用全局 CSS 变量实现液态玻璃效果
+        background: `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`,
+        border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+        backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+        WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+        boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.35), 0 4px 16px -2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset',
       }}
     >
       {/* 头部 */}
       <div
         className="px-4 py-3 flex items-center justify-between gap-3"
         style={{
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          background: 'rgba(255,255,255,0.02)',
+          borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+          background: 'var(--nested-block-bg, rgba(255,255,255,0.02))',
         }}
       >
         <div className="flex items-center gap-2.5 min-w-0">

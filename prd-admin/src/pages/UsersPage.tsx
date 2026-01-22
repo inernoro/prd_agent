@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
@@ -761,7 +761,7 @@ export default function UsersPage() {
         icon={<Users size={16} />}
       />
 
-      <Card className="flex-1 min-h-0 flex flex-col">
+      <GlassCard glow className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex-1 min-w-[200px] max-w-[320px]">
             <div className="relative">
@@ -1249,7 +1249,7 @@ export default function UsersPage() {
             </Button>
           </div>
         </div>
-      </Card>
+      </GlassCard>
 
       <Dialog
         open={createOpen}

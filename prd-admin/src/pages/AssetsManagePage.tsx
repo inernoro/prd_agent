@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -543,7 +543,7 @@ export default function AssetsManagePage() {
 
       {/* ==================== 单文件资源 Tab ==================== */}
       {activeTab === 'single' && (
-        <Card className="overflow-hidden">
+        <GlassCard glow className="overflow-hidden">
           <div className="flex items-center justify-between gap-3 mb-5">
             <SectionTitle icon={<User size={16} />} title="无头像兜底" badge="required" />
           </div>
@@ -630,14 +630,14 @@ export default function AssetsManagePage() {
               </p>
             </div>
           </div>
-        </Card>
+        </GlassCard>
       )}
 
       {/* ==================== Desktop 资源 Tab ==================== */}
       {activeTab === 'desktop' && (
         <div className="flex flex-col gap-4">
           {/* 品牌配置 */}
-          <Card className="overflow-hidden">
+          <GlassCard glow className="overflow-hidden">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
                 <SectionTitle icon={<Monitor size={16} />} title="品牌配置" badge="Desktop" />
@@ -677,10 +677,10 @@ export default function AssetsManagePage() {
                 placeholder="PRD Agent"
               />
             </div>
-          </Card>
+          </GlassCard>
 
           {/* 快速创建 */}
-          <Card className="overflow-hidden">
+          <GlassCard glow className="overflow-hidden">
             <SectionTitle icon={<Plus size={16} />} title="快速创建" />
             <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               资源根目录：<code className="font-mono text-[10px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'rgba(255,255,255,0.04)' }}>{desktopRoot || '-'}</code>
@@ -762,10 +762,10 @@ export default function AssetsManagePage() {
                 </div>
               </div>
             </div>
-          </Card>
+          </GlassCard>
 
           {/* 资源矩阵 */}
-          <Card className="overflow-hidden">
+          <GlassCard glow className="overflow-hidden">
             <SectionTitle icon={<Layers size={16} />} title="资源矩阵" />
             <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               点击缩略图上传/替换资源，红色边框表示缺失，黄色虚线表示回落到默认
@@ -832,7 +832,7 @@ export default function AssetsManagePage() {
                 )}
               </div>
             </div>
-          </Card>
+          </GlassCard>
         </div>
       )}
     </div>
