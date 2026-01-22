@@ -68,6 +68,49 @@ public class UserDetailResponse
 }
 
 /// <summary>
+/// 用户简要资料响应（用于卡片悬浮展示）
+/// </summary>
+public class UserProfileResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string UserType { get; set; } = string.Empty;
+    public string? BotKind { get; set; }
+    public string? AvatarFileName { get; set; }
+    public string? AvatarUrl { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastLoginAt { get; set; }
+    public DateTime? LastActiveAt { get; set; }
+    public bool IsLocked { get; set; }
+    /// <summary>用户加入的群组列表</summary>
+    public List<UserProfileGroupItem> Groups { get; set; } = new();
+    /// <summary>用户使用的 Agent 统计（最近30天）</summary>
+    public List<UserProfileAgentUsageItem> AgentUsage { get; set; } = new();
+}
+
+/// <summary>
+/// 用户简要资料 - 群组项
+/// </summary>
+public class UserProfileGroupItem
+{
+    public string GroupId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int MemberCount { get; set; }
+}
+
+/// <summary>
+/// 用户简要资料 - Agent 使用统计项
+/// </summary>
+public class UserProfileAgentUsageItem
+{
+    public string AppKey { get; set; } = string.Empty;
+    public int UsageCount { get; set; }
+}
+
+/// <summary>
 /// 用户头像更新响应
 /// </summary>
 public class UserAvatarUpdateResponse

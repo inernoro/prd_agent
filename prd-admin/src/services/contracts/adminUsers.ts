@@ -51,3 +51,35 @@ export type BulkCreateAdminUsersResponse = {
 };
 
 export type BulkCreateAdminUsersContract = (items: BulkCreateAdminUsersItem[]) => Promise<ApiResponse<BulkCreateAdminUsersResponse>>;
+
+// 用户简要资料（用于卡片悬浮展示）
+export type UserProfileGroupItem = {
+  groupId: string;
+  name: string;
+  memberCount: number;
+};
+
+export type UserProfileAgentUsageItem = {
+  appKey: string;
+  usageCount: number;
+};
+
+export type UserProfileResponse = {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  status: UserStatus;
+  userType: string;
+  botKind?: string | null;
+  avatarFileName?: string | null;
+  avatarUrl?: string | null;
+  createdAt: string;
+  lastLoginAt?: string | null;
+  lastActiveAt?: string | null;
+  isLocked: boolean;
+  groups: UserProfileGroupItem[];
+  agentUsage: UserProfileAgentUsageItem[];
+};
+
+export type GetUserProfileContract = (userId: string) => Promise<ApiResponse<UserProfileResponse>>;

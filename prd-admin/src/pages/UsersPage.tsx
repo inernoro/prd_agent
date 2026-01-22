@@ -5,8 +5,9 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit } from '@/services';
-import { CheckCircle2, Circle, Clock, MoreVertical, Pencil, Search, XCircle, UserCog, Users, Gauge } from 'lucide-react';
+import { CheckCircle2, Circle, MoreVertical, Pencil, Search, XCircle, UserCog, Users, Gauge } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
+import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigate } from 'react-router-dom';
@@ -33,22 +34,8 @@ type UserRow = {
   lockoutRemainingSeconds?: number;
 };
 
-function fmtDateTime(v?: string | null) {
-  if (!v) return '-';
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return String(v);
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(d);
-}
-
-function fmtRelative(v?: string | null) {
+// 格式化相对时间（保留供 profile popover 使用）
+function fmtRelativeTime(v?: string | null) {
   if (!v) return '';
   const d = new Date(v);
   const t = d.getTime();
@@ -68,6 +55,9 @@ function fmtRelative(v?: string | null) {
   if (day < 30) return `${day} 天${suffix}`;
   return '';
 }
+
+// 抑制 unused warning（将在 profile popover 中使用）
+void fmtRelativeTime;
 
 const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
   { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
@@ -249,7 +239,7 @@ export default function UsersPage() {
   }, [bulkUsernames]);
 
   const query = useMemo(
-    () => ({ page, pageSize: 20, search: search.trim() || undefined, role: role || undefined, status: status || undefined }),
+    () => ({ page, pageSize: 50, search: search.trim() || undefined, role: role || undefined, status: status || undefined }),
     [page, search, role, status]
   );
 
@@ -857,374 +847,345 @@ export default function UsersPage() {
               暂无数据
             </div>
           ) : (
-            <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-stretch">
+            <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 items-stretch">
               {items.map((u) => {
-                const last = u.lastActiveAt ?? u.lastLoginAt;
                 const displayName = (u.displayName || u.username).trim();
+                const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
+                const isAdmin = String(u.role ?? '').toUpperCase() === 'ADMIN';
+                const roleColors: Record<string, { bg: string; border: string; text: string }> = {
+                  PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
+                  DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
+                  QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
+                  ADMIN: { bg: 'rgba(214,178,106,0.12)', border: 'rgba(214,178,106,0.25)', text: 'var(--accent-gold)' },
+                };
+                const rc = roleColors[u.role] || roleColors.DEV;
                 return (
                   <div
                     key={u.userId}
-                    className="group h-full rounded-[14px] p-3.5 transition-all duration-200 hover:-translate-y-px"
+                    className="group relative rounded-[10px] p-2.5 transition-all duration-150"
                     style={{
                       background: 'rgba(255,255,255,0.02)',
                       border: '1px solid rgba(255,255,255,0.06)',
-                      boxShadow: '0 2px 8px -2px rgba(0,0,0,0.2)',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.035)';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
                       e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                      e.currentTarget.style.boxShadow = '0 4px 16px -4px rgba(0,0,0,0.3)';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
                       e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
-                      e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0,0,0,0.2)';
                     }}
                   >
-                    <div
-                      className="h-full flex flex-col"
-                      style={{ gap: 14 }}
-                    >
-                      {/* Header（强约束：左侧信息 + 右侧操作，避免窄卡片挤压导致“重叠”） */}
-                      <div className="grid grid-cols-[1fr_auto] gap-3 items-start">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div
-                            className="h-10 w-10 rounded-[12px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-gold)]/50"
-                            title="点击修改头像"
-                            onClick={() => openChangeAvatar(u)}
-                            role="button"
-                            tabIndex={0}
-                            aria-label="点击修改头像"
-                            onKeyDown={(e) => {
-                              if (e.key !== 'Enter' && e.key !== ' ') return;
-                              e.preventDefault();
-                              openChangeAvatar(u);
+                    {/* 操作按钮：悬浮显示 */}
+                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors hover:bg-white/10"
+                            style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)' }}
+                            aria-label="更多操作"
+                          >
+                            <MoreVertical size={14} />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            side="bottom"
+                            align="end"
+                            sideOffset={4}
+                            className="rounded-[10px] p-1 min-w-[160px]"
+                            style={{
+                              zIndex: 90,
+                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                             }}
                           >
-                            {(() => {
-                              const url = resolveAvatarUrl({
-                                username: u.username,
-                                userType: u.userType,
-                                botKind: u.botKind,
-                                avatarFileName: u.avatarFileName ?? null,
-                                avatarUrl: u.avatarUrl,
-                              });
-                              const fallback = resolveNoHeadAvatarUrl();
-                              return (
-                                <img
-                                  src={url}
-                                  alt="avatar"
-                                  className="h-full w-full object-cover"
-                                  onError={(e) => {
-                                    const el = e.currentTarget;
-                                    if (el.getAttribute('data-fallback-applied') === '1') return;
-                                    if (!fallback) return;
-                                    el.setAttribute('data-fallback-applied', '1');
-                                    el.src = fallback;
-                                  }}
-                                />
-                              );
-                            })()}
-                          </div>
-
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className="inline-block h-2 w-2 rounded-full shrink-0"
-                                style={{
-                                  background: u.status === 'Active' ? 'rgba(34,197,94,0.95)' : 'rgba(247,247,251,0.28)',
-                                  boxShadow: u.status === 'Active' ? '0 0 0 3px rgba(34,197,94,0.12)' : 'none',
-                                }}
-                                title={u.status === 'Active' ? '正常' : '已禁用'}
-                                aria-label={u.status === 'Active' ? '正常' : '已禁用'}
-                              />
-                              <div
-                                className="font-semibold truncate leading-5"
-                                style={{ color: 'var(--text-primary)' }}
-                                title={displayName}
-                              >
-                                {displayName}
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                {/* Robot tag icon */}
-                                {String(u.userType ?? '').toLowerCase() === 'bot' ? (
-                                  <span
-                                    className="inline-flex items-center justify-center h-5 w-5 rounded-[8px]"
-                                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}
-                                    title="机器人"
-                                  >
-                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
-                                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
-                                    </svg>
-                                  </span>
-                                ) : null}
-                                {/* Admin tag icon */}
-                                {String(u.role ?? '').toUpperCase() === 'ADMIN' ? (
-                                  <span
-                                    className="inline-flex items-center justify-center h-5 w-5 rounded-[8px]"
-                                    style={{ background: 'rgba(214,178,106,0.1)', border: '1px solid rgba(214,178,106,0.2)', color: 'var(--accent-gold)' }}
-                                    title="系统管理员"
-                                  >
-                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
-                                    </svg>
-                                  </span>
-                                ) : null}
-                              </div>
-                            </div>
-
-                            <div className="mt-1 flex flex-col gap-1 min-w-0">
-                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }} title={`用户名：${u.username}`}>
-                                @{u.username}
-                              </div>
-                              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }} title={u.userId}>
-                                ID: {u.userId}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-end gap-1.5 shrink-0">
-                          <Button
-                            variant={u.status === 'Active' ? 'secondary' : 'primary'}
-                            size="xs"
-                            disabled={statusUpdatingUserId === u.userId || roleUpdatingUserId === u.userId}
-                            onClick={() => onToggleStatus(u)}
-                            title={u.status === 'Active' ? '点击停用' : '点击启用'}
-                            aria-label={u.status === 'Active' ? '停用' : '启用'}
-                            className="min-w-[56px] text-[11px]"
-                          >
-                            {statusUpdatingUserId === u.userId ? '...' : u.status === 'Active' ? '停用' : '启用'}
-                          </Button>
-
-                          <DropdownMenu.Root>
-                            <DropdownMenu.Trigger asChild>
-                              <button
-                                type="button"
-                                className="inline-flex items-center justify-center h-[28px] w-[28px] rounded-[8px] transition-colors hover:bg-white/6 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-gold)]/30"
-                                style={{ border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
-                                aria-label="更多操作"
-                                title="更多操作"
-                              >
-                                <MoreVertical size={16} />
-                              </button>
-                            </DropdownMenu.Trigger>
-                            <DropdownMenu.Portal>
-                            <DropdownMenu.Content
-                              side="bottom"
-                              align="end"
-                              sideOffset={8}
-                              className="rounded-[12px] p-1 min-w-[180px]"
-                              style={{
-                                zIndex: 90,
-                                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                                boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                                backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                                WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            {/* 状态切换 */}
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: u.status === 'Active' ? 'rgba(239,68,68,0.9)' : 'rgba(34,197,94,0.9)' }}
+                              disabled={statusUpdatingUserId === u.userId}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                onToggleStatus(u);
                               }}
                             >
-                              {isLockedUser(u) && (
-                                <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
-                                  disabled={unlockingUserId === u.userId}
-                                  onSelect={(e) => {
-                                    e.preventDefault();
-                                    onUnlock(u);
-                                  }}
-                                  title={
-                                    typeof u.lockoutRemainingSeconds === 'number' && u.lockoutRemainingSeconds > 0
-                                      ? `当前锁定剩余 ${u.lockoutRemainingSeconds} 秒`
-                                      : '解除登录锁定'
-                                  }
-                                >
-                                  {unlockingUserId === u.userId ? '解除锁定（处理中…）' : '解除锁定'}
-                                </DropdownMenu.Item>
-                              )}
-                              {isHumanUser(u) && (
-                                <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
-                                  onSelect={(e) => {
-                                    e.preventDefault();
-                                    openChangeDisplayName(u);
-                                  }}
-                                >
-                                  <Pencil size={14} />
-                                  修改姓名
-                                </DropdownMenu.Item>
-                              )}
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  openForceExpire(u);
-                                }}
-                              >
-                                一键过期
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  openChangeAvatar(u);
-                                }}
-                              >
-                                修改头像
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  openChangePassword(u);
-                                }}
-                              >
-                                修改密码
-                              </DropdownMenu.Item>
+                              {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用账户' : '启用账户'}
+                            </DropdownMenu.Item>
 
-                              {canAuthzManage ? (
-                                <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
-                                  onSelect={(e) => {
-                                    e.preventDefault();
-                                    void openUserAuthz(u);
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+
+                            {/* 角色切换子菜单 */}
+                            <DropdownMenu.Sub>
+                              <DropdownMenu.SubTrigger
+                                className="flex items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                              >
+                                切换角色
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M9 18l6-6-6-6" />
+                                </svg>
+                              </DropdownMenu.SubTrigger>
+                              <DropdownMenu.Portal>
+                                <DropdownMenu.SubContent
+                                  sideOffset={4}
+                                  className="rounded-[10px] p-1 min-w-[100px]"
+                                  style={{
+                                    zIndex: 91,
+                                    background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                                    border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                                    boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                                    backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                    WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                                   }}
                                 >
-                                  后台菜单权限
-                                </DropdownMenu.Item>
-                              ) : null}
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  void openRateLimitConfig(u);
-                                }}
-                              >
-                                <Gauge size={14} />
-                                限流配置
-                              </DropdownMenu.Item>
-
-                              <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
-
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                disabled={switchingUserId === u.userId}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  onSwitchToUser(u);
-                                }}
-                              >
-                                <UserCog size={14} />
-                                {switchingUserId === u.userId ? '切换中...' : '切换到该用户登录'}
-                              </DropdownMenu.Item>
-
-                              <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
-
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  navigate(`/logs?tab=llm&userId=${encodeURIComponent(u.userId)}`);
-                                }}
-                              >
-                                查看 LLM 请求日志
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  navigate(`/logs?tab=system&userId=${encodeURIComponent(u.userId)}`);
-                                }}
-                              >
-                                查看 系统请求日志
-                              </DropdownMenu.Item>
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                          </DropdownMenu.Root>
-                        </div>
-                      </div>
-
-                      {/* Role */}
-                      <div
-                        className="rounded-[14px] p-2"
-                        style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}
-                      >
-                        <div className="grid grid-cols-4 gap-1">
-                          {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => {
-                            const active = u.role === r;
-                            const disabled = roleUpdatingUserId === u.userId || statusUpdatingUserId === u.userId;
-                            return (
-                              <button
-                                key={r}
-                                type="button"
-                                className="h-[30px] rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center justify-center disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]"
-                                style={{
-                                  color: active ? 'rgba(250,204,21,0.95)' : 'var(--text-primary)',
-                                  background: active ? 'rgba(250,204,21,0.10)' : 'transparent',
-                                  border: active ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                                }}
-                                aria-pressed={active}
-                                disabled={disabled}
-                                onClick={() => onSetRole(u, r)}
-                              >
-                                {r}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Footer */}
-                      <div className="flex items-end justify-between gap-3">
-                        <div className="min-w-0" />
-                        {!last ? (
-                          <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
-                            暂无操作记录
-                          </div>
-                        ) : (
-                          <div className="text-right min-w-0">
-                            {(() => {
-                              const abs = fmtDateTime(last);
-                              const rel = fmtRelative(last);
-                              const primary = rel || abs;
-                              const secondary = rel ? abs : '';
-                              return (
-                                <div className="flex flex-col items-end">
-                                  <div
-                                    className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold"
-                                    style={{
-                                      background: 'rgba(255,255,255,0.03)',
-                                      border: '1px solid rgba(255,255,255,0.10)',
-                                      color: 'var(--text-secondary)',
-                                    }}
-                                    title={abs}
-                                  >
-                                    <Clock size={12} style={{ color: 'var(--text-muted)' }} />
-                                    <span className="truncate">{primary}</span>
-                                  </div>
-                                  {secondary ? (
-                                    <div
-                                      className="mt-1 text-[11px] truncate opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                                      style={{ color: 'var(--text-muted)' }}
+                                  {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => (
+                                    <DropdownMenu.Item
+                                      key={r}
+                                      className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                      style={{ color: u.role === r ? roleColors[r].text : 'var(--text-primary)' }}
+                                      disabled={roleUpdatingUserId === u.userId || u.role === r}
+                                      onSelect={(e) => {
+                                        e.preventDefault();
+                                        onSetRole(u, r);
+                                      }}
                                     >
-                                      {secondary}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        )}
+                                      {u.role === r && <span className="w-1.5 h-1.5 rounded-full" style={{ background: roleColors[r].text }} />}
+                                      {r}
+                                    </DropdownMenu.Item>
+                                  ))}
+                                </DropdownMenu.SubContent>
+                              </DropdownMenu.Portal>
+                            </DropdownMenu.Sub>
+
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+
+                            {isLockedUser(u) && (
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                disabled={unlockingUserId === u.userId}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  onUnlock(u);
+                                }}
+                              >
+                                {unlockingUserId === u.userId ? '解除中...' : '解除锁定'}
+                              </DropdownMenu.Item>
+                            )}
+                            {isHumanUser(u) && (
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  openChangeDisplayName(u);
+                                }}
+                              >
+                                <Pencil size={12} />
+                                修改姓名
+                              </DropdownMenu.Item>
+                            )}
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                openChangeAvatar(u);
+                              }}
+                            >
+                              修改头像
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                openChangePassword(u);
+                              }}
+                            >
+                              修改密码
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                openForceExpire(u);
+                              }}
+                            >
+                              一键过期
+                            </DropdownMenu.Item>
+
+                            {canAuthzManage && (
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                style={{ color: 'var(--text-primary)' }}
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  void openUserAuthz(u);
+                                }}
+                              >
+                                后台权限
+                              </DropdownMenu.Item>
+                            )}
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                void openRateLimitConfig(u);
+                              }}
+                            >
+                              <Gauge size={12} />
+                              限流配置
+                            </DropdownMenu.Item>
+
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              disabled={switchingUserId === u.userId}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                onSwitchToUser(u);
+                              }}
+                            >
+                              <UserCog size={12} />
+                              {switchingUserId === u.userId ? '切换中...' : '切换登录'}
+                            </DropdownMenu.Item>
+
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                navigate(`/logs?tab=llm&userId=${encodeURIComponent(u.userId)}`);
+                              }}
+                            >
+                              LLM 日志
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                              style={{ color: 'var(--text-primary)' }}
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                navigate(`/logs?tab=system&userId=${encodeURIComponent(u.userId)}`);
+                              }}
+                            >
+                              系统日志
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                    </div>
+
+                    {/* 紧凑卡片内容 */}
+                    <div className="flex items-center gap-2.5">
+                      {/* 头像（悬浮显示用户详情） */}
+                      <UserProfilePopover
+                        userId={u.userId}
+                        username={u.username}
+                        userType={u.userType}
+                        botKind={u.botKind}
+                        avatarFileName={u.avatarFileName}
+                        avatarUrl={u.avatarUrl}
+                      >
+                        <div
+                          className="relative h-9 w-9 rounded-[8px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all"
+                          onClick={() => openChangeAvatar(u)}
+                          title="悬浮查看详情 / 点击修改头像"
+                        >
+                          {(() => {
+                            const url = resolveAvatarUrl({
+                              username: u.username,
+                              userType: u.userType,
+                              botKind: u.botKind,
+                              avatarFileName: u.avatarFileName ?? null,
+                              avatarUrl: u.avatarUrl,
+                            });
+                            const fallback = resolveNoHeadAvatarUrl();
+                            return (
+                              <img
+                                src={url}
+                                alt="avatar"
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  const el = e.currentTarget;
+                                  if (el.getAttribute('data-fallback-applied') === '1') return;
+                                  if (!fallback) return;
+                                  el.setAttribute('data-fallback-applied', '1');
+                                  el.src = fallback;
+                                }}
+                              />
+                            );
+                          })()}
+                          {/* 状态指示点 */}
+                          <span
+                            className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2"
+                            style={{
+                              background: u.status === 'Active' ? 'rgba(34,197,94,0.95)' : 'rgba(120,120,128,0.5)',
+                              borderColor: 'rgba(0,0,0,0.4)',
+                            }}
+                          />
+                        </div>
+                      </UserProfilePopover>
+
+                      {/* 信息区 */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          {/* 名称 */}
+                          <span
+                            className="text-[12px] font-semibold truncate"
+                            style={{ color: 'var(--text-primary)' }}
+                            title={displayName}
+                          >
+                            {displayName}
+                          </span>
+                          {/* 角色标签 */}
+                          <span
+                            className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
+                            style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
+                          >
+                            {u.role}
+                          </span>
+                          {/* Bot 标记 */}
+                          {isBot && (
+                            <span
+                              className="shrink-0 inline-flex items-center justify-center h-4 w-4 rounded-[4px]"
+                              style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}
+                              title="机器人"
+                            >
+                              <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
+                                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
+                              </svg>
+                            </span>
+                          )}
+                          {/* Admin 盾牌 */}
+                          {isAdmin && !isBot && (
+                            <span
+                              className="shrink-0 inline-flex items-center justify-center h-4 w-4 rounded-[4px]"
+                              style={{ background: 'rgba(214,178,106,0.12)', color: 'var(--accent-gold)' }}
+                              title="管理员"
+                            >
+                              <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
+                              </svg>
+                            </span>
+                          )}
+                        </div>
+                        {/* 用户名 */}
+                        <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }} title={`@${u.username}`}>
+                          @{u.username}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1234,12 +1195,14 @@ export default function UsersPage() {
           )}
         </div>
 
-        <div className="mt-4 pt-4 flex items-center justify-between border-t border-white/10">
-          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>第 {page} 页 / 共 {Math.max(1, Math.ceil(total / 20))} 页</div>
-          <div className="flex items-center gap-2">
+        <div className="mt-3 pt-3 flex items-center justify-between border-t border-white/8">
+          <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            共 {total} 人 · 第 {page} / {Math.max(1, Math.ceil(total / 50))} 页
+          </div>
+          <div className="flex items-center gap-1.5">
             <Button
               variant="secondary"
-              size="sm"
+              size="xs"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
@@ -1247,8 +1210,8 @@ export default function UsersPage() {
             </Button>
             <Button
               variant="secondary"
-              size="sm"
-              disabled={page >= Math.ceil(total / 20)}
+              size="xs"
+              disabled={page >= Math.ceil(total / 50)}
               onClick={() => setPage((p) => p + 1)}
             >
               下一页

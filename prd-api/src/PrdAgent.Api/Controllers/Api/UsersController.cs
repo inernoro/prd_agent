@@ -220,7 +220,89 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// 更新用户头像（仅保存“头像文件名”，不保存域名/完整URL）
+    /// 获取用户简要资料（用于卡片悬浮展示）
+    /// </summary>
+    [HttpGet("{userId}/profile")]
+    public async Task<IActionResult> GetUserProfile(string userId, CancellationToken ct)
+    {
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        // 查询用户加入的群组（通过 GroupMembers 集合）
+        var memberGroups = await _db.GroupMembers
+            .Find(m => m.UserId == userId)
+            .ToListAsync(ct);
+
+        var groupIds = memberGroups.Select(m => m.GroupId).ToList();
+        var groups = groupIds.Count > 0
+            ? await _db.Groups.Find(g => groupIds.Contains(g.GroupId))
+                .Project(g => new UserProfileGroupItem
+                {
+                    GroupId = g.GroupId,
+                    Name = g.Name ?? g.GroupId,
+                    MemberCount = g.MemberCount
+                })
+                .ToListAsync(ct)
+            : new List<UserProfileGroupItem>();
+
+        // 查询用户使用的 Agent 统计（按 appKey 分组，最近30天）
+        var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+        var agentUsageFilter = Builders<PrdAgent.Core.Models.LlmLog>.Filter.And(
+            Builders<PrdAgent.Core.Models.LlmLog>.Filter.Eq(l => l.UserId, userId),
+            Builders<PrdAgent.Core.Models.LlmLog>.Filter.Gte(l => l.CreatedAt, thirtyDaysAgo),
+            Builders<PrdAgent.Core.Models.LlmLog>.Filter.Ne(l => l.AppKey, null)
+        );
+
+        var agentStats = await _db.LlmLogs.Aggregate()
+            .Match(agentUsageFilter)
+            .Group(l => l.AppKey, g => new
+            {
+                AppKey = g.Key,
+                Count = g.Count()
+            })
+            .SortByDescending(x => x.Count)
+            .Limit(5)
+            .ToListAsync(ct);
+
+        var agentUsage = agentStats
+            .Where(x => !string.IsNullOrEmpty(x.AppKey))
+            .Select(x => new UserProfileAgentUsageItem
+            {
+                AppKey = x.AppKey!,
+                UsageCount = x.Count
+            })
+            .ToList();
+
+        var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(user.Username);
+
+        var profile = new UserProfileResponse
+        {
+            UserId = user.UserId,
+            Username = user.Username,
+            DisplayName = user.DisplayName,
+            Role = user.Role.ToString(),
+            Status = user.Status.ToString(),
+            UserType = user.UserType.ToString(),
+            BotKind = user.UserType == UserType.Bot ? user.BotKind?.ToString() : null,
+            AvatarFileName = user.AvatarFileName,
+            AvatarUrl = BuildAvatarUrl(user),
+            CreatedAt = user.CreatedAt,
+            LastLoginAt = user.LastLoginAt,
+            LastActiveAt = user.LastActiveAt,
+            IsLocked = remaining > 0,
+            Groups = groups,
+            AgentUsage = agentUsage
+        };
+
+        return Ok(ApiResponse<UserProfileResponse>.Ok(profile));
+    }
+
+    /// <summary>
+    /// 更新用户头像（仅保存"头像文件名"，不保存域名/完整URL）
     /// </summary>
     [HttpPut("{userId}/avatar")]
     public async Task<IActionResult> UpdateUserAvatar(string userId, [FromBody] UpdateAvatarRequest request, CancellationToken ct)

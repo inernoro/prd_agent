@@ -28,6 +28,7 @@ import type {
   UpdateUserDisplayNameContract,
   UpdateUserRoleContract,
   UpdateUserStatusContract,
+  GetUserProfileContract,
   UnlockUserContract,
   ForceExpireUserContract,
 } from '@/services/contracts/adminUsers';
@@ -184,6 +185,7 @@ import {
   updateUserPasswordReal,
   updateUserAvatarReal,
   updateUserDisplayNameReal,
+  getUserProfileReal,
   updateUserRoleReal,
   updateUserStatusReal,
   unlockUserReal,
@@ -364,6 +366,7 @@ export const unlockUser: UnlockUserContract = withAuth(unlockUserReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
 export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);
 export const initializeUsers = withAuth(initializeUsersReal);
+export const getUserProfile: GetUserProfileContract = withAuth(getUserProfileReal);
 
 export const getOverviewStats: GetOverviewStatsContract = withAuth(getOverviewStatsReal);
 export const getTokenUsage: GetTokenUsageContract = withAuth(getTokenUsageReal);
