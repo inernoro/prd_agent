@@ -73,15 +73,19 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // 查找该 appKey 下的所有 Controller
-            if (!appKeyMap.TryGetValue(menu.AppKey, out var controllers) || controllers.Count == 0)
+            // 特殊菜单：仪表盘和系统设置，只需要基础访问权限
+            if (menu.AppKey is "dashboard" or "settings")
             {
-                // 没有对应的 Controller，跳过（或者是仪表盘等特殊菜单）
-                // 对于 dashboard，检查 admin.access
-                if (menu.AppKey == "dashboard" && permSet.Contains(AdminPermissionCatalog.Access))
+                if (permSet.Contains(AdminPermissionCatalog.Access))
                 {
                     result.Add(menu);
                 }
+                continue;
+            }
+
+            // 查找该 appKey 下的所有 Controller
+            if (!appKeyMap.TryGetValue(menu.AppKey, out var controllers) || controllers.Count == 0)
+            {
                 continue;
             }
 

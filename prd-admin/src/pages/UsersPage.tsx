@@ -13,6 +13,8 @@ import { useNavigate } from 'react-router-dom';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
+import { useThemeStore } from '@/stores/themeStore';
+import { useNavOrderStore } from '@/stores/navOrderStore';
 
 type UserRow = {
   userId: string;
@@ -144,6 +146,8 @@ export default function UsersPage() {
 
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
   const { login: authLogin, setPermissionsLoaded, setMenuCatalogLoaded } = useAuthStore();
+  const loadThemeFromServer = useThemeStore((s) => s.loadFromServer);
+  const loadNavOrderFromServer = useNavOrderStore((s) => s.loadFromServer);
   const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('authz.manage'));
 
   // 用户后台权限（systemRoleKey + allow/deny）
@@ -452,6 +456,10 @@ export default function UsersPage() {
       // 重置权限和菜单，触发 App.tsx 中的 useEffect 重新加载新用户的权限
       setPermissionsLoaded(false);
       setMenuCatalogLoaded(false);
+
+      // 重新加载新用户的主题配置和导航顺序
+      void loadThemeFromServer();
+      void loadNavOrderFromServer();
 
       // 提示并跳转到首页
       toast.info(`已切换到用户 "${res.data.user.displayName}" (${res.data.user.username})`, `会话有效期约 ${Math.floor(res.data.expiresIn / 60)} 分钟`);

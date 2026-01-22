@@ -666,19 +666,21 @@ export default function AppShell() {
                     type="button"
                     onClick={() => navigate(it.key)}
                     className={cn(
-                      'relative flex items-center gap-3 rounded-[12px] transition-[background-color,border-color,color] duration-200',
-                      'hover:bg-white/5',
+                      'group/nav relative flex items-center gap-3 rounded-[12px]',
+                      'transition-all duration-200 ease-out',
+                      'hover:bg-white/6 hover:scale-[1.02] hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)]',
                       collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
                     )}
                     style={{
                       background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
                       border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                       color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      transformOrigin: 'left center',
                     }}
                     title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                   >
-                    <span 
-                      className="inline-flex items-center justify-center shrink-0 transition-colors duration-200"
+                    <span
+                      className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-[1.08]"
                       style={{ color: active ? 'var(--accent-gold)' : undefined }}
                     >
                       {it.icon}

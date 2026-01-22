@@ -5699,57 +5699,40 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
           </div>
 
-          {/* splitter */}
+          {/* 右侧：浮动对话面板（液态大玻璃效果） */}
           <div
-            role="separator"
-            aria-orientation="vertical"
-            className="relative shrink-0 w-[10px]"
-            style={{ background: 'rgba(255,255,255,0.02)' }}
-            onMouseDown={(e) => {
-              dragRef.current = { dragging: true, startX: e.clientX, startRight: rightWidth };
-              document.body.style.cursor = 'col-resize';
-              document.body.style.userSelect = 'none';
-              e.preventDefault();
+            className="absolute right-3 top-3 z-30 flex flex-col"
+            style={{
+              width: 260,
+              maxHeight: 'calc(100% - 24px)',
             }}
           >
             <div
-              className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px"
-              style={{ background: 'rgba(255,255,255,0.08)' }}
-            />
-            <div
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-1.5 rounded-[999px]"
-              style={{ background: 'rgba(255,255,255,0.10)' }}
-            />
-          </div>
-
-          {/* 右侧：单对话/上下文（液态大玻璃效果） */}
-          <div className="shrink-0 min-h-0 flex flex-col" style={{ width: rightWidth || 280 }}>
-            <div
-              className="h-full min-h-0 flex flex-col p-3 rounded-l-[16px]"
+              className="flex flex-col p-2.5 rounded-[14px]"
               style={{
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.10))',
-                borderRight: 'none',
+                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
+                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
+                boxShadow: '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
                 backdropFilter: 'blur(40px) saturate(180%)',
                 WebkitBackdropFilter: 'blur(40px) saturate(180%)',
               }}
             >
             <div className="min-w-0">
-                <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 Hi，我是你的 AI 设计师
               </div>
-                <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                右侧是唯一对话上下文；左侧是画板。点画板图片即可选中，未来可作为图生图首帧。
+                <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                点画板图片即可选中，未来可作为图生图首帧。
               </div>
             </div>
 
             {(!input.trim() && messages.length === 0) ? (
-              <div className="mt-3 grid gap-2">
+              <div className="mt-2 grid gap-1.5">
                 {templates.map((t) => (
                   <button
                     key={t.id}
                     type="button"
-                    className="w-full text-left rounded-[14px] px-3 py-2.5 hover:bg-white/5 transition-colors"
+                    className="w-full text-left rounded-[10px] px-2.5 py-2 hover:bg-white/5 transition-colors"
                     style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
                     onClick={() => {
                       const text = buildTemplate(t.id);
@@ -5757,10 +5740,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       requestAnimationFrame(() => inputRef.current?.focus());
                     }}
                   >
-                    <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                       {t.title}
                     </div>
-                    <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-0.5 text-[9px]" style={{ color: 'var(--text-muted)' }}>
                       {t.desc}
                     </div>
                   </button>
@@ -5768,7 +5751,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
-            <div ref={scrollRef} className="mt-3 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5">
+            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1" style={{ maxHeight: 280 }}>
               {messages.map((m) => {
                 const isUser = m.role === 'User';
                 // 过滤历史遗留的“本次使用模型/直连模式...”提示（用户要求移除）
@@ -5785,9 +5768,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="group relative max-w-[92%] rounded-[14px] px-3 py-2 text-[14px] leading-[20px]"
+                      className="group relative max-w-[95%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
                       style={{
-                        // 用户气泡更克制：减少金色占比，让它更贴整体背景
                         background: isUser
                           ? 'rgba(214, 178, 106, 0.12)'
                           : 'rgba(255,255,255,0.04)',
@@ -5903,14 +5885,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </div>
 
             {error ? (
-              <div className="mt-3 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+              <div className="mt-2 text-[10px]" style={{ color: 'rgba(239,68,68,0.95)' }}>
                 {error}
               </div>
             ) : null}
 
             <div
               ref={inputPanelRef}
-              className="mt-3 rounded-[18px] p-3 relative"
+              className="mt-2 rounded-[12px] p-2 relative"
               style={{
                 border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
                 background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
@@ -6360,12 +6342,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </div>
               ) : null}
 
-              <div className="mt-1 flex items-center justify-between gap-2">
+              <div className="mt-1 flex items-center justify-between gap-1.5">
                 {/* 左侧：附件 + @（强制入口） */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
+                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: 'rgba(255,255,255,0.04)',
@@ -6375,12 +6357,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     title="附件"
                     onClick={() => openImageFilePicker()}
                   >
-                    <Paperclip size={16} />
+                    <Paperclip size={14} />
                   </button>
 
                   <button
                     type="button"
-                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
+                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: 'rgba(255,255,255,0.04)',
@@ -6390,15 +6372,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     title="@"
                     onClick={() => insertTextAtCursor('@', { openMention: true })}
                   >
-                    <AtSign size={16} />
+                    <AtSign size={14} />
                   </button>
                 </div>
 
                 {/* 右侧：模型偏好 + 发送 */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
+                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: 'rgba(255,255,255,0.04)',
@@ -6408,15 +6390,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     title="一键清理（清理本页本地缓存）"
                     onClick={() => void oneClickCleanLocalCache()}
                   >
-                    <Eraser size={16} />
+                    <Eraser size={14} />
                   </button>
 
-                  {/* 图2：发送左边的按钮是“模型偏好” */}
+                  {/* 图2：发送左边的按钮是"模型偏好" */}
                   <DropdownMenu.Root open={modelPrefOpen} onOpenChange={setModelPrefOpen}>
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="h-9 w-9 rounded-full inline-flex items-center justify-center"
+                        className="h-7 w-7 rounded-full inline-flex items-center justify-center"
                         style={{
                           border: '1px solid rgba(255,255,255,0.10)',
                           background: 'rgba(255,255,255,0.04)',
@@ -6425,7 +6407,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         aria-label="模型偏好"
                         title="模型偏好"
                       >
-                        <SlidersHorizontal size={16} />
+                        <SlidersHorizontal size={14} />
                       </button>
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
@@ -6578,7 +6560,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   {/* 水印设置按钮 */}
                   <button
                     type="button"
-                    className="h-9 w-9 rounded-full inline-flex items-center justify-center"
+                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
                     style={{
                       border: watermarkStatus.enabled ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(255,255,255,0.10)',
                       background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255,255,255,0.04)',
@@ -6588,12 +6570,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     title={watermarkStatus.enabled ? `水印: ${watermarkStatus.name || '已启用'}` : '水印设置'}
                     onClick={() => setWatermarkSettingsOpen(true)}
                   >
-                    <Droplet size={16} />
+                    <Droplet size={14} />
                   </button>
 
                   {(runningCount > 0 || pendingCount > 0) ? (
                     <div
-                      className="text-[11px] px-2 h-10 inline-flex items-center rounded-full"
+                      className="text-[9px] px-1.5 h-7 inline-flex items-center rounded-full"
                       style={{
                         border: '1px solid rgba(255,255,255,0.10)',
                         background: 'rgba(0,0,0,0.18)',
@@ -6602,7 +6584,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       title="生成队列：运行中 / 排队"
                       aria-label="生成队列"
                     >
-                      运行 {runningCount} · 排队 {pendingCount}
+                      {runningCount}/{pendingCount}
                     </div>
                   ) : null}
 
@@ -6611,7 +6593,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     type="button"
                     onClick={() => void onSend()}
                     disabled={!input.trim()}
-                    className="h-10 w-10 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="h-8 w-8 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
                       background: !input.trim() ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)',
@@ -6620,7 +6602,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     aria-label="生成"
                     title="生成"
                   >
-                    <ArrowUp size={18} />
+                    <ArrowUp size={16} />
                   </button>
                 </div>
               </div>
