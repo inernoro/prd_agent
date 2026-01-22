@@ -674,19 +674,16 @@ export default function AppShell() {
                       background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
                       border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                       color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                      transformOrigin: 'left center',
                     }}
                     onMouseEnter={(e) => {
                       if (!active) {
-                        e.currentTarget.style.transform = 'scale(1.03) translateX(2px)';
                         e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
                         e.currentTarget.style.borderColor = 'rgba(214, 178, 106, 0.25)';
-                        e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3), 0 0 0 1px rgba(214, 178, 106, 0.15) inset';
+                        e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(214, 178, 106, 0.12) inset';
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (!active) {
-                        e.currentTarget.style.transform = '';
                         e.currentTarget.style.background = 'transparent';
                         e.currentTarget.style.borderColor = 'transparent';
                         e.currentTarget.style.boxShadow = '';
