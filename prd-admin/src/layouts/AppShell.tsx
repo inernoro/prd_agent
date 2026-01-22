@@ -668,27 +668,14 @@ export default function AppShell() {
                     className={cn(
                       'group/nav relative flex items-center gap-3 rounded-[12px]',
                       'transition-all duration-200 ease-out',
-                      collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2'
+                      collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2',
+                      // 使用 CSS 类处理 hover，避免 JS 残影问题
+                      !active && 'nav-item-hover'
                     )}
                     style={{
                       background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
                       border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                       color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                      // 确保 active 状态下清除悬浮时添加的 boxShadow
-                      boxShadow: active ? 'none' : undefined,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!active) {
-                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                        e.currentTarget.style.borderColor = 'rgba(214, 178, 106, 0.25)';
-                        e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(214, 178, 106, 0.12) inset';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      // 始终清除 hover 样式，让 style prop 控制最终状态
-                      e.currentTarget.style.background = '';
-                      e.currentTarget.style.borderColor = '';
-                      e.currentTarget.style.boxShadow = '';
                     }}
                     title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
                   >
