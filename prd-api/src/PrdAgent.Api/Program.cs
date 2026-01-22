@@ -22,6 +22,7 @@ using PrdAgent.Infrastructure.Prompts;
 using PrdAgent.Infrastructure.Repositories;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.Helpers;
 using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
@@ -568,7 +569,7 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var activeConfig = db.LLMConfigs.Find(c => c.IsActive).FirstOrDefault();
     if (activeConfig != null)
     {
-        var apiKey = DecryptApiKey(activeConfig.ApiKeyEncrypted, jwtSecret);
+        var apiKey = ApiKeyCrypto.Decrypt(activeConfig.ApiKeyEncrypted, jwtSecret);
         
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
@@ -607,7 +608,7 @@ builder.Services.AddScoped<ILLMClient>(sp =>
 static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model, MongoDbContext db, string jwtSecret)
 {
     string? apiUrl = model.ApiUrl;
-    string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
+    string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
 
     // 如果模型没有配置，从平台继承
     if (model.PlatformId != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
@@ -618,41 +619,12 @@ static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model,
             apiUrl ??= platform.ApiUrl;
             if (string.IsNullOrEmpty(apiKey))
             {
-                apiKey = DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
             }
         }
     }
 
     return (apiUrl, apiKey);
-}
-
-// 辅助方法：解密 API Key（与 AdminLLMConfigController 中的逻辑一致）
-static string DecryptApiKey(string encryptedKey, string secretKey)
-{
-    if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
-    
-    try
-    {
-        var parts = encryptedKey.Split(':');
-        if (parts.Length != 2) return string.Empty;
-
-        var keyBytes = Encoding.UTF8.GetBytes(secretKey.Length >= 32 ? secretKey[..32] : secretKey.PadRight(32));
-        var iv = Convert.FromBase64String(parts[0]);
-        var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-        using var aes = Aes.Create();
-        aes.Key = keyBytes;
-        aes.IV = iv;
-
-        using var decryptor = aes.CreateDecryptor();
-        var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-        
-        return Encoding.UTF8.GetString(decryptedBytes);
-    }
-    catch
-    {
-        return string.Empty;
-    }
 }
 
 // 注册仓储

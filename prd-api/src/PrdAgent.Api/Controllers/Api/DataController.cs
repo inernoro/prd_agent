@@ -1,14 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -83,7 +82,7 @@ public class DataController : ControllerBase
                 PlatformType = p.PlatformType,
                 ProviderId = string.IsNullOrWhiteSpace(providerId) ? null : providerId,
                 ApiUrl = p.ApiUrl,
-                ApiKey = DecryptApiKey(p.ApiKeyEncrypted),
+                ApiKey = ApiKeyCrypto.Decrypt(p.ApiKeyEncrypted, GetJwtSecret()),
                 EnabledModels = enabled
             };
         }).ToList();
@@ -433,7 +432,7 @@ public class DataController : ControllerBase
 
                     if (!string.IsNullOrWhiteSpace(p.ApiKey))
                     {
-                        update = update.Set(x => x.ApiKeyEncrypted, EncryptApiKey(p.ApiKey));
+                        update = update.Set(x => x.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(p.ApiKey ?? string.Empty, GetJwtSecret()));
                     }
 
                     await _db.LLMPlatforms.UpdateOneAsync(x => x.Id == cur.Id, update);
@@ -451,7 +450,7 @@ public class DataController : ControllerBase
                     PlatformType = p.PlatformType,
                     ProviderId = string.IsNullOrWhiteSpace(p.ProviderId) ? null : p.ProviderId,
                     ApiUrl = p.ApiUrl,
-                    ApiKeyEncrypted = EncryptApiKey(p.ApiKey ?? string.Empty),
+                    ApiKeyEncrypted = ApiKeyCrypto.Encrypt(p.ApiKey ?? string.Empty, GetJwtSecret()),
                     Enabled = true,
                     MaxConcurrency = 5,
                     Remark = null,
@@ -903,50 +902,7 @@ public class DataController : ControllerBase
         return Ok(ApiResponse<DataPurgeResponse>.Ok(payload));
     }
 
-    private string EncryptApiKey(string apiKey)
-    {
-        if (string.IsNullOrEmpty(apiKey)) return string.Empty;
-        var key = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var keyBytes = Encoding.UTF8.GetBytes(key[..32]);
-
-        using var aes = Aes.Create();
-        aes.Key = keyBytes;
-        aes.GenerateIV();
-
-        using var encryptor = aes.CreateEncryptor();
-        var plainBytes = Encoding.UTF8.GetBytes(apiKey);
-        var encryptedBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-
-        return Convert.ToBase64String(aes.IV) + ":" + Convert.ToBase64String(encryptedBytes);
-    }
-
-    private string DecryptApiKey(string encryptedKey)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
-            var parts = encryptedKey.Split(':');
-            if (parts.Length != 2) return "";
-
-            var key = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-            var keyBytes = Encoding.UTF8.GetBytes(key[..32]);
-            var iv = Convert.FromBase64String(parts[0]);
-            var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-            using var aes = Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return "";
-        }
-    }
+    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
 public class ExportedConfigV1

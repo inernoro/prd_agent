@@ -81,6 +81,28 @@ public static class Desktop
         )]
         public const string SummarizationChat = "prd-agent-desktop.gap.summarization::chat";
     }
+
+    public static class GroupName
+    {
+        [AppCallerMetadata(
+            "群组名称建议-意图",
+            "根据PRD内容建议群组名称",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Utility"
+        )]
+        public const string SuggestIntent = "prd-agent-desktop.group-name.suggest::intent";
+    }
+
+    public static class PreviewAsk
+    {
+        [AppCallerMetadata(
+            "预览问答-对话",
+            "PRD预览时的章节问答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string SectionChat = "prd-agent-desktop.preview-ask.section::chat";
+    }
 }
     
 /// <summary>

@@ -1,12 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
-using System.Security.Cryptography;
-using System.Text;
+using PrdAgent.Infrastructure.Database;
 using System.Text.Json;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -125,7 +124,7 @@ public class ModelsController : ControllerBase
             Name = request.Name,
             ModelName = reqMid,
             ApiUrl = request.ApiUrl,
-            ApiKeyEncrypted = string.IsNullOrEmpty(request.ApiKey) ? null : EncryptApiKey(request.ApiKey),
+            ApiKeyEncrypted = string.IsNullOrEmpty(request.ApiKey) ? null : ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()),
             PlatformId = request.PlatformId,
             Group = request.Group,
             Timeout = request.Timeout,
@@ -187,7 +186,7 @@ public class ModelsController : ControllerBase
 
         if (!string.IsNullOrEmpty(request.ApiKey))
         {
-            update = update.Set(m => m.ApiKeyEncrypted, EncryptApiKey(request.ApiKey));
+            update = update.Set(m => m.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()));
         }
 
         var result = await _db.LLMModels.UpdateOneAsync(m => m.Id == id, update);
@@ -643,7 +642,7 @@ public class ModelsController : ControllerBase
     private async Task<(string? apiUrl, string? apiKey, string? platformType)> ResolveApiConfig(LLMModel model)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted);
+        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret());
         string? platformType = null;
 
         if (model.PlatformId != null)
@@ -652,7 +651,7 @@ public class ModelsController : ControllerBase
             if (platform != null)
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= DecryptApiKey(platform.ApiKeyEncrypted);
+                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
                 platformType ??= platform.PlatformType;
             }
         }
@@ -678,7 +677,7 @@ public class ModelsController : ControllerBase
         m.Name,
         m.ModelName,
         m.ApiUrl,
-        apiKeyMasked = string.IsNullOrEmpty(m.ApiKeyEncrypted) ? null : MaskApiKey(DecryptApiKey(m.ApiKeyEncrypted)),
+        apiKeyMasked = string.IsNullOrEmpty(m.ApiKeyEncrypted) ? null : ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(m.ApiKeyEncrypted, GetJwtSecret())),
         m.PlatformId,
         platformName = m.PlatformId != null && platformMap.TryGetValue(m.PlatformId, out var name) ? name : null,
         m.Group,
@@ -704,58 +703,7 @@ public class ModelsController : ControllerBase
         m.UpdatedAt
     };
 
-    private string EncryptApiKey(string apiKey)
-    {
-        if (string.IsNullOrEmpty(apiKey)) return string.Empty;
-        var key = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var keyBytes = Encoding.UTF8.GetBytes(key[..32]);
-        
-        using var aes = Aes.Create();
-        aes.Key = keyBytes;
-        aes.GenerateIV();
-        
-        using var encryptor = aes.CreateEncryptor();
-        var plainBytes = Encoding.UTF8.GetBytes(apiKey);
-        var encryptedBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-        
-        return Convert.ToBase64String(aes.IV) + ":" + Convert.ToBase64String(encryptedBytes);
-    }
-
-    private string DecryptApiKey(string encryptedKey)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
-            var parts = encryptedKey.Split(':');
-            if (parts.Length != 2) return "";
-
-            var key = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-            var keyBytes = Encoding.UTF8.GetBytes(key[..32]);
-            var iv = Convert.FromBase64String(parts[0]);
-            var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-            using var aes = Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-            
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    private string MaskApiKey(string apiKey)
-    {
-        if (string.IsNullOrEmpty(apiKey) || apiKey.Length < 8)
-            return "****";
-        
-        return apiKey[..4] + "****" + apiKey[^4..];
-    }
+    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 
     /// <summary>
     /// 获取模型的平台适配信息

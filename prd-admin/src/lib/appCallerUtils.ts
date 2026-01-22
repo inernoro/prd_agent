@@ -263,8 +263,8 @@ export function getModelTypeIcon(modelType: string): ComponentType<any> {
 
 /**
  * 从 requestPurpose 获取功能描述（用于日志页面）
- * 
- * @param requestPurpose - 如 "desktop.chat.sendmessage::chat" 或 "chat.sendMessage"（旧格式）
+ *
+ * @param requestPurpose - 如 "prd-agent-desktop.chat.sendmessage::chat"（新格式）或 "chat.sendMessage"（旧格式）
  * @returns 中文描述，如 "桌面端：用户发送聊天消息"
  */
 export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string | null | undefined): string {
@@ -278,40 +278,96 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
     'visual-agent': '视觉创作',
     'literary-agent': '文学创作',
     'open-platform': '开放平台',
+    'open-platform-agent': '开放平台',
     'desktop': '桌面端',
     'admin': '管理后台',
   };
 
-  // 功能名称映射
-  const featureNameMap: Record<string, string> = {
-    'chat.send-message': '用户发送聊天消息',
-    'preview-ask.section': 'PRD 预览问答',
-    'gaps.summary-report': 'Gap 差异总结',
-    'group-name.suggest': '群组名称建议',
-    'model-lab.run': '模型实验室',
-    'image-gen.plan': '图片生成规划',
-    'image-gen.generate': '图片生成',
-    'image-gen.batch-generate': '批量图片生成',
-    'image-gen.run': '图片生成任务',
+  // 完整 AppCallerCode 映射（新格式：app.feature.action::modelType）
+  const fullCodeMap: Record<string, string> = {
+    // Desktop
+    'prd-agent-desktop.chat.sendmessage::chat': '桌面端：用户发送聊天消息',
+    'prd-agent-desktop.chat.sendmessage::intent': '桌面端：消息意图识别',
+    'prd-agent-desktop.chat::vision': '桌面端：图片理解',
+    'prd-agent-desktop.prd.analysis::chat': '桌面端：PRD 智能分析',
+    'prd-agent-desktop.prd.preview::chat': '桌面端：PRD 预览问答',
+    'prd-agent-desktop.gap.detection::chat': '桌面端：Gap 差异检测',
+    'prd-agent-desktop.gap.summarization::chat': '桌面端：Gap 差异总结',
+    'prd-agent-desktop.group-name.suggest::intent': '桌面端：群组名称建议',
+    'prd-agent-desktop.preview-ask.section::chat': '桌面端：预览章节问答',
+    // Visual Agent
+    'visual-agent.image::generation': '视觉创作：生成图片',
+    'visual-agent.image::vision': '视觉创作：图片分析',
+    'visual-agent.image::chat': '视觉创作：创意对话',
+    // Literary Agent
+    'literary-agent.content::chat': '文学创作：内容生成',
+    'literary-agent.content.polishing::chat': '文学创作：内容润色',
+    'literary-agent.illustration::generation': '文学创作：配图生成',
+    // Open Platform
+    'open-platform-agent.proxy::chat': '开放平台：聊天代理',
+    'open-platform-agent.proxy::embedding': '开放平台：向量嵌入',
+    'open-platform-agent.proxy::rerank': '开放平台：重排序',
+    // Admin
+    'prd-agent-web.lab::chat': '管理后台：实验室对话测试',
+    'prd-agent-web.lab::vision': '管理后台：实验室视觉测试',
+    'prd-agent-web.lab::generation': '管理后台：实验室生图测试',
+    'prd-agent-web::model-lab.run': '管理后台：模型实验室',
+    'prd-agent-web::image-gen.plan': '管理后台：图片生成规划',
+    'prd-agent-web::image-gen.generate': '管理后台：图片生成',
+    'prd-agent-web::image-gen.batch-generate': '管理后台：批量图片生成',
+    'prd-agent-web::image-gen.run': '管理后台：图片生成任务',
   };
+
+  // 先检查完整 AppCallerCode 精确匹配
+  if (fullCodeMap[rp]) {
+    return fullCodeMap[rp];
+  }
 
   // 精确匹配映射（用于不含 :: 的纯应用名）
   const exactMap: Record<string, string> = {
     'visual-agent': '视觉创作',
     'literary-agent': '文学创作',
+    'model-health-check': '模型健康检查',
+    'admin.platforms.reclassify': '管理后台：模型重分类',
+    'admin.platforms.fetch-models': '管理后台：拉取模型列表',
   };
 
-  // 先检查精确匹配
   if (exactMap[rp]) {
     return exactMap[rp];
   }
 
-  // 新格式：app::feature（kebab-case）
+  // 新格式解析：app.feature.action::modelType 或 app::feature
   if (rp.includes('::')) {
-    const [app, feature] = rp.split('::');
-    const appName = appSubjectMap[app] || app;
-    const featureName = featureNameMap[feature] || feature;
-    return `${appName}：${featureName}`;
+    const [pathPart, modelType] = rp.split('::');
+    const parts = pathPart.split('.');
+
+    // 尝试识别应用名（可能是多段的，如 prd-agent-desktop）
+    let appName = '';
+    let featureParts: string[] = [];
+
+    // 检查第一段是否是已知应用
+    if (appSubjectMap[parts[0]]) {
+      appName = appSubjectMap[parts[0]];
+      featureParts = parts.slice(1);
+    } else if (parts.length >= 2) {
+      // 可能是 prd-agent-desktop 这样的格式
+      const potentialApp = parts[0];
+      if (appSubjectMap[potentialApp]) {
+        appName = appSubjectMap[potentialApp];
+        featureParts = parts.slice(1);
+      } else {
+        appName = parts[0];
+        featureParts = parts.slice(1);
+      }
+    }
+
+    // 构建功能描述
+    const featureDesc = featureParts.length > 0 ? featureParts.join('.') : modelType;
+    const modelTypeDesc = getModelTypeDisplayName(modelType);
+
+    if (appName && featureDesc) {
+      return `${appName}：${featureDesc} (${modelTypeDesc})`;
+    }
   }
 
   // 旧格式兼容映射（camelCase）

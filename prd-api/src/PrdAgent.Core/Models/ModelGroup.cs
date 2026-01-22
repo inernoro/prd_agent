@@ -64,6 +64,20 @@ public class ModelGroupItem
     
     /// <summary>连续成功次数（用于恢复判断）</summary>
     public int ConsecutiveSuccesses { get; set; } = 0;
+
+    /// <summary>
+    /// 是否启用 Prompt Cache（模型池项级开关）
+    /// - null: 使用全局配置（默认行为）
+    /// - true: 强制启用
+    /// - false: 强制禁用
+    /// </summary>
+    public bool? EnablePromptCache { get; set; }
+
+    /// <summary>
+    /// 最大输出 Token 数（透传到大模型请求的 max_tokens）
+    /// - null: 使用服务端默认值（当前为 4096）
+    /// </summary>
+    public int? MaxTokens { get; set; }
 }
 
 /// <summary>

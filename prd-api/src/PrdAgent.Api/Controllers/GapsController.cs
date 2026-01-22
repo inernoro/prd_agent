@@ -7,6 +7,7 @@ using System.Text;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -145,7 +146,7 @@ public class GapsController : ControllerBase
             DocumentHash: Sha256Hex(document.RawContent ?? string.Empty),
             SystemPromptRedacted: "你是一个专业的产品文档分析师。",
             RequestType: "reasoning",
-            RequestPurpose: "prd-agent-desktop::gaps.summary-report"));
+            RequestPurpose: AppCallerRegistry.Desktop.Gap.SummarizationChat));
 
         var detector = new AIGapDetector(_llmClient, _promptManager);
         var report = await detector.GenerateSummaryReportAsync(

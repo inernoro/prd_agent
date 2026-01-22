@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Core.Services;
 
@@ -152,7 +153,7 @@ public class PreviewAskService : IPreviewAskService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: "prd-agent-desktop::preview-ask.section"));
+            RequestPurpose: Desktop.PreviewAsk.SectionChat));
 
         yield return new PreviewAskStreamEvent { Type = "start", RequestId = requestId };
 

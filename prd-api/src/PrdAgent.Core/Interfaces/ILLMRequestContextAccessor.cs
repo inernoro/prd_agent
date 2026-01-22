@@ -12,7 +12,10 @@ public record LlmRequestContext(
     string? RequestType = null,
     string? RequestPurpose = null,
     string? PlatformId = null,
-    string? PlatformName = null);
+    string? PlatformName = null,
+    string? ModelGroupId = null,
+    string? ModelGroupName = null,
+    bool? IsDefaultModelGroup = null);
 
 public interface ILLMRequestContextAccessor
 {

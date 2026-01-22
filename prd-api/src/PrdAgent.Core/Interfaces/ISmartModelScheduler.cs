@@ -1,6 +1,15 @@
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
+/// 调度器返回结果，包含客户端和模型池信息
+/// </summary>
+public record ScheduledClientResult(
+    ILLMClient Client,
+    string ModelGroupId,
+    string ModelGroupName,
+    bool IsDefaultModelGroup);
+
+/// <summary>
 /// 智能模型调度器 - 负责根据应用需求选择最佳模型并处理降权恢复
 /// </summary>
 public interface ISmartModelScheduler
@@ -13,6 +22,15 @@ public interface ISmartModelScheduler
     /// <param name="ct">取消令牌</param>
     /// <returns>LLM客户端</returns>
     Task<ILLMClient> GetClientAsync(string appCallerCode, string modelType, CancellationToken ct = default);
+
+    /// <summary>
+    /// 根据应用标识和模型类型获取客户端（包含模型池信息）
+    /// </summary>
+    /// <param name="appCallerCode">应用标识（如：chat.sendMessage）</param>
+    /// <param name="modelType">模型类型（如：chat, intent, vision）</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>调度结果，包含客户端和模型池信息</returns>
+    Task<ScheduledClientResult> GetClientWithGroupInfoAsync(string appCallerCode, string modelType, CancellationToken ct = default);
     
     /// <summary>
     /// 记录调用结果，触发降权/恢复逻辑

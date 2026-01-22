@@ -1,13 +1,14 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -122,7 +123,7 @@ public class ModelDomainService : IModelDomainService
             // 展示给管理后台/日志的 system（脱敏版）：不要再用占位符，避免误导排障
             SystemPromptRedacted: "意图：根据文件名与PRD片段输出群组名称（只输出名称，不追问）",
             RequestType: "intent",
-            RequestPurpose: "prd-agent-desktop::group-name.suggest"));
+            RequestPurpose: Desktop.GroupName.SuggestIntent));
 
         var systemPrompt =
             "你是PRD Agent的意图模型。\n" +
@@ -173,7 +174,7 @@ public class ModelDomainService : IModelDomainService
         CancellationToken ct)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
+        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
         string? platformType = null;
         string? platformId = model.PlatformId;
         string? platformName = null;
@@ -186,7 +187,7 @@ public class ModelDomainService : IModelDomainService
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
             }
         }
 
@@ -263,31 +264,6 @@ public class ModelDomainService : IModelDomainService
         return line;
     }
 
-    private static string DecryptApiKey(string encryptedKey, string secretKey)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
-            var parts = encryptedKey.Split(':');
-            if (parts.Length != 2) return "";
-
-            var keyBytes = Encoding.UTF8.GetBytes(secretKey[..32]);
-            var iv = Convert.FromBase64String(parts[0]);
-            var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-            using var aes = Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return "";
-        }
-    }
 }
 
 

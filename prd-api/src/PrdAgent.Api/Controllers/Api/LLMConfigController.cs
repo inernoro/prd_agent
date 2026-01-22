@@ -1,12 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -61,7 +60,7 @@ public class LLMConfigController : ControllerBase
             c.EnablePromptCache,
             c.CreatedAt,
             c.UpdatedAt,
-            apiKeyMasked = MaskApiKey(DecryptApiKey(c.ApiKeyEncrypted))
+            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(c.ApiKeyEncrypted, GetJwtSecret()))
         });
 
         return Ok(ApiResponse<object>.Ok(response));
@@ -78,7 +77,7 @@ public class LLMConfigController : ControllerBase
             Id = await _idGenerator.GenerateIdAsync("config"),
             Provider = request.Provider,
             Model = request.Model,
-            ApiKeyEncrypted = EncryptApiKey(request.ApiKey),
+            ApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()),
             ApiEndpoint = request.ApiEndpoint,
             MaxTokens = request.MaxTokens,
             Temperature = request.Temperature,
@@ -114,7 +113,7 @@ public class LLMConfigController : ControllerBase
 
         if (!string.IsNullOrEmpty(request.ApiKey))
         {
-            update = update.Set(c => c.ApiKeyEncrypted, EncryptApiKey(request.ApiKey));
+            update = update.Set(c => c.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()));
         }
 
         var result = await _db.LLMConfigs.UpdateOneAsync(c => c.Id == configId, update);
@@ -173,57 +172,7 @@ public class LLMConfigController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { configId, isActive = true }));
     }
 
-    private string EncryptApiKey(string apiKey)
-    {
-        // 简化实现，生产环境应使用更安全的加密
-        var key = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var keyBytes = Encoding.UTF8.GetBytes(key[..32]);
-        
-        using var aes = Aes.Create();
-        aes.Key = keyBytes;
-        aes.GenerateIV();
-        
-        using var encryptor = aes.CreateEncryptor();
-        var plainBytes = Encoding.UTF8.GetBytes(apiKey);
-        var encryptedBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-        
-        return Convert.ToBase64String(aes.IV) + ":" + Convert.ToBase64String(encryptedBytes);
-    }
-
-    private string DecryptApiKey(string encryptedKey)
-    {
-        try
-        {
-            var parts = encryptedKey.Split(':');
-            if (parts.Length != 2) return "";
-
-            var key = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-            var keyBytes = Encoding.UTF8.GetBytes(key[..32]);
-            var iv = Convert.FromBase64String(parts[0]);
-            var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-            using var aes = Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-            
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    private string MaskApiKey(string apiKey)
-    {
-        if (string.IsNullOrEmpty(apiKey) || apiKey.Length < 8)
-            return "****";
-        
-        return apiKey[..4] + "****" + apiKey[^4..];
-    }
+    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
 public class CreateLLMConfigRequest

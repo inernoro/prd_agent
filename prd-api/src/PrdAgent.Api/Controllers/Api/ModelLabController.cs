@@ -1,17 +1,16 @@
 using System.Security.Claims;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
-
-using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -945,7 +944,7 @@ public class ModelLabController : ControllerBase
     private (string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName) ResolveApiConfigForModel(LLMModel model, string jwtSecret)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
+        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
         string? platformType = null;
         string? platformId = model.PlatformId;
         string? platformName = null;
@@ -958,7 +957,7 @@ public class ModelLabController : ControllerBase
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
             }
         }
 
@@ -968,37 +967,11 @@ public class ModelLabController : ControllerBase
     private static (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForPlatform(LLMPlatform platform, string jwtSecret)
     {
         var apiUrl = platform.ApiUrl;
-        var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+        var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
         var platformType = platform.PlatformType?.ToLowerInvariant();
         return (apiUrl, apiKey, platformType);
     }
 
-    private static string DecryptApiKey(string encryptedKey, string secretKey)
-    {
-        if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
-
-        try
-        {
-            var parts = encryptedKey.Split(':');
-            if (parts.Length != 2) return string.Empty;
-
-            var keyBytes = Encoding.UTF8.GetBytes(secretKey.Length >= 32 ? secretKey[..32] : secretKey.PadRight(32));
-            var iv = Convert.FromBase64String(parts[0]);
-            var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-            using var aes = Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
 }
 
 public class UpsertExperimentRequest

@@ -8,7 +8,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
-import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { getFeatureDescriptionFromRequestPurpose } from '@/lib/appCallerUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -1269,6 +1269,16 @@ export default function LlmLogsPage() {
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {getFeatureDescriptionFromRequestPurpose(it.requestPurpose)}
                         </div>
+                        {/* 原始 requestPurpose（appCallerCode） */}
+                        {it.requestPurpose && (
+                          <span
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
+                            style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                            title={`requestPurpose: ${it.requestPurpose}`}
+                          >
+                            {it.requestPurpose}
+                          </span>
+                        )}
                         {statusBadge(it.status)}
                       </div>
                       <div className="mt-1 text-xs truncate flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
@@ -1300,33 +1310,51 @@ export default function LlmLogsPage() {
                             HTTP
                           </label>
                         )}
-                        {/* 请求类型标签（默认/专属 + 模型类型） */}
+                        {/* 模型池标签（默认/专属） */}
                         {(() => {
+                          const isDefault = it.isDefaultModelGroup ?? true;
+                          const groupName = it.modelGroupName || '';
                           const b = requestTypeToBadge(it.requestType);
-                          
-                          // 判断是否使用默认分组（简化判断：如果 requestPurpose 包含 ::，解析后判断）
-                          // 这里我们暂时无法从日志中直接判断是否使用默认分组，所以统一显示"默认"
-                          // TODO: 后端需要在日志中记录 modelGroupId 才能准确判断
-                          const isDefault = true; // 暂时假设都是默认
-                          const prefix = isDefault ? '默认' : '专属';
-                          const label = `${prefix}${b.label}`;
-                          
-                          return (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                              title={`${label}（点击跳转到应用配置）`}
-                              style={requestTypeChipStyle(b.tone)}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // 跳转到应用与分组页面
-                                window.location.href = '/mds?tab=apps';
-                              }}
-                            >
-                              {b.icon}
-                              {label}
-                            </button>
-                          );
+
+                          if (isDefault) {
+                            // 默认模型池 - 使用与请求类型相同的颜色
+                            return (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                                title={`默认${b.label}（点击跳转到应用配置）`}
+                                style={requestTypeChipStyle(b.tone)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.href = '/mds?tab=apps';
+                                }}
+                              >
+                                {b.icon}
+                                默认{b.label}
+                              </button>
+                            );
+                          } else {
+                            // 专属模型池 - 使用蓝色（与模型池图标颜色一致）
+                            return (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                                title={`专属模型池：${groupName}（点击跳转到模型池管理）`}
+                                style={{
+                                  background: 'rgba(59, 130, 246, 0.12)',
+                                  border: '1px solid rgba(59, 130, 246, 0.28)',
+                                  color: 'rgba(59, 130, 246, 0.95)'
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.href = '/mds?tab=pools';
+                                }}
+                              >
+                                <Layers size={10} />
+                                专属模型池：{groupName || b.label}
+                              </button>
+                            );
+                          }
                         })()}
                         {(() => {
                           const hint = extractImageSizeAdjustmentHint(it);

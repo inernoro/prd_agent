@@ -1,20 +1,21 @@
 using System.Net.Http.Headers;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -142,7 +143,7 @@ public class OpenAIImageClient
         {
             // 平台回退调用：直接用平台 API 配置 + 指定 modelName
             apiUrl = platform!.ApiUrl;
-            apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+            apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
             platformType = platform.PlatformType?.ToLowerInvariant();
             effectiveModelName = requestedModelName ?? string.Empty;
             if (string.IsNullOrWhiteSpace(effectiveModelName))
@@ -936,7 +937,7 @@ public class OpenAIImageClient
         CancellationToken ct)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : DecryptApiKey(model.ApiKeyEncrypted, jwtSecret);
+        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
         string? platformType = null;
 
         if (model.PlatformId != null)
@@ -946,37 +947,11 @@ public class OpenAIImageClient
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= DecryptApiKey(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
             }
         }
 
         return (apiUrl, apiKey, platformType);
-    }
-
-    private static string DecryptApiKey(string encryptedKey, string secretKey)
-    {
-        if (string.IsNullOrEmpty(encryptedKey)) return string.Empty;
-        try
-        {
-            var parts = encryptedKey.Split(':');
-            if (parts.Length != 2) return string.Empty;
-
-            var keyBytes = Encoding.UTF8.GetBytes(secretKey.Length >= 32 ? secretKey[..32] : secretKey.PadRight(32));
-            var iv = Convert.FromBase64String(parts[0]);
-            var encryptedBytes = Convert.FromBase64String(parts[1]);
-
-            using var aes = Aes.Create();
-            aes.Key = keyBytes;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            var decryptedBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch
-        {
-            return string.Empty;
-        }
     }
 
     /// <summary>

@@ -226,6 +226,10 @@ public class ChatService : IChatService
         string? terminatedErrorMessage = null;
         var isFirstDelta = true; // 标记是否为第一个 delta（用于隐藏加载动画）
 
+        // 通过 SmartModelScheduler 获取专属模型客户端（支持专属模型配置）
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(AppCallerCode, ModelType, cancellationToken);
+        var llmClient = scheduledResult.Client;
+
         var llmRequestId = Guid.NewGuid().ToString();
         using var scope = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: llmRequestId,
@@ -237,7 +241,10 @@ public class ChatService : IChatService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: "prd-agent-desktop::chat.send-message"));
+            RequestPurpose: AppCallerCode,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName,
+            IsDefaultModelGroup: scheduledResult.IsDefaultModelGroup));
 
         // 检查用户消息是否已存在（CreateRun 可能已创建）
         Message userMessage;
@@ -308,8 +315,6 @@ public class ChatService : IChatService
         var botUser = await _userService.GetByUsernameAsync(botUsername);
         var botUserId = botUser?.UserId;
 
-        // 通过 SmartModelScheduler 获取专属模型客户端（支持专属模型配置）
-        var llmClient = await _modelScheduler.GetClientAsync(AppCallerCode, ModelType, cancellationToken);
         var enumerator = llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {

@@ -96,6 +96,12 @@ export type LlmRequestLogListItem = {
   platformId?: string | null;
   /** 平台名称（来自 LLMPlatform.Name，如"硅基流动"、"薇薇安"） */
   platformName?: string | null;
+  /** 模型池 ID */
+  modelGroupId?: string | null;
+  /** 模型池名称 */
+  modelGroupName?: string | null;
+  /** 是否使用默认模型池 */
+  isDefaultModelGroup?: boolean | null;
   groupId?: string | null;
   sessionId?: string | null;
   viewRole?: string | null;

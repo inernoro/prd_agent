@@ -41,7 +41,13 @@ public class SmartModelScheduler : ISmartModelScheduler
 
     public async Task<ILLMClient> GetClientAsync(string appCallerCode, string modelType, CancellationToken ct = default)
     {
-        return await GetClientAsync(appCallerCode, modelType, expectedModelCode: null, ct);
+        var result = await GetClientWithGroupInfoAsync(appCallerCode, modelType, ct);
+        return result.Client;
+    }
+
+    public async Task<ScheduledClientResult> GetClientWithGroupInfoAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+    {
+        return await GetClientWithGroupInfoAsync(appCallerCode, modelType, expectedModelCode: null, ct);
     }
 
     /// <summary>
@@ -52,6 +58,15 @@ public class SmartModelScheduler : ISmartModelScheduler
     /// <param name="expectedModelCode">期望的模型 Code（用于匹配模型池）</param>
     /// <param name="ct">取消令牌</param>
     public async Task<ILLMClient> GetClientAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default)
+    {
+        var result = await GetClientWithGroupInfoAsync(appCallerCode, modelType, expectedModelCode, ct);
+        return result.Client;
+    }
+
+    /// <summary>
+    /// 获取 LLM 客户端及模型池信息（支持指定期望的模型 Code）
+    /// </summary>
+    public async Task<ScheduledClientResult> GetClientWithGroupInfoAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(appCallerCode))
         {
@@ -94,8 +109,15 @@ public class SmartModelScheduler : ISmartModelScheduler
         // 检查测试桩配置（用于故障模拟）
         await CheckTestStubAsync(bestModel, group.Id, ct);
 
-        // 创建并返回客户端
-        return await CreateClientForModelAsync(bestModel, group.Id, ct);
+        // 创建客户端
+        var client = await CreateClientForModelAsync(bestModel, group.Id, ct);
+
+        // 返回客户端及模型池信息
+        return new ScheduledClientResult(
+            Client: client,
+            ModelGroupId: group.Id,
+            ModelGroupName: group.Name,
+            IsDefaultModelGroup: group.IsDefaultForType);
     }
 
     public async Task<LLMAppCaller> GetOrCreateAppCallerAsync(string appCallerCode, CancellationToken ct = default)
@@ -595,9 +617,9 @@ public class SmartModelScheduler : ISmartModelScheduler
         var apiUrlTrim = apiUrl.Trim();
         httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
 
-        // 默认配置（不再依赖 LLMModels 表）
-        var enablePromptCache = true;
-        var maxTokens = 4096;
+        // 模型池项级配置（模型池是决定缓存的唯一来源）
+        var enablePromptCache = modelItem.EnablePromptCache ?? true;
+        var maxTokens = modelItem.MaxTokens ?? 4096;
 
         // 模型名称直接使用 modelItem.ModelId
         var modelName = modelItem.ModelId;

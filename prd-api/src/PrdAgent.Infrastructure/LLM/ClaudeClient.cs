@@ -233,7 +233,10 @@ public class ClaudeClient : ILLMClient
                     UserPromptChars: userPromptChars,
                     StartedAt: startedAt,
                     PlatformId: _platformId,
-                    PlatformName: _platformName),
+                    PlatformName: _platformName,
+                    ModelGroupId: ctx?.ModelGroupId,
+                    ModelGroupName: ctx?.ModelGroupName,
+                    IsDefaultModelGroup: ctx?.IsDefaultModelGroup),
                 cancellationToken);
         }
 
