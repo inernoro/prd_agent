@@ -825,9 +825,11 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'rgba(28, 24, 20, 0.95)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.5)',
+                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                         }}
                       >
                         {(['1k', '2k', '4k'] as const).map((tier) => {
@@ -918,9 +920,11 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'rgba(28, 24, 20, 0.95)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.5)',
+                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                         }}
                       >
                         {ASPECT_OPTIONS.map((opt) => {

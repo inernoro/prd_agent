@@ -4998,9 +4998,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           className="z-50 rounded-[18px] p-2"
                           style={{
                             minWidth: 320,
-                            background: 'rgba(255,255,255,0.92)',
-                            border: '1px solid rgba(0,0,0,0.08)',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                            background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
+                            border: '1px solid rgba(0, 0, 0, 0.08)',
+                            boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
+                            backdropFilter: 'blur(40px) saturate(180%)',
+                            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                             color: '#0b0b0f',
                           }}
                         >
@@ -5246,9 +5248,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="z-50 rounded-[18px] p-2"
                       style={{
                         minWidth: 220,
-                        background: 'rgba(255,255,255,0.92)',
-                        border: '1px solid rgba(0,0,0,0.08)',
-                        boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
+                        border: '1px solid rgba(0, 0, 0, 0.08)',
+                        boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
+                        backdropFilter: 'blur(40px) saturate(180%)',
+                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                         color: '#0b0b0f',
                       }}
                       onPointerEnter={() => {
@@ -5373,9 +5377,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="z-50 rounded-[18px] p-3"
                       style={{
                         minWidth: 260,
-                        background: 'rgba(255,255,255,0.92)',
-                        border: '1px solid rgba(0,0,0,0.08)',
-                        boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
+                        border: '1px solid rgba(0, 0, 0, 0.08)',
+                        boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
+                        backdropFilter: 'blur(40px) saturate(180%)',
+                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                         color: '#0b0b0f',
                       }}
                       onPointerEnter={() => {
@@ -5496,9 +5502,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="z-50 rounded-[18px] p-3"
                       style={{
                         minWidth: 320,
-                        background: 'rgba(255,255,255,0.92)',
-                        border: '1px solid rgba(0,0,0,0.08)',
-                        boxShadow: '0 18px 60px rgba(0,0,0,0.18)',
+                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
+                        border: '1px solid rgba(0, 0, 0, 0.08)',
+                        boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
+                        backdropFilter: 'blur(40px) saturate(180%)',
+                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                       }}
                       onPointerEnter={() => {
                         if (shapeMenuCloseTimerRef.current != null) {
@@ -6074,9 +6082,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             style={{
                               outline: 'none',
                               zIndex: 90,
-                              background: 'var(--bg-elevated)',
-                              border: '1px solid var(--border-subtle)',
-                              boxShadow: 'var(--shadow-lg)',
+                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                             }}
                           >
                             {(['1k', '2k', '4k'] as const).map((tier) => {
@@ -6169,9 +6179,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             style={{
                               outline: 'none',
                               zIndex: 90,
-                              background: 'var(--bg-elevated)',
-                              border: '1px solid var(--border-subtle)',
-                              boxShadow: 'var(--shadow-lg)',
+                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                             }}
                           >
                             {ASPECT_OPTIONS.map((opt) => {
@@ -6441,9 +6453,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         style={{
                           width: 360,
                           maxWidth: 'min(92vw, 360px)',
-                          background: 'rgba(30, 30, 32, 0.96)',
-                          border: '1px solid var(--border-default)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                         }}
                       >
                         <div className="flex items-center justify-between gap-3">

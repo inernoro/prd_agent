@@ -496,12 +496,11 @@ export default function AppShell() {
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
                 style={{
-                  backgroundColor: 'var(--bg-elevated, #121216)',
-                  backgroundImage: 'var(--panel, linear-gradient(180deg, rgba(18, 18, 22, 0.92) 0%, rgba(18, 18, 22, 0.78) 100%))',
-                  border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))',
-                  boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset',
-                  backdropFilter: 'blur(16px)',
-                  WebkitBackdropFilter: 'blur(16px)',
+                  background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                  boxShadow: '0 18px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                 }}
                 sideOffset={8}
                 side="bottom"
