@@ -69,11 +69,12 @@ export default function SettingsPage() {
     e.dataTransfer.setData('text/plain', String(index));
   }, []);
 
-  // 拖拽经过
+  // 拖拽经过（添加防抖，避免频繁状态更新导致抖动）
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    setDragOverIndex(index);
+    // 仅在索引变化时更新，避免频繁 setState 造成抖动
+    setDragOverIndex((prev) => (prev === index ? prev : index));
   }, []);
 
   // 拖拽离开
@@ -206,11 +207,21 @@ export default function SettingsPage() {
                           border: isDragging
                             ? '1px solid rgba(214,178,106,0.4)'
                             : '1px solid rgba(255,255,255,0.06)',
-                          opacity: isDragging ? 0.85 : 1,
-                          transform: isDragging ? 'scale(1.03)' : `translateY(${translateY}px)`,
-                          transition: isDragging ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0, 0, 1), background 0.15s, border 0.15s',
+                          opacity: isDragging ? 0.9 : 1,
+                          // 使用 translate3d 启用 GPU 加速，避免抖动
+                          transform: isDragging
+                            ? 'translate3d(0, 0, 0)'
+                            : `translate3d(0, ${translateY}px, 0)`,
+                          // 使用 will-change 预告浏览器即将变化的属性，优化渲染性能
+                          willChange: draggingIndex !== null ? 'transform' : 'auto',
+                          // 使用更平滑的过渡曲线（spring-like）
+                          transition: isDragging
+                            ? 'opacity 0.15s ease, background 0.15s ease, border 0.15s ease, box-shadow 0.15s ease'
+                            : 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), background 0.15s ease, border 0.15s ease',
                           zIndex: isDragging ? 10 : 1,
                           boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,0.3)' : 'none',
+                          // 隔离合成层，减少重绘范围
+                          isolation: 'isolate',
                         }}
                       >
                         <div

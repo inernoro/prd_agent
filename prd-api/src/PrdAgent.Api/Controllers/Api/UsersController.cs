@@ -238,28 +238,38 @@ public class UsersController : ControllerBase
             .ToListAsync(ct);
 
         var groupIds = memberGroups.Select(m => m.GroupId).ToList();
-        var groups = groupIds.Count > 0
-            ? await _db.Groups.Find(g => groupIds.Contains(g.GroupId))
-                .Project(g => new UserProfileGroupItem
-                {
-                    GroupId = g.GroupId,
-                    Name = g.Name ?? g.GroupId,
-                    MemberCount = g.MemberCount
-                })
-                .ToListAsync(ct)
-            : new List<UserProfileGroupItem>();
+        var groups = new List<UserProfileGroupItem>();
+        if (groupIds.Count > 0)
+        {
+            // 获取群组基本信息
+            var groupDocs = await _db.Groups.Find(g => groupIds.Contains(g.GroupId)).ToListAsync(ct);
 
-        // 查询用户使用的 Agent 统计（按 appKey 分组，最近30天）
+            // 统计每个群组的成员数
+            var memberCounts = await _db.GroupMembers.Aggregate()
+                .Match(Builders<GroupMember>.Filter.In(m => m.GroupId, groupIds))
+                .Group(m => m.GroupId, g => new { GroupId = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+            var countMap = memberCounts.ToDictionary(x => x.GroupId, x => x.Count);
+
+            groups = groupDocs.Select(g => new UserProfileGroupItem
+            {
+                GroupId = g.GroupId,
+                Name = g.GroupName ?? g.GroupId,
+                MemberCount = countMap.GetValueOrDefault(g.GroupId, 0)
+            }).ToList();
+        }
+
+        // 查询用户使用的 Agent 统计（按 appKey 分组，最近30天）- 从 ImageGenRuns 获取
         var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
-        var agentUsageFilter = Builders<PrdAgent.Core.Models.LlmLog>.Filter.And(
-            Builders<PrdAgent.Core.Models.LlmLog>.Filter.Eq(l => l.UserId, userId),
-            Builders<PrdAgent.Core.Models.LlmLog>.Filter.Gte(l => l.CreatedAt, thirtyDaysAgo),
-            Builders<PrdAgent.Core.Models.LlmLog>.Filter.Ne(l => l.AppKey, null)
+        var agentUsageFilter = Builders<ImageGenRun>.Filter.And(
+            Builders<ImageGenRun>.Filter.Eq(r => r.OwnerAdminId, userId),
+            Builders<ImageGenRun>.Filter.Gte(r => r.CreatedAt, thirtyDaysAgo),
+            Builders<ImageGenRun>.Filter.Ne(r => r.AppKey, null)
         );
 
-        var agentStats = await _db.LlmLogs.Aggregate()
+        var agentStats = await _db.ImageGenRuns.Aggregate()
             .Match(agentUsageFilter)
-            .Group(l => l.AppKey, g => new
+            .Group(r => r.AppKey, g => new
             {
                 AppKey = g.Key,
                 Count = g.Count()
