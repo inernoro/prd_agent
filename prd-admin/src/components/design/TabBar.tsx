@@ -77,11 +77,11 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
     <div
       className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden shrink-0"
       style={{
-        // macOS 风格的多层背景
+        // 液态大玻璃效果 - 使用主题系统 CSS 变量
         background: variant === 'gold'
-          ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)'
-          : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
+          ? 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%)'
+          : 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
+        border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
         // 增强的模糊效果
         backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
         WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',

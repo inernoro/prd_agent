@@ -1,13 +1,13 @@
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 
 type Accent = 'default' | 'green' | 'gold' | 'blue' | 'purple';
 
-const accentColors: Record<Accent, { text: string; glow: string }> = {
+const accentColors: Record<Accent, { text: string; glow: string; hue?: number }> = {
   default: { text: 'var(--text-primary)', glow: 'transparent' },
-  green: { text: 'var(--accent-green)', glow: 'rgba(34,197,94,0.08)' },
+  green: { text: 'var(--accent-green)', glow: 'rgba(34,197,94,0.08)', hue: 142 },
   gold: { text: 'var(--accent-gold)', glow: 'rgba(214,178,106,0.08)' },
-  blue: { text: 'rgba(59,130,246,0.95)', glow: 'rgba(59,130,246,0.08)' },
-  purple: { text: 'rgba(168,85,247,0.95)', glow: 'rgba(168,85,247,0.08)' },
+  blue: { text: 'rgba(59,130,246,0.95)', glow: 'rgba(59,130,246,0.08)', hue: 217 },
+  purple: { text: 'rgba(168,85,247,0.95)', glow: 'rgba(168,85,247,0.08)', hue: 270 },
 };
 
 export function KpiCard({
@@ -31,7 +31,12 @@ export function KpiCard({
   const colors = accentColors[accent];
 
   return (
-    <Card className="min-h-[100px]">
+    <GlassCard
+      className="min-h-[100px]"
+      glow
+      variant={accent === 'gold' ? 'gold' : 'default'}
+      accentHue={colors.hue}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
           {title}
@@ -83,7 +88,7 @@ export function KpiCard({
           </span>
         </div>
       )}
-    </Card>
+    </GlassCard>
   );
 }
 

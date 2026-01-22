@@ -55,7 +55,6 @@ import {
   ImagePlus,
   MapPin,
   Maximize2,
-  Minimize2,
   MousePointer2,
   Paperclip,
   Plus,
@@ -722,7 +721,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const serverDefaultModel = useMemo(() => firstEnabledImageModel(models), [models]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
-  const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
   // 专注模式属于临时态：离开页面必须恢复，避免影响其他页面布局
   useEffect(() => {
@@ -5079,31 +5077,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             ) : null}
           </div>
 
-          {/* 右上：专注模式（主区全宽 + 隐藏侧栏） */}
-          <div className="absolute top-4 right-4 z-30">
-            <button
-              type="button"
-              className="h-10 w-10 rounded-full inline-flex items-center justify-center"
-              style={{
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: fullBleedMain ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.06)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
-                color: 'var(--text-secondary)',
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setFullBleedMain(!fullBleedMain);
-              }}
-              aria-label={fullBleedMain ? '还原布局' : '最大化'}
-              title={fullBleedMain ? '还原布局' : '最大化'}
-            >
-              {fullBleedMain ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
-          </div>
+          {/* 右上：专注模式按钮（已隐藏 - 功能暂时不需要） */}
 
           {/* 顶部居中：缩放浮层 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
@@ -5182,15 +5156,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </div>
           </div>
 
-          {/* 左侧工具栏（图1-5 风格，除画笔外都可用） */}
-          <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
+          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角） */}
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
             <div
-              className="rounded-[20px] p-2 flex flex-col gap-2 bg-transparent"
+              className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
-                border: '1px solid rgba(255,255,255,0.12)',
-                backdropFilter: 'blur(14px)',
-                WebkitBackdropFilter: 'blur(14px)',
-                boxShadow: '0 18px 60px rgba(0,0,0,0.35)',
+                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                backdropFilter: 'blur(40px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+                boxShadow: '0 18px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
               }}
             >
               {/* 工具（hover 弹出：Select / Hand / Mark[禁用]） */}
@@ -5747,9 +5722,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             />
           </div>
 
-          {/* 右侧：单对话/上下文（无独立卡片隔断） */}
+          {/* 右侧：单对话/上下文（液态大玻璃效果） */}
           <div className="shrink-0 min-h-0 flex flex-col" style={{ width: rightWidth || 280 }}>
-            <div className="h-full min-h-0 flex flex-col p-3" style={{ background: 'rgba(255,255,255,0.015)' }}>
+            <div
+              className="h-full min-h-0 flex flex-col p-3 rounded-l-[16px]"
+              style={{
+                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.10))',
+                borderRight: 'none',
+                backdropFilter: 'blur(40px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+              }}
+            >
             <div className="min-w-0">
                 <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 Hi，我是你的 AI 设计师

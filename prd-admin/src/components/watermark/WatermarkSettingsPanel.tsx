@@ -10,7 +10,7 @@ import {
   type ForwardedRef,
 } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Card } from '@/components/design/Card';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import {
@@ -537,7 +537,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
               const previewUrl = buildPreviewUrl(item.previewUrl);
               const previewError = Boolean(previewErrorById[item.id]);
               return (
-                <Card key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
+                <GlassCard key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
                   <div className="flex flex-col">
                     <div className="p-2 pb-1 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
@@ -691,7 +691,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                       </div>
                     </div>
                   </div>
-                </Card>
+                </GlassCard>
               );
             })}
           </div>
