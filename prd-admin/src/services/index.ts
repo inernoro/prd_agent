@@ -616,3 +616,55 @@ export const getUserRateLimit: GetUserRateLimitContract = withAuth(getUserRateLi
 export const updateUserRateLimit: UpdateUserRateLimitContract = withAuth(updateUserRateLimitReal);
 export const getExemptUsers: GetExemptUsersContract = withAuth(getExemptUsersReal);
 export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConfigsReal);
+
+// 周计划 Agent 服务
+import type {
+  ListWeeklyPlanTemplatesContract,
+  CreateWeeklyPlanTemplateContract,
+  UpdateWeeklyPlanTemplateContract,
+  DeleteWeeklyPlanTemplateContract,
+  InitWeeklyPlanTemplatesContract,
+  ListWeeklyPlansContract,
+  ListTeamPlansContract,
+  GetWeeklyPlanContract,
+  CreateWeeklyPlanContract,
+  UpdateWeeklyPlanContract,
+  SubmitWeeklyPlanContract,
+  WithdrawWeeklyPlanContract,
+  ReviewWeeklyPlanContract,
+  DeleteWeeklyPlanContract,
+  GetWeeklyPlanStatsContract,
+} from '@/services/contracts/weeklyPlan';
+import {
+  listWeeklyPlanTemplatesReal,
+  createWeeklyPlanTemplateReal,
+  updateWeeklyPlanTemplateReal,
+  deleteWeeklyPlanTemplateReal,
+  initWeeklyPlanTemplatesReal,
+  listWeeklyPlansReal,
+  listTeamPlansReal,
+  getWeeklyPlanReal,
+  createWeeklyPlanReal,
+  updateWeeklyPlanReal,
+  submitWeeklyPlanReal,
+  withdrawWeeklyPlanReal,
+  reviewWeeklyPlanReal,
+  deleteWeeklyPlanReal,
+  getWeeklyPlanStatsReal,
+} from '@/services/real/weeklyPlan';
+
+export const listWeeklyPlanTemplates: ListWeeklyPlanTemplatesContract = withAuth(listWeeklyPlanTemplatesReal);
+export const createWeeklyPlanTemplate: CreateWeeklyPlanTemplateContract = withAuth(createWeeklyPlanTemplateReal);
+export const updateWeeklyPlanTemplate: UpdateWeeklyPlanTemplateContract = withAuth(updateWeeklyPlanTemplateReal);
+export const deleteWeeklyPlanTemplate: DeleteWeeklyPlanTemplateContract = withAuth(deleteWeeklyPlanTemplateReal);
+export const initWeeklyPlanTemplates: InitWeeklyPlanTemplatesContract = withAuth(initWeeklyPlanTemplatesReal);
+export const listWeeklyPlans: ListWeeklyPlansContract = withAuth(listWeeklyPlansReal);
+export const listTeamPlans: ListTeamPlansContract = withAuth(listTeamPlansReal);
+export const getWeeklyPlan: GetWeeklyPlanContract = withAuth(getWeeklyPlanReal);
+export const createWeeklyPlan: CreateWeeklyPlanContract = withAuth(createWeeklyPlanReal);
+export const updateWeeklyPlan: UpdateWeeklyPlanContract = withAuth(updateWeeklyPlanReal);
+export const submitWeeklyPlan: SubmitWeeklyPlanContract = withAuth(submitWeeklyPlanReal);
+export const withdrawWeeklyPlan: WithdrawWeeklyPlanContract = withAuth(withdrawWeeklyPlanReal);
+export const reviewWeeklyPlan: ReviewWeeklyPlanContract = withAuth(reviewWeeklyPlanReal);
+export const deleteWeeklyPlan: DeleteWeeklyPlanContract = withAuth(deleteWeeklyPlanReal);
+export const getWeeklyPlanStats: GetWeeklyPlanStatsContract = withAuth(getWeeklyPlanStatsReal);

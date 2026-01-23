@@ -33,6 +33,7 @@ public static class AdminMenuCatalog
         new("prd-agent", "/prd-agent", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
         new("visual-agent", "/visual-agent", "视觉创作 Agent", "高级视觉创作工作区", "Wand2", 70),
         new("literary-agent", "/literary-agent", "文学创作 Agent", "文章配图智能生成", "PenLine", 80),
+        new("weekly-plan-agent", "/weekly-plan-agent", "周计划 Agent", "团队周计划报送与审阅", "CalendarCheck", 85),
 
         // 资源管理
         new("assets", "/assets", "资源管理", "Desktop 资源与品牌配置", "Image", 90),

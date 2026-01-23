@@ -23,6 +23,7 @@
    | 视觉创作 Agent | `visual-agent` | 高级视觉创作工作区 |
    | PRD Agent | `prd-agent` | PRD 智能解读与问答 |
    | 缺陷管理 Agent | `defect-agent` | AI 驱动的缺陷检测与自动修复 |
+   | 周计划 Agent | `weekly-plan-agent` | 团队周计划报送与审阅 |
 
 4. **为什么这样设计**
    - 权限控制：未来可以基于 Controller 做细粒度权限管理
@@ -126,6 +127,7 @@ prd_agent/
 | 会话归档 | ✅ DONE | SessionsController (archive/unarchive) |
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
+| **周计划 Agent** | ✅ DONE | WeeklyPlanTemplatesController, WeeklyPlanSubmissionsController, WeeklyPlanAgentPage |
 | **缺陷管理 Agent** | 📋 PLANNED | DefectAgentController, DefectReviewWorker, DefectFixWorker (设计文档: doc/20) |
 | **附件上传** | ⚠️ PARTIAL | Model 定义 + Message.AttachmentIds 关联，无通用上传 Controller |
 | **知识库 (多文档)** | ✅ DONE | KnowledgeBasePage, kbStore, kb.rs, KnowledgeBaseController |
@@ -150,6 +152,8 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 提示词：`prompt_stages`, `literary_prompts`
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
+
+周计划：`weekly_plan_templates`, `weekly_plan_submissions`
 
 缺陷管理 (PLANNED)：`defect_reports`, `defect_reviews`, `defect_fixes`, `defect_repo_configs`, `defect_github_tokens`, `defect_products`
 
