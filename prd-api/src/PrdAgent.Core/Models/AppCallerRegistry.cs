@@ -179,6 +179,71 @@ public static class LiteraryAgent
 }
 
 /// <summary>
+/// Defect Agent 缺陷管理
+/// </summary>
+public static class DefectAgent
+{
+    public const string AppName = "Defect Agent";
+
+    public static class Triage
+    {
+        [AppCallerMetadata(
+            "缺陷初审",
+            "检查信息完整性、重复检测、复现性评估",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Vision },
+            Category = "Triage"
+        )]
+        public const string Review = "defect-agent.triage::chat";
+
+        [AppCallerMetadata(
+            "截图分析",
+            "分析缺陷截图中的 UI 元素",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Triage"
+        )]
+        public const string ScreenshotAnalysis = "defect-agent.triage::vision";
+    }
+
+    public static class Analysis
+    {
+        [AppCallerMetadata(
+            "代码定位",
+            "根据缺陷描述定位相关代码",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Analysis"
+        )]
+        public const string CodeLocate = "defect-agent.analysis::code";
+
+        [AppCallerMetadata(
+            "影响分析",
+            "评估缺陷影响范围和修复代价",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string ImpactAssess = "defect-agent.analysis::chat";
+    }
+
+    public static class Fix
+    {
+        [AppCallerMetadata(
+            "生成修复",
+            "生成修复代码 Patch",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Fix"
+        )]
+        public const string Generate = "defect-agent.fix::code";
+
+        [AppCallerMetadata(
+            "修复验证",
+            "验证修复后的代码正确性",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Fix"
+        )]
+        public const string Verify = "defect-agent.fix.verify::code";
+    }
+}
+
+/// <summary>
 /// Open Platform 开放平台
 /// </summary>
 public static class OpenPlatform

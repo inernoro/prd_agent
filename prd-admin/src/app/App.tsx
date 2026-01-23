@@ -15,6 +15,7 @@ import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
+import { DefectListPage, DefectDetailPage, DefectSubmitPage, DefectRepoSettingsPage } from '@/pages/defect-agent';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
 import AuthzPage from '@/pages/AuthzPage';
@@ -192,6 +193,10 @@ export default function App() {
         <Route path="prd-agent" element={<RequirePermission perm="prd-agent.use"><AiChatPage /></RequirePermission>} />
         <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
+        <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectListPage /></RequirePermission>} />
+        <Route path="defect-agent/new" element={<RequirePermission perm="defect-agent.use"><DefectSubmitPage /></RequirePermission>} />
+        <Route path="defect-agent/settings" element={<RequirePermission perm="defect-agent.manage"><DefectRepoSettingsPage /></RequirePermission>} />
+        <Route path="defect-agent/:id" element={<RequirePermission perm="defect-agent.use"><DefectDetailPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
