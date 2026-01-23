@@ -856,7 +856,7 @@ public class ImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
-            Purpose = appKey, // 使用应用标识作为用途标记
+            Purpose = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation", // 完整 AppCallerCode
             AppKey = appKey,
             CreatedAt = DateTime.UtcNow
         };

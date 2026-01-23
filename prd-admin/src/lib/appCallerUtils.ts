@@ -330,6 +330,9 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
     'model-health-check': '模型健康检查',
     'admin.platforms.reclassify': '管理后台：模型重分类',
     'admin.platforms.fetch-models': '管理后台：拉取模型列表',
+    'admin.platforms.available-models': '管理后台：查询可用模型',
+    'admin.platforms.refresh-models': '管理后台：刷新模型列表',
+    'admin.platforms.reclassify.fetch-models': '管理后台：重分类拉取模型',
   };
 
   if (exactMap[rp]) {

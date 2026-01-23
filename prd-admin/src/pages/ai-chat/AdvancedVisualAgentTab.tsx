@@ -15,11 +15,13 @@ import {
   getImageGenSizeCaps,
   getModels,
   getWatermarkByApp,
+  modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
+import type { ModelGroup } from '@/types/modelGroup';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -718,7 +720,44 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const serverDefaultModel = useMemo(() => firstEnabledImageModel(models), [models]);
+  const [imageGenPools, setImageGenPools] = useState<ModelGroup[]>([]);
+
+  // 将模型池转换为 Model 兼容对象，用于选择器展示
+  const poolModels = useMemo<Model[]>(() => {
+    if (imageGenPools.length === 0) return [];
+    return imageGenPools
+      .filter((g) => g.models && g.models.length > 0)
+      .map((g) => {
+        const first = g.models[0]!;
+        return {
+          id: `pool_${g.id}`,
+          name: g.name,
+          modelName: first.modelId,
+          platformId: first.platformId,
+          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
+          isMain: false,
+          isImageGen: true,
+          enablePromptCache: false,
+          priority: g.priority ?? 50,
+        } as Model;
+      });
+  }, [imageGenPools]);
+
+  // 合并模型列表：优先使用模型池；如果没有池则回退到 llm_models
+  const allImageGenModels = useMemo<Model[]>(() => {
+    if (poolModels.length > 0) return poolModels;
+    return (models ?? []).filter((m) => m.isImageGen);
+  }, [poolModels, models]);
+
+  const serverDefaultModel = useMemo(() => {
+    const list = allImageGenModels.filter((m) => m.enabled);
+    list.sort(
+      (a, b) =>
+        Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9) ||
+        String(a.name || a.modelName || '').localeCompare(String(b.name || b.modelName || ''), undefined, { numeric: true, sensitivity: 'base' })
+    );
+    return list[0] ?? null;
+  }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
@@ -743,7 +782,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, []);
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
-  const enabledImageModels = useMemo(() => (models ?? []).filter((m) => m.enabled && m.isImageGen), [models]);
+  const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
@@ -1620,10 +1659,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    getModels()
-      .then((res) => {
-        if (!res.success) return;
-        setModels(res.data ?? []);
+    Promise.all([
+      getModels(),
+      modelGroupsService.getModelGroups('image-gen').catch(() => ({ success: false, data: [] as ModelGroup[] })),
+    ])
+      .then(([modelsRes, poolsRes]) => {
+        if (modelsRes.success) setModels(modelsRes.data ?? []);
+        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -2558,9 +2600,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!reqText) return;
     const pickedModel = forcedPick.forced ?? effectiveModel;
     if (!pickedModel) {
-      const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请先在“模型管理”启用 isImageGen 模型）';
+      const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）';
       setError(msg);
-      pushMsg('Assistant', '暂无可用生图模型（请先在“模型管理”启用 isImageGen 模型）');
+      pushMsg('Assistant', '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）');
       return;
     }
 
@@ -2875,7 +2917,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           y: typeof cur?.y === 'number' ? cur!.y : undefined,
           w: typeof cur?.w === 'number' ? cur!.w : undefined,
           h: typeof cur?.h === 'number' ? cur!.h : undefined,
-          configModelId: pickedModel!.id,
+          ...(pickedModel!.id.startsWith('pool_')
+            ? { platformId: pickedModel!.platformId, modelId: pickedModel!.modelName }
+            : { configModelId: pickedModel!.id }),
           size: resolvedSizeForGen,
           responseFormat: 'url',
           initImageAssetSha256: initImageAssetSha256,
@@ -5033,11 +5077,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           }}
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
-                            绘图模型（isImageGen）
+                            {poolModels.length > 0 ? '绘图模型（模型池）' : '绘图模型（isImageGen）'}
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
-                            {(models ?? [])
-                              .filter((m) => m.isImageGen)
+                            {allImageGenModels
                               .slice()
                               .sort(
                                 (a, b) =>
@@ -5048,6 +5091,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               .map((m) => {
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
+                                const isPool = m.id.startsWith('pool_');
                                 return (
                                   <button
                                     key={m.id}
@@ -5065,7 +5109,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           {m.name || m.modelName}
                                         </div>
                                         <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(0,0,0,0.40)' }}>
-                                          {disabled ? '已禁用（模型管理可启用）' : '已启用'}
+                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : '已启用')}
                                         </div>
                                       </div>
                                       <div className="ml-auto shrink-0">{using ? <Check size={16} color="#0b0b0f" /> : null}</div>
