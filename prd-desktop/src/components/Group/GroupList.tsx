@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '../../lib/tauri';
-import { ApiResponse, Document, Session, UserRole } from '../../types';
+import { ApiResponse, Session, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
@@ -56,11 +56,6 @@ export default function GroupList() {
     bindGroupContext(group.groupId);
     setActiveGroupContext(group.groupId);
 
-    // 未绑定 PRD 的群组允许存在，但无法进入会话
-    if (!group.prdDocumentId) {
-      return;
-    }
-
     // 默认用登录用户角色打开群组会话（DEV/QA/PM）；管理员按 PM 处理
     const role: UserRole =
       user?.role === 'DEV' || user?.role === 'QA' || user?.role === 'PM'
@@ -68,28 +63,22 @@ export default function GroupList() {
         : 'PM';
 
     try {
-      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
+      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; kbDocumentCount: number; currentRole: string }>>(
         'open_group_session',
         { groupId: group.groupId, userRole: role }
       );
 
       if (!openResp.success || !openResp.data) return;
 
-      const docResp = await invoke<ApiResponse<Document>>('get_document', {
-        documentId: openResp.data.documentId,
-      });
-
-      if (!docResp.success || !docResp.data) return;
-
       const session: Session = {
         sessionId: openResp.data.sessionId,
         groupId: openResp.data.groupId,
-        documentId: openResp.data.documentId,
+        kbDocumentCount: openResp.data.kbDocumentCount,
         currentRole: (openResp.data.currentRole as UserRole) || role,
         mode: 'QA',
       };
 
-      setSession(session, docResp.data);
+      setSession(session);
       // 同步选中态（防止 setSession 的 groupId 为空时覆盖）
       setActiveGroupId(group.groupId);
 
