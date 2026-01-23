@@ -556,20 +556,23 @@ function inferUserPromptCharsFromRequestBody(requestBodyRedacted: string): numbe
 
 /**
  * 将参考图 URL 注入到请求体 JSON 中（用于 curl 复制和 body 展示）。
- * 当 body 中 initImageProvided=true 且有 input artifacts 时，补充 image 字段。
+ * 当 body 中 initImageProvided=true 时，补充 image 字段：
+ * - 有 input artifacts → 使用真实 URL
+ * - 无 input artifacts → 使用占位符提示用户补充
  */
 function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadArtifact[]): string {
-  if (!inputArtifacts.length) return bodyText;
   const raw = (bodyText ?? '').trim();
   if (!raw) return bodyText;
   try {
     const obj = JSON.parse(raw) as any;
     if (obj?.initImageProvided !== true) return bodyText;
-    // 注入参考图 URL
+    // 注入参考图 URL 或占位符
     if (inputArtifacts.length === 1) {
       obj.image = inputArtifacts[0].cosUrl;
-    } else {
+    } else if (inputArtifacts.length > 1) {
       obj.image = inputArtifacts.map((a) => a.cosUrl);
+    } else {
+      obj.image = 'REDACTED_INIT_IMAGE_URL';
     }
     return JSON.stringify(obj);
   } catch {
@@ -1029,6 +1032,12 @@ export default function LlmLogsPage() {
     return v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
   const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
+  const bodyHasInitImage = useMemo(() => {
+    try {
+      const obj = JSON.parse(detail?.requestBodyRedacted || '');
+      return obj?.initImageProvided === true;
+    } catch { return false; }
+  }, [detail?.requestBodyRedacted]);
   const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
@@ -1940,7 +1949,7 @@ export default function LlmLogsPage() {
                   </div>
 
                   <div className="mt-3">
-                    {hasImageArtifacts ? (
+                    {(hasImageArtifacts || bodyHasInitImage) ? (
                     <div className="mb-3">
                       <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
                         <span>图片预览</span>
@@ -2077,6 +2086,55 @@ export default function LlmLogsPage() {
                                     </div>
                                     <div className="mt-1 truncate" title={artifactInputs[0].sha256}>
                                       sha256: {artifactInputs[0].sha256}
+                                    </div>
+                                  </div>
+                                </div>
+                                {/* 结果图 - 加载中/失败 */}
+                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      结果图
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                    {detail?.status === 'running' ? (
+                                      <div className="flex flex-col items-center gap-3">
+                                        <PrdPetalBreathingLoader size={72} />
+                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
+                                      </div>
+                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
+                                      <div className="flex flex-col items-center gap-3">
+                                        <PrdPetalBreathingLoader size={72} paused grayscale />
+                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
+                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          ) : bodyHasInitImage && artifactInputs.length === 0 ? (
+                            <>
+                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                              </div>
+                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                                {/* 参考图 - 无法预览 */}
+                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      参考图
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                    <div className="flex flex-col items-center gap-2">
+                                      <PrdPetalBreathingLoader size={48} paused grayscale />
+                                      <div className="text-[11px] text-center px-4" style={{ color: 'var(--text-muted)' }}>
+                                        参考图 URL 已脱敏，无法预览
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
