@@ -778,7 +778,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
 
-      <div className="grid gap-4 flex-1 min-h-0 transition-all lg:grid-cols-[320px_1fr]">
+      <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
         <GlassCard glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <div className="p-4 border-b border-white/10">
