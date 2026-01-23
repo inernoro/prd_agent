@@ -3935,7 +3935,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             style={{
               background: 'rgba(0,0,0,0.10)',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
             }}
+            onContextMenu={(e) => e.preventDefault()}
             tabIndex={0}
             onPointerEnter={() => {
               stageHoverRef.current = true;
@@ -5904,7 +5907,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <img
                             src={genDone.src}
                             alt={genDone.prompt || '生成结果'}
-                            style={{ width: '100%', maxHeight: 280, objectFit: 'contain', display: 'block' }}
+                            style={{ width: '100%', maxHeight: 70, objectFit: 'contain', display: 'block' }}
                           />
                         </button>
                         <span
@@ -6387,15 +6390,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         className="absolute bottom-full left-0 mb-2 z-50 rounded-[14px] p-3"
                         style={{
                           width: 260,
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          background: 'rgba(32, 32, 36, 0.96)',
+                          border: '1px solid rgba(255, 255, 255, 0.18)',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
+                          backdropFilter: 'blur(24px)',
+                          WebkitBackdropFilter: 'blur(24px)',
                         }}
                       >
                         {/* 分辨率（档位） */}
-                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>分辨率</div>
+                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
                         <div className="grid grid-cols-3 gap-1.5 mb-3">
                           {(['1k', '2k', '4k'] as const).map((tier) => {
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
@@ -6408,9 +6411,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 type="button"
                                 className="h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
                                 style={{
-                                  background: isSelected ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.04)',
-                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid rgba(255,255,255,0.10)',
-                                  color: isSelected ? 'rgba(99, 102, 241, 1)' : 'var(--text-primary)',
+                                  background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
+                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                  color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                 }}
                                 onClick={() => {
                                   const currentAspect = detectAspectFromSize(currentSize);
@@ -6426,6 +6429,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     composerSizeAutoRef.current = false;
                                     setComposerSize(newSize);
                                   }
+                                  setSizeSelectorOpen(false);
                                 }}
                               >
                                 {label}
@@ -6435,7 +6439,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </div>
 
                         {/* 比例 */}
-                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>Size</div>
+                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
                         <div className="grid grid-cols-4 gap-1.5">
                           {ASPECT_OPTIONS.map((opt) => {
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
@@ -6451,9 +6455,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 type="button"
                                 className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[8px] transition-colors"
                                 style={{
-                                  background: isSelected ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.04)',
-                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid rgba(255,255,255,0.10)',
-                                  color: isSelected ? 'rgba(99, 102, 241, 1)' : 'var(--text-primary)',
+                                  background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
+                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                  color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                   opacity: supported ? 1 : 0.5,
                                 }}
                                 onClick={() => {
@@ -6464,6 +6468,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     composerSizeAutoRef.current = false;
                                     setComposerSize(targetSize);
                                   }
+                                  setSizeSelectorOpen(false);
                                 }}
                               >
                                 <AspectIcon size={targetSize} />
