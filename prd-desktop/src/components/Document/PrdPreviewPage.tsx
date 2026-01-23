@@ -3,7 +3,7 @@ import { invoke } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { listen } from '../../lib/tauri';
-import type { ApiResponse, DocCitation, KbDocumentContent } from '../../types';
+import type { ApiResponse, DocCitation, DocumentContent } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import PrdCommentsPanel from '../Comments/PrdCommentsPanel';
 import { usePrdPreviewNavStore } from '../../stores/prdPreviewNavStore';
@@ -20,7 +20,7 @@ export default function PrdPreviewPage(props?: {
   const compactMode = Boolean(props?.compactMode);
   const overrideDocumentId = (props?.overrideDocumentId || '').trim() || null;
   const overrideGroupId = (props?.overrideGroupId || '').trim() || null;
-  const { activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
+  const { documentLoaded, document: prdDocument, activeGroupId, backFromPrdPreview, sessionId, setRole, currentRole } = useSessionStore();
   const { addMessage } = useMessageStore();
 
   const [prdPreviewLoading, setPrdPreviewLoading] = useState(false);
@@ -61,16 +61,16 @@ export default function PrdPreviewPage(props?: {
   const clearNav = usePrdPreviewNavStore((s) => s.clear);
 
   const effectiveDocumentId = useMemo(() => {
-    return overrideDocumentId || null;
-  }, [overrideDocumentId]);
+    return overrideDocumentId || prdDocument?.id || null;
+  }, [overrideDocumentId, prdDocument?.id]);
 
   const effectiveGroupId = useMemo(() => {
     return overrideGroupId || activeGroupId || null;
   }, [overrideGroupId, activeGroupId]);
 
   const canPreview = useMemo(() => {
-    return Boolean(overrideDocumentId && (overrideGroupId || activeGroupId));
-  }, [activeGroupId, overrideDocumentId, overrideGroupId]);
+    return Boolean((overrideDocumentId && overrideGroupId) || (documentLoaded && prdDocument && activeGroupId));
+  }, [activeGroupId, prdDocument, documentLoaded, overrideDocumentId, overrideGroupId]);
 
   const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
@@ -131,16 +131,16 @@ export default function PrdPreviewPage(props?: {
       setPrdPreviewError('');
       try {
         setPrdPreviewLoading(true);
-        const resp = await invoke<ApiResponse<KbDocumentContent>>('get_kb_document_content', {
+        const resp = await invoke<ApiResponse<DocumentContent>>('get_document_content', {
           documentId: effectiveDocumentId,
           groupId: effectiveGroupId,
         });
         if (cancelled) return;
         if (!resp.success || !resp.data) {
-          setPrdPreviewError(resp.error?.message || '获取文档内容失败');
+          setPrdPreviewError(resp.error?.message || '获取 PRD 内容失败');
           return;
         }
-        setPrdPreview({ documentId: resp.data.documentId, title: resp.data.fileName, content: resp.data.textContent || '' });
+        setPrdPreview({ documentId: resp.data.id, title: resp.data.title, content: resp.data.content || '' });
       } catch {
         if (cancelled) return;
         setPrdPreviewError('获取 PRD 内容失败');
@@ -163,14 +163,14 @@ export default function PrdPreviewPage(props?: {
   // 注意：不要在首次 mount 就清空，否则会与“从聊天点击依据 -> 打开预览并跳转”产生竞态，导致永远跳不到目标章节。
   const lastDocGroupRef = useRef<{ docId: string | null; groupId: string | null } | null>(null);
   useEffect(() => {
-    const cur = { docId: effectiveDocumentId ?? null, groupId: activeGroupId ?? null };
+    const cur = { docId: prdDocument?.id ?? null, groupId: activeGroupId ?? null };
     const prev = lastDocGroupRef.current;
     lastDocGroupRef.current = cur;
     if (!prev) return;
     if (prev.docId !== cur.docId || prev.groupId !== cur.groupId) {
       clearNav();
     }
-  }, [effectiveDocumentId, activeGroupId, clearNav]);
+  }, [prdDocument?.id, activeGroupId, clearNav]);
 
   const tocIndentClass = (level: number) => {
     switch (level) {
@@ -825,8 +825,8 @@ export default function PrdPreviewPage(props?: {
 
           <div className="min-w-0">
             <div className="text-sm font-semibold truncate">{compactMode ? '引用预览' : 'PRD 预览'}</div>
-            <div className="text-xs text-text-secondary truncate" title={prdPreview?.title || ''}>
-              {prdPreview?.title || ''}
+            <div className="text-xs text-text-secondary truncate" title={prdPreview?.title || prdDocument?.title || ''}>
+              {prdPreview?.title || prdDocument?.title || ''}
             </div>
           </div>
         </div>
@@ -976,7 +976,7 @@ export default function PrdPreviewPage(props?: {
               style={{ width: `${commentsWidth}px` }}
             >
               <PrdCommentsPanel
-                documentId={prdPreview?.documentId || ''}
+                documentId={prdPreview?.documentId || prdDocument?.id || ''}
                 groupId={activeGroupId || ''}
                 headingId={activeHeadingId}
                 headingTitle={activeHeadingTitle}

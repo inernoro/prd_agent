@@ -10,6 +10,7 @@ public class SessionResponse
     public string SessionId { get; set; } = string.Empty;
     public string? GroupId { get; set; }
     public string? OwnerUserId { get; set; }
+    public string DocumentId { get; set; } = string.Empty;
     public string? Title { get; set; }
     public UserRole CurrentRole { get; set; }
     public InteractionMode Mode { get; set; }

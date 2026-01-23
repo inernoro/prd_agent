@@ -9,8 +9,8 @@ public class GroupResponse
 {
     public string GroupId { get; set; } = string.Empty;
     public string GroupName { get; set; } = string.Empty;
-    public bool HasKnowledgeBase { get; set; }
-    public int KbDocumentCount { get; set; }
+    public string? PrdDocumentId { get; set; }
+    public string? PrdTitle { get; set; }
     public string InviteLink { get; set; } = string.Empty;
     public string InviteCode { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
@@ -24,8 +24,7 @@ public class JoinGroupResponse
 {
     public string GroupId { get; set; } = string.Empty;
     public string GroupName { get; set; } = string.Empty;
-    public bool HasKnowledgeBase { get; set; }
-    public int KbDocumentCount { get; set; }
+    public string? PrdTitle { get; set; }
     public int MemberCount { get; set; }
     public DateTime JoinedAt { get; set; }
 }
@@ -64,6 +63,6 @@ public class OpenGroupSessionResponse
 {
     public string SessionId { get; set; } = string.Empty;
     public string GroupId { get; set; } = string.Empty;
-    public int KbDocumentCount { get; set; }
+    public string DocumentId { get; set; } = string.Empty;
     public UserRole CurrentRole { get; set; }
 }

@@ -11,9 +11,19 @@ public interface IGroupRepository
     Task<Group?> GetByInviteCodeAsync(string inviteCode);
     Task InsertAsync(Group group);
     Task DeleteAsync(string groupId);
+    Task<long> CountByPrdDocumentIdAsync(string prdDocumentId);
     Task UpdateInviteCodeAsync(string groupId, string newCode);
     Task<List<Group>> GetByIdsAsync(List<string> groupIds);
-    Task UpdateKbStatusAsync(string groupId, bool hasKb, int docCount);
+
+    Task UpdatePrdAsync(
+        string groupId,
+        string prdDocumentId,
+        string? prdTitleSnapshot,
+        int? prdTokenEstimateSnapshot,
+        int? prdCharCountSnapshot);
+
+    Task ClearPrdAsync(string groupId);
+
     Task UpdateGroupNameAsync(string groupId, string groupName);
 }
 

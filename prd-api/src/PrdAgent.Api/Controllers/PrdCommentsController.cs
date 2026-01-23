@@ -65,7 +65,11 @@ public class PrdCommentsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员")));
         }
 
-        // 知识库多文档：不再做单文档绑定校验（文档由 kb_documents 管理）
+        if (!string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase))
+        {
+            return (false, StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组")));
+        }
 
         return (true, null);
     }

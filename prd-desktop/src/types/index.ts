@@ -24,7 +24,7 @@ export interface User {
 export interface Session {
   sessionId: string;
   groupId?: string;
-  kbDocumentCount?: number;
+  documentId: string;
   currentRole: UserRole;
   mode: InteractionMode;
 }
@@ -41,23 +41,17 @@ export interface PromptsClientResponse {
   prompts: PromptItem[];
 }
 
-export interface KbDocument {
-  documentId: string;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
+export interface Document {
+  id: string;
+  title: string;
   charCount: number;
   tokenEstimate: number;
-  uploadedAt: string;
-  replaceVersion: number;
-  hasTextContent: boolean;
 }
 
-export interface KbDocumentContent {
-  documentId: string;
-  fileName: string;
-  textContent: string | null;
-  fileUrl: string;
+export interface DocumentContent {
+  id: string;
+  title: string;
+  content: string;
 }
 
 export interface Message {
@@ -108,8 +102,8 @@ export interface MessageBlock {
 export interface Group {
   groupId: string;
   groupName: string;
-  hasKnowledgeBase?: boolean;
-  kbDocumentCount?: number;
+  prdDocumentId?: string | null;
+  prdTitle?: string;
   inviteLink?: string;
   inviteCode: string;
   memberCount: number;

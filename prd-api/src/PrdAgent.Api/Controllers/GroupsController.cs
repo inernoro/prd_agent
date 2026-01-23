@@ -24,6 +24,7 @@ public class GroupsController : ControllerBase
 {
     private readonly IGroupService _groupService;
     private readonly IGroupBotService _groupBotService;
+    private readonly IDocumentService _documentService;
     private readonly IUserService _userService;
     private readonly ISessionService _sessionService;
     private readonly IMessageRepository _messageRepository;
@@ -48,6 +49,7 @@ public class GroupsController : ControllerBase
     public GroupsController(
         IGroupService groupService,
         IGroupBotService groupBotService,
+        IDocumentService documentService,
         IUserService userService,
         ISessionService sessionService,
         IMessageRepository messageRepository,
@@ -60,6 +62,7 @@ public class GroupsController : ControllerBase
     {
         _groupService = groupService;
         _groupBotService = groupBotService;
+        _documentService = documentService;
         _userService = userService;
         _sessionService = sessionService;
         _messageRepository = messageRepository;
@@ -105,9 +108,26 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品经理可创建群组"));
         }
 
+        var prdDocumentId = string.IsNullOrWhiteSpace(request.PrdDocumentId) ? null : request.PrdDocumentId!.Trim();
+        ParsedPrd? document = null;
+        if (!string.IsNullOrEmpty(prdDocumentId))
+        {
+            // 检查文档是否存在
+            document = await _documentService.GetByIdAsync(prdDocumentId);
+            if (document == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    ErrorCodes.DOCUMENT_NOT_FOUND, "PRD文档不存在"));
+            }
+        }
+
         var group = await _groupService.CreateAsync(
             ownerId: userId,
-            groupName: request.GroupName);
+            prdDocumentId: prdDocumentId ?? "",
+            groupName: (request.GroupName ?? document?.Title ?? "新建群组"),
+            prdTitleSnapshot: document?.Title,
+            prdTokenEstimateSnapshot: document?.TokenEstimate,
+            prdCharCountSnapshot: document?.CharCount);
 
         // 创建群后自动初始化默认机器人账号（PM/DEV/QA），并加入群成员（幂等）
         try
@@ -122,12 +142,21 @@ public class GroupsController : ControllerBase
 
         var members = await _groupService.GetMembersAsync(group.GroupId);
 
+        // 如果用户没有提供群名且有 PRD 文档，在后台异步生成群名
+        if (string.IsNullOrWhiteSpace(request.GroupName) && !string.IsNullOrEmpty(prdDocumentId))
+        {
+            _groupNameSuggestionService.EnqueueGroupNameSuggestion(
+                group.GroupId, 
+                fileName: null, 
+                prdDocumentId);
+        }
+
         var response = new GroupResponse
         {
             GroupId = group.GroupId,
             GroupName = group.GroupName,
-            HasKnowledgeBase = group.HasKnowledgeBase,
-            KbDocumentCount = group.KbDocumentCount,
+            PrdDocumentId = string.IsNullOrWhiteSpace(group.PrdDocumentId) ? null : group.PrdDocumentId,
+            PrdTitle = document?.Title ?? group.PrdTitleSnapshot,
             InviteLink = $"prdagent://join/{group.InviteCode}",
             InviteCode = group.InviteCode,
             CreatedAt = group.CreatedAt,
@@ -165,14 +194,16 @@ public class GroupsController : ControllerBase
         {
             var member = await _groupService.JoinAsync(request.InviteCode, userId, request.UserRole);
             var group = await _groupService.GetByIdAsync(member.GroupId);
+            var document = group != null 
+                ? await _documentService.GetByIdAsync(group.PrdDocumentId) 
+                : null;
             var members = await _groupService.GetMembersAsync(member.GroupId);
 
             var response = new JoinGroupResponse
             {
                 GroupId = member.GroupId,
                 GroupName = group?.GroupName ?? "",
-                HasKnowledgeBase = group?.HasKnowledgeBase ?? false,
-                KbDocumentCount = group?.KbDocumentCount ?? 0,
+                PrdTitle = document?.Title,
                 MemberCount = members.Count,
                 JoinedAt = member.JoinedAt
             };
@@ -222,9 +253,19 @@ public class GroupsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
         }
 
-        if (!group.HasKnowledgeBase)
+        if (string.IsNullOrWhiteSpace(group.PrdDocumentId))
         {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "群组未绑定知识库文档"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "群组未绑定PRD"));
+        }
+
+        // 关键校验：PRD 原文仅存缓存（默认30分钟）。缓存被清/过期后，群组仍有 prdDocumentId，
+        // 但无法进入会话与对话。这里提前返回明确错误，避免后续 open_session 成功但 get_document 404。
+        var prd = await _documentService.GetByIdAsync(group.PrdDocumentId);
+        if (prd == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.DOCUMENT_NOT_FOUND,
+                "PRD文档不存在或已过期"));
         }
 
         // 校验成员关系（群主/成员均可）
@@ -244,13 +285,14 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
-        var session = await _sessionService.CreateAsync(groupId);
+        var session = await _sessionService.CreateAsync(group.PrdDocumentId, groupId);
 
         return Ok(ApiResponse<OpenGroupSessionResponse>.Ok(new OpenGroupSessionResponse
         {
             SessionId = session.SessionId,
             GroupId = groupId,
-            KbDocumentCount = group.KbDocumentCount,
+            DocumentId = session.DocumentId,
+            // currentRole 语义：当前用户的身份（用于提示词分组与默认回答 bot）
             CurrentRole = member.MemberRole
         }));
     }
@@ -269,14 +311,15 @@ public class GroupsController : ControllerBase
                 ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
         }
 
+        var document = await _documentService.GetByIdAsync(group.PrdDocumentId);
         var members = await _groupService.GetMembersAsync(groupId);
 
         var response = new GroupResponse
         {
             GroupId = group.GroupId,
             GroupName = group.GroupName,
-            HasKnowledgeBase = group.HasKnowledgeBase,
-            KbDocumentCount = group.KbDocumentCount,
+            PrdDocumentId = string.IsNullOrWhiteSpace(group.PrdDocumentId) ? null : group.PrdDocumentId,
+            PrdTitle = document?.Title ?? group.PrdTitleSnapshot,
             InviteLink = $"prdagent://join/{group.InviteCode}",
             InviteCode = group.InviteCode,
             CreatedAt = group.CreatedAt,
@@ -436,6 +479,148 @@ public class GroupsController : ControllerBase
         return Ok(ApiResponse<BootstrapGroupBotsResponse>.Ok(response));
     }
 
+    /// <summary>
+    /// 绑定 PRD 到群组（仅写入元数据快照；不存原文）
+    /// </summary>
+    [HttpPut("{groupId}/prd")]
+    [ProducesResponseType(typeof(ApiResponse<GroupResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> BindPrd(string groupId, [FromBody] BindGroupPrdRequest request)
+    {
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 仅群主/管理员可绑定 PRD
+        var user = await _userService.GetByIdAsync(userId);
+        if (user == null)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+        if (user.Role != UserRole.ADMIN && group.OwnerId != userId)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅群主可绑定PRD"));
+        }
+
+        var prdDocumentId = request.PrdDocumentId.Trim();
+        var document = await _documentService.GetByIdAsync(prdDocumentId);
+        if (document == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "PRD文档不存在或已过期"));
+        }
+
+        await _groupService.BindPrdAsync(
+            groupId,
+            prdDocumentId,
+            document.Title,
+            document.TokenEstimate,
+            document.CharCount);
+
+        // PRD 变更：必须让所有成员重新建立 group->session 映射，否则桌面端会继续复用旧 sessionId，导致“串 PRD/串上下文”。
+        // - group session 映射 key：group:session:{groupId}:{userId}
+        // - LLM 上下文缓存 key：chat:history:group:{groupId}
+        try
+        {
+            await _cache.RemoveByPatternAsync($"group:session:{groupId}:*");
+            await _cache.RemoveAsync(CacheKeys.ForGroupChatHistory(groupId));
+        }
+        catch
+        {
+            // cache 失效失败不应影响主流程；最坏情况是等 TTL 到期
+        }
+
+        // 重新读取群组（避免返回旧值）
+        group = await _groupService.GetByIdAsync(groupId);
+        var members = await _groupService.GetMembersAsync(groupId);
+
+        var response = new GroupResponse
+        {
+            GroupId = group!.GroupId,
+            GroupName = group.GroupName,
+            PrdDocumentId = prdDocumentId,
+            PrdTitle = document.Title,
+            InviteLink = $"prdagent://join/{group.InviteCode}",
+            InviteCode = group.InviteCode,
+            CreatedAt = group.CreatedAt,
+            MemberCount = members.Count
+        };
+
+        return Ok(ApiResponse<GroupResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 解绑群组 PRD
+    /// </summary>
+    [HttpDelete("{groupId}/prd")]
+    [ProducesResponseType(typeof(ApiResponse<GroupResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UnbindPrd(string groupId)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 仅群主/管理员可解绑
+        var user = await _userService.GetByIdAsync(userId);
+        if (user == null)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+        if (user.Role != UserRole.ADMIN && group.OwnerId != userId)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅群主可解绑PRD"));
+        }
+
+        await _groupService.UnbindPrdAsync(groupId);
+
+        // PRD 解绑同样需要失效 group session 映射与上下文缓存
+        try
+        {
+            await _cache.RemoveByPatternAsync($"group:session:{groupId}:*");
+            await _cache.RemoveAsync(CacheKeys.ForGroupChatHistory(groupId));
+        }
+        catch
+        {
+            // ignore
+        }
+
+        group = await _groupService.GetByIdAsync(groupId);
+        var members = await _groupService.GetMembersAsync(groupId);
+
+        var response = new GroupResponse
+        {
+            GroupId = group!.GroupId,
+            GroupName = group.GroupName,
+            PrdDocumentId = null,
+            PrdTitle = null,
+            InviteLink = $"prdagent://join/{group.InviteCode}",
+            InviteCode = group.InviteCode,
+            CreatedAt = group.CreatedAt,
+            MemberCount = members.Count
+        };
+
+        return Ok(ApiResponse<GroupResponse>.Ok(response));
+    }
 
     /// <summary>
     /// 获取用户的群组列表
@@ -455,14 +640,19 @@ public class GroupsController : ControllerBase
 
         foreach (var group in groups)
         {
+            ParsedPrd? document = null;
+            if (!string.IsNullOrWhiteSpace(group.PrdDocumentId))
+            {
+                document = await _documentService.GetByIdAsync(group.PrdDocumentId);
+            }
             var members = await _groupService.GetMembersAsync(group.GroupId);
 
             response.Add(new GroupResponse
             {
                 GroupId = group.GroupId,
                 GroupName = group.GroupName,
-                HasKnowledgeBase = group.HasKnowledgeBase,
-                KbDocumentCount = group.KbDocumentCount,
+                PrdDocumentId = string.IsNullOrWhiteSpace(group.PrdDocumentId) ? null : group.PrdDocumentId,
+                PrdTitle = document?.Title ?? group.PrdTitleSnapshot,
                 InviteLink = $"prdagent://join/{group.InviteCode}",
                 InviteCode = group.InviteCode,
                 CreatedAt = group.CreatedAt,

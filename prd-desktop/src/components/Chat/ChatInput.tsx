@@ -51,7 +51,7 @@ function fallbackPrompts(role: UserRole): PromptItem[] {
 }
 
 export default function ChatInput() {
-  const { sessionId, currentRole, prompts } = useSessionStore();
+  const { sessionId, currentRole, document, prompts } = useSessionStore();
   const { addUserMessageWithPendingAssistant, isStreaming, stopStreaming, ackPendingUserMessageRunId, clearPendingAssistant } = useMessageStore();
   const { user } = useAuthStore();
   const connectionStatus = useConnectionStore((s) => s.status);
@@ -289,7 +289,7 @@ export default function ChatInput() {
   return (
     <div className="border-t ui-glass-bar">
       {/* 提示词栏：按当前角色展示 */}
-      {canChat && (
+      {canChat && document?.id && (
         <div className="px-3 py-2 flex items-start gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
           {/* 左侧：提示词区域 */}
           <div className="flex-1 min-w-0 flex items-start gap-2">
@@ -386,7 +386,7 @@ export default function ChatInput() {
             placeholder={
               isDisconnected
                 ? "服务器已断开连接，正在重连…"
-                : (canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "请先选择群组")
+                : (canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问")
             }
             className="w-full min-w-0 px-3 py-2 ui-control rounded-xl resize-none text-sm overflow-y-hidden"
             rows={1}
