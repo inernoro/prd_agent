@@ -1,0 +1,40 @@
+# Cursor Rules for PRD Agent
+
+## Project Context
+
+Read `CLAUDE.md` in project root for full architecture rules and codebase skill snapshot.
+
+## Key Architecture Rules
+
+1. **App Identity Isolation**: Each app has its own Controller with hardcoded `appKey` (never from frontend)
+2. **appKey values**: `prd-agent`, `visual-agent`, `literary-agent`
+3. **Run/Worker pattern**: Chat uses `POST /sessions/{id}/messages/run` → SSE stream with `afterSeq` reconnection
+4. **Platform + Model**: `(platformId, modelId)` as business identifier (NOT Provider)
+5. **RBAC**: `SystemRole` + `AdminPermissionCatalog` + `AdminPermissionMiddleware`
+
+## Documentation Maintenance
+
+When making structural code changes (new modules, renames, deprecations), update:
+
+1. `CLAUDE.md` → Codebase Skill section (feature registry, DB collections, deprecated concepts)
+2. `doc/2.srs.md` → Relevant functional requirements section
+3. `doc/7.data-dictionary.md` → If new MongoDB collections or localStorage entries added
+
+### Cross-validation Checklist
+
+Before committing doc updates, verify:
+- [ ] Code → Doc: Every Controller/Service has corresponding SRS section
+- [ ] Doc → Code: Every SRS feature has code implementation (or ⚠️ NOT_IMPL marker)
+- [ ] Git log → Doc: Recent commits reflected in docs
+- [ ] DB → Dict: MongoDbContext collections match data dictionary
+- [ ] No deprecated references (Guide mode, Provider, ImageMaster in code context, IEEE 830-1998)
+
+## Deprecated Concepts (DO NOT reference)
+
+| Deprecated | Replacement |
+|-----------|-------------|
+| Guide mode | Prompt Stages |
+| Provider | Platform |
+| ImageMaster (code) | VisualAgent (DB names preserved) |
+| Direct SSE | Run/Worker + afterSeq |
+| IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
