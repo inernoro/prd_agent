@@ -525,7 +525,8 @@ public class ChatService : IChatService
         };
 
         // 引用依据（SSE 事件，仅会话内下发；不落库）
-        var citations = DocCitationExtractor.Extract(document, assistantMessage.Content, maxCitations: 12);
+        // TODO: 多文档知识库场景下需重新实现引用提取（当前传 null 跳过）
+        var citations = DocCitationExtractor.Extract(null!, assistantMessage.Content, maxCitations: 12);
 
         // 更新对话历史缓存
         await SaveMessagesToHistoryAsync(session, userMessage, assistantMessage);
