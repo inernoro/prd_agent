@@ -133,7 +133,7 @@ prd_agent/
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (52 个 + 5 PLANNED)
+### MongoDB 集合清单 (52 个 + 6 PLANNED)
 
 核心业务：`users`, `groups`, `group_members`, `sessions`, `messages`, `parsed_prds`, `attachments`, `contentgaps`, `prdcomments`
 
@@ -151,7 +151,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
 
-缺陷管理 (PLANNED)：`defect_reports`, `defect_reviews`, `defect_fixes`, `defect_repo_configs`, `defect_github_tokens`
+缺陷管理 (PLANNED)：`defect_reports`, `defect_reviews`, `defect_fixes`, `defect_repo_configs`, `defect_github_tokens`, `defect_products`
 
 其他：`api_request_logs`, `user_preferences`
 
