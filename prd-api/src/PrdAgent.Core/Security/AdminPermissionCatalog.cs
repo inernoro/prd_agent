@@ -59,6 +59,16 @@ public static class AdminPermissionCatalog
     public const string LiteraryAgentUse = "literary-agent.use";
 
     /// <summary>
+    /// 周计划 Agent 权限：查看和提交周计划
+    /// </summary>
+    public const string WeeklyPlanAgentUse = "weekly-plan-agent.use";
+
+    /// <summary>
+    /// 周计划 Agent 管理权限：管理模板、审阅他人计划
+    /// </summary>
+    public const string WeeklyPlanAgentManage = "weekly-plan-agent.manage";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -70,6 +80,8 @@ public static class AdminPermissionCatalog
         new(PrdAgentUse, "PRD Agent", "PRD 智能解读与问答"),
         new(VisualAgentUse, "视觉创作 Agent", "高级视觉创作工作区"),
         new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
+        new(WeeklyPlanAgentUse, "周计划 Agent", "查看和提交周计划"),
+        new(WeeklyPlanAgentManage, "周计划 Agent-管理", "管理模板、审阅他人计划"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),

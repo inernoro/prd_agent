@@ -22,6 +22,8 @@
    | 文学创作 Agent | `literary-agent` | 文章配图、文学创作场景 |
    | 视觉创作 Agent | `visual-agent` | 高级视觉创作工作区 |
    | PRD Agent | `prd-agent` | PRD 智能解读与问答 |
+   | 缺陷管理 Agent | `defect-agent` | AI 驱动的缺陷检测与自动修复 |
+   | 周计划 Agent | `weekly-plan-agent` | 团队周计划报送与审阅 |
 
 4. **为什么这样设计**
    - 权限控制：未来可以基于 Controller 做细粒度权限管理
@@ -90,7 +92,7 @@ prd_agent/
 ├── prd-desktop/      # Tauri 2.0 桌面客户端 (Rust + React)
 │   ├── src-tauri/    # Rust: commands/, services/, models/
 │   └── src/          # React: components/, stores/, pages/
-├── doc/              # 编号文档 (0-18) + 维护计划
+├── doc/              # 编号文档 (0-20) + 维护计划
 └── scripts/          # 构建/部署脚本
 ```
 
@@ -125,13 +127,15 @@ prd_agent/
 | 会话归档 | ✅ DONE | SessionsController (archive/unarchive) |
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
+| **周计划 Agent** | ✅ DONE | WeeklyPlanTemplatesController, WeeklyPlanSubmissionsController, WeeklyPlanAgentPage |
+| **缺陷管理 Agent** | 📋 PLANNED | DefectAgentController, DefectReviewWorker, DefectFixWorker (设计文档: doc/20) |
 | **附件上传** | ⚠️ PARTIAL | Model 定义 + Message.AttachmentIds 关联，无通用上传 Controller |
-| **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
+| **知识库 (多文档)** | ✅ DONE | KnowledgeBasePage, kbStore, kb.rs, KnowledgeBaseController |
 | **i18n** | ❌ NOT_IMPL | 无任何 i18n 基础设施，文案硬编码中文 |
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (52 个)
+### MongoDB 集合清单 (52 个 + 6 PLANNED)
 
 核心业务：`users`, `groups`, `group_members`, `sessions`, `messages`, `parsed_prds`, `attachments`, `contentgaps`, `prdcomments`
 
@@ -149,6 +153,10 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
 
+周计划：`weekly_plan_templates`, `weekly_plan_submissions`
+
+缺陷管理 (PLANNED)：`defect_reports`, `defect_reviews`, `defect_fixes`, `defect_repo_configs`, `defect_github_tokens`, `defect_products`
+
 其他：`api_request_logs`, `user_preferences`
 
 ### 已废弃概念 (勿再引用)
@@ -161,6 +169,14 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 | 直接 SSE 流 | Run/Worker + afterSeq 重连 |
 | GuideController | 已删除 |
 | IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
+| DocumentUpload (单文档上传建群) | KnowledgeBasePage (多文档管理) |
+| bind_group_prd (群绑定单PRD) | 知识库多文档 (list/upload/replace/delete) |
+| commands/document.rs | commands/kb.rs |
+
+### Agent 开发流程
+
+新增 Agent 应用必须遵循 `doc/19.agent-development-workflow.md` 定义的标准化交付流程（6 个 Phase）。
+关键检查点：appKey 注册 → 权限定义 → Controller 硬编码 → 菜单注册 → AppCaller 注册 → 前端路由 → 文档同步。
 
 ### 交叉校验检查点
 
