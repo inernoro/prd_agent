@@ -8,13 +8,7 @@ namespace PrdAgent.Core.Interfaces;
 public interface IGroupService
 {
     /// <summary>创建群组</summary>
-    Task<Group> CreateAsync(
-        string ownerId,
-        string prdDocumentId,
-        string? groupName = null,
-        string? prdTitleSnapshot = null,
-        int? prdTokenEstimateSnapshot = null,
-        int? prdCharCountSnapshot = null);
+    Task<Group> CreateAsync(string ownerId, string? groupName = null);
     
     /// <summary>根据ID获取群组</summary>
     Task<Group?> GetByIdAsync(string groupId);
@@ -40,16 +34,8 @@ public interface IGroupService
     /// <summary>获取用户的群组列表</summary>
     Task<List<Group>> GetUserGroupsAsync(string userId);
 
-    /// <summary>绑定 PRD 到群组（仅写入元数据快照；不存原文）</summary>
-    Task BindPrdAsync(
-        string groupId,
-        string prdDocumentId,
-        string? prdTitleSnapshot,
-        int? prdTokenEstimateSnapshot,
-        int? prdCharCountSnapshot);
-
-    /// <summary>解绑 PRD（清空绑定与快照）</summary>
-    Task UnbindPrdAsync(string groupId);
+    /// <summary>更新群组知识库状态</summary>
+    Task UpdateKbStatusAsync(string groupId, bool hasKb, int docCount);
 
     /// <summary>解散群组（删除群组与成员记录）</summary>
     Task DissolveAsync(string groupId);

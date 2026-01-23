@@ -22,13 +22,11 @@ public class MongoSessionService : ISessionService
         _cache = cache;
     }
 
-    public async Task<Session> CreateAsync(string documentId, string? groupId = null)
+    public async Task<Session> CreateAsync(string? groupId = null)
     {
         var gid = (groupId ?? string.Empty).Trim();
-        var did = (documentId ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(did)) throw new ArgumentException("documentId 不能为空", nameof(documentId));
 
-        // 单群单会话：groupId 不为空则复用同一条会话线程，必要时更新 documentId
+        // 单群单会话：groupId 不为空则复用同一条会话线程
         if (!string.IsNullOrWhiteSpace(gid))
         {
             var existing = await _db.Sessions
@@ -37,11 +35,6 @@ public class MongoSessionService : ISessionService
 
             if (existing != null)
             {
-                if (!string.Equals(existing.DocumentId, did, StringComparison.Ordinal))
-                {
-                    existing.DocumentId = did;
-                }
-
                 existing.LastActiveAt = DateTime.UtcNow;
                 await UpsertAsync(existing);
                 return existing;
@@ -51,7 +44,6 @@ public class MongoSessionService : ISessionService
         var session = new Session
         {
             SessionId = await _idGenerator.GenerateIdAsync("session"),
-            DocumentId = did,
             GroupId = string.IsNullOrWhiteSpace(gid) ? null : gid,
             CurrentRole = UserRole.PM,
             Mode = InteractionMode.QA,
