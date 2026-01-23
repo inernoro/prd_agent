@@ -7,8 +7,6 @@ use crate::services::ApiClient;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateGroupRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    prd_document_id: Option<String>,
     group_name: Option<String>,
 }
 
@@ -24,20 +22,19 @@ struct JoinGroupRequest {
 pub struct JoinGroupResponse {
     pub group_id: String,
     pub group_name: String,
-    pub prd_title: Option<String>,
+    #[serde(default)]
+    pub has_knowledge_base: bool,
+    #[serde(default)]
+    pub kb_document_count: i32,
     pub member_count: i32,
 }
 
 #[command]
 pub async fn create_group(
-    prd_document_id: Option<String>,
     group_name: Option<String>,
 ) -> Result<ApiResponse<GroupInfo>, String> {
     let client = ApiClient::new();
-    let request = CreateGroupRequest {
-        prd_document_id,
-        group_name,
-    };
+    let request = CreateGroupRequest { group_name };
 
     client.post("/groups", &request).await
 }
@@ -77,24 +74,6 @@ pub async fn open_group_session(
     let request = OpenGroupSessionRequest { user_role };
     client
         .post(&format!("/groups/{}/session", group_id), &request)
-        .await
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BindGroupPrdRequest {
-    prd_document_id: String,
-}
-
-#[command]
-pub async fn bind_group_prd(
-    group_id: String,
-    prd_document_id: String,
-) -> Result<ApiResponse<GroupInfo>, String> {
-    let client = ApiClient::new();
-    let request = BindGroupPrdRequest { prd_document_id };
-    client
-        .put(&format!("/groups/{}/prd", group_id), &request)
         .await
 }
 

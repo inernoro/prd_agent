@@ -730,9 +730,16 @@ builder.Services.AddScoped<IGroupService>(sp =>
 {
     var groupRepo = sp.GetRequiredService<IGroupRepository>();
     var memberRepo = sp.GetRequiredService<IGroupMemberRepository>();
-    var docRepo = sp.GetRequiredService<IPrdDocumentRepository>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new GroupService(groupRepo, memberRepo, docRepo, idGenerator);
+    return new GroupService(groupRepo, memberRepo, idGenerator);
+});
+
+builder.Services.AddScoped<IKnowledgeBaseService>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    var storage = sp.GetRequiredService<IAssetStorage>();
+    var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.KnowledgeBaseService>>();
+    return new PrdAgent.Infrastructure.Services.KnowledgeBaseService(db, storage, logger);
 });
 
 builder.Services.AddScoped<IGroupBotService>(sp =>
@@ -747,10 +754,10 @@ builder.Services.AddScoped<IGroupBotService>(sp =>
 builder.Services.AddScoped<IGroupNameSuggestionService>(sp =>
 {
     var groupService = sp.GetRequiredService<IGroupService>();
-    var documentService = sp.GetRequiredService<IDocumentService>();
+    var kbService = sp.GetRequiredService<IKnowledgeBaseService>();
     var modelDomainService = sp.GetRequiredService<IModelDomainService>();
     var logger = sp.GetRequiredService<ILogger<GroupNameSuggestionService>>();
-    return new GroupNameSuggestionService(groupService, documentService, modelDomainService, logger);
+    return new GroupNameSuggestionService(groupService, kbService, modelDomainService, logger);
 });
 
 builder.Services.AddScoped<IGapDetectionService>(sp =>
@@ -764,7 +771,7 @@ builder.Services.AddScoped<IChatService>(sp =>
 {
     var modelScheduler = sp.GetRequiredService<ISmartModelScheduler>();
     var sessionService = sp.GetRequiredService<ISessionService>();
-    var documentService = sp.GetRequiredService<IDocumentService>();
+    var kbService = sp.GetRequiredService<IKnowledgeBaseService>();
     var cache = sp.GetRequiredService<ICacheManager>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var promptService = sp.GetRequiredService<IPromptService>();
@@ -775,19 +782,19 @@ builder.Services.AddScoped<IChatService>(sp =>
     var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new ChatService(modelScheduler, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
+    return new ChatService(modelScheduler, sessionService, kbService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
 {
     var llmClient = sp.GetRequiredService<ILLMClient>();
     var sessionService = sp.GetRequiredService<ISessionService>();
-    var documentService = sp.GetRequiredService<IDocumentService>();
+    var kbSvc = sp.GetRequiredService<IKnowledgeBaseService>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var settingsService = sp.GetRequiredService<IAppSettingsService>();
     var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
-    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx, settingsService, systemPromptService);
+    return new PreviewAskService(llmClient, sessionService, kbSvc, promptManager, llmCtx, settingsService, systemPromptService);
 });
 
 // 引导讲解体系已删除（去阶段化）

@@ -36,11 +36,6 @@ public class GroupRepository : IGroupRepository
         await _groups.DeleteOneAsync(g => g.GroupId == groupId);
     }
 
-    public async Task<long> CountByPrdDocumentIdAsync(string prdDocumentId)
-    {
-        return await _groups.CountDocumentsAsync(g => g.PrdDocumentId == prdDocumentId);
-    }
-
     public async Task UpdateInviteCodeAsync(string groupId, string newCode)
     {
         await _groups.UpdateOneAsync(
@@ -53,30 +48,11 @@ public class GroupRepository : IGroupRepository
         return await _groups.Find(g => groupIds.Contains(g.GroupId)).ToListAsync();
     }
 
-    public async Task UpdatePrdAsync(
-        string groupId,
-        string prdDocumentId,
-        string? prdTitleSnapshot,
-        int? prdTokenEstimateSnapshot,
-        int? prdCharCountSnapshot)
+    public async Task UpdateKbStatusAsync(string groupId, bool hasKb, int docCount)
     {
         var update = Builders<Group>.Update
-            .Set(g => g.PrdDocumentId, prdDocumentId)
-            .Set(g => g.PrdTitleSnapshot, prdTitleSnapshot)
-            .Set(g => g.PrdTokenEstimateSnapshot, prdTokenEstimateSnapshot)
-            .Set(g => g.PrdCharCountSnapshot, prdCharCountSnapshot);
-
-        await _groups.UpdateOneAsync(g => g.GroupId == groupId, update);
-    }
-
-    public async Task ClearPrdAsync(string groupId)
-    {
-        var update = Builders<Group>.Update
-            .Set(g => g.PrdDocumentId, "")
-            .Set(g => g.PrdTitleSnapshot, null)
-            .Set(g => g.PrdTokenEstimateSnapshot, null)
-            .Set(g => g.PrdCharCountSnapshot, null);
-
+            .Set(g => g.HasKnowledgeBase, hasKb)
+            .Set(g => g.KbDocumentCount, docCount);
         await _groups.UpdateOneAsync(g => g.GroupId == groupId, update);
     }
 

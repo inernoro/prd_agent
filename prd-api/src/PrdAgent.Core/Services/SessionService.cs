@@ -19,13 +19,13 @@ public class SessionService : ISessionService
         _sessionTimeout = TimeSpan.FromMinutes(timeoutMinutes);
     }
 
-    public async Task<Session> CreateAsync(string documentId, string? groupId = null)
+    public async Task<Session> CreateAsync(string? groupId = null)
     {
+        var gid = (groupId ?? string.Empty).Trim();
         var session = new Session
         {
             SessionId = await _idGenerator.GenerateIdAsync("session"),
-            DocumentId = documentId,
-            GroupId = groupId,
+            GroupId = string.IsNullOrWhiteSpace(gid) ? null : gid,
             CurrentRole = UserRole.PM,
             Mode = InteractionMode.QA
         };

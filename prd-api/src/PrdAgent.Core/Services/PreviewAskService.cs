@@ -16,7 +16,7 @@ public class PreviewAskService : IPreviewAskService
 {
     private readonly ILLMClient _llmClient;
     private readonly ISessionService _sessionService;
-    private readonly IDocumentService _documentService;
+    private readonly IKnowledgeBaseService _kbService;
     private readonly IPromptManager _promptManager;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAppSettingsService _settingsService;
@@ -25,7 +25,7 @@ public class PreviewAskService : IPreviewAskService
     public PreviewAskService(
         ILLMClient llmClient,
         ISessionService sessionService,
-        IDocumentService documentService,
+        IKnowledgeBaseService kbService,
         IPromptManager promptManager,
         ILLMRequestContextAccessor llmRequestContext,
         IAppSettingsService settingsService,
@@ -33,7 +33,7 @@ public class PreviewAskService : IPreviewAskService
     {
         _llmClient = llmClient;
         _sessionService = sessionService;
-        _documentService = documentService;
+        _kbService = kbService;
         _promptManager = promptManager;
         _llmRequestContext = llmRequestContext;
         _settingsService = settingsService;
@@ -89,19 +89,23 @@ public class PreviewAskService : IPreviewAskService
         // “本章提问”也视为会话活跃：刷新 LastActiveAt 与 TTL，避免用户在预览页连续使用但会话仍自然过期。
         await _sessionService.RefreshActivityAsync(sessionId);
 
-        var document = await _documentService.GetByIdAsync(session.DocumentId);
-        if (document == null)
+        var kbDocs = !string.IsNullOrEmpty(session.GroupId)
+            ? await _kbService.GetActiveDocumentsAsync(session.GroupId)
+            : new List<KbDocument>();
+        if (kbDocs.Count == 0)
         {
             yield return new PreviewAskStreamEvent
             {
                 Type = "error",
                 ErrorCode = ErrorCodes.DOCUMENT_NOT_FOUND,
-                ErrorMessage = "文档不存在或已过期"
+                ErrorMessage = "群组未绑定知识库文档"
             };
             yield break;
         }
 
-        var raw = document.RawContent ?? string.Empty;
+        var raw = string.Join("\n\n", kbDocs
+            .Where(d => d.TextContent != null)
+            .Select(d => d.TextContent!));
         var sectionMarkdown = ExtractSectionMarkdown(raw, hId, headingTitle);
         if (string.IsNullOrWhiteSpace(sectionMarkdown))
         {

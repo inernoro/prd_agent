@@ -359,17 +359,17 @@ public class OpenPlatformChatController : ControllerBase
 
         // 获取群组信息
         var group = await _groupService.GetByIdAsync(targetGroupId);
-        if (group == null || string.IsNullOrWhiteSpace(group.PrdDocumentId))
+        if (group == null || !group.HasKnowledgeBase)
         {
             Response.StatusCode = 404;
-            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Group or PRD document not found", type = "not_found" } });
+            var errorResponse = JsonSerializer.Serialize(new { error = new { message = "Group or KB documents not found", type = "not_found" } });
             await Response.WriteAsync(errorResponse);
             await LogRequestAsync(appId, requestId, startedAt, 404, "GROUP_NOT_FOUND", boundUserId, targetGroupId, null, sw.ElapsedMilliseconds, responseBody: errorResponse);
             return;
         }
 
         // 创建会话
-        var session = await _sessionService.CreateAsync(group.PrdDocumentId, targetGroupId);
+        var session = await _sessionService.CreateAsync(targetGroupId);
         var sessionId = session.SessionId;
 
         // 提取最后一条用户消息

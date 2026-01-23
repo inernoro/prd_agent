@@ -16,9 +16,6 @@ public class Session
     /// </summary>
     public string? OwnerUserId { get; set; }
     
-    /// <summary>关联的文档ID</summary>
-    public string DocumentId { get; set; } = string.Empty;
-
     /// <summary>会话标题（可选：用于 IM 形态的会话列表展示）</summary>
     public string? Title { get; set; }
     

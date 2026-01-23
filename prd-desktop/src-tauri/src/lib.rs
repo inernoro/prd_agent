@@ -160,9 +160,11 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
-            commands::document::upload_document,
-            commands::document::get_document,
-            commands::document::get_document_content,
+            commands::kb::list_kb_documents,
+            commands::kb::upload_kb_documents,
+            commands::kb::replace_kb_document,
+            commands::kb::delete_kb_document,
+            commands::kb::get_kb_document_content,
             commands::intent::suggest_group_name,
             commands::session::get_session,
             commands::session::get_message_history,
@@ -186,7 +188,6 @@ pub fn run() {
             commands::group::join_group,
             commands::group::get_groups,
             commands::group::open_group_session,
-            commands::group::bind_group_prd,
             commands::group::dissolve_group,
             commands::group::get_group_members,
             commands::group::clear_group_context,
