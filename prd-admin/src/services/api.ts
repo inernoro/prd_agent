@@ -254,6 +254,7 @@ export const api = {
         asset: (id: string, assetId: string) => `/api/visual-agent/image-master/workspaces/${id}/assets/${assetId}`,
         imageGenRuns: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/image-gen/runs`,
         coverRefresh: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/cover/refresh`,
+        generateTitle: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/generate-title`,
         article: {
           generateMarkers: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/article/generate-markers`,
           extractMarkers: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/article/extract-markers`,

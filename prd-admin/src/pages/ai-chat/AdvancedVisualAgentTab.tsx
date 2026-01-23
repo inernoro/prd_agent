@@ -11,6 +11,7 @@ import {
   addVisualAgentWorkspaceMessage,
   deleteVisualAgentWorkspaceAsset,
   createWorkspaceImageGenRun,
+  generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
   getImageGenSizeCaps,
   getModels,
@@ -44,7 +45,6 @@ import {
   ArrowUp,
   ArrowUpToLine,
   ArrowDownToLine,
-  AtSign,
   Check,
   ChevronUp,
   ChevronDown,
@@ -58,7 +58,6 @@ import {
   MapPin,
   Maximize2,
   MousePointer2,
-  Paperclip,
   Plus,
   SlidersHorizontal,
   Sparkles,
@@ -794,6 +793,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [modelPrefOpen, setModelPrefOpen] = useState(false);
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
+  const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
 
   // 水印配置
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
@@ -867,6 +867,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ts: Date.now(),
     },
   ]);
+
+  const [expandedMsgIds, setExpandedMsgIds] = useState<Set<string>>(new Set());
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
@@ -1501,6 +1503,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 重要：pushMsg 需要稳定引用（供多个 useEffect 依赖），并且不能直接依赖 workspace state（否则每次 render 变更都触发 effect）
   const workspaceRef = useRef<VisualAgentWorkspace | null>(null);
+  const titleGenTriggeredRef = useRef(false);
   useEffect(() => {
     workspaceRef.current = workspace;
   }, [workspace]);
@@ -2359,15 +2362,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /** 动画移动视角并适配尺寸，使指定矩形区域完整显示在视口中 */
   const animateCameraToFitRect = useCallback(
-    (rect: { x: number; y: number; w: number; h: number }) => {
+    (rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number }) => {
       if (!stageSize.w || !stageSize.h) return;
       const pad = 60; // 留边距
       const viewW = Math.max(1, stageSize.w - pad * 2);
       const viewH = Math.max(1, stageSize.h - pad * 2);
       const rectW = Math.max(1, rect.w);
       const rectH = Math.max(1, rect.h);
+      const maxZ = opts?.maxZoom ?? 1;
       // 计算合适的缩放比例，使矩形能够完整显示
-      const targetZoom = clampZoom(Math.min(viewW / rectW, viewH / rectH, 1)); // 最大不超过 100%
+      const targetZoom = clampZoom(Math.min(viewW / rectW, viewH / rectH, maxZ));
       const worldCx = rect.x + rectW / 2;
       const worldCy = rect.y + rectH / 2;
       const fromZoom = zoomRef.current;
@@ -2481,22 +2485,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     });
   };
 
-  const insertTextAtCursor = (text: string, opts?: { openMention?: boolean }) => {
-    const ta = getActiveTa();
-    if (!ta) return;
-    const value = ta.value ?? '';
-    const start = ta.selectionStart ?? value.length;
-    const end = ta.selectionEnd ?? start;
-    const next = value.slice(0, start) + text + value.slice(end);
-    setActiveValue(next);
-    requestAnimationFrame(() => {
-      ta.focus();
-      const pos = start + text.length;
-      ta.setSelectionRange(pos, pos);
-      if (opts?.openMention) refreshMention(next, pos);
-    });
-  };
-
   const findAtomicTagRangeAt = (s: string, caret: number) => {
     const patterns = [
       /@model\([^)]+\)\s?/g,
@@ -2547,32 +2535,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const bottom = `└${'─'.repeat(width)}┘`;
     const body = lines.map((l) => `│${padLine(l)}│`).join('\n');
     return `${top}\n${body}\n${bottom}`;
-  };
-
-  const refreshMention = (val: string, caret: number) => {
-    // 快捷输入面板：暂不弹 @ 菜单（避免菜单出现在右侧输入框区域）；仍可手动输入 @tag
-    if (activeComposerRef.current === 'quick') return;
-    const s = String(val ?? '');
-    const pos = Math.max(0, Math.min(caret, s.length));
-    const before = s.slice(0, pos);
-    const at = before.lastIndexOf('@');
-    if (at < 0) {
-      setMentionOpen(false);
-      setMentionQuery('');
-      setMentionAtPos(null);
-      return;
-    }
-    const token = before.slice(at + 1);
-    // token 内出现空白/换行，视为不在 @ 模式
-    if (token.length > 24 || /\s/.test(token)) {
-      setMentionOpen(false);
-      setMentionQuery('');
-      setMentionAtPos(null);
-      return;
-    }
-    setMentionAtPos(at);
-    setMentionQuery(token.toLowerCase());
-    setMentionOpen(true);
   };
 
   const extractForcedImageModel = (text: string): { forced: Model | null; clean: string } => {
@@ -3207,6 +3169,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     pendingJobsRef.current.push(job);
     setPendingCount(pendingJobsRef.current.length);
     drainGenQueue();
+
+    // 首次发送时，自动生成工作区标题
+    if (!titleGenTriggeredRef.current && workspaceId) {
+      const ws = workspaceRef.current;
+      if (!ws || ws.title === '未命名' || !ws.title) {
+        titleGenTriggeredRef.current = true;
+        generateVisualAgentWorkspaceTitle(workspaceId, cleanDisplay).then((res) => {
+          if (res.success && res.data?.title) {
+            setWorkspace((prev) => prev ? { ...prev, title: res.data.title } : prev);
+          }
+        }).catch(() => { /* ignore */ });
+      }
+    }
   };
 
   // 重试生成：使用保存的参考图信息
@@ -5687,7 +5662,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 title="图像生成器（A）"
                 aria-label="图像生成器"
                 onClick={() => {
-                  // 允许创建多个“生成器区域”：每次点击都新建一个（不覆盖旧的）
+                  // 允许创建多个"生成器区域"：每次点击都新建一个（不覆盖旧的）
                   const w = 1024;
                   const h = 1024;
                   const near = stageCenterWorld();
@@ -5724,9 +5699,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   requestAnimationFrame(() => {
                     const f = focusKeyRef.current;
                     if (!f || f.key !== key) return;
-                    // 新图可能很大，移动视角前先适配尺寸
+                    // 生成器区域固定缩放 30%，避免过大
                     if (f.w && f.h) {
-                      animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h });
+                      animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h }, { maxZoom: 0.3 });
                     } else {
                       animateCameraToWorldCenter(f.cx, f.cy);
                     }
@@ -5977,10 +5952,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
                 const msgSize = String(sizedMsg.size ?? '').trim();
                 const msgBody = String(sizedMsg.cleanText ?? '');
+                const MSG_COLLAPSE_THRESHOLD = 100;
+                const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
+                const isExpanded = expandedMsgIds.has(m.id);
                 return (
                   <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className="group relative max-w-[95%] rounded-[10px] px-2.5 pt-1.5 pb-4 text-[12px] leading-[16px]"
+                      className="group relative max-w-[95%] rounded-[10px] px-2.5 pt-1.5 text-[12px] leading-[16px]"
                       style={{
                         background: isUser
                           ? 'rgba(214, 178, 106, 0.12)'
@@ -5989,6 +5967,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         color: 'var(--text-primary)',
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
+                        paddingBottom: isLongMsg ? 4 : 16,
                       }}
                     >
                       <span
@@ -5997,96 +5976,113 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       >
                         {formatMsgTimestamp(m.ts)}
                       </span>
-                      {isUser && (refSrc || msgSize) ? (
-                        <span className="flex flex-wrap items-center gap-x-1.5">
-                          {refSrc ? (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1.5"
-                              style={{
-                                height: 20,
-                                maxWidth: 240,
-                                paddingLeft: 6,
-                                paddingRight: 8,
-                                borderRadius: 4,
-                                overflow: 'hidden',
-                                border: '1px solid var(--border-subtle)',
-                                background: 'rgba(214, 178, 106, 0.12)',
-                              }}
-                              title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
-                              aria-label="预览参考图"
-                              onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
-                            >
-                              <span
+                      <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
+                        {isUser && (refSrc || msgSize) ? (
+                          <span className="flex flex-wrap items-center gap-x-1.5">
+                            {refSrc ? (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5"
                                 style={{
-                                  width: 18,
-                                  height: 18,
+                                  height: 20,
+                                  maxWidth: 240,
+                                  paddingLeft: 6,
+                                  paddingRight: 8,
                                   borderRadius: 4,
                                   overflow: 'hidden',
-                                  border: '1px solid rgba(255,255,255,0.22)',
-                                  background: 'rgba(255,255,255,0.06)',
-                                  display: 'inline-flex',
-                                  flex: '0 0 auto',
+                                  border: '1px solid var(--border-subtle)',
+                                  background: 'rgba(214, 178, 106, 0.12)',
                                 }}
+                                title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
+                                aria-label="预览参考图"
+                                onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
                               >
-                                <img
-                                  src={refSrc}
-                                  alt={refName || '参照图'}
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                                />
-                              </span>
-                              <span
+                                <span
+                                  style={{
+                                    width: 18,
+                                    height: 18,
+                                    borderRadius: 4,
+                                    overflow: 'hidden',
+                                    border: '1px solid rgba(255,255,255,0.22)',
+                                    background: 'rgba(255,255,255,0.06)',
+                                    display: 'inline-flex',
+                                    flex: '0 0 auto',
+                                  }}
+                                >
+                                  <img
+                                    src={refSrc}
+                                    alt={refName || '参照图'}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                  />
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: 14,
+                                    lineHeight: '20px',
+                                    color: 'rgba(255,255,255,0.82)',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    maxWidth: 200,
+                                  }}
+                                >
+                                {refName}
+                                </span>
+                              </button>
+                            ) : null}
+
+                            {msgSize ? (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5"
                                 style={{
-                                  fontSize: 14,
-                                  lineHeight: '20px',
-                                  color: 'rgba(255,255,255,0.82)',
-                                  whiteSpace: 'nowrap',
+                                  height: 20,
+                                  paddingLeft: 6,
+                                  paddingRight: 8,
+                                  borderRadius: 4,
                                   overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  maxWidth: 200,
+                                  border: '1px solid var(--border-subtle)',
+                                  background: 'rgba(214, 178, 106, 0.10)',
                                 }}
+                                aria-label="尺寸"
+                                title={`尺寸：${msgSize}`}
                               >
-                              {refName}
-                              </span>
-                            </button>
-                          ) : null}
+                                <AspectIcon size={msgSize} />
+                                <span
+                                  className="tabular-nums"
+                                  style={{
+                                    fontSize: 14,
+                                    lineHeight: '20px',
+                                    color: 'rgba(255,255,255,0.82)',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {msgSize}
+                                </span>
+                              </button>
+                            ) : null}
 
-                          {msgSize ? (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1.5"
-                              style={{
-                                height: 20,
-                                paddingLeft: 6,
-                                paddingRight: 8,
-                                borderRadius: 4,
-                                overflow: 'hidden',
-                                border: '1px solid var(--border-subtle)',
-                                background: 'rgba(214, 178, 106, 0.10)',
-                              }}
-                              aria-label="尺寸"
-                              title={`尺寸：${msgSize}`}
-                            >
-                              <AspectIcon size={msgSize} />
-                              <span
-                                className="tabular-nums"
-                                style={{
-                                  fontSize: 14,
-                                  lineHeight: '20px',
-                                  color: 'rgba(255,255,255,0.82)',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {msgSize}
-                              </span>
-                            </button>
-                          ) : null}
-
-                          <span style={{ lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msgBody}</span>
-                        </span>
-                      ) : (
-                        msgBody
-                      )}
+                            <span style={{ lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msgBody}</span>
+                          </span>
+                        ) : (
+                          msgBody
+                        )}
+                      </div>
+                      {isLongMsg ? (
+                        <button
+                          type="button"
+                          className="mt-0.5 text-[10px] font-medium"
+                          style={{ color: 'rgba(99, 102, 241, 0.85)' }}
+                          onClick={() => setExpandedMsgIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(m.id)) next.delete(m.id);
+                            else next.add(m.id);
+                            return next;
+                          })}
+                        >
+                          {isExpanded ? '收起' : '展开'}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -6212,204 +6208,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </button>
                   ))}
 
-                  {/* 尺寸选择器（单选/多选都显示） */}
-                  <>
-                    {/* 档位选择器（1K/2K/4K） */}
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-0.5"
-                            style={{
-                              height: 20,
-                              paddingLeft: 6,
-                              paddingRight: 6,
-                              borderRadius: 4,
-                              overflow: 'hidden',
-                              border: '1px solid var(--border-subtle)',
-                              background: 'rgba(255,255,255,0.02)',
-                              color: 'rgba(255,255,255,0.82)',
-                            }}
-                            title="选择档位"
-                            aria-label="选择档位"
-                          >
-                            {(() => {
-                              const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                              const tier = detectTierFromSize(size);
-                              return (
-                                <>
-                                  <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                    {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
-                                  </span>
-                                  <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                    ▾
-                                  </span>
-                                </>
-                              );
-                            })()}
-                          </button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            side="top"
-                            align="start"
-                            sideOffset={8}
-                            className="rounded-[12px] p-1 min-w-[80px]"
-                            style={{
-                              outline: 'none',
-                              zIndex: 90,
-                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                            }}
-                          >
-                            {(['1k', '2k', '4k'] as const).map((tier) => {
-                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                              const currentTier = detectTierFromSize(currentSize);
-                              const isSelected = currentTier === tier;
-                              const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-
-                              return (
-                                <DropdownMenu.Item
-                                  key={tier}
-                                  className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                                  style={{
-                                    color: 'var(--text-primary)',
-                                    background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                    borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                                  }}
-                                  onSelect={() => {
-                                    const currentAspect = detectAspectFromSize(currentSize);
-                                    const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                                    if (!targetOpt) return;
-
-                                    const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                    const sizeKey = newSize.trim().toLowerCase();
-                                    const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-
-                                    if (!supported) {
-                                      const fallback = findClosestSize(newSize, allowedSizes);
-                                      if (fallback) {
-                                        composerSizeAutoRef.current = false;
-                                        setComposerSize(fallback);
-                                      }
-                                    } else {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(newSize);
-                                    }
-                                    requestAnimationFrame(() => inputRef.current?.focus());
-                                  }}
-                                >
-                                  <span className="font-semibold">{label}</span>
-                                </DropdownMenu.Item>
-                              );
-                            })}
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
-
-                      {/* 比例选择器 */}
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-0.5"
-                            style={{
-                              height: 20,
-                              paddingLeft: 6,
-                              paddingRight: 6,
-                              borderRadius: 4,
-                              overflow: 'hidden',
-                              border: '1px solid var(--border-subtle)',
-                              background: 'rgba(255,255,255,0.02)',
-                              color: 'rgba(255,255,255,0.82)',
-                            }}
-                            title="选择比例"
-                            aria-label="选择比例"
-                          >
-                            {(() => {
-                              const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                              const aspect = detectAspectFromSize(size);
-                              return (
-                                <>
-                                  <AspectIcon size={size} />
-                                  <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                    {aspect || '1:1'}
-                                  </span>
-                                  <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                    ▾
-                                  </span>
-                                </>
-                              );
-                            })()}
-                          </button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            side="top"
-                            align="start"
-                            sideOffset={8}
-                            className="rounded-[12px] p-1 min-w-[120px]"
-                            style={{
-                              outline: 'none',
-                              zIndex: 90,
-                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                            }}
-                          >
-                            {ASPECT_OPTIONS.map((opt) => {
-                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                              const currentAspect = detectAspectFromSize(currentSize);
-                              const currentTier = detectTierFromSize(currentSize);
-                              const isSelected = currentAspect === opt.id;
-
-                              const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                              const sizeKey = targetSize.trim().toLowerCase();
-                              const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-
-                              return (
-                                <DropdownMenu.Item
-                                  key={opt.id}
-                                  className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                                  style={{
-                                    color: 'var(--text-primary)',
-                                    background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                    borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                                    opacity: supported ? 1 : 0.5,
-                                  }}
-                                  onSelect={() => {
-                                    if (!supported) {
-                                      const fallback = findClosestSize(targetSize, allowedSizes);
-                                      if (fallback) {
-                                        composerSizeAutoRef.current = false;
-                                        setComposerSize(fallback);
-                                      }
-                                    } else {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(targetSize);
-                                    }
-                                    requestAnimationFrame(() => inputRef.current?.focus());
-                                  }}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <AspectIcon size={targetSize} />
-                                    <span className="font-semibold">{opt.label}</span>
-                                  </div>
-                                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                    {targetSize}
-                                  </span>
-                                </DropdownMenu.Item>
-                              );
-                            })}
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
-                  </>
                 </div>
               ) : null}
 
@@ -6432,7 +6230,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   paddingTop: composerMetaPadTop,
                 }}
                 minHeight={MIN_TA_HEIGHT}
-                maxHeight="50%"
+                maxHeight={120}
               />
 
               {mentionOpen ? (
@@ -6553,37 +6351,130 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               ) : null}
 
               <div className="mt-1 flex items-center justify-between gap-1.5">
-                {/* 左侧：附件 + @（强制入口） */}
-                <div className="flex items-center gap-1.5">
+                {/* 左侧：尺寸/比例选择器 */}
+                <div className="relative flex items-center gap-1.5">
                   <button
                     type="button"
-                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
+                    className="h-7 px-2 rounded-full inline-flex items-center gap-1"
                     style={{
                       border: '1px solid rgba(255,255,255,0.10)',
-                      background: 'rgba(255,255,255,0.04)',
+                      background: sizeSelectorOpen ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
                       color: 'var(--text-secondary)',
+                      fontSize: 11,
+                      fontWeight: 600,
                     }}
-                    aria-label="附件"
-                    title="附件"
-                    onClick={() => openImageFilePicker()}
+                    aria-label="尺寸比例"
+                    title="选择分辨率和比例"
+                    onClick={() => setSizeSelectorOpen((v) => !v)}
                   >
-                    <Paperclip size={14} />
+                    {(() => {
+                      const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                      const tier = detectTierFromSize(size);
+                      const aspect = detectAspectFromSize(size);
+                      const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                      return (
+                        <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>
+                      );
+                    })()}
+                    <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>▾</span>
                   </button>
 
-                  <button
-                    type="button"
-                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
-                    style={{
-                      border: '1px solid rgba(255,255,255,0.10)',
-                      background: 'rgba(255,255,255,0.04)',
-                      color: 'var(--text-secondary)',
-                    }}
-                    aria-label="@"
-                    title="@"
-                    onClick={() => insertTextAtCursor('@', { openMention: true })}
-                  >
-                    <AtSign size={14} />
-                  </button>
+                  {/* 尺寸/比例 Popover */}
+                  {sizeSelectorOpen ? (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setSizeSelectorOpen(false)} />
+                      <div
+                        className="absolute bottom-full left-0 mb-2 z-50 rounded-[14px] p-3"
+                        style={{
+                          width: 260,
+                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                        }}
+                      >
+                        {/* 分辨率（档位） */}
+                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>分辨率</div>
+                        <div className="grid grid-cols-3 gap-1.5 mb-3">
+                          {(['1k', '2k', '4k'] as const).map((tier) => {
+                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const currentTier = detectTierFromSize(currentSize);
+                            const isSelected = currentTier === tier;
+                            const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                            return (
+                              <button
+                                key={tier}
+                                type="button"
+                                className="h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
+                                style={{
+                                  background: isSelected ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.04)',
+                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid rgba(255,255,255,0.10)',
+                                  color: isSelected ? 'rgba(99, 102, 241, 1)' : 'var(--text-primary)',
+                                }}
+                                onClick={() => {
+                                  const currentAspect = detectAspectFromSize(currentSize);
+                                  const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                                  if (!targetOpt) return;
+                                  const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
+                                  const sizeKey = newSize.trim().toLowerCase();
+                                  const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                                  if (!supported) {
+                                    const fallback = findClosestSize(newSize, allowedSizes);
+                                    if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
+                                  } else {
+                                    composerSizeAutoRef.current = false;
+                                    setComposerSize(newSize);
+                                  }
+                                }}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* 比例 */}
+                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>Size</div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {ASPECT_OPTIONS.map((opt) => {
+                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const currentAspect = detectAspectFromSize(currentSize);
+                            const currentTier = detectTierFromSize(currentSize);
+                            const isSelected = currentAspect === opt.id;
+                            const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+                            const sizeKey = targetSize.trim().toLowerCase();
+                            const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[8px] transition-colors"
+                                style={{
+                                  background: isSelected ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.04)',
+                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid rgba(255,255,255,0.10)',
+                                  color: isSelected ? 'rgba(99, 102, 241, 1)' : 'var(--text-primary)',
+                                  opacity: supported ? 1 : 0.5,
+                                }}
+                                onClick={() => {
+                                  if (!supported) {
+                                    const fallback = findClosestSize(targetSize, allowedSizes);
+                                    if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
+                                  } else {
+                                    composerSizeAutoRef.current = false;
+                                    setComposerSize(targetSize);
+                                  }
+                                }}
+                              >
+                                <AspectIcon size={targetSize} />
+                                <span className="text-[10px] font-semibold">{opt.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
 
                 {/* 右侧：模型偏好 + 发送 */}

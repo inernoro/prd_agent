@@ -14,6 +14,7 @@ public interface IModelDomainService
 {
     Task<ILLMClient> GetClientAsync(ModelPurpose purpose, CancellationToken ct = default);
     Task<string> SuggestGroupNameAsync(string? fileName, string snippet, CancellationToken ct = default);
+    Task<string> SuggestWorkspaceTitleAsync(string prompt, CancellationToken ct = default);
 }
 
 

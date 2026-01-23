@@ -152,6 +152,13 @@ export const deleteVisualAgentWorkspaceReal: DeleteVisualAgentWorkspaceContract 
   });
 };
 
+export const generateVisualAgentWorkspaceTitleReal = async (workspaceId: string, prompt: string) => {
+  return await apiRequest<{ title: string }>(api.visualAgent.imageMaster.workspaces.generateTitle(encodeURIComponent(workspaceId)), {
+    method: 'POST',
+    body: { prompt },
+  });
+};
+
 export const getVisualAgentWorkspaceDetailReal: GetVisualAgentWorkspaceDetailContract = async (input) => {
   const qs = new URLSearchParams();
   if (input.messageLimit != null) qs.set('messageLimit', String(input.messageLimit));

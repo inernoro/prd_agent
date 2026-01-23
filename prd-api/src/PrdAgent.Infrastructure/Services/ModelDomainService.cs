@@ -156,6 +156,58 @@ public class ModelDomainService : IModelDomainService
         return name;
     }
 
+    public async Task<string> SuggestWorkspaceTitleAsync(string prompt, CancellationToken ct = default)
+    {
+        var safePrompt = (prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(safePrompt))
+        {
+            return "未命名";
+        }
+
+        // 截取前 200 字作为输入，避免过长
+        if (safePrompt.Length > 200)
+            safePrompt = safePrompt[..200];
+
+        var client = await GetClientAsync(ModelPurpose.Intent, ct);
+
+        var requestId = Guid.NewGuid().ToString("N");
+        using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: null,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "意图：根据用户图像生成提示词生成工作区标题（5-20字）",
+            RequestType: "intent",
+            RequestPurpose: "prd-agent-web::visual-agent.workspace-title"));
+
+        var systemPrompt =
+            "你是视觉创作工作区的命名助手。\n" +
+            "任务：根据用户的图像生成提示词，生成一个简短的工作区标题。\n" +
+            "强制要求：\n" +
+            "- 只输出一个标题（单行），不要解释、不要提问\n" +
+            "- 5-20个字，优先中文（允许混合英文）\n" +
+            "- 概括用户意图的核心主题（如"科技感海报"、"水彩风景插画"）\n" +
+            "- 避免使用引号、前缀（如"标题："）、标点符号\n" +
+            "输出格式：仅标题本身";
+
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = "user", Content = $"用户提示词：{safePrompt}" }
+        };
+
+        var text = await CollectToTextAsync(client, systemPrompt, messages, enablePromptCache: false, ct);
+        var title = NormalizeName(text);
+        if (string.IsNullOrWhiteSpace(title) || !LooksLikeAName(title) || title.Length > 20)
+        {
+            // 启发式兜底：截取提示词前 15 字
+            title = safePrompt.Length > 15 ? safePrompt[..15] + "…" : safePrompt;
+        }
+        return title;
+    }
+
     private async Task<LLMModel?> FindPurposeModelAsync(ModelPurpose purpose, CancellationToken ct)
     {
         var q = purpose switch
