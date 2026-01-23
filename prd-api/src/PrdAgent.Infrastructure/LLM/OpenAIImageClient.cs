@@ -131,6 +131,8 @@ public class OpenAIImageClient
         string? apiKey;
         string? platformType;
         string effectiveModelName;
+        string? platformIdForLog = null;
+        string? platformNameForLog = null;
         if (model != null)
         {
             var cfg = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
@@ -138,6 +140,13 @@ public class OpenAIImageClient
             apiKey = cfg.apiKey;
             platformType = cfg.platformType;
             effectiveModelName = model.ModelName;
+            platformIdForLog = model.PlatformId;
+            // 查询平台名称用于日志
+            if (!string.IsNullOrWhiteSpace(model.PlatformId))
+            {
+                var plt = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
+                platformNameForLog = plt?.Name;
+            }
         }
         else
         {
@@ -146,6 +155,8 @@ public class OpenAIImageClient
             apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
             platformType = platform.PlatformType?.ToLowerInvariant();
             effectiveModelName = requestedModelName ?? string.Empty;
+            platformIdForLog = platform.Id;
+            platformNameForLog = platform.Name;
             if (string.IsNullOrWhiteSpace(effectiveModelName))
             {
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未提供 modelName（平台回退调用需要 modelName）");
@@ -436,7 +447,9 @@ public class OpenAIImageClient
                     UserPromptChars: prompt.Trim().Length,
                     StartedAt: startedAt,
                     RequestType: (ctx?.RequestType ?? "imageGen"),
-                    RequestPurpose: (ctx?.RequestPurpose ?? "prd-agent-web::image-gen.generate")),
+                    RequestPurpose: (ctx?.RequestPurpose ?? "prd-agent-web::image-gen.generate"),
+                    PlatformId: platformIdForLog,
+                    PlatformName: platformNameForLog),
                 ct);
         }
 
