@@ -6387,7 +6387,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setSizeSelectorOpen(false)} />
                       <div
-                        className="absolute bottom-full left-0 mb-2 z-50 rounded-[14px] p-3"
+                        className="absolute bottom-full right-0 mb-2 z-50 rounded-[14px] p-3"
                         style={{
                           width: 260,
                           background: 'rgba(32, 32, 36, 0.96)',
