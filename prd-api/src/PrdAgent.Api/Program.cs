@@ -149,6 +149,11 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
+// 缺陷管理 Agent：代码访问 + 审核/修复 Worker
+builder.Services.AddSingleton<ICodeProviderFactory, PrdAgent.Infrastructure.Services.CodeProviderFactory>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DefectReviewWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DefectFixWorker>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {

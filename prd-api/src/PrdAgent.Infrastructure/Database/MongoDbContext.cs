@@ -92,6 +92,14 @@ public class MongoDbContext
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
 
+    // Defect Agent
+    public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
+    public IMongoCollection<DefectReview> DefectReviews => _database.GetCollection<DefectReview>("defect_reviews");
+    public IMongoCollection<DefectFix> DefectFixes => _database.GetCollection<DefectFix>("defect_fixes");
+    public IMongoCollection<DefectProduct> DefectProducts => _database.GetCollection<DefectProduct>("defect_products");
+    public IMongoCollection<DefectRepoConfig> DefectRepoConfigs => _database.GetCollection<DefectRepoConfig>("defect_repo_configs");
+    public IMongoCollection<DefectGithubToken> DefectGithubTokens => _database.GetCollection<DefectGithubToken>("defect_github_tokens");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
@@ -627,5 +635,33 @@ public class MongoDbContext
         WatermarkConfigs.Indexes.CreateOne(new CreateIndexModel<WatermarkConfig>(
             Builders<WatermarkConfig>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.AppKeys),
             new CreateIndexOptions { Name = "idx_watermark_configs_user_appkeys" }));
+
+        // DefectReports：按 ownerUserId + status + createdAt
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_owner_created" }));
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_status_created" }));
+
+        // DefectReviews：按 defectId + phase
+        DefectReviews.Indexes.CreateOne(new CreateIndexModel<DefectReview>(
+            Builders<DefectReview>.IndexKeys.Ascending(x => x.DefectId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reviews_defect_created" }));
+
+        // DefectFixes：按 defectId + status
+        DefectFixes.Indexes.CreateOne(new CreateIndexModel<DefectFix>(
+            Builders<DefectFix>.IndexKeys.Ascending(x => x.DefectId).Ascending(x => x.Status),
+            new CreateIndexOptions { Name = "idx_defect_fixes_defect_status" }));
+
+        // DefectRepoConfigs：按 ownerUserId
+        DefectRepoConfigs.Indexes.CreateOne(new CreateIndexModel<DefectRepoConfig>(
+            Builders<DefectRepoConfig>.IndexKeys.Ascending(x => x.OwnerUserId),
+            new CreateIndexOptions { Name = "idx_defect_repo_configs_owner" }));
+
+        // DefectGithubTokens：按 userId
+        DefectGithubTokens.Indexes.CreateOne(new CreateIndexModel<DefectGithubToken>(
+            Builders<DefectGithubToken>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_defect_github_tokens_user" }));
     }
 }

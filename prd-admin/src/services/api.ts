@@ -368,6 +368,34 @@ export const api = {
     },
     prompts: () => '/api/v1/prompts',
   },
+
+  // ============ Defect Agent 缺陷管理 ============
+  defectAgent: {
+    defects: {
+      list: () => '/api/defect-agent/defects',
+      byId: (id: string) => `/api/defect-agent/defects/${id}`,
+      create: () => '/api/defect-agent/defects',
+      submit: (id: string) => `/api/defect-agent/defects/${id}/submit`,
+      fix: (id: string) => `/api/defect-agent/defects/${id}/fix`,
+      verify: (id: string) => `/api/defect-agent/defects/${id}/verify`,
+      close: (id: string) => `/api/defect-agent/defects/${id}/close`,
+      reopen: (id: string) => `/api/defect-agent/defects/${id}/reopen`,
+      reviews: (id: string) => `/api/defect-agent/defects/${id}/reviews`,
+      fixes: (id: string) => `/api/defect-agent/defects/${id}/fixes`,
+      runs: (id: string) => `/api/defect-agent/defects/${id}/runs`,
+    },
+    runs: {
+      stream: (runId: string) => `/api/defect-agent/runs/${runId}/stream`,
+    },
+    repos: {
+      list: () => '/api/defect-agent/repos',
+      create: () => '/api/defect-agent/repos',
+      byId: (id: string) => `/api/defect-agent/repos/${id}`,
+    },
+    stats: {
+      overview: () => '/api/defect-agent/stats',
+    },
+  },
 } as const;
 
 export default api;
