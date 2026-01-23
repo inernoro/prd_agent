@@ -15,26 +15,25 @@ pub struct ApiError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UploadDocumentResponse {
-    pub session_id: String,
-    pub document: DocumentInfo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocumentInfo {
-    pub id: String,
-    pub title: String,
+pub struct KbDocumentInfo {
+    pub document_id: String,
+    pub file_name: String,
+    pub file_type: String,
+    pub file_size: i64,
     pub char_count: i32,
     pub token_estimate: i32,
+    pub uploaded_at: String,
+    pub replace_version: i32,
+    pub has_text_content: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DocumentContentInfo {
-    pub id: String,
-    pub title: String,
-    pub content: String,
+pub struct KbDocumentContentInfo {
+    pub document_id: String,
+    pub file_name: String,
+    pub text_content: Option<String>,
+    pub file_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,10 +55,8 @@ pub struct PrdCommentInfo {
 pub struct SessionInfo {
     pub session_id: String,
     pub group_id: Option<String>,
-    pub document_id: String,
     pub current_role: String,
     pub mode: String,
-    pub guide_step: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,8 +93,9 @@ pub struct GroupInfo {
     pub group_id: String,
     pub group_name: String,
     #[serde(default)]
-    pub prd_document_id: Option<String>,
-    pub prd_title: Option<String>,
+    pub has_knowledge_base: bool,
+    #[serde(default)]
+    pub kb_document_count: i32,
     #[serde(default)]
     pub invite_link: Option<String>,
     pub invite_code: String,
@@ -135,7 +133,8 @@ pub struct GroupMemberTag {
 pub struct OpenGroupSessionResponse {
     pub session_id: String,
     pub group_id: String,
-    pub document_id: String,
+    #[serde(default)]
+    pub kb_document_count: i32,
     pub current_role: String,
 }
 

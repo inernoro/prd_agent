@@ -9,30 +9,30 @@ namespace PrdAgent.Infrastructure.Services;
 public class GroupNameSuggestionService : IGroupNameSuggestionService
 {
     private readonly IGroupService _groupService;
-    private readonly IDocumentService _documentService;
+    private readonly IKnowledgeBaseService _kbService;
     private readonly IModelDomainService _modelDomainService;
     private readonly ILogger<GroupNameSuggestionService> _logger;
 
     public GroupNameSuggestionService(
         IGroupService groupService,
-        IDocumentService documentService,
+        IKnowledgeBaseService kbService,
         IModelDomainService modelDomainService,
         ILogger<GroupNameSuggestionService> logger)
     {
         _groupService = groupService;
-        _documentService = documentService;
+        _kbService = kbService;
         _modelDomainService = modelDomainService;
         _logger = logger;
     }
 
-    public void EnqueueGroupNameSuggestion(string groupId, string? fileName, string prdDocumentId)
+    public void EnqueueGroupNameSuggestion(string groupId, string? fileName)
     {
         // 使用 Task.Run 将任务放到后台线程池执行，不阻塞当前请求
         _ = Task.Run(async () =>
         {
             try
             {
-                await SuggestAndUpdateGroupNameAsync(groupId, fileName, prdDocumentId);
+                await SuggestAndUpdateGroupNameAsync(groupId, fileName);
             }
             catch (Exception ex)
             {
@@ -41,7 +41,7 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
         });
     }
 
-    private async Task SuggestAndUpdateGroupNameAsync(string groupId, string? fileName, string prdDocumentId)
+    private async Task SuggestAndUpdateGroupNameAsync(string groupId, string? fileName)
     {
         try
         {
@@ -56,31 +56,31 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
             // 如果群组已经有自定义名称（不是默认名称），则不覆盖
             if (!IsDefaultOrPlaceholderName(group.GroupName))
             {
-                _logger.LogInformation("Group {GroupId} already has custom name: {GroupName}, skipping suggestion", 
+                _logger.LogInformation("Group {GroupId} already has custom name: {GroupName}, skipping suggestion",
                     groupId, group.GroupName);
                 return;
             }
 
-            // 获取 PRD 文档
-            if (string.IsNullOrWhiteSpace(prdDocumentId))
+            // 获取知识库文档
+            var kbDocs = await _kbService.GetActiveDocumentsAsync(groupId);
+            if (kbDocs.Count == 0)
             {
-                _logger.LogInformation("No PRD document for group {GroupId}, skipping name suggestion", groupId);
+                _logger.LogInformation("No KB documents for group {GroupId}, skipping name suggestion", groupId);
                 return;
             }
 
-            var document = await _documentService.GetByIdAsync(prdDocumentId);
-            if (document == null)
+            // 从首个有内容的文档中提取片段
+            var firstDoc = kbDocs.FirstOrDefault(d => !string.IsNullOrWhiteSpace(d.TextContent));
+            if (firstDoc == null)
             {
-                _logger.LogWarning("PRD document {PrdDocumentId} not found for group {GroupId}", 
-                    prdDocumentId, groupId);
+                _logger.LogInformation("No meaningful text in KB docs for group {GroupId}", groupId);
                 return;
             }
 
-            // 提取文档片段用于生成名称
-            var snippet = ExtractSnippet(document.RawContent);
+            var snippet = ExtractSnippet(firstDoc.TextContent!);
             if (string.IsNullOrWhiteSpace(snippet))
             {
-                _logger.LogInformation("No meaningful snippet from PRD for group {GroupId}", groupId);
+                _logger.LogInformation("No meaningful snippet from KB docs for group {GroupId}", groupId);
                 return;
             }
 
@@ -96,7 +96,7 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
 
             // 更新群组名称
             await _groupService.UpdateGroupNameAsync(groupId, suggestedName);
-            _logger.LogInformation("Successfully updated group {GroupId} name to: {GroupName}", 
+            _logger.LogInformation("Successfully updated group {GroupId} name to: {GroupName}",
                 groupId, suggestedName);
         }
         catch (Exception ex)
@@ -109,8 +109,6 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
     {
         if (string.IsNullOrWhiteSpace(content)) return string.Empty;
 
-        // 目标：尽量提取“有信息密度”的头部若干行（而不是生硬截断前 N 字），
-        // 避免 PRD 开头是模板/目录/版本历史时把模型带偏。
         var s = content.Replace("\r\n", "\n").Replace("\r", "\n");
         var lines = s.Split('\n');
         var picked = new List<string>(capacity: 32);
@@ -125,7 +123,6 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
             var trimmed = line.Trim();
             if (IsNoiseLine(trimmed)) continue;
 
-            // 截断到 maxLength
             var remaining = maxLength - total;
             if (remaining <= 0) break;
             if (trimmed.Length > remaining) trimmed = trimmed[..remaining];
@@ -144,11 +141,8 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
         var s = (name ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(s)) return true;
 
-        // 明确的默认值
         if (string.Equals(s, "新建群组", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.Equals(s, "未命名群组", StringComparison.OrdinalIgnoreCase)) return true;
-
-        // 常见占位/模板/泛词：这些不应被视为“用户自定义群名”，应允许被后台建议覆盖
         if (string.Equals(s, "未命名文档", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.Equals(s, "产品需求文档", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.Equals(s, "需求文档", StringComparison.OrdinalIgnoreCase)) return true;
@@ -164,18 +158,14 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
         var s = (line ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(s)) return true;
 
-        // 模板/目录类噪声（单行）
         var badExact = new[]
         {
             "目录", "版本历史", "更新记录"
         };
         if (badExact.Any(x => string.Equals(s, x, StringComparison.OrdinalIgnoreCase))) return true;
 
-        // Markdown fence 分隔符（会显著降低意图模型判断质量）
         if (string.Equals(s, "```", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.Equals(s, "---", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 }
-
-

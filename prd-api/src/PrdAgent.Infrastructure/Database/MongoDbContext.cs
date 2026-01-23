@@ -39,6 +39,8 @@ public class MongoDbContext
     public IMongoCollection<GroupMessageCounter> GroupMessageCounters => _database.GetCollection<GroupMessageCounter>("group_message_counters");
     public IMongoCollection<ContentGap> ContentGaps => _database.GetCollection<ContentGap>("contentgaps");
     public IMongoCollection<Attachment> Attachments => _database.GetCollection<Attachment>("attachments");
+    // 知识库文档（群组绑定，多文档管理）
+    public IMongoCollection<KbDocument> KbDocuments => _database.GetCollection<KbDocument>("kb_documents");
     public IMongoCollection<LLMConfig> LLMConfigs => _database.GetCollection<LLMConfig>("llmconfigs");
     public IMongoCollection<InviteCode> InviteCodes => _database.GetCollection<InviteCode>("invitecodes");
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
@@ -224,6 +226,20 @@ public class MongoDbContext
         // ContentGaps索引
         ContentGaps.Indexes.CreateOne(new CreateIndexModel<ContentGap>(
             Builders<ContentGap>.IndexKeys.Ascending(g => g.GroupId)));
+
+        // KbDocuments索引
+        try
+        {
+            KbDocuments.Indexes.CreateOne(new CreateIndexModel<KbDocument>(
+                Builders<KbDocument>.IndexKeys.Ascending(d => d.DocumentId),
+                new CreateIndexOptions { Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex)) { }
+        KbDocuments.Indexes.CreateOne(new CreateIndexModel<KbDocument>(
+            Builders<KbDocument>.IndexKeys
+                .Ascending(d => d.GroupId)
+                .Ascending(d => d.Status)
+                .Ascending(d => d.UploadedAt)));
         
         // InviteCodes: 禁止用业务字段 Code 当 _id；统一使用 string Id(Guid) 作为 _id，因此需要对 Code 建唯一索引
         try

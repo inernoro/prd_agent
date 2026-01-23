@@ -6,12 +6,9 @@ namespace PrdAgent.Core.Interfaces;
 public interface IGroupNameSuggestionService
 {
     /// <summary>
-    /// 在后台异步生成并更新群组名称
+    /// 在后台异步生成并更新群组名称（基于知识库文档内容）
     /// </summary>
     /// <param name="groupId">群组ID</param>
-    /// <param name="fileName">文件名（可选）</param>
-    /// <param name="prdDocumentId">PRD文档ID</param>
-    void EnqueueGroupNameSuggestion(string groupId, string? fileName, string prdDocumentId);
+    /// <param name="fileName">文件名（可选，首个上传文件的名称）</param>
+    void EnqueueGroupNameSuggestion(string groupId, string? fileName);
 }
-
-

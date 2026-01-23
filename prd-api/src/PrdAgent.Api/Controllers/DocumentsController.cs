@@ -89,8 +89,8 @@ public class DocumentsController : ControllerBase
             // 保存文档（缓存）
             await _documentService.SaveAsync(parsed);
             
-            // 创建会话
-            var session = await _sessionService.CreateAsync(parsed.Id);
+            // 创建独立会话（调试页：无群组绑定）
+            var session = await _sessionService.CreateAsync();
             // 个人会话：绑定 ownerUserId，便于 IM 形态的会话列表展示
             session.OwnerUserId = userId;
             // 标题：调试页允许客户端传入自定义标题；留空则使用 PRD 标题
@@ -217,11 +217,7 @@ public class DocumentsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
-        if (!string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase))
-        {
-            return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
-        }
+        // 知识库多文档：不再做单文档绑定校验（文档由 kb_documents 管理）
 
         var document = await _documentService.GetByIdAsync(documentId);
         if (document == null)

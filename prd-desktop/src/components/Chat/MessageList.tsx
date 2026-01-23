@@ -332,7 +332,7 @@ function MessageListInner() {
   const hasMoreOlder = useMessageStore((s: MsgStoreState) => s.hasMoreOlder);
   const loadOlderMessages = useMessageStore((s: MsgStoreState) => s.loadOlderMessages);
   const pendingAssistantId = useMessageStore((s: MsgStoreState) => s.pendingAssistantId);
-  const { sessionId, activeGroupId, document: prdDocument } = useSessionStore();
+  const { sessionId, activeGroupId } = useSessionStore();
   const openCitationDrawer = usePrdCitationPreviewStore((s) => s.open);
   const openWithCitations = usePrdPreviewNavStore((s) => s.openWithCitations);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1375,7 +1375,7 @@ function MessageListInner() {
                 showThinking={true}
                 thinkingLabel=""
                 activeGroupId={activeGroupId}
-                prdDocumentId={prdDocument?.id ?? null}
+                prdDocumentId={null}
                 openCitationDrawer={openCitationDrawer as any}
                 openWithCitations={openWithCitations as any}
               />
@@ -1404,7 +1404,7 @@ function MessageListInner() {
             showThinking={showThinking}
             thinkingLabel={thinkingLabel}
             activeGroupId={activeGroupId}
-            prdDocumentId={prdDocument?.id ?? null}
+            prdDocumentId={null}
             openCitationDrawer={openCitationDrawer as any}
             openWithCitations={openWithCitations as any}
           />
