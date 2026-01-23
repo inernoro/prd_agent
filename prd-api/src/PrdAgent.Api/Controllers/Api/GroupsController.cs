@@ -143,8 +143,9 @@ public class GroupsController : ControllerBase
                         Role = owner.Role.ToString()
                     },
                 MemberCount = (int)(memberCount == 0 ? 0 : memberCount),
-                HasKnowledgeBase = g.HasKnowledgeBase,
-                KbDocumentCount = g.KbDocumentCount,
+                PrdTitleSnapshot = g.PrdTitleSnapshot,
+                PrdTokenEstimateSnapshot = g.PrdTokenEstimateSnapshot,
+                PrdCharCountSnapshot = g.PrdCharCountSnapshot,
                 InviteCode = g.InviteCode,
                 InviteExpireAt = g.InviteExpireAt,
                 MaxMembers = g.MaxMembers,
@@ -198,8 +199,9 @@ public class GroupsController : ControllerBase
                     Role = owner.Role.ToString()
                 },
             MemberCount = (int)memberCount,
-            HasKnowledgeBase = group.HasKnowledgeBase,
-            KbDocumentCount = group.KbDocumentCount,
+            PrdTitleSnapshot = group.PrdTitleSnapshot,
+            PrdTokenEstimateSnapshot = group.PrdTokenEstimateSnapshot,
+            PrdCharCountSnapshot = group.PrdCharCountSnapshot,
             InviteCode = group.InviteCode,
             InviteExpireAt = group.InviteExpireAt,
             MaxMembers = group.MaxMembers,
@@ -525,8 +527,9 @@ public class AdminGroupListItem
     public string GroupName { get; set; } = string.Empty;
     public AdminGroupOwner? Owner { get; set; }
     public int MemberCount { get; set; }
-    public bool HasKnowledgeBase { get; set; }
-    public int KbDocumentCount { get; set; }
+    public string? PrdTitleSnapshot { get; set; }
+    public int? PrdTokenEstimateSnapshot { get; set; }
+    public int? PrdCharCountSnapshot { get; set; }
     public string InviteCode { get; set; } = string.Empty;
     public DateTime? InviteExpireAt { get; set; }
     public int MaxMembers { get; set; }

@@ -126,7 +126,7 @@ prd_agent/
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
 | **附件上传** | ⚠️ PARTIAL | Model 定义 + Message.AttachmentIds 关联，无通用上传 Controller |
-| **知识库 (多文档)** | ✅ DONE | KnowledgeBasePage, kbStore, kb.rs, KnowledgeBaseController |
+| **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
 | **i18n** | ❌ NOT_IMPL | 无任何 i18n 基础设施，文案硬编码中文 |
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
@@ -161,9 +161,6 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 | 直接 SSE 流 | Run/Worker + afterSeq 重连 |
 | GuideController | 已删除 |
 | IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
-| DocumentUpload (单文档上传建群) | KnowledgeBasePage (多文档管理) |
-| bind_group_prd (群绑定单PRD) | 知识库多文档 (list/upload/replace/delete) |
-| commands/document.rs | commands/kb.rs |
 
 ### 交叉校验检查点
 

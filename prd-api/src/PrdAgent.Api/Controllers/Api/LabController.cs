@@ -140,11 +140,12 @@ public class LabController : ControllerBase
         Session? session = null;
         if (request.TriggerAiReply)
         {
-            if (!group.HasKnowledgeBase)
+            if (string.IsNullOrEmpty(group.PrdDocumentId))
             {
-                return BadRequest(ApiResponse<object>.Fail("NO_PRD_DOCUMENT", "群组尚未绑定知识库文档，无法触发 AI 回复"));
+                return BadRequest(ApiResponse<object>.Fail("NO_PRD_DOCUMENT", "群组尚未绑定 PRD 文档，无法触发 AI 回复"));
             }
-            session = await _sessionService.CreateAsync(group.GroupId);
+            // 创建一个临时会话用于触发 AI 回复
+            session = await _sessionService.CreateAsync(group.PrdDocumentId, group.GroupId);
         }
 
         // 查找管理员用户信息
@@ -231,9 +232,9 @@ public class LabController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("GROUP_NOT_FOUND", "群组不存在"));
         }
 
-        if (!group.HasKnowledgeBase)
+        if (string.IsNullOrEmpty(group.PrdDocumentId))
         {
-            return BadRequest(ApiResponse<object>.Fail("NO_PRD_DOCUMENT", "群组尚未绑定知识库文档，无法触发 AI 回复"));
+            return BadRequest(ApiResponse<object>.Fail("NO_PRD_DOCUMENT", "群组尚未绑定 PRD 文档，无法触发 AI 回复"));
         }
 
         // 获取三个机器人用户

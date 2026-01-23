@@ -21,7 +21,7 @@ public class GapsController : ControllerBase
 {
     private readonly IGapDetectionService _gapService;
     private readonly IUserService _userService;
-    private readonly IKnowledgeBaseService _kbService;
+    private readonly IDocumentService _documentService;
     private readonly IGroupService _groupService;
     private readonly ILLMClient _llmClient;
     private readonly IPromptManager _promptManager;
@@ -39,7 +39,7 @@ public class GapsController : ControllerBase
     public GapsController(
         IGapDetectionService gapService,
         IUserService userService,
-        IKnowledgeBaseService kbService,
+        IDocumentService documentService,
         IGroupService groupService,
         ILLMClient llmClient,
         IPromptManager promptManager,
@@ -48,7 +48,7 @@ public class GapsController : ControllerBase
     {
         _gapService = gapService;
         _userService = userService;
-        _kbService = kbService;
+        _documentService = documentService;
         _groupService = groupService;
         _llmClient = llmClient;
         _promptManager = promptManager;
@@ -117,16 +117,11 @@ public class GapsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("GROUP_NOT_FOUND", "群组不存在"));
         }
 
-        if (!group.HasKnowledgeBase)
+        var document = await _documentService.GetByIdAsync(group.PrdDocumentId);
+        if (document == null)
         {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "群组未绑定知识库文档"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "文档不存在或已过期"));
         }
-
-        // 获取知识库文档内容
-        var kbDocs = await _kbService.GetActiveDocumentsAsync(groupId);
-        var combinedContent = string.Join("\n\n", kbDocs
-            .Where(d => d.TextContent != null)
-            .Select(d => d.TextContent!));
 
         // 获取所有缺口
         var gaps = await _gapService.GetGapsAsync(groupId);
@@ -147,16 +142,16 @@ public class GapsController : ControllerBase
             SessionId: null,
             UserId: userId,
             ViewRole: "ADMIN",
-            DocumentChars: combinedContent.Length,
-            DocumentHash: Sha256Hex(combinedContent),
+            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentHash: Sha256Hex(document.RawContent ?? string.Empty),
             SystemPromptRedacted: "你是一个专业的产品文档分析师。",
             RequestType: "reasoning",
             RequestPurpose: AppCallerRegistry.Desktop.Gap.SummarizationChat));
 
         var detector = new AIGapDetector(_llmClient, _promptManager);
         var report = await detector.GenerateSummaryReportAsync(
-            combinedContent,
-            gaps,
+            document.RawContent ?? string.Empty, 
+            gaps, 
             cancellationToken);
 
         var response = new GapSummaryResponse

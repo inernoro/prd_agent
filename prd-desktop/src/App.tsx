@@ -6,6 +6,7 @@ import { useGroupListStore } from './stores/groupListStore';
 import { useSettingsStore } from './stores/settingsStore';
 import Header from './components/Layout/Header';
 import Sidebar from './components/Layout/Sidebar';
+import DocumentUpload from './components/Document/DocumentUpload';
 import PrdPreviewPage from './components/Document/PrdPreviewPage';
 import ChatContainer from './components/Chat/ChatContainer';
 import KnowledgeBasePage from './components/KnowledgeBase/KnowledgeBasePage';
@@ -20,7 +21,7 @@ import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { ApiResponse, PromptsClientResponse, Session, UserRole } from './types';
+import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
 
@@ -378,21 +379,26 @@ function App() {
         // Deep link 加入群组后强制刷新列表
         await useGroupListStore.getState().loadGroups({ force: true });
 
-        const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; kbDocumentCount: number; currentRole: string }>>(
+        const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
           'open_group_session',
           { groupId: joinResp.data.groupId, userRole: effectiveRole }
         );
         if (!openResp.success || !openResp.data) return;
 
+        const docResp = await invoke<ApiResponse<Document>>('get_document', {
+          documentId: openResp.data.documentId,
+        });
+        if (!docResp.success || !docResp.data) return;
+
         const session: Session = {
           sessionId: openResp.data.sessionId,
           groupId: openResp.data.groupId,
-          kbDocumentCount: openResp.data.kbDocumentCount,
+          documentId: openResp.data.documentId,
           currentRole: (openResp.data.currentRole as UserRole) || effectiveRole,
           mode: 'QA',
         };
 
-        useSessionStore.getState().setSession(session);
+        useSessionStore.getState().setSession(session, docResp.data);
       } catch (err) {
         console.error('Failed to handle deep link join:', err);
         // invoke reject 已由全局弹窗接管
@@ -420,17 +426,17 @@ function App() {
         <Sidebar />
         
         <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+          {/* 规则：
+              - 没有任何群组：右侧显示上传 PRD（上传后自动建群）
+              - 有群组：右侧进入会话区域；未绑定 PRD 的群组显示“待上传/不可对话”空态（由 ChatContainer/ChatInput 控制）
+          */}
           {mode === 'AssetsDiag' ? (
             <AssetsDiagPage />
           ) : groupsLoading ? (
+            // 冷启动加载时由 StartLoadOverlay 统一覆盖；主区保持空，避免重复“加载中...”
             <div className="flex-1" />
           ) : groups.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center p-8">
-              <div className="text-center text-text-secondary">
-                <p className="text-lg font-medium mb-2">暂无群组</p>
-                <p className="text-sm">点击左侧「新建群组」开始使用</p>
-              </div>
-            </div>
+            <DocumentUpload />
           ) : mode === 'PrdPreview' ? (
             <PrdPreviewPage />
           ) : (

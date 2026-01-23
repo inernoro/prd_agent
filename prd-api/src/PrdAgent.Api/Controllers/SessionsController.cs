@@ -322,6 +322,7 @@ public class SessionsController : ControllerBase
             SessionId = session.SessionId,
             GroupId = session.GroupId,
             OwnerUserId = session.OwnerUserId,
+            DocumentId = session.DocumentId,
             Title = session.Title,
             CurrentRole = session.CurrentRole,
             Mode = session.Mode,

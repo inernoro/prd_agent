@@ -7,8 +7,8 @@ namespace PrdAgent.Core.Interfaces;
 /// </summary>
 public interface ISessionService
 {
-    /// <summary>创建会话（groupId 为空时创建独立会话）</summary>
-    Task<Session> CreateAsync(string? groupId = null);
+    /// <summary>创建会话</summary>
+    Task<Session> CreateAsync(string documentId, string? groupId = null);
     
     /// <summary>获取会话</summary>
     Task<Session?> GetByIdAsync(string sessionId);
