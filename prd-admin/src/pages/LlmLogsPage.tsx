@@ -1039,6 +1039,13 @@ export default function LlmLogsPage() {
       return obj?.initImageProvided === true;
     } catch { return false; }
   }, [detail?.requestBodyRedacted]);
+  const bodyImageUrl = useMemo(() => {
+    try {
+      const obj = JSON.parse(detail?.requestBodyRedacted || '');
+      if (typeof obj?.image === 'string' && obj.image.startsWith('http')) return obj.image;
+    } catch { /* ignore */ }
+    return null;
+  }, [detail?.requestBodyRedacted]);
   const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
@@ -2123,21 +2130,44 @@ export default function LlmLogsPage() {
                                 {(detail?.questionText ?? '').trim() || '（无提示词）'}
                               </div>
                               <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {/* 参考图 - 无法预览 */}
+                                {/* 参考图 - 从 body 中提取 URL 或降级 */}
                                 <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
                                   <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                                     <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                                       参考图
                                     </div>
+                                    {bodyImageUrl && (
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(bodyImageUrl);
+                                            setCopiedHint('已复制');
+                                            setTimeout(() => setCopiedHint(''), 1200);
+                                          } catch {
+                                            setCopiedHint('复制失败（浏览器权限）');
+                                            setTimeout(() => setCopiedHint(''), 2000);
+                                          }
+                                        }}
+                                      >
+                                        <Copy size={14} />
+                                        复制URL
+                                      </Button>
+                                    )}
                                   </div>
-                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                    <div className="flex flex-col items-center gap-2">
-                                      <PrdPetalBreathingLoader size={48} paused grayscale />
-                                      <div className="text-[11px] text-center px-4" style={{ color: 'var(--text-muted)' }}>
-                                        参考图 URL 已脱敏，无法预览
+                                  {bodyImageUrl ? (
+                                    <img src={bodyImageUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
+                                  ) : (
+                                    <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                      <div className="flex flex-col items-center gap-2">
+                                        <PrdPetalBreathingLoader size={48} paused grayscale />
+                                        <div className="text-[11px] text-center px-4" style={{ color: 'var(--text-muted)' }}>
+                                          参考图未记录（历史数据）
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
+                                  )}
                                 </div>
                                 {/* 结果图 - 加载中/失败 */}
                                 <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
