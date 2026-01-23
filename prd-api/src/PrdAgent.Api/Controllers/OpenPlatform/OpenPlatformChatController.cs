@@ -27,6 +27,7 @@ public class OpenPlatformChatController : ControllerBase
     private readonly IGroupService _groupService;
     private readonly IOpenPlatformService _openPlatformService;
     private readonly ILLMClient _llmClient;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IIdGenerator _idGenerator;
     private readonly ILogger<OpenPlatformChatController> _logger;
 
@@ -36,6 +37,7 @@ public class OpenPlatformChatController : ControllerBase
         IGroupService groupService,
         IOpenPlatformService openPlatformService,
         ILLMClient llmClient,
+        ILLMRequestContextAccessor llmRequestContext,
         IIdGenerator idGenerator,
         ILogger<OpenPlatformChatController> logger)
     {
@@ -44,6 +46,7 @@ public class OpenPlatformChatController : ControllerBase
         _groupService = groupService;
         _openPlatformService = openPlatformService;
         _llmClient = llmClient;
+        _llmRequestContext = llmRequestContext;
         _idGenerator = idGenerator;
         _logger = logger;
     }
@@ -764,6 +767,19 @@ public class OpenPlatformChatController : ControllerBase
             // 使用简单的系统提示
             var systemPrompt = "You are a helpful AI assistant.";
 
+            // 设置 LLM 请求上下文（确保日志中显示正确的请求类型和来源）
+            using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: boundGroupId,
+                SessionId: null,
+                UserId: boundUserId,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "reasoning",
+                RequestPurpose: "open-platform-agent.proxy::chat"));
+
             var isFirstChunk = true;
 
             // 调用主模型
@@ -927,6 +943,19 @@ public class OpenPlatformChatController : ControllerBase
 
             // 使用简单的系统提示
             var systemPrompt = "You are a helpful AI assistant.";
+
+            // 设置 LLM 请求上下文（确保日志中显示正确的请求类型和来源）
+            using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: boundGroupId,
+                SessionId: null,
+                UserId: boundUserId,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "reasoning",
+                RequestPurpose: "open-platform-agent.proxy::chat"));
 
             // 调用主模型
             await foreach (var chunk in _llmClient.StreamGenerateAsync(

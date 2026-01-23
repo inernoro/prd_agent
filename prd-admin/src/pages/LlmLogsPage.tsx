@@ -556,9 +556,8 @@ function inferUserPromptCharsFromRequestBody(requestBodyRedacted: string): numbe
 
 /**
  * 将参考图 URL 注入到请求体 JSON 中（用于 curl 复制和 body 展示）。
- * 当 body 中 initImageProvided=true 时，补充 image 字段：
- * - 有 input artifacts → 使用真实 URL
- * - 无 input artifacts → 使用占位符提示用户补充
+ * 当 body 中 initImageProvided=true 且 image 字段缺失时，从 artifacts 补充。
+ * 后端新版本已直接写入 image 字段，此函数兼容旧日志。
  */
 function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadArtifact[]): string {
   const raw = (bodyText ?? '').trim();
@@ -566,14 +565,16 @@ function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadA
   try {
     const obj = JSON.parse(raw) as any;
     if (obj?.initImageProvided !== true) return bodyText;
-    // 注入参考图 URL 或占位符
+    // 如果后端已写入有效 image URL 则不覆盖
+    if (typeof obj.image === 'string' && obj.image.startsWith('http')) return bodyText;
+    // 兼容旧日志：从 artifacts 注入
     if (inputArtifacts.length === 1) {
       obj.image = inputArtifacts[0].cosUrl;
     } else if (inputArtifacts.length > 1) {
       obj.image = inputArtifacts.map((a) => a.cosUrl);
-    } else {
-      obj.image = 'REDACTED_INIT_IMAGE_URL';
     }
+    // 无 artifact 且后端未写入时不注入占位符（后端新版本会直接写入）
+    if (!obj.image) return bodyText;
     return JSON.stringify(obj);
   } catch {
     return bodyText;
