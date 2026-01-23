@@ -404,6 +404,40 @@ public class ImageMasterController : ControllerBase
         return Ok(ApiResponse<object>.Ok(payload));
     }
 
+    [HttpPost("workspaces/{id}/generate-title")]
+    public async Task<IActionResult> GenerateWorkspaceTitle(string id, [FromBody] GenerateWorkspaceTitleRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var prompt = (request?.Prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(prompt)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 不能为空"));
+
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId != adminId) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        try
+        {
+            var title = await _modelDomain.SuggestWorkspaceTitleAsync(prompt, ct);
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                if (title.Length > 20) title = title[..20];
+                var update = Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.Title, title)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow);
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+            }
+            return Ok(ApiResponse<object>.Ok(new { title }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate workspace title for {WorkspaceId}", wid);
+            return Ok(ApiResponse<object>.Ok(new { title = ws.Title }));
+        }
+    }
+
     [HttpDelete("workspaces/{id}")]
     public async Task<IActionResult> DeleteWorkspace(string id, CancellationToken ct)
     {
@@ -2083,6 +2117,11 @@ public class UpdateWorkspaceRequest
     public string? ArticleContent { get; set; }
     public string? ScenarioType { get; set; }
     public string? FolderName { get; set; }
+}
+
+public class GenerateWorkspaceTitleRequest
+{
+    public string? Prompt { get; set; }
 }
 
 public class UploadAssetRequest

@@ -264,6 +264,7 @@ import {
   extractArticleMarkersReal,
   exportArticleReal,
   updateArticleMarkerReal,
+  generateVisualAgentWorkspaceTitleReal,
 } from '@/services/real/visualAgent';
 import {
   exportConfigReal,
@@ -509,6 +510,7 @@ export const deleteVisualAgentWorkspaceAsset: DeleteVisualAgentWorkspaceAssetCon
 export const createWorkspaceImageGenRun: CreateWorkspaceImageGenRunContract = withAuth(createWorkspaceImageGenRunReal);
 export const refreshVisualAgentWorkspaceCover: RefreshVisualAgentWorkspaceCoverContract = withAuth(refreshVisualAgentWorkspaceCoverReal);
 
+export const generateVisualAgentWorkspaceTitle = generateVisualAgentWorkspaceTitleReal;
 export const generateArticleMarkers = generateArticleMarkersReal;
 export const extractArticleMarkers = extractArticleMarkersReal;
 export const exportArticle = exportArticleReal;
