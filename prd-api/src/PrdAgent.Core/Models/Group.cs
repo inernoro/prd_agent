@@ -14,17 +14,11 @@ public class Group
     /// <summary>群主用户ID</summary>
     public string OwnerId { get; set; } = string.Empty;
     
-    /// <summary>绑定的PRD文档ID</summary>
-    public string PrdDocumentId { get; set; } = string.Empty;
+    /// <summary>是否有知识库文档</summary>
+    public bool HasKnowledgeBase { get; set; }
 
-    /// <summary>PRD标题快照（仅元数据；不存原文）</summary>
-    public string? PrdTitleSnapshot { get; set; }
-
-    /// <summary>PRD Token 估算快照（可选，仅元数据）</summary>
-    public int? PrdTokenEstimateSnapshot { get; set; }
-
-    /// <summary>PRD 字符数快照（可选，仅元数据）</summary>
-    public int? PrdCharCountSnapshot { get; set; }
+    /// <summary>知识库文档数量</summary>
+    public int KbDocumentCount { get; set; }
     
     /// <summary>邀请码</summary>
     public string InviteCode { get; set; } = GenerateInviteCode();

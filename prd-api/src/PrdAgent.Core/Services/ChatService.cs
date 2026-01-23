@@ -13,7 +13,7 @@ public class ChatService : IChatService
 {
     private readonly ISmartModelScheduler _modelScheduler;
     private readonly ISessionService _sessionService;
-    private readonly IDocumentService _documentService;
+    private readonly IKnowledgeBaseService _kbService;
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
     private readonly IPromptService _promptService;
@@ -34,7 +34,7 @@ public class ChatService : IChatService
     public ChatService(
         ISmartModelScheduler modelScheduler,
         ISessionService sessionService,
-        IDocumentService documentService,
+        IKnowledgeBaseService kbService,
         ICacheManager cache,
         IPromptManager promptManager,
         IPromptService promptService,
@@ -48,7 +48,7 @@ public class ChatService : IChatService
     {
         _modelScheduler = modelScheduler;
         _sessionService = sessionService;
-        _documentService = documentService;
+        _kbService = kbService;
         _cache = cache;
         _promptManager = promptManager;
         _promptService = promptService;
@@ -99,15 +99,18 @@ public class ChatService : IChatService
         // 回答机器人/提示词选择角色：优先使用调用方传入（例如按群成员身份决定），否则回退到 session 的 CurrentRole（兼容历史）。
         var effectiveAnswerRole = answerAsRole ?? session.CurrentRole;
 
-        // 获取文档
-        var document = await _documentService.GetByIdAsync(session.DocumentId);
-        if (document == null)
+        // 获取群组知识库文档
+        var kbDocuments = !string.IsNullOrEmpty(session.GroupId)
+            ? await _kbService.GetActiveDocumentsAsync(session.GroupId)
+            : new List<KbDocument>();
+
+        if (kbDocuments.Count == 0)
         {
             yield return new ChatStreamEvent
             {
                 Type = "error",
                 ErrorCode = ErrorCodes.DOCUMENT_NOT_FOUND,
-                ErrorMessage = "文档不存在或已过期"
+                ErrorMessage = "群组未绑定知识库文档"
             };
             yield break;
         }
@@ -155,7 +158,10 @@ public class ChatService : IChatService
             ? systemPromptOverride
             : await _systemPromptService.GetSystemPromptAsync(effectiveAnswerRole, cancellationToken);
         var systemPromptRedacted = baseSystemPrompt;
-        var docHash = Sha256Hex(document.RawContent);
+        var combinedContent = string.Join("\n", kbDocuments
+            .Where(d => d.TextContent != null)
+            .Select(d => d.TextContent!));
+        var docHash = Sha256Hex(combinedContent);
 
         // 提示词（可选）：将提示词模板作为"聚焦指令"注入 system prompt（仅当未使用覆盖提示词时）
         string systemPrompt = baseSystemPrompt;
@@ -197,8 +203,8 @@ public class ChatService : IChatService
         // 获取对话历史（disableGroupContext=true 时跳过，仅使用系统提示词+PRD+当前消息）
         var messages = new List<LLMMessage>
         {
-            // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
-            new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
+            // 首条 user message：知识库资料（多文档拼接，日志侧按标记脱敏）
+            new() { Role = "user", Content = _promptManager.BuildMultiDocContextMessage(kbDocuments) }
         };
         if (!disableGroupContext)
         {
@@ -237,7 +243,7 @@ public class ChatService : IChatService
             SessionId: sessionId,
             UserId: userId,
             ViewRole: effectiveAnswerRole.ToString(),
-            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentChars: combinedContent.Length,
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",

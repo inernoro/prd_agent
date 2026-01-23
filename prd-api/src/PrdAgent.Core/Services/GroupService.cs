@@ -10,38 +10,27 @@ public class GroupService : IGroupService
 {
     private readonly IGroupRepository _groupRepository;
     private readonly IGroupMemberRepository _memberRepository;
-    private readonly IPrdDocumentRepository _documentRepository;
     private readonly IIdGenerator _idGenerator;
 
     public GroupService(
         IGroupRepository groupRepository,
         IGroupMemberRepository memberRepository,
-        IPrdDocumentRepository documentRepository,
         IIdGenerator idGenerator)
     {
         _groupRepository = groupRepository;
         _memberRepository = memberRepository;
-        _documentRepository = documentRepository;
         _idGenerator = idGenerator;
     }
 
-    public async Task<Group> CreateAsync(
-        string ownerId,
-        string prdDocumentId,
-        string? groupName = null,
-        string? prdTitleSnapshot = null,
-        int? prdTokenEstimateSnapshot = null,
-        int? prdCharCountSnapshot = null)
+    public async Task<Group> CreateAsync(string ownerId, string? groupName = null)
     {
         var group = new Group
         {
             GroupId = await _idGenerator.GenerateIdAsync("group"),
             OwnerId = ownerId,
-            PrdDocumentId = prdDocumentId,
             GroupName = groupName ?? "新建群组",
-            PrdTitleSnapshot = prdTitleSnapshot,
-            PrdTokenEstimateSnapshot = prdTokenEstimateSnapshot,
-            PrdCharCountSnapshot = prdCharCountSnapshot
+            HasKnowledgeBase = false,
+            KbDocumentCount = 0
         };
 
         await _groupRepository.InsertAsync(group);
@@ -75,27 +64,23 @@ public class GroupService : IGroupService
         var group = await GetByInviteCodeAsync(inviteCode)
             ?? throw new ArgumentException("邀请码无效");
 
-        // 检查邀请码是否过期
         if (group.InviteExpireAt.HasValue && group.InviteExpireAt.Value < DateTime.UtcNow)
         {
             throw new ArgumentException("邀请码已过期");
         }
 
-        // 检查是否已是成员
         var existingMember = await _memberRepository.GetAsync(group.GroupId, userId);
         if (existingMember != null)
         {
             throw new ArgumentException("您已是该群组成员");
         }
 
-        // 检查群组是否已满
         var memberCount = await _memberRepository.CountByGroupIdAsync(group.GroupId);
         if (memberCount >= group.MaxMembers)
         {
             throw new ArgumentException("群组已满");
         }
 
-        // 添加成员
         var member = new GroupMember
         {
             GroupId = group.GroupId,
@@ -160,55 +145,20 @@ public class GroupService : IGroupService
 
     public async Task<List<Group>> GetUserGroupsAsync(string userId)
     {
-        // 获取用户所在的群组ID列表
         var memberRecords = await _memberRepository.GetByUserIdAsync(userId);
         var groupIds = memberRecords.Select(m => m.GroupId).ToList();
-
-        // 获取群组信息
         return await _groupRepository.GetByIdsAsync(groupIds);
     }
 
-    public async Task BindPrdAsync(
-        string groupId,
-        string prdDocumentId,
-        string? prdTitleSnapshot,
-        int? prdTokenEstimateSnapshot,
-        int? prdCharCountSnapshot)
+    public async Task UpdateKbStatusAsync(string groupId, bool hasKb, int docCount)
     {
-        await _groupRepository.UpdatePrdAsync(
-            groupId,
-            prdDocumentId,
-            prdTitleSnapshot,
-            prdTokenEstimateSnapshot,
-            prdCharCountSnapshot);
-    }
-
-    public async Task UnbindPrdAsync(string groupId)
-    {
-        await _groupRepository.ClearPrdAsync(groupId);
+        await _groupRepository.UpdateKbStatusAsync(groupId, hasKb, docCount);
     }
 
     public async Task DissolveAsync(string groupId)
     {
-        // 先读出群组，拿到 prdDocumentId，便于后续做引用清理
-        var group = await _groupRepository.GetByIdAsync(groupId);
-        var prdDocumentId = group?.PrdDocumentId;
-
-        // 删除成员记录（先删成员，避免残留无主成员）
         await _memberRepository.DeleteByGroupIdAsync(groupId);
-        // 删除群组
         await _groupRepository.DeleteAsync(groupId);
-
-        // 业务规则：PRD 文档随时可被查看，默认不应"自己消失"；
-        // 只有当群组被人为删除/解散，且无任何群组再引用该 PRD 时，才允许清理文档。
-        if (!string.IsNullOrWhiteSpace(prdDocumentId))
-        {
-            var refs = await _groupRepository.CountByPrdDocumentIdAsync(prdDocumentId);
-            if (refs == 0)
-            {
-                await _documentRepository.DeleteAsync(prdDocumentId);
-            }
-        }
     }
 
     public async Task UpdateGroupNameAsync(string groupId, string groupName)
