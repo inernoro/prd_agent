@@ -445,6 +445,26 @@ type UiMsg = {
   ts: number;
 };
 
+// 图片生成结果/错误的富消息编码 —— 持久化在 content 字符串中
+const GEN_ERROR_PREFIX = '[GEN_ERROR]';
+const GEN_DONE_PREFIX = '[GEN_DONE]';
+type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string };
+type GenDoneMeta = { src: string; refSrc?: string; prompt?: string };
+function buildGenErrorContent(meta: GenErrorMeta): string {
+  return `${GEN_ERROR_PREFIX}${JSON.stringify(meta)}`;
+}
+function buildGenDoneContent(meta: GenDoneMeta): string {
+  return `${GEN_DONE_PREFIX}${JSON.stringify(meta)}`;
+}
+function parseGenError(content: string): GenErrorMeta | null {
+  if (!content.startsWith(GEN_ERROR_PREFIX)) return null;
+  try { return JSON.parse(content.slice(GEN_ERROR_PREFIX.length)) as GenErrorMeta; } catch { return null; }
+}
+function parseGenDone(content: string): GenDoneMeta | null {
+  if (!content.startsWith(GEN_DONE_PREFIX)) return null;
+  try { return JSON.parse(content.slice(GEN_DONE_PREFIX.length)) as GenDoneMeta; } catch { return null; }
+}
+
 type CanvasTool = 'select' | 'hand' | 'mark';
 type CanvasPlacing =
   | null
@@ -2585,8 +2605,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
-        setError(msg);
-        pushMsg('Assistant', `生成失败：${msg}`);
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined }));
         return;
       }
     } else {
@@ -2595,15 +2614,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const pres = await planImageGen({ text: reqText, maxItems: 8 });
         if (!pres.success) {
           const msg = pres.error?.message || '解析失败';
-          setError(msg);
-          pushMsg('Assistant', `解析失败：${msg}`);
+          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined }));
           return;
         }
         plan = pres.data ?? null;
       } catch (e) {
         const msg = e instanceof Error ? e.message : '网络错误';
-        setError(msg);
-        pushMsg('Assistant', `解析失败：${msg}`);
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined }));
         return;
       }
 
@@ -2885,17 +2902,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runRes.success) {
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        setError(msg);
-        pushMsg('Assistant', `生成失败：${msg}`);
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
         return;
       }
 
       const runId = String(runRes.data?.runId ?? '').trim();
       if (!runId) {
-        const msg = '生成失败：未返回 runId';
+        const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        setError(msg);
-        pushMsg('Assistant', msg);
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
         return;
       }
 
@@ -2949,9 +2964,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   : x
               )
             );
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
           }
         },
       }).then(() => {
@@ -2968,8 +2985,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-      setError(msg);
-      pushMsg('Assistant', `生成失败：${msg}`);
+      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
     }
   };
 
@@ -5778,12 +5794,140 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5" style={{ maxHeight: 360 }}>
               {messages.map((m) => {
                 const isUser = m.role === 'User';
-                // 过滤历史遗留的“本次使用模型/直连模式...”提示（用户要求移除）
+                // 过滤历史遗留的"本次使用模型/直连模式..."提示（用户要求移除）
                 if (!isUser && String(m.content ?? '').trim().startsWith('本次使用模型：')) return null;
+
+                // Assistant 富消息：生成错误
+                const genError = !isUser ? parseGenError(m.content) : null;
+                if (genError) {
+                  return (
+                    <div key={m.id} className="flex justify-start">
+                      <div
+                        className="group relative max-w-[95%] rounded-[10px] overflow-hidden"
+                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)' }}
+                      >
+                        {/* 引用用户提示词 */}
+                        {genError.prompt ? (
+                          <div className="px-2.5 pt-2 pb-1.5 flex items-start gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
+                            <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(239,68,68,0.4)' }} />
+                            <div className="text-[11px] min-w-0 truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
+                              {genError.prompt}
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="px-2.5 pt-2 pb-4 flex items-start gap-2.5">
+                          {/* 参考图缩略图 */}
+                          {genError.refSrc ? (
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-[6px] overflow-hidden"
+                              style={{ width: 48, height: 48, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.2)' }}
+                              onClick={() => setPreview({ open: true, src: genError.refSrc!, prompt: '参照图' })}
+                              title="点击预览参照图"
+                            >
+                              <img src={genError.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            </button>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
+                            <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
+                              {genError.msg}
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
+                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                        >
+                          {formatMsgTimestamp(m.ts)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Assistant 富消息：生成成功
+                const genDone = !isUser ? parseGenDone(m.content) : null;
+                if (genDone) {
+                  return (
+                    <div key={m.id} className="flex justify-start">
+                      <div
+                        className="group relative max-w-[95%] rounded-[10px] overflow-hidden"
+                        style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)' }}
+                      >
+                        {/* 引用用户提示词 + 参考图 */}
+                        {(genDone.prompt || genDone.refSrc) ? (
+                          <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(214,178,106,0.5)' }} />
+                            {genDone.refSrc ? (
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-[4px] overflow-hidden"
+                                style={{ width: 20, height: 20, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.15)' }}
+                                onClick={() => setPreview({ open: true, src: genDone.refSrc!, prompt: '参照图' })}
+                                title="点击预览参照图"
+                              >
+                                <img src={genDone.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                              </button>
+                            ) : null}
+                            <div className="text-[11px] min-w-0 truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
+                              {genDone.prompt || ''}
+                            </div>
+                          </div>
+                        ) : null}
+                        {/* 生成的图片 */}
+                        <button
+                          type="button"
+                          className="block w-full"
+                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '' })}
+                          title="点击放大"
+                        >
+                          <img
+                            src={genDone.src}
+                            alt={genDone.prompt || '生成结果'}
+                            style={{ width: '100%', maxHeight: 280, objectFit: 'contain', display: 'block' }}
+                          />
+                        </button>
+                        <span
+                          className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
+                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                        >
+                          {formatMsgTimestamp(m.ts)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // 兼容旧格式的纯文本错误消息（"生成失败：..." / "解析失败：..."）
+                const legacyErrorMatch = !isUser ? /^(?:生成失败|解析失败)[：:](.+)$/s.exec(String(m.content ?? '').trim()) : null;
+                if (legacyErrorMatch) {
+                  const legacyMsg = legacyErrorMatch[1].trim();
+                  return (
+                    <div key={m.id} className="flex justify-start">
+                      <div
+                        className="group relative max-w-[95%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-4"
+                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)' }}
+                      >
+                        <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
+                        <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
+                          {legacyMsg}
+                        </div>
+                        <span
+                          className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
+                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                        >
+                          {formatMsgTimestamp(m.ts)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // 普通消息（用户/助手纯文本）
                 const parsed = isUser ? extractInlineImageToken(m.content) : null;
                 const refSrc = parsed?.src ? String(parsed.src).trim() : '';
                 const refNameFull = String(parsed?.name ?? '').trim();
-                // 只显示前 6 个字符，其余用 "..."（n=9 => 6 + "..."）
                 const refName = truncateLabelFront(refNameFull || '参照图', 9) || '参照图';
                 const contentText = parsed ? parsed.clean : m.content;
                 const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
@@ -5803,7 +5947,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         wordBreak: 'break-word',
                       }}
                     >
-                      {/* 悬浮时显示时间（底部留出空间避免重叠） */}
                       <span
                         className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
                         style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
@@ -5824,7 +5967,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 borderRadius: 4,
                                 overflow: 'hidden',
                                 border: '1px solid var(--border-subtle)',
-                                // 与用户气泡（金色系）更协调：更亮、更“贴”背景
                                 background: 'rgba(214, 178, 106, 0.12)',
                               }}
                               title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}

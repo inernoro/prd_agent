@@ -320,10 +320,41 @@ public class OpenAIImageClient
             }
         }
 
+        // 提前保存参考图到 COS 并创建 input artifact（确保即使请求失败也能在日志中预览参考图）
+        var createdByAdminId = ctx?.UserId ?? "system";
+        var inputArtifactIds = new List<string>();
+        string? initImageCosUrl = null;
+        if (!string.IsNullOrWhiteSpace(initImageBase64))
+        {
+            if (TryDecodeDataUrlOrBase64(initImageBase64, out var initBytes, out var initMime) && initBytes.Length > 0)
+            {
+                var stored = await _assetStorage.SaveAsync(initBytes, initMime, ct, domain: AppDomainPaths.DomainAssets, type: AppDomainPaths.TypeImg);
+                var dim = TryParseSize(NormalizeSizeString(size), out var iw, out var ih) ? new { w = iw, h = ih } : null;
+                var input = new UploadArtifact
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    RequestId = requestId,
+                    Kind = "input_image",
+                    CreatedByAdminId = createdByAdminId,
+                    Prompt = prompt,
+                    Sha256 = stored.Sha256,
+                    Mime = stored.Mime,
+                    Width = dim?.w ?? 0,
+                    Height = dim?.h ?? 0,
+                    SizeBytes = stored.SizeBytes,
+                    CosUrl = stored.Url,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _db.UploadArtifacts.InsertOneAsync(input, cancellationToken: ct);
+                inputArtifactIds.Add(input.Id);
+                initImageCosUrl = stored.Url;
+            }
+        }
+
         // 写入 LLM 请求日志（生图）
         if (_logWriter != null)
         {
-            // 注意：不落库 initImageBase64 内容，只记录“是否提供/是否使用”
+            // 记录请求体：包含参考图 COS URL（若有），便于日志页 curl 复制和调试
             string reqRawJson;
             if (initImageUsedForCall)
             {
@@ -335,7 +366,8 @@ public class OpenAIImageClient
                     size = isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size,
                     responseFormat = isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat,
                     initImageProvided = initImageProvidedForLog,
-                    initImageUsed = true
+                    initImageUsed = true,
+                    image = initImageCosUrl
                 });
             }
             else
@@ -693,35 +725,6 @@ public class OpenAIImageClient
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
-            // 同时写入 UploadArtifacts（用于 LLM 日志页图片预览）
-            var createdByAdminId = ctx?.UserId ?? "system";
-            var inputArtifactIds = new List<string>();
-            if (!string.IsNullOrWhiteSpace(initImageBase64))
-            {
-                if (TryDecodeDataUrlOrBase64(initImageBase64, out var initBytes, out var initMime) && initBytes.Length > 0)
-                {
-                    // 参考图也落 COS（与输出一并可在日志页预览）
-                    var stored = await _assetStorage.SaveAsync(initBytes, initMime, ct, domain: AppDomainPaths.DomainAssets, type: AppDomainPaths.TypeImg);
-                    var dim = TryParseSize(NormalizeSizeString(size), out var iw, out var ih) ? new { w = iw, h = ih } : null;
-                    var input = new UploadArtifact
-                    {
-                        Id = Guid.NewGuid().ToString("N"),
-                        RequestId = requestId,
-                        Kind = "input_image",
-                        CreatedByAdminId = createdByAdminId,
-                        Prompt = prompt,
-                        Sha256 = stored.Sha256,
-                        Mime = stored.Mime,
-                        Width = dim?.w ?? 0,
-                        Height = dim?.h ?? 0,
-                        SizeBytes = stored.SizeBytes,
-                        CosUrl = stored.Url,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    await _db.UploadArtifacts.InsertOneAsync(input, cancellationToken: ct);
-                    inputArtifactIds.Add(input.Id);
-                }
-            }
 
             // 根据调用方传入的 appKey 查找水印配置（不传则不打水印）
             var watermarkConfig = string.IsNullOrWhiteSpace(appKey) ? null : await TryGetWatermarkConfigAsync(appKey, ct);

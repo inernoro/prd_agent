@@ -5,6 +5,7 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
+import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
@@ -553,7 +554,34 @@ function inferUserPromptCharsFromRequestBody(requestBodyRedacted: string): numbe
   return sum;
 }
 
-function buildCurlFromLog(detail: LlmRequestLog): string {
+/**
+ * 将参考图 URL 注入到请求体 JSON 中（用于 curl 复制和 body 展示）。
+ * 当 body 中 initImageProvided=true 且 image 字段缺失时，从 artifacts 补充。
+ * 后端新版本已直接写入 image 字段，此函数兼容旧日志。
+ */
+function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadArtifact[]): string {
+  const raw = (bodyText ?? '').trim();
+  if (!raw) return bodyText;
+  try {
+    const obj = JSON.parse(raw) as any;
+    if (obj?.initImageProvided !== true) return bodyText;
+    // 如果后端已写入有效 image URL 则不覆盖
+    if (typeof obj.image === 'string' && obj.image.startsWith('http')) return bodyText;
+    // 兼容旧日志：从 artifacts 注入
+    if (inputArtifacts.length === 1) {
+      obj.image = inputArtifacts[0].cosUrl;
+    } else if (inputArtifacts.length > 1) {
+      obj.image = inputArtifacts.map((a) => a.cosUrl);
+    }
+    // 无 artifact 且后端未写入时不注入占位符（后端新版本会直接写入）
+    if (!obj.image) return bodyText;
+    return JSON.stringify(obj);
+  } catch {
+    return bodyText;
+  }
+}
+
+function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact[]): string {
   const apiBase = (detail.apiBase ?? '').trim();
   const path = (detail.path ?? '').trim();
   const url = joinBaseAndPath(apiBase, path) || 'https://api.example.com/v1/chat/completions';
@@ -581,7 +609,8 @@ function buildCurlFromLog(detail: LlmRequestLog): string {
     headers['Content-Type'] = 'application/json';
   }
 
-  const restoredBody = restoreSystemPromptInRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText);
+  let restoredBody = restoreSystemPromptInRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText);
+  restoredBody = injectRefImageIntoRequestBody(restoredBody, inputArtifacts ?? []);
   const bodyPretty = tryPrettyJsonText(restoredBody);
   const headerArgs = Object.entries(headers)
     .filter(([k, v]) => String(k).trim() && v !== undefined && v !== null)
@@ -985,8 +1014,6 @@ export default function LlmLogsPage() {
   }, []);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
-  const prettyRequestBody = useMemo(() => (detail ? tryPrettyJsonText(detail.requestBodyRedacted || '') : ''), [detail]);
-  const curlText = useMemo(() => (detail ? buildCurlFromLog(detail) : ''), [detail]);
   const answerText = useMemo(() => (detail?.answerText ?? '').trim(), [detail]);
   const answerHasUnicodeEscapes = useMemo(() => /\\u[0-9a-fA-F]{4}/.test(answerText), [answerText]);
   const answerDisplayText = useMemo(
@@ -1006,7 +1033,26 @@ export default function LlmLogsPage() {
     return v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
   const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
+  const bodyHasInitImage = useMemo(() => {
+    try {
+      const obj = JSON.parse(detail?.requestBodyRedacted || '');
+      return obj?.initImageProvided === true;
+    } catch { return false; }
+  }, [detail?.requestBodyRedacted]);
+  const bodyImageUrl = useMemo(() => {
+    try {
+      const obj = JSON.parse(detail?.requestBodyRedacted || '');
+      if (typeof obj?.image === 'string' && obj.image.startsWith('http')) return obj.image;
+    } catch { /* ignore */ }
+    return null;
+  }, [detail?.requestBodyRedacted]);
   const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
+  const prettyRequestBody = useMemo(() => {
+    if (!detail) return '';
+    const restored = injectRefImageIntoRequestBody(detail.requestBodyRedacted || '', artifactInputs);
+    return tryPrettyJsonText(restored);
+  }, [detail, artifactInputs]);
+  const curlText = useMemo(() => (detail ? buildCurlFromLog(detail, artifactInputs) : ''), [detail, artifactInputs]);
   useEffect(() => {
     // 内容不再包含 \uXXXX 时，自动关闭“可见字符”避免误解
     if (!answerHasUnicodeEscapes && answerVisibleChars) setAnswerVisibleChars(false);
@@ -1911,7 +1957,7 @@ export default function LlmLogsPage() {
                   </div>
 
                   <div className="mt-3">
-                    {hasImageArtifacts ? (
+                    {(hasImageArtifacts || bodyHasInitImage) ? (
                     <div className="mb-3">
                       <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
                         <span>图片预览</span>
@@ -2001,6 +2047,153 @@ export default function LlmLogsPage() {
                                     </div>
                                   </div>
                                 ))}
+                              </div>
+                            </>
+                          ) : artifactInputs.length >= 1 && artifactOutputs.length === 0 ? (
+                            <>
+                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                              </div>
+                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                                {/* 参考图 */}
+                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      参考图
+                                    </div>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          await navigator.clipboard.writeText(artifactInputs[0].cosUrl || '');
+                                          setCopiedHint('已复制');
+                                          setTimeout(() => setCopiedHint(''), 1200);
+                                        } catch {
+                                          setCopiedHint('复制失败（浏览器权限）');
+                                          setTimeout(() => setCopiedHint(''), 2000);
+                                        }
+                                      }}
+                                    >
+                                      <Copy size={14} />
+                                      复制URL
+                                    </Button>
+                                  </div>
+                                  <img src={artifactInputs[0].cosUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
+                                  <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    <div className="truncate" title={artifactInputs[0].cosUrl}>
+                                      {artifactInputs[0].cosUrl}
+                                    </div>
+                                    <div className="mt-1 flex items-center justify-between gap-2">
+                                      <span>
+                                        {artifactInputs[0].width}×{artifactInputs[0].height}
+                                      </span>
+                                      <span>
+                                        {fmtBytes(artifactInputs[0].sizeBytes)} · {String(artifactInputs[0].mime || '').toLowerCase()}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 truncate" title={artifactInputs[0].sha256}>
+                                      sha256: {artifactInputs[0].sha256}
+                                    </div>
+                                  </div>
+                                </div>
+                                {/* 结果图 - 加载中/失败 */}
+                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      结果图
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                    {detail?.status === 'running' ? (
+                                      <div className="flex flex-col items-center gap-3">
+                                        <PrdPetalBreathingLoader size={72} />
+                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
+                                      </div>
+                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
+                                      <div className="flex flex-col items-center gap-3">
+                                        <PrdPetalBreathingLoader size={72} paused grayscale />
+                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
+                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          ) : bodyHasInitImage && artifactInputs.length === 0 ? (
+                            <>
+                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                              </div>
+                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                                {/* 参考图 - 从 body 中提取 URL 或降级 */}
+                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      参考图
+                                    </div>
+                                    {bodyImageUrl && (
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(bodyImageUrl);
+                                            setCopiedHint('已复制');
+                                            setTimeout(() => setCopiedHint(''), 1200);
+                                          } catch {
+                                            setCopiedHint('复制失败（浏览器权限）');
+                                            setTimeout(() => setCopiedHint(''), 2000);
+                                          }
+                                        }}
+                                      >
+                                        <Copy size={14} />
+                                        复制URL
+                                      </Button>
+                                    )}
+                                  </div>
+                                  {bodyImageUrl ? (
+                                    <img src={bodyImageUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
+                                  ) : (
+                                    <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                      <div className="flex flex-col items-center gap-2">
+                                        <PrdPetalBreathingLoader size={48} paused grayscale />
+                                        <div className="text-[11px] text-center px-4" style={{ color: 'var(--text-muted)' }}>
+                                          参考图未记录（历史数据）
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                                {/* 结果图 - 加载中/失败 */}
+                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      结果图
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                    {detail?.status === 'running' ? (
+                                      <div className="flex flex-col items-center gap-3">
+                                        <PrdPetalBreathingLoader size={72} />
+                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
+                                      </div>
+                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
+                                      <div className="flex flex-col items-center gap-3">
+                                        <PrdPetalBreathingLoader size={72} paused grayscale />
+                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
+                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             </>
                           ) : (
