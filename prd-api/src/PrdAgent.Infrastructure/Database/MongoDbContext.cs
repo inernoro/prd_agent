@@ -93,6 +93,8 @@ public class MongoDbContext
     public IMongoCollection<UserPreferences> UserPreferences => _database.GetCollection<UserPreferences>("user_preferences");
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
+    public IMongoCollection<WeeklyPlanTemplate> WeeklyPlanTemplates => _database.GetCollection<WeeklyPlanTemplate>("weekly_plan_templates");
+    public IMongoCollection<WeeklyPlanSubmission> WeeklyPlanSubmissions => _database.GetCollection<WeeklyPlanSubmission>("weekly_plan_submissions");
 
     // Defect Agent
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
@@ -651,7 +653,7 @@ public class MongoDbContext
         WatermarkConfigs.Indexes.CreateOne(new CreateIndexModel<WatermarkConfig>(
             Builders<WatermarkConfig>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.AppKeys),
             new CreateIndexOptions { Name = "idx_watermark_configs_user_appkeys" }));
-
+ 
         // DefectReports：按 ownerUserId + status + createdAt
         DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
             Builders<DefectReport>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
@@ -678,6 +680,36 @@ public class MongoDbContext
         // DefectGithubTokens：按 userId
         DefectGithubTokens.Indexes.CreateOne(new CreateIndexModel<DefectGithubToken>(
             Builders<DefectGithubToken>.IndexKeys.Ascending(x => x.UserId),
-            new CreateIndexOptions { Name = "idx_defect_github_tokens_user" }));
+            new CreateIndexOptions { Name = "idx_defect_github_tokens_user" })); 
+        // WeeklyPlanTemplates：按 isBuiltIn + isActive 筛选
+        WeeklyPlanTemplates.Indexes.CreateOne(new CreateIndexModel<WeeklyPlanTemplate>(
+            Builders<WeeklyPlanTemplate>.IndexKeys.Ascending(x => x.IsBuiltIn).Ascending(x => x.IsActive),
+            new CreateIndexOptions { Name = "idx_weekly_plan_templates_builtin_active" }));
+
+        // WeeklyPlanSubmissions：按 userId + periodStart 查询（个人周计划列表）
+        WeeklyPlanSubmissions.Indexes.CreateOne(new CreateIndexModel<WeeklyPlanSubmission>(
+            Builders<WeeklyPlanSubmission>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.PeriodStart),
+            new CreateIndexOptions { Name = "idx_weekly_plan_submissions_user_period" }));
+        // 团队视图：按 periodStart + status 查询
+        WeeklyPlanSubmissions.Indexes.CreateOne(new CreateIndexModel<WeeklyPlanSubmission>(
+            Builders<WeeklyPlanSubmission>.IndexKeys.Ascending(x => x.PeriodStart).Ascending(x => x.Status),
+            new CreateIndexOptions { Name = "idx_weekly_plan_submissions_period_status" }));
+        // 防止同一用户同一模板同一周期重复提交
+        try
+        {
+            WeeklyPlanSubmissions.Indexes.CreateOne(new CreateIndexModel<WeeklyPlanSubmission>(
+                Builders<WeeklyPlanSubmission>.IndexKeys
+                    .Ascending(x => x.UserId)
+                    .Ascending(x => x.TemplateId)
+                    .Ascending(x => x.PeriodStart),
+                new CreateIndexOptions<WeeklyPlanSubmission>
+                {
+                    Name = "uniq_weekly_plan_user_template_period",
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        } 
     }
 }
