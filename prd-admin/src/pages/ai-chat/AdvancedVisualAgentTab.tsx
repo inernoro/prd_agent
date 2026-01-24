@@ -575,16 +575,6 @@ function AspectIcon({ size }: { size: string | null | undefined }) {
   );
 }
 
-function firstEnabledImageModel(models: Model[]): Model | null {
-  const list = (models ?? []).filter((m) => m.enabled && m.isImageGen);
-  list.sort(
-    (a, b) =>
-      Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9) ||
-      String(a.name || a.modelName || '').localeCompare(String(b.name || b.modelName || ''), undefined, { numeric: true, sensitivity: 'base' })
-  );
-  return list[0] ?? null;
-}
-
 async function copyToClipboard(text: string) {
   const t = String(text ?? '');
   if (!t) return;
@@ -3197,36 +3187,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   };
 
-  // 重试生成：使用保存的参考图信息
-  const retryGenerate = async (item: CanvasImageItem) => {
-    const prompt = String(item.prompt ?? '').trim();
-    if (!prompt) return;
-
-    // 从 canvas 中查找保存的参考图
-    let refImage: CanvasImageItem | null = null;
-    const refKey = item.refImageKey;
-    const refSha = item.refImageSha256;
-    if (refKey) {
-      refImage = canvasRef.current.find((x) => x.key === refKey) ?? null;
-    }
-    // 如果通过 key 找不到，尝试通过 sha256 查找（图片可能被重新加载）
-    if (!refImage && refSha) {
-      refImage = canvasRef.current.find((x) => (x.originalSha256 ?? x.sha256) === refSha) ?? null;
-    }
-
-    // 构建 job，与 sendText 类似但使用保存的参考图
-    const job: GenJob = {
-      id: `job_retry_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      displayText: prompt,
-      requestText: prompt,
-      primaryRef: refImage,
-      seedSelectedKey: item.key, // 使用当前失败项的 key 作为种子，这样会替换该项
-      sizeOverride: item.requestedSize ?? null,
-    };
-    pendingJobsRef.current.push(job);
-    setPendingCount(pendingJobsRef.current.length);
-    drainGenQueue();
-  };
 
   const onSend = async () => {
     const raw = input.trim();
@@ -5829,7 +5789,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 color: 'rgba(255,255,255,0.7)',
                               }}
                               title="重试生成"
-                              onClick={() => void sendText(genError.prompt)}
+                              onClick={() => { if (genError.prompt) void sendText(genError.prompt); }}
                             >
                               重试
                             </button>
