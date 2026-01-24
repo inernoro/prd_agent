@@ -291,6 +291,24 @@ export const api = {
     },
   },
 
+  // ============ Weekly Plan Agent 周计划 ============
+  weeklyPlanAgent: {
+    templates: {
+      list: () => '/api/weekly-plan-agent/templates',
+      byId: (id: string) => `/api/weekly-plan-agent/templates/${id}`,
+      init: () => '/api/weekly-plan-agent/templates/init',
+    },
+    plans: {
+      list: () => '/api/weekly-plan-agent/plans',
+      byId: (id: string) => `/api/weekly-plan-agent/plans/${id}`,
+      team: () => '/api/weekly-plan-agent/plans/team',
+      submit: (id: string) => `/api/weekly-plan-agent/plans/${id}/submit`,
+      withdraw: (id: string) => `/api/weekly-plan-agent/plans/${id}/withdraw`,
+      review: (id: string) => `/api/weekly-plan-agent/plans/${id}/review`,
+      stats: () => '/api/weekly-plan-agent/plans/stats',
+    },
+  },
+
   // ============ Open Platform 开放平台 ============
   openPlatform: {
     apps: {
