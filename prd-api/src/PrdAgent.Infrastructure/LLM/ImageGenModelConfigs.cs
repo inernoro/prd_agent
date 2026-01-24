@@ -249,7 +249,7 @@ public static class ImageGenModelConfigs
         // ===== 豆包 Seedream 4.0（火山引擎）=====
         new ImageGenModelAdapterConfig
         {
-            ModelIdPattern = "doubao-seedream-4.0*",
+            ModelIdPattern = "doubao-seedream-4-0*",
             DisplayName = "豆包 Seedream 4.0",
             Provider = "字节跳动 (火山引擎)",
             SizeConstraintType = SizeConstraintTypes.Range,

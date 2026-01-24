@@ -99,7 +99,7 @@ export const IMAGE_GEN_ADAPTER_CONFIGS: AdapterConfig[] = [
     notes: ['支持 2K/4K 档位', '不支持 1K 档位'],
   },
   {
-    modelIdPattern: 'doubao-seedream-4.0*',
+    modelIdPattern: 'doubao-seedream-4-0*',
     displayName: '豆包 Seedream 4.0',
     provider: '字节跳动 (火山引擎)',
     sizeConstraintType: 'range',

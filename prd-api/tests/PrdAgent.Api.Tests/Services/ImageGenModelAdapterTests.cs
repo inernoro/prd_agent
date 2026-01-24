@@ -36,8 +36,8 @@ public class ImageGenModelAdapterTests
     [Theory]
     [InlineData("doubao-seedream-4-5-251128", "doubao-seedream-4-5*", "豆包 Seedream 4.5")]
     [InlineData("doubao-seedream-4-5", "doubao-seedream-4-5*", "豆包 Seedream 4.5")]
-    [InlineData("doubao-seedream-4.0-lite", "doubao-seedream-4.0*", "豆包 Seedream 4.0")]
-    [InlineData("doubao-seedream-4.0", "doubao-seedream-4.0*", "豆包 Seedream 4.0")]
+    [InlineData("doubao-seedream-4-0-250828", "doubao-seedream-4-0*", "豆包 Seedream 4.0")]
+    [InlineData("doubao-seedream-4-0", "doubao-seedream-4-0*", "豆包 Seedream 4.0")]
     [InlineData("doubao-seedream-3.0", "doubao-seedream-3*", "豆包 Seedream 3.0")]
     [InlineData("doubao-seedream-3", "doubao-seedream-3*", "豆包 Seedream 3.0")]
     public void TryMatch_DoubaoModels_ReturnsCorrectConfig(string modelId, string expectedPattern, string expectedDisplayName)
@@ -171,7 +171,7 @@ public class ImageGenModelAdapterTests
     public void NormalizeSize_DoubaoSeedream40_SupportsAll(
         string requestedSize, int expectedW, int expectedH)
     {
-        var config = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4.0");
+        var config = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4-0");
         Assert.NotNull(config);
         Assert.Equal("豆包 Seedream 4.0", config.DisplayName);
 
@@ -288,7 +288,7 @@ public class ImageGenModelAdapterTests
     [InlineData("dall-e-3", true, "DALL-E 3", "OpenAI")]
     [InlineData("flux-pro", true, "Flux Pro", "Black Forest Labs")]
     [InlineData("doubao-seedream-4-5", true, "豆包 Seedream 4.5", "字节跳动 (火山引擎)")]
-    [InlineData("doubao-seedream-4.0", true, "豆包 Seedream 4.0", "字节跳动 (火山引擎)")]
+    [InlineData("doubao-seedream-4-0", true, "豆包 Seedream 4.0", "字节跳动 (火山引擎)")]
     [InlineData("doubao-seedream-3", true, "豆包 Seedream 3.0", "字节跳动 (火山引擎)")]
     [InlineData("jimeng-ai", true, "即梦 AI", "字节跳动")]
     [InlineData("kling-v1", true, "可灵 AI", "快手")]
@@ -475,7 +475,7 @@ public class ImageGenModelAdapterTests
     {
         // 测试豆包系列不同版本的正确匹配
         var config45 = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4-5-251128");
-        var config40 = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4.0-lite");
+        var config40 = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4-0-lite");
         var config30 = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-3.0");
 
         Assert.NotNull(config45);
@@ -484,7 +484,7 @@ public class ImageGenModelAdapterTests
 
         // 确保匹配到不同的配置
         Assert.Equal("doubao-seedream-4-5*", config45.ModelIdPattern);
-        Assert.Equal("doubao-seedream-4.0*", config40.ModelIdPattern);
+        Assert.Equal("doubao-seedream-4-0*", config40.ModelIdPattern);
         Assert.Equal("doubao-seedream-3*", config30.ModelIdPattern);
 
         // 验证各自的特性
@@ -545,8 +545,8 @@ public class ImageGenModelAdapterTests
     [InlineData("4096x4096", "4k")]
     public void NormalizeSize_ResolutionTier_BasicSizes(string requestedSize, string expectedTier)
     {
-        // 使用 doubao-seedream-4.0，它支持 1K/2K/4K 全档位
-        var config = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4.0");
+        // 使用 doubao-seedream-4-0，它支持 1K/2K/4K 全档位
+        var config = ImageGenModelAdapterRegistry.TryMatch("doubao-seedream-4-0");
         Assert.NotNull(config);
         Assert.Equal(SizeConstraintTypes.Range, config.SizeConstraintType);
 
