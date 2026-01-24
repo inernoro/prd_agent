@@ -794,6 +794,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
+  const sizeSelectorRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭尺寸选择器
+  useEffect(() => {
+    if (!sizeSelectorOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sizeSelectorRef.current && !sizeSelectorRef.current.contains(e.target as Node)) {
+        setSizeSelectorOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [sizeSelectorOpen]);
 
   // 水印配置
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
@@ -4404,26 +4417,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}
                             <PrdPetalBreathingLoader fill paused grayscale className="absolute inset-0" />
-                            {/* 重试按钮覆盖层 */}
+                            {/* 错误提示 */}
                             <div
-                              className="absolute inset-0 flex flex-col items-center justify-center gap-[3%]"
+                              className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={(e) => e.stopPropagation()}
                             >
-                              <Button
-                                variant="secondary"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // 使用保存的参考图信息重试
-                                  void retryGenerate(it);
-                                }}
-                                style={{ fontSize: '5%', fontWeight: 600, padding: '2% 5%', height: 'auto', borderRadius: '3%' }}
-                                className="!text-[5cqw] !h-auto !px-[5%] !py-[2%] !rounded-[3%]"
-                              >
-                                重试
-                              </Button>
-                              <div className="max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
                                 {it.errorMessage || '生成失败'}
                               </div>
                             </div>
@@ -4541,26 +4540,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           >
                             {/* 灰色静止花瓣背景 */}
                             <PrdPetalBreathingLoader fill paused grayscale className="absolute inset-0" />
-                            {/* 重试按钮覆盖层 */}
+                            {/* 错误提示 */}
                             <div
-                              className="absolute inset-0 flex flex-col items-center justify-center gap-[3%]"
+                              className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={(e) => e.stopPropagation()}
                             >
-                              <Button
-                                variant="secondary"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // 使用保存的参考图信息重试
-                                  void retryGenerate(it);
-                                }}
-                                style={{ fontSize: '5%', fontWeight: 600, padding: '2% 5%', height: 'auto', borderRadius: '3%' }}
-                                className="!text-[5cqw] !h-auto !px-[5%] !py-[2%] !rounded-[3%]"
-                              >
-                                重试
-                              </Button>
-                              <div className="max-w-[80%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
                                 {it.errorMessage || '图片加载失败'}
                               </div>
                             </div>
@@ -5823,21 +5808,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const genError = !isUser ? parseGenError(m.content) : null;
                 if (genError) {
                   return (
-                    <div key={m.id} className="flex justify-start">
+                    <div key={m.id} className="flex flex-col items-start gap-0.5">
                       <div
-                        className="group relative max-w-[95%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)' }}
+                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
+                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgb(45, 30, 30)' }}
                       >
-                        {/* 引用用户提示词 */}
+                        {/* 引用用户提示词 + 重试按钮 */}
                         {genError.prompt ? (
-                          <div className="px-2.5 pt-2 pb-1.5 flex items-start gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
+                          <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
                             <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(239,68,68,0.4)' }} />
-                            <div className="text-[11px] min-w-0 truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
+                            <div className="text-[11px] min-w-0 truncate flex-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
                               {genError.prompt}
                             </div>
+                            <button
+                              type="button"
+                              className="shrink-0 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10"
+                              style={{
+                                border: '1px solid rgba(255,255,255,0.15)',
+                                background: 'rgba(255,255,255,0.05)',
+                                color: 'rgba(255,255,255,0.7)',
+                              }}
+                              title="重试生成"
+                              onClick={() => void sendText(genError.prompt)}
+                            >
+                              重试
+                            </button>
                           </div>
                         ) : null}
-                        <div className="px-2.5 pt-2 pb-4 flex items-start gap-2.5">
+                        <div className="px-2.5 pt-2 pb-2 flex items-start gap-2.5">
                           {/* 参考图缩略图 */}
                           {genError.refSrc ? (
                             <button
@@ -5857,13 +5855,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           </div>
                         </div>
-                        <span
-                          className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
-                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                        >
-                          {formatMsgTimestamp(m.ts)}
-                        </span>
                       </div>
+                      <span
+                        className="text-[9px] tabular-nums select-none pl-1"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                      >
+                        {formatMsgTimestamp(m.ts)}
+                      </span>
                     </div>
                   );
                 }
@@ -5872,10 +5870,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const genDone = !isUser ? parseGenDone(m.content) : null;
                 if (genDone) {
                   return (
-                    <div key={m.id} className="flex justify-start">
+                    <div key={m.id} className="flex flex-col items-start gap-0.5">
                       <div
-                        className="group relative max-w-[95%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)' }}
+                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
+                        style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgb(35, 35, 40)' }}
                       >
                         {/* 引用用户提示词 + 参考图 */}
                         {(genDone.prompt || genDone.refSrc) ? (
@@ -5910,13 +5908,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             style={{ width: '100%', maxHeight: 70, objectFit: 'contain', display: 'block' }}
                           />
                         </button>
-                        <span
-                          className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
-                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                        >
-                          {formatMsgTimestamp(m.ts)}
-                        </span>
                       </div>
+                      <span
+                        className="text-[9px] tabular-nums select-none pl-1"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                      >
+                        {formatMsgTimestamp(m.ts)}
+                      </span>
                     </div>
                   );
                 }
@@ -5926,22 +5924,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 if (legacyErrorMatch) {
                   const legacyMsg = legacyErrorMatch[1].trim();
                   return (
-                    <div key={m.id} className="flex justify-start">
+                    <div key={m.id} className="flex flex-col items-start gap-0.5">
                       <div
-                        className="group relative max-w-[95%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-4"
-                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)' }}
+                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
+                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgb(45, 30, 30)' }}
                       >
                         <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
                         <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
                           {legacyMsg}
                         </div>
-                        <span
-                          className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
-                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                        >
-                          {formatMsgTimestamp(m.ts)}
-                        </span>
                       </div>
+                      <span
+                        className="text-[9px] tabular-nums select-none pl-1"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                      >
+                        {formatMsgTimestamp(m.ts)}
+                      </span>
                     </div>
                   );
                 }
@@ -5959,38 +5957,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
                 const isExpanded = expandedMsgIds.has(m.id);
                 return (
-                  <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                  <div key={m.id} className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
                     <div
-                      className="group relative max-w-[95%] rounded-[10px] px-2.5 pt-1.5 text-[12px] leading-[16px]"
+                      className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
                       style={{
                         background: isUser
-                          ? 'rgba(214, 178, 106, 0.12)'
-                          : 'rgba(255,255,255,0.04)',
+                          ? 'rgb(50, 45, 35)'
+                          : 'rgb(35, 35, 40)',
                         border: '1px solid var(--border-subtle)',
                         color: 'var(--text-primary)',
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
-                        paddingBottom: isLongMsg ? 4 : 16,
                       }}
                     >
-                      <span
-                        className="pointer-events-none absolute bottom-0.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] tabular-nums select-none"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
                       <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
                         {isUser && (refSrc || msgSize) ? (
-                          <span className="flex flex-wrap items-center gap-x-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             {refSrc ? (
                               <button
                                 type="button"
-                                className="inline-flex items-center gap-1.5"
+                                className="inline-flex items-center gap-1"
                                 style={{
-                                  height: 20,
-                                  maxWidth: 240,
-                                  paddingLeft: 6,
-                                  paddingRight: 8,
+                                  height: 18,
+                                  maxWidth: 120,
+                                  paddingLeft: 4,
+                                  paddingRight: 6,
                                   borderRadius: 4,
                                   overflow: 'hidden',
                                   border: '1px solid var(--border-subtle)',
@@ -6002,9 +5993,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               >
                                 <span
                                   style={{
-                                    width: 18,
-                                    height: 18,
-                                    borderRadius: 4,
+                                    width: 14,
+                                    height: 14,
+                                    borderRadius: 3,
                                     overflow: 'hidden',
                                     border: '1px solid rgba(255,255,255,0.22)',
                                     background: 'rgba(255,255,255,0.06)',
@@ -6020,13 +6011,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 </span>
                                 <span
                                   style={{
-                                    fontSize: 14,
-                                    lineHeight: '20px',
-                                    color: 'rgba(255,255,255,0.82)',
+                                    fontSize: 10,
+                                    lineHeight: '14px',
+                                    color: 'rgba(255,255,255,0.7)',
                                     whiteSpace: 'nowrap',
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
-                                    maxWidth: 200,
+                                    maxWidth: 80,
                                   }}
                                 >
                                 {refName}
@@ -6035,41 +6026,35 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             ) : null}
 
                             {msgSize ? (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1.5"
+                              <span
+                                className="inline-flex items-center gap-1"
                                 style={{
-                                  height: 20,
-                                  paddingLeft: 6,
-                                  paddingRight: 8,
+                                  height: 18,
+                                  paddingLeft: 4,
+                                  paddingRight: 6,
                                   borderRadius: 4,
-                                  overflow: 'hidden',
                                   border: '1px solid var(--border-subtle)',
                                   background: 'rgba(214, 178, 106, 0.10)',
                                 }}
-                                aria-label="尺寸"
                                 title={`尺寸：${msgSize}`}
                               >
                                 <AspectIcon size={msgSize} />
                                 <span
                                   className="tabular-nums"
                                   style={{
-                                    fontSize: 14,
-                                    lineHeight: '20px',
-                                    color: 'rgba(255,255,255,0.82)',
+                                    fontSize: 10,
+                                    lineHeight: '14px',
+                                    color: 'rgba(255,255,255,0.7)',
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
                                   {msgSize}
                                 </span>
-                              </button>
+                              </span>
                             ) : null}
-
-                            <span style={{ lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msgBody}</span>
-                          </span>
-                        ) : (
-                          msgBody
-                        )}
+                          </div>
+                        ) : null}
+                        <div>{msgBody}</div>
                       </div>
                       {isLongMsg ? (
                         <button
@@ -6087,6 +6072,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </button>
                       ) : null}
                     </div>
+                    {/* 时间在气泡下方 */}
+                    <span
+                      className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
+                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+                    >
+                      {formatMsgTimestamp(m.ts)}
+                    </span>
                   </div>
                 );
               })}
@@ -6355,7 +6347,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               <div className="mt-1 flex items-center justify-between gap-1.5">
                 {/* 左侧：尺寸/比例选择器 */}
-                <div className="relative flex items-center gap-1.5">
+                <div ref={sizeSelectorRef} className="relative flex items-center gap-1.5">
                   <button
                     type="button"
                     className="h-7 px-2 rounded-full inline-flex items-center gap-1"
@@ -6384,8 +6376,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   {/* 尺寸/比例 Popover */}
                   {sizeSelectorOpen ? (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setSizeSelectorOpen(false)} />
                       <div
                         className="absolute bottom-full right-0 mb-2 z-50 rounded-[14px] p-3"
                         style={{
@@ -6429,7 +6419,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     composerSizeAutoRef.current = false;
                                     setComposerSize(newSize);
                                   }
-                                  setSizeSelectorOpen(false);
+                                  // 点击分辨率不关闭面板，只有点击 Size 才关闭
                                 }}
                               >
                                 {label}
@@ -6478,7 +6468,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           })}
                         </div>
                       </div>
-                    </>
                   ) : null}
                 </div>
 

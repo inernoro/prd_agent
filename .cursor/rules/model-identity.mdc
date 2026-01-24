@@ -8,8 +8,17 @@ description: 模型标识/命名全局契约（platformId + modelId）
 ## 术语
 
 - **platformId**：平台 ID（对应 `LLMPlatform.Id`）
-- **modelId**：平台侧模型 ID（供应商/网关暴露的模型标识，例如 `deepseek-v3`、`gpt-4.1`）
+- **modelId**：平台侧模型 ID（供应商/网关暴露的模型标识，例如 `deepseek-v3`、`gpt-4-turbo`、`doubao-seedream-4-5`）
 - **configModelId**：内部配置模型 ID（对应 `LLMModel.Id`，Guid 字符串），只用于配置管理与兼容历史数据
+
+## 数据库字段映射（重要）
+
+`LLMModel` 表中的字段：
+- `Id` -> **configModelId**（数据库内部 ID，Guid）
+- `Name` -> 显示名称（用户友好的名字，如 "GPT-4 Turbo"）
+- `ModelName` -> **modelId**（平台侧模型标识，如 `gpt-4-turbo`）
+
+**注意**：字段名 `ModelName` 是历史遗留，实际存储的是 `modelId`。调用 LLM API 时必须使用 `ModelName`（即 `modelId`），而不是 `Name`。
 
 ## 强制语义
 
@@ -20,10 +29,65 @@ description: 模型标识/命名全局契约（platformId + modelId）
   - 在业务逻辑中统一按 `modelId` 理解/实现；
   - 当代码里出现 `modelName` 时，必须确认是否缺少 `platformId` 维度。
 
+## LLMModels 集合的本质（重要）
+
+**`LLMModels` 是"收藏夹"，不是模型的完整来源！**
+
+### 核心原则
+
+1. **LLMModels 只是用户收藏/配置的模型快捷方式**
+   - 用于设置主模型、意图模型、生图模型等默认配置
+   - 用于在管理页面展示已收藏的模型列表
+   - **不代表所有可用的模型**
+
+2. **真正的模型标识永远是 `(platformId, modelId)`**
+   - 用户可以直接输入任意 modelId，不必在收藏夹中
+   - 平台提供的模型列表可能随时变化
+   - 收藏夹中的模型可能被删除
+
+3. **禁止通过查询 LLMModels 来获取模型信息用于业务逻辑**
+   - 错误：`var model = await _db.LLMModels.Find(m => m.Id == modelId)` 然后使用 `model.ModelName`
+   - 正确：直接使用传入的 `modelName`/`modelId` 参数
+
+### 允许查询 LLMModels 的场景
+
+- 管理收藏夹本身（CRUD 操作）
+- 获取默认配置（主模型 IsMain、意图模型 IsIntent 等）
+- 数据导入/导出
+- 平台下的模型列表展示（仅限管理页面）
+
+### 禁止查询 LLMModels 的场景
+
+- 获取模型的适配器信息（应直接用 modelName 匹配）
+- 验证模型是否存在（模型不需要在收藏夹中）
+- 获取模型的尺寸限制（应直接用 modelName 查适配器配置）
+
+### 正确的 API 设计
+
+```csharp
+// 正确：直接接受 modelName，无需查询数据库
+[HttpGet("adapter-info")]
+public IActionResult GetAdapterInfo([FromQuery] string modelName)
+{
+    var info = ImageGenModelAdapterRegistry.GetAdapterInfo(modelName);
+    // ...
+}
+
+// 仅用于管理页面（收藏夹内的模型）
+[HttpGet("{id}/adapter-info")]
+public async Task<IActionResult> GetModelAdapterInfo(string id)
+{
+    var model = await _db.LLMModels.Find(m => m.Id == id).FirstOrDefaultAsync();
+    // 注意：这只用于已收藏的模型
+}
+```
+
 ## 常见错误（必须规避）
 
 - 使用 `ModelName == xxx` 全库查询/去重（未加 `PlatformId`）——会导致跨平台同名冲突。
 - 以 `name/displayName` 作为唯一标识或作为默认展示——会导致用户误选与数据错配。
+- **假设模型必须在 LLMModels 中才能使用**——用户可以直接输入任意 modelId。
+- **通过 LLMModels 获取 modelName 再调用适配器**——应直接用参数中的 modelName。
 
 ## 兼容策略（允许但需标注）
 

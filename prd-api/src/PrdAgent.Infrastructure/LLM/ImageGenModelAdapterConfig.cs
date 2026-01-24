@@ -1,7 +1,7 @@
 namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
-/// vveai 平台模型尺寸约束类型
+/// 生图模型尺寸约束类型
 /// </summary>
 public static class SizeConstraintTypes
 {
@@ -14,7 +14,7 @@ public static class SizeConstraintTypes
 }
 
 /// <summary>
-/// vveai 平台模型尺寸参数格式
+/// 生图模型尺寸参数格式
 /// </summary>
 public static class SizeParamFormats
 {
@@ -27,9 +27,9 @@ public static class SizeParamFormats
 }
 
 /// <summary>
-/// vveai 平台模型适配配置
+/// 生图模型适配配置
 /// </summary>
-public class VveaiModelAdapterConfig
+public class ImageGenModelAdapterConfig
 {
     /// <summary>模型匹配模式（支持通配符 *，如 nano-banana*）</summary>
     public string ModelIdPattern { get; set; } = string.Empty;

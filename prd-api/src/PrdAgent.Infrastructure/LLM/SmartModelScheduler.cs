@@ -505,9 +505,95 @@ public class SmartModelScheduler : ISmartModelScheduler
         }
 
         // 3. 使用该类型的默认分组
-        return await _db.ModelGroups
+        var defaultGroup = await _db.ModelGroups
             .Find(g => g.ModelType == modelType && g.IsDefaultForType)
             .FirstOrDefaultAsync(ct);
+        
+        if (defaultGroup != null)
+        {
+            return defaultGroup;
+        }
+
+        // 4. 回退到传统单点配置模型（主模型/意图模型/识图模型/生图模型）
+        var legacyGroup = await GetLegacyModelAsGroupAsync(modelType, ct);
+        if (legacyGroup != null)
+        {
+            _logger.LogInformation("使用传统单点配置模型作为回退: modelType={ModelType}, modelId={ModelId}", 
+                modelType, legacyGroup.Models.FirstOrDefault()?.ModelId);
+            return legacyGroup;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 从传统单点配置模型（LLMModels 表）构建虚拟模型池
+    /// 按 modelType 映射：chat -> IsMain, intent -> IsIntent, vision -> IsVision, image-gen -> IsImageGen
+    /// 若指定类型未配置，则回退主模型
+    /// </summary>
+    private async Task<ModelGroup?> GetLegacyModelAsGroupAsync(string modelType, CancellationToken ct)
+    {
+        // 根据 modelType 查找对应的传统配置模型
+        LLMModel? legacyModel = null;
+        var lowerType = modelType?.ToLowerInvariant() ?? "chat";
+
+        switch (lowerType)
+        {
+            case "intent":
+                legacyModel = await _db.LLMModels.Find(m => m.IsIntent && m.Enabled).FirstOrDefaultAsync(ct);
+                break;
+            case "vision":
+                legacyModel = await _db.LLMModels.Find(m => m.IsVision && m.Enabled).FirstOrDefaultAsync(ct);
+                break;
+            case "image-gen":
+            case "imagegen":
+                legacyModel = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
+                break;
+            case "chat":
+            default:
+                // chat 类型或未知类型直接使用主模型
+                legacyModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
+                break;
+        }
+
+        // 如果指定类型未配置，回退到主模型
+        if (legacyModel == null && lowerType != "chat")
+        {
+            _logger.LogDebug("未找到 {ModelType} 类型的传统配置模型，尝试回退主模型", modelType);
+            legacyModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
+        }
+
+        if (legacyModel == null)
+        {
+            return null;
+        }
+
+        // 构造虚拟模型池（不持久化，仅用于本次调用）
+        var virtualGroup = new ModelGroup
+        {
+            Id = $"legacy-{legacyModel.Id}",
+            Name = $"传统配置 - {legacyModel.Name}",
+            Code = $"legacy-{lowerType}",
+            ModelType = modelType ?? "chat",
+            IsDefaultForType = false, // 标记为非默认，便于日志/监控区分
+            Priority = 9999, // 最低优先级
+            Models = new List<ModelGroupItem>
+            {
+                new ModelGroupItem
+                {
+                    ModelId = legacyModel.ModelName,
+                    PlatformId = legacyModel.PlatformId ?? string.Empty,
+                    Priority = 1,
+                    HealthStatus = ModelHealthStatus.Healthy,
+                    EnablePromptCache = legacyModel.EnablePromptCache,
+                    MaxTokens = legacyModel.MaxTokens
+                }
+            },
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        return virtualGroup;
     }
 
     /// <summary>

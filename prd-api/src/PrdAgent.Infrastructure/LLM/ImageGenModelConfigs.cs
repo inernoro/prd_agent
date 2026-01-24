@@ -1,18 +1,18 @@
 namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
-/// vveai 平台模型配置集合
-/// 基于 https://api.vveai.com (api-gpt-ge.apifox.cn) 文档
+/// 生图模型配置集合
+/// 基于模型名匹配，适用于所有平台
 /// </summary>
-public static class VveaiModelConfigs
+public static class ImageGenModelConfigs
 {
     /// <summary>
-    /// 所有已知的 vveai 平台模型适配配置
+    /// 所有已知的生图模型适配配置
     /// </summary>
-    public static readonly List<VveaiModelAdapterConfig> Configs = new()
+    public static readonly List<ImageGenModelAdapterConfig> Configs = new()
     {
         // ===== Gemini Nano-Banana 系列 =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "nano-banana*",
             DisplayName = "Gemini Nano-Banana",
@@ -45,7 +45,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== DALL-E 3 =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "dall-e-3",
             DisplayName = "DALL-E 3",
@@ -65,7 +65,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== DALL-E 2 =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "dall-e-2",
             DisplayName = "DALL-E 2",
@@ -85,7 +85,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== Flux Pro =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "flux*",
             DisplayName = "Flux Pro",
@@ -107,7 +107,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== 即梦 AI 4.0 =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "jimeng*",
             DisplayName = "即梦 AI",
@@ -132,7 +132,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== 通义万相 qwen-image =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "qwen-image*",
             DisplayName = "通义万相 qwen-image",
@@ -156,7 +156,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== Grok-2 Image =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "grok-2-image*",
             DisplayName = "Grok-2 Image",
@@ -176,7 +176,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== Stable Diffusion 3.5 =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "stable-diffusion*",
             DisplayName = "Stable Diffusion 3.5",
@@ -201,7 +201,7 @@ public static class VveaiModelConfigs
         },
 
         // ===== 可灵 AI 1.5 =====
-        new VveaiModelAdapterConfig
+        new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "kling*",
             DisplayName = "可灵 AI",
@@ -216,25 +216,91 @@ public static class VveaiModelConfigs
             SupportsImageToImage = true,
             SupportsInpainting = false,
         },
-    };
 
-    /// <summary>
-    /// vveai 平台的 API URL 模式
-    /// </summary>
-    public static readonly List<string> VveaiApiUrlPatterns = new()
-    {
-        "api.vveai.com",
-        "vveai.com",
-        "api-gpt-ge.apifox.cn"
-    };
+        // ===== 豆包 Seedream 4.5（火山引擎）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "doubao-seedream-4-5*",
+            DisplayName = "豆包 Seedream 4.5",
+            Provider = "字节跳动 (火山引擎)",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeConstraintDescription = "支持 2K/4K 档位，总像素 [3,686,400 ~ 16,777,216]",
+            AllowedSizes = new List<string>
+            {
+                // 2K 档位（约 1920x1920 ~ 2048x2048）
+                "2048x2048", "2560x1440", "1440x2560", "2304x1728", "1728x2304",
+                "2400x1600", "1600x2400", "2176x1920", "1920x2176",
+                // 4K 档位
+                "4096x4096", "3840x2160", "2160x3840", "4608x3456", "3456x4608",
+            },
+            AllowedRatios = new List<string> { "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3" },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MustBeDivisibleBy = 8,
+            MinWidth = 14,
+            MinHeight = 14,
+            MaxWidth = 6000,
+            MaxHeight = 6000,
+            MaxPixels = 16777216,
+            Notes = new List<string> { "总像素下限 3,686,400（约 1920x1920）", "不支持 1K 档位" },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+        },
 
-    /// <summary>
-    /// 检查是否为 vveai 平台
-    /// </summary>
-    public static bool IsVveaiPlatform(string? apiUrl)
-    {
-        if (string.IsNullOrWhiteSpace(apiUrl)) return false;
-        var url = apiUrl.Trim().ToLowerInvariant();
-        return VveaiApiUrlPatterns.Any(pattern => url.Contains(pattern, StringComparison.OrdinalIgnoreCase));
-    }
+        // ===== 豆包 Seedream 4.0（火山引擎）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "doubao-seedream-4.0*",
+            DisplayName = "豆包 Seedream 4.0",
+            Provider = "字节跳动 (火山引擎)",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeConstraintDescription = "支持 1K/2K/4K 全档位，总像素 [921,600 ~ 16,777,216]",
+            AllowedSizes = new List<string>
+            {
+                // 1K 档位
+                "1024x1024", "1280x720", "720x1280", "1152x864", "864x1152",
+                "1200x800", "800x1200",
+                // 2K 档位
+                "2048x2048", "2560x1440", "1440x2560", "2304x1728", "1728x2304",
+                // 4K 档位
+                "4096x4096", "3840x2160", "2160x3840",
+            },
+            AllowedRatios = new List<string> { "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3" },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MustBeDivisibleBy = 8,
+            MinWidth = 14,
+            MinHeight = 14,
+            MaxWidth = 6000,
+            MaxHeight = 6000,
+            MaxPixels = 16777216,
+            Notes = new List<string> { "支持 1K/2K/4K 全档位" },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+        },
+
+        // ===== 豆包 Seedream 3.0（火山引擎）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "doubao-seedream-3*",
+            DisplayName = "豆包 Seedream 3.0",
+            Provider = "字节跳动 (火山引擎)",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeConstraintDescription = "仅支持约 1K 档位，总像素 [262,144 ~ 4,194,304]",
+            AllowedSizes = new List<string>
+            {
+                "1024x1024", "1280x720", "720x1280", "1152x864", "864x1152",
+                "1200x800", "800x1200", "960x960",
+            },
+            AllowedRatios = new List<string> { "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3" },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MustBeDivisibleBy = 8,
+            MinWidth = 14,
+            MinHeight = 14,
+            MaxWidth = 2048,
+            MaxHeight = 2048,
+            MaxPixels = 4194304,
+            Notes = new List<string> { "不支持 2K/4K 档位" },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+        },
+    };
 }

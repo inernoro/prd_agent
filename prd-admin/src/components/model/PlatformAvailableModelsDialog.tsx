@@ -8,7 +8,7 @@ import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
 import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
-import { matchAdapterConfig } from '@/lib/vveaiAdapterConfigs';
+import { matchAdapterConfig } from '@/lib/imageGenAdapterConfigs';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';

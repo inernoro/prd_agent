@@ -1,6 +1,7 @@
 /**
- * vveai 平台模型适配器配置（前端本地版本）
+ * 生图模型适配器配置（前端本地版本）
  * 用于在模型选择器中预览匹配的适配器信息
+ * 基于模型名匹配，适用于所有平台
  */
 
 export type AdapterConfig = {
@@ -13,9 +14,9 @@ export type AdapterConfig = {
 };
 
 /**
- * vveai 平台已配置的适配器列表
+ * 生图模型适配器配置列表
  */
-export const VVEAI_ADAPTER_CONFIGS: AdapterConfig[] = [
+export const IMAGE_GEN_ADAPTER_CONFIGS: AdapterConfig[] = [
   {
     modelIdPattern: 'nano-banana*',
     displayName: 'Gemini Nano-Banana',
@@ -88,6 +89,31 @@ export const VVEAI_ADAPTER_CONFIGS: AdapterConfig[] = [
     allowedRatios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'],
     notes: ['通过 aspect_ratio 参数控制比例'],
   },
+  // ===== 豆包 Seedream 系列（火山引擎）=====
+  {
+    modelIdPattern: 'doubao-seedream-4-5*',
+    displayName: '豆包 Seedream 4.5',
+    provider: '字节跳动 (火山引擎)',
+    sizeConstraintType: 'range',
+    allowedRatios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'],
+    notes: ['支持 2K/4K 档位', '不支持 1K 档位'],
+  },
+  {
+    modelIdPattern: 'doubao-seedream-4.0*',
+    displayName: '豆包 Seedream 4.0',
+    provider: '字节跳动 (火山引擎)',
+    sizeConstraintType: 'range',
+    allowedRatios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'],
+    notes: ['支持 1K/2K/4K 全档位'],
+  },
+  {
+    modelIdPattern: 'doubao-seedream-3*',
+    displayName: '豆包 Seedream 3.0',
+    provider: '字节跳动 (火山引擎)',
+    sizeConstraintType: 'range',
+    allowedRatios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'],
+    notes: ['仅支持约 1K 档位'],
+  },
 ];
 
 /**
@@ -97,7 +123,7 @@ export function matchAdapterConfig(modelName: string | null | undefined): Adapte
   if (!modelName) return null;
   const name = modelName.trim().toLowerCase();
 
-  for (const config of VVEAI_ADAPTER_CONFIGS) {
+  for (const config of IMAGE_GEN_ADAPTER_CONFIGS) {
     const pattern = config.modelIdPattern.trim().toLowerCase();
 
     if (pattern.endsWith('*')) {

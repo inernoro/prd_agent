@@ -3,43 +3,24 @@ using System.Text.RegularExpressions;
 namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
-/// vveai 平台模型适配器注册表
+/// 生图模型适配器注册表
 /// 负责模型匹配、尺寸归一化、参数转换
+/// 基于模型名匹配，适用于所有平台
 /// </summary>
-public static class VveaiModelAdapterRegistry
+public static class ImageGenModelAdapterRegistry
 {
     private static readonly Regex SizeRegex = new(@"^\s*(\d+)\s*[xX×＊*]\s*(\d+)\s*$", RegexOptions.Compiled);
 
     /// <summary>
-    /// 根据平台 URL 和模型名匹配适配配置
+    /// 根据模型名匹配适配配置（纯粹基于模型名，不检查平台）
     /// </summary>
-    public static VveaiModelAdapterConfig? TryMatch(string? platformApiUrl, string? modelName)
+    public static ImageGenModelAdapterConfig? TryMatch(string? modelName)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return null;
-        if (!VveaiModelConfigs.IsVveaiPlatform(platformApiUrl)) return null;
 
         var name = modelName.Trim().ToLowerInvariant();
 
-        foreach (var config in VveaiModelConfigs.Configs)
-        {
-            if (MatchPattern(config.ModelIdPattern, name))
-            {
-                return config;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// 根据模型名获取适配信息（不检查平台 URL）
-    /// </summary>
-    public static VveaiModelAdapterConfig? GetConfigByModelName(string? modelName)
-    {
-        if (string.IsNullOrWhiteSpace(modelName)) return null;
-        var name = modelName.Trim().ToLowerInvariant();
-
-        foreach (var config in VveaiModelConfigs.Configs)
+        foreach (var config in ImageGenModelConfigs.Configs)
         {
             if (MatchPattern(config.ModelIdPattern, name))
             {
@@ -53,7 +34,7 @@ public static class VveaiModelAdapterRegistry
     /// <summary>
     /// 尺寸归一化：将请求的尺寸适配到模型支持的尺寸
     /// </summary>
-    public static SizeAdaptationResult NormalizeSize(VveaiModelAdapterConfig config, string? requestedSize)
+    public static SizeAdaptationResult NormalizeSize(ImageGenModelAdapterConfig config, string? requestedSize)
     {
         var result = new SizeAdaptationResult();
 
@@ -92,7 +73,7 @@ public static class VveaiModelAdapterRegistry
     /// <summary>
     /// 白名单模式：选择最接近的尺寸
     /// </summary>
-    private static SizeAdaptationResult NormalizeSizeWhitelist(VveaiModelAdapterConfig config, int reqW, int reqH)
+    private static SizeAdaptationResult NormalizeSizeWhitelist(ImageGenModelAdapterConfig config, int reqW, int reqH)
     {
         var result = new SizeAdaptationResult();
         var reqRatio = (double)reqW / reqH;
@@ -137,7 +118,7 @@ public static class VveaiModelAdapterRegistry
     /// <summary>
     /// 范围模式：在范围内调整尺寸
     /// </summary>
-    private static SizeAdaptationResult NormalizeSizeRange(VveaiModelAdapterConfig config, int reqW, int reqH)
+    private static SizeAdaptationResult NormalizeSizeRange(ImageGenModelAdapterConfig config, int reqW, int reqH)
     {
         var result = new SizeAdaptationResult();
 
@@ -185,7 +166,7 @@ public static class VveaiModelAdapterRegistry
     /// <summary>
     /// 比例模式：只返回比例和分辨率档位
     /// </summary>
-    private static SizeAdaptationResult NormalizeSizeAspectRatio(VveaiModelAdapterConfig config, int reqW, int reqH)
+    private static SizeAdaptationResult NormalizeSizeAspectRatio(ImageGenModelAdapterConfig config, int reqW, int reqH)
     {
         var result = new SizeAdaptationResult();
 
@@ -220,7 +201,7 @@ public static class VveaiModelAdapterRegistry
     /// 转换参数（应用 ParamRenames）
     /// </summary>
     public static Dictionary<string, object> TransformParams(
-        VveaiModelAdapterConfig config,
+        ImageGenModelAdapterConfig config,
         Dictionary<string, object> originalParams)
     {
         var result = new Dictionary<string, object>(originalParams);
@@ -241,7 +222,7 @@ public static class VveaiModelAdapterRegistry
     /// 构建尺寸参数（根据 SizeParamFormat）
     /// </summary>
     public static void ApplySizeParams(
-        VveaiModelAdapterConfig config,
+        ImageGenModelAdapterConfig config,
         SizeAdaptationResult sizeResult,
         Dictionary<string, object> targetParams)
     {
@@ -271,12 +252,12 @@ public static class VveaiModelAdapterRegistry
     /// <summary>
     /// 获取适配器信息（供前端展示）
     /// </summary>
-    public static VveaiAdapterInfo? GetAdapterInfo(string? platformApiUrl, string? modelName)
+    public static ImageGenAdapterInfo? GetAdapterInfo(string? modelName)
     {
-        var config = TryMatch(platformApiUrl, modelName);
+        var config = TryMatch(modelName);
         if (config == null) return null;
 
-        return new VveaiAdapterInfo
+        return new ImageGenAdapterInfo
         {
             Matched = true,
             AdapterName = config.ModelIdPattern.TrimEnd('*'),
@@ -398,7 +379,7 @@ public static class VveaiModelAdapterRegistry
 /// <summary>
 /// 适配器信息（供前端展示）
 /// </summary>
-public class VveaiAdapterInfo
+public class ImageGenAdapterInfo
 {
     public bool Matched { get; set; }
     public string AdapterName { get; set; } = string.Empty;

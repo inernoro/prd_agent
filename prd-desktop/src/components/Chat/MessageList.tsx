@@ -201,7 +201,10 @@ function unwrapMarkdownFences(text: string) {
   if (!text) return text;
   // 兼容：LLM 常用 ```markdown / ```md 包裹“本来就想渲染的 Markdown”，会被当作代码块显示
   // 这里仅解包 markdown/md 语言标记，其它代码块保持不动
-  return text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+  let result = text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+  // 去除开头的空白行，避免 prose 渲染时产生多余的空白区域
+  result = result.replace(/^[\s\n]+/, '');
+  return result;
 }
 
 function injectSectionNumberLinks(raw: string) {
@@ -1045,7 +1048,7 @@ function MessageListInner() {
                               // 因此：未完成的 block 先纯文本展示，blockEnd 后再用 ReactMarkdown 渲染
                               b.isComplete === false ? (
                                 <p className="whitespace-pre-wrap break-words">
-                                  {b.content}
+                                  {(b.content || '').replace(/^[\s\n]+/, '')}
                                 </p>
                               ) : (
                                 <MarkdownRenderer 
@@ -1085,7 +1088,7 @@ function MessageListInner() {
                   // 兼容旧协议：无 blocks 时沿用原逻辑（流式阶段先纯文本，done 后 markdown）
               isMessageStreaming ? (
                     <div className="prose prose-sm dark:prose-invert max-w-none" style={assistantContentStyle}>
-                      <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                      <p className="whitespace-pre-wrap break-words">{(message.content || '').replace(/^[\s\n]+/, '')}</p>
                     </div>
                   ) : (
                     <MarkdownRenderer

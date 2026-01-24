@@ -706,47 +706,31 @@ public class ModelsController : ControllerBase
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 
     /// <summary>
-    /// 获取模型的平台适配信息
+    /// 根据平台侧模型ID直接获取适配信息（无需查询数据库，支持任意模型）
     /// </summary>
-    [HttpGet("{id}/adapter-info")]
-    public async Task<IActionResult> GetModelAdapterInfo(string id)
+    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
+    [HttpGet("adapter-info")]
+    public IActionResult GetAdapterInfoByModelId([FromQuery] string modelId)
     {
-        var model = await _db.LLMModels.Find(m => m.Id == id).FirstOrDefaultAsync();
-        if (model == null)
+        if (string.IsNullOrWhiteSpace(modelId))
         {
-            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "模型不存在"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
         }
 
-        // 获取平台信息
-        string? platformApiUrl = null;
-        if (!string.IsNullOrWhiteSpace(model.PlatformId))
-        {
-            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync();
-            platformApiUrl = platform?.ApiUrl ?? model.ApiUrl;
-        }
-        else
-        {
-            platformApiUrl = model.ApiUrl;
-        }
-
-        // 尝试匹配 vveai 适配器
-        var adapterInfo = Infrastructure.LLM.VveaiModelAdapterRegistry.GetAdapterInfo(platformApiUrl, model.ModelName);
-
-        if (adapterInfo == null)
+        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(modelId.Trim());
+        if (adapterInfo == null || !adapterInfo.Matched)
         {
             return Ok(ApiResponse<object>.Ok(new
             {
                 matched = false,
-                modelId = id,
-                modelName = model.ModelName,
+                modelId = modelId.Trim(),
             }));
         }
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            matched = adapterInfo.Matched,
-            modelId = id,
-            modelName = model.ModelName,
+            matched = true,
+            modelId = modelId.Trim(),
             adapterName = adapterInfo.AdapterName,
             displayName = adapterInfo.DisplayName,
             provider = adapterInfo.Provider,
@@ -774,43 +758,88 @@ public class ModelsController : ControllerBase
     }
 
     /// <summary>
-    /// 批量获取多个模型的适配信息
+    /// 获取模型的平台适配信息（基于收藏夹中的配置模型 ID，仅用于管理页面）
     /// </summary>
-    [HttpPost("adapter-info/batch")]
-    public async Task<IActionResult> GetModelsAdapterInfoBatch([FromBody] List<string> modelIds)
+    /// <param name="id">收藏夹中的配置模型 ID（configModelId）</param>
+    [HttpGet("{id}/adapter-info")]
+    public async Task<IActionResult> GetModelAdapterInfo(string id)
     {
-        if (modelIds == null || modelIds.Count == 0)
+        var model = await _db.LLMModels.Find(m => m.Id == id).FirstOrDefaultAsync();
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", "收藏夹中不存在该模型"));
+        }
+
+        // 尝试匹配生图模型适配器（基于平台侧模型ID）
+        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(model.ModelName);
+
+        if (adapterInfo == null)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                matched = false,
+                configModelId = id,
+                modelId = model.ModelName, // 平台侧模型标识
+            }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            matched = adapterInfo.Matched,
+            configModelId = id, // 收藏夹内部 ID
+            modelId = model.ModelName, // 平台侧模型标识
+            adapterName = adapterInfo.AdapterName,
+            displayName = adapterInfo.DisplayName,
+            provider = adapterInfo.Provider,
+            sizeConstraint = new
+            {
+                type = adapterInfo.SizeConstraintType,
+                description = adapterInfo.SizeConstraintDescription,
+            },
+            allowedSizes = adapterInfo.AllowedSizes,
+            allowedRatios = adapterInfo.AllowedRatios,
+            sizeParamFormat = adapterInfo.SizeParamFormat,
+            limitations = new
+            {
+                mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
+                maxWidth = adapterInfo.MaxWidth,
+                maxHeight = adapterInfo.MaxHeight,
+                minWidth = adapterInfo.MinWidth,
+                minHeight = adapterInfo.MinHeight,
+                maxPixels = adapterInfo.MaxPixels,
+                notes = adapterInfo.Notes,
+            },
+            supportsImageToImage = adapterInfo.SupportsImageToImage,
+            supportsInpainting = adapterInfo.SupportsInpainting,
+        }));
+    }
+
+    /// <summary>
+    /// 批量获取多个模型的适配信息（基于收藏夹中的配置模型 ID，仅用于管理页面）
+    /// </summary>
+    /// <param name="configModelIds">收藏夹中的配置模型 ID 列表</param>
+    [HttpPost("adapter-info/batch")]
+    public async Task<IActionResult> GetModelsAdapterInfoBatch([FromBody] List<string> configModelIds)
+    {
+        if (configModelIds == null || configModelIds.Count == 0)
         {
             return Ok(ApiResponse<object>.Ok(new Dictionary<string, object>()));
         }
 
-        var ids = modelIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().Take(100).ToList();
+        var ids = configModelIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().Take(100).ToList();
         var models = await _db.LLMModels.Find(m => ids.Contains(m.Id)).ToListAsync();
-
-        // 获取所有相关平台
-        var platformIds = models.Where(m => !string.IsNullOrWhiteSpace(m.PlatformId)).Select(m => m.PlatformId!).Distinct().ToList();
-        var platforms = await _db.LLMPlatforms.Find(p => platformIds.Contains(p.Id)).ToListAsync();
-        var platformMap = platforms.ToDictionary(p => p.Id, p => p);
 
         var result = new Dictionary<string, object>();
         foreach (var model in models)
         {
-            string? platformApiUrl = null;
-            if (!string.IsNullOrWhiteSpace(model.PlatformId) && platformMap.TryGetValue(model.PlatformId, out var plat))
-            {
-                platformApiUrl = plat.ApiUrl ?? model.ApiUrl;
-            }
-            else
-            {
-                platformApiUrl = model.ApiUrl;
-            }
-
-            var adapterInfo = Infrastructure.LLM.VveaiModelAdapterRegistry.GetAdapterInfo(platformApiUrl, model.ModelName);
+            // 尝试匹配生图模型适配器（基于平台侧模型ID）
+            var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(model.ModelName);
             if (adapterInfo != null && adapterInfo.Matched)
             {
                 result[model.Id] = new
                 {
                     matched = true,
+                    modelId = model.ModelName, // 平台侧模型标识
                     adapterName = adapterInfo.AdapterName,
                     displayName = adapterInfo.DisplayName,
                     provider = adapterInfo.Provider,
