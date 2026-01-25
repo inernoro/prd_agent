@@ -3,6 +3,7 @@ import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, g
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
+import { Select } from '@/components/design/Select';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import {
@@ -163,22 +164,17 @@ function SelectField({
           {label}
         </label>
       )}
-      <select
+      <Select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full h-10 px-3 rounded-xl text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--accent-gold)]/30"
-        style={{
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          color: 'var(--text-primary)',
-        }}
+        uiSize="md"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }

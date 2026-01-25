@@ -99,7 +99,7 @@ export const ModelTypes = {
   Chat: 'chat',
   Intent: 'intent',
   Vision: 'vision',
-  ImageGen: 'image-gen',
+  ImageGen: 'generation',
   Code: 'code',
   LongContext: 'long-context',
   Embedding: 'embedding',

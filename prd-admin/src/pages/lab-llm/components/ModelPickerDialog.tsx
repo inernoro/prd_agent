@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
+import { Select } from '@/components/design/Select';
 import type { Platform } from '@/types/admin';
 import type { ModelLabSelectedModel } from '@/services/contracts/modelLab';
 // lucide icons are used inside shared dialog component
@@ -463,11 +464,11 @@ export function ModelPickerDialog({
                 >
                   从下栏追加
                 </Button>
-                <select
+                <Select
                   value={groupAddPlatformId}
                   onChange={(e) => setGroupAddPlatformId(e.target.value)}
+                  uiSize="sm"
                   className="h-[30px] rounded-[10px] px-2 text-[12px]"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   title="选择平台"
                 >
                   <option value="">选择平台</option>
@@ -476,7 +477,7 @@ export function ModelPickerDialog({
                       {p.name}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <Button
                   size="xs"
                   variant="secondary"

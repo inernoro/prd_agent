@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
+import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
@@ -586,11 +587,11 @@ function CreateAppDialog({
 
               <div>
                 <label className="block text-sm font-medium mb-1">绑定群组 *</label>
-                <select
+                <Select
                   value={boundGroupId}
                   onChange={(e) => setBoundGroupId(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-md"
                   disabled={loadingGroups}
+                  uiSize="md"
                 >
                   <option value="">{loadingGroups ? '加载中...' : '请选择群组'}</option>
                   {(groups || []).map((g) => (
@@ -598,16 +599,16 @@ function CreateAppDialog({
                       {g.groupName} (ID: {g.groupId})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">绑定用户 *</label>
-                <select
+                <Select
                   value={boundUserId}
                   onChange={(e) => setBoundUserId(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-md"
                   disabled={loadingUsers}
+                  uiSize="md"
                 >
                   <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
                   {(users || []).map((u) => (
@@ -615,7 +616,7 @@ function CreateAppDialog({
                       {u.displayName} (@{u.username})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
@@ -849,11 +850,11 @@ function EditAppDialog({
 
               <div>
                 <label className="block text-sm font-medium mb-1">绑定群组 *</label>
-                <select
+                <Select
                   value={boundGroupId}
                   onChange={(e) => setBoundGroupId(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-md"
                   disabled={loadingGroups}
+                  uiSize="md"
                 >
                   <option value="">{loadingGroups ? '加载中...' : '请选择群组'}</option>
                   {(groups || []).map((g) => (
@@ -861,16 +862,16 @@ function EditAppDialog({
                       {g.groupName} (ID: {g.groupId})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">绑定用户 *</label>
-                <select
+                <Select
                   value={boundUserId}
                   onChange={(e) => setBoundUserId(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-md"
                   disabled={loadingUsers}
+                  uiSize="md"
                 >
                   <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
                   {(users || []).map((u) => (
@@ -878,7 +879,7 @@ function EditAppDialog({
                       {u.displayName} (@{u.username})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
@@ -1102,38 +1103,28 @@ function LogsDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>应用</label>
-                  <select
+                  <Select
                     value={filterAppId}
                     onChange={(e) => onFilterAppIdChange(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg text-sm outline-none transition-colors"
-                    style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      color: 'var(--text-primary)',
-                    }}
+                    uiSize="sm"
                   >
                     <option value="">全部应用</option>
                     {apps.map((app) => (
                       <option key={app.id} value={app.id}>{app.appName}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>状态</label>
-                  <select
+                  <Select
                     value={filterStatus}
                     onChange={(e) => onFilterStatusChange(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg text-sm outline-none transition-colors"
-                    style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      color: 'var(--text-primary)',
-                    }}
+                    uiSize="sm"
                   >
                     <option value="">全部状态</option>
                     <option value="success">成功 (2xx)</option>
                     <option value="error">失败 (4xx/5xx)</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
               <div className="flex items-center gap-2 mt-3">

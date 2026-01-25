@@ -113,11 +113,13 @@ public class SmartModelScheduler : ISmartModelScheduler
         var client = await CreateClientForModelAsync(bestModel, group.Id, ct);
 
         // 返回客户端及模型池信息
+        // 对于 legacy（直连单模型）情况，ModelGroupId/ModelGroupName 应为 null
+        var isLegacy = group.Id.StartsWith("legacy-", StringComparison.OrdinalIgnoreCase);
         return new ScheduledClientResult(
             Client: client,
-            ModelGroupId: group.Id,
-            ModelGroupName: group.Name,
-            IsDefaultModelGroup: group.IsDefaultForType);
+            ModelGroupId: isLegacy ? null! : group.Id,
+            ModelGroupName: isLegacy ? null! : group.Name,
+            IsDefaultModelGroup: isLegacy ? null : group.IsDefaultForType);
     }
 
     public async Task<LLMAppCaller> GetOrCreateAppCallerAsync(string appCallerCode, CancellationToken ct = default)
@@ -545,6 +547,7 @@ public class SmartModelScheduler : ISmartModelScheduler
             case "vision":
                 legacyModel = await _db.LLMModels.Find(m => m.IsVision && m.Enabled).FirstOrDefaultAsync(ct);
                 break;
+            case "generation":
             case "image-gen":
             case "imagegen":
                 legacyModel = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);

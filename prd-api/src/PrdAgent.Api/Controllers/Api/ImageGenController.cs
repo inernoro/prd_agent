@@ -850,7 +850,7 @@ public class ImageGenController : ControllerBase
             var appCallerCode = $"{appKey}.image::generation";
             try
             {
-                var groupInfo = await _scheduler.GetModelGroupForAppAsync(appCallerCode, "image", ct);
+                var groupInfo = await _scheduler.GetModelGroupForAppAsync(appCallerCode, "generation", ct);
                 if (groupInfo != null)
                 {
                     modelGroupId = groupInfo.Id;

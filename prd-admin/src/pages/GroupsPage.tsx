@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
+import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   deleteAdminGroup,
@@ -265,19 +266,18 @@ export default function GroupsPage() {
             </div>
           </div>
 
-          <select
+          <Select
             value={inviteStatus}
             onChange={(e) => {
               setInviteStatus(e.target.value as 'all' | 'valid' | 'expired');
               setPage(1);
             }}
-            className="h-10 rounded-[14px] px-3 text-sm"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            uiSize="md"
           >
             <option value="all">邀请状态</option>
             <option value="valid">有效</option>
             <option value="expired">已过期</option>
-          </select>
+          </Select>
 
           {null}
         </div>

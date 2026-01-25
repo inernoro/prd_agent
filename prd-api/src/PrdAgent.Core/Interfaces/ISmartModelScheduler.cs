@@ -3,11 +3,17 @@ namespace PrdAgent.Core.Interfaces;
 /// <summary>
 /// 调度器返回结果，包含客户端和模型池信息
 /// </summary>
+/// <summary>
+/// 调度器返回结果，包含客户端和模型池信息
+/// - 专属模型池：ModelGroupId/ModelGroupName 有值，IsDefaultModelGroup = false
+/// - 默认模型池：ModelGroupId/ModelGroupName 有值，IsDefaultModelGroup = true
+/// - 直连单模型：ModelGroupId/ModelGroupName 为 null，IsDefaultModelGroup = null
+/// </summary>
 public record ScheduledClientResult(
     ILLMClient Client,
-    string ModelGroupId,
-    string ModelGroupName,
-    bool IsDefaultModelGroup);
+    string? ModelGroupId,
+    string? ModelGroupName,
+    bool? IsDefaultModelGroup);
 
 /// <summary>
 /// 模型解析结果（不创建客户端，仅返回模型信息）

@@ -1,6 +1,7 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { getApiLogDetail, getApiLogs, getApiLogsMeta } from '@/services';
 import type { ApiLogsListItem, ApiRequestLog } from '@/services/contracts/apiLogs';
@@ -214,39 +215,39 @@ export default function SystemLogsTab() {
               placeholder="requestId"
             />
           </div>
-          <select
+          <Select
             value={qMethod}
             onChange={(e) => setQMethod(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+            uiSize="sm"
             style={inputStyle}
           >
             <option value="">method（全部）</option>
             {metaMethods.map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             value={qStatusCode}
             onChange={(e) => setQStatusCode(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+            uiSize="sm"
             style={inputStyle}
           >
             <option value="">status（全部）</option>
             {commonStatusCodes.map((code) => (
               <option key={code} value={code}>{code}</option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             value={qClientType}
             onChange={(e) => setQClientType(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+            uiSize="sm"
             style={inputStyle}
           >
             <option value="">clientType（全部）</option>
             {metaClientTypes.map((t) => (
               <option key={t} value={t}>{t}</option>
             ))}
-          </select>
+          </Select>
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">

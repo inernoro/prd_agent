@@ -1,7 +1,15 @@
-import { cn } from '@/lib/cn';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { ChevronDown, Search, X } from 'lucide-react';
 import * as React from 'react';
+import {
+  selectContentClass,
+  selectContentStyle,
+  selectItemClass,
+  selectTriggerClass,
+  selectTriggerStyle,
+  selectViewportClass,
+  selectViewportStyle,
+} from './selectStyles';
 
 export interface SearchableSelectOption {
   value: string;
@@ -34,9 +42,6 @@ export function SearchableSelect({
   const [search, setSearch] = React.useState('');
   const [open, setOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
-
-  const sizeCls = uiSize === 'sm' ? 'h-9 rounded-[12px] text-sm' : 'h-10 rounded-[14px] text-[13px]';
-  const paddingLeft = leftIcon ? 'pl-9' : 'px-3';
 
   // 将空值选项转换为特殊值以支持 Radix Select
   const ALL_VALUE = '__all__';
@@ -77,21 +82,8 @@ export function SearchableSelect({
   return (
     <SelectPrimitive.Root value={currentValue} onValueChange={handleValueChange} open={open} onOpenChange={setOpen} disabled={disabled}>
       <SelectPrimitive.Trigger
-        className={cn(
-          'relative w-full pr-9 outline-none transition-colors flex items-center',
-          paddingLeft,
-          'hover:border-white/20',
-          'focus-visible:ring-2 focus-visible:ring-white/20',
-          sizeCls,
-          disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
-          className
-        )}
-        style={{
-          background: 'var(--bg-input)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: 'var(--text-primary)',
-          ...style,
-        }}
+        className={selectTriggerClass({ uiSize, hasLeftIcon: !!leftIcon, disabled, className })}
+        style={{ ...selectTriggerStyle, ...style }}
       >
         {leftIcon && (
           <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }}>
@@ -111,16 +103,8 @@ export function SearchableSelect({
 
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="z-50 rounded-[14px] overflow-hidden"
-          style={{
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            minWidth: 'var(--radix-select-trigger-width)',
-            maxHeight: 'var(--radix-select-content-available-height)',
-          }}
+          className={selectContentClass}
+          style={selectContentStyle}
           position="popper"
           sideOffset={8}
         >
@@ -166,13 +150,7 @@ export function SearchableSelect({
           </div>
 
           {/* 选项列表 */}
-          <SelectPrimitive.Viewport
-            className="p-1"
-            style={{
-              maxHeight: 240,
-              overflow: 'auto',
-            }}
-          >
+          <SelectPrimitive.Viewport className={selectViewportClass} style={selectViewportStyle}>
             {filteredOptions.length === 0 ? (
               <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                 未找到匹配项
@@ -182,12 +160,7 @@ export function SearchableSelect({
                 <SelectPrimitive.Item
                   key={option.value}
                   value={option.value}
-                  className={cn(
-                    'px-3 py-2 rounded-[8px] text-sm cursor-pointer outline-none',
-                    'hover:bg-white/8',
-                    'focus:bg-white/8',
-                    'data-[highlighted]:bg-white/8'
-                  )}
+                  className={selectItemClass}
                   style={{
                     color: 'var(--text-primary)',
                   }}

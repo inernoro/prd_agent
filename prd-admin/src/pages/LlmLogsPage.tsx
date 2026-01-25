@@ -9,7 +9,7 @@ import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
-import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { getFeatureDescriptionFromRequestPurpose, AppCallerKeyIcon } from '@/lib/appCallerUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -162,7 +162,7 @@ function requestTypeToBadge(t: string | null | undefined): { label: string; titl
   }
   if (v === 'intent') return { label: '意图', title: '意图', tone: 'green', icon: <Sparkles size={12} /> };
   if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue', icon: <ScanEye size={12} /> };
-  if (v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple', icon: <ImagePlus size={12} /> };
+  if (v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple', icon: <ImagePlus size={12} /> };
   if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '推理', tone: 'gold', icon: <Zap size={12} /> };
   if (!v || v === 'unknown') return { label: '未知', title: '未知', tone: 'muted', icon: null };
   return { label: '未知', title: v, tone: 'muted', icon: null };
@@ -178,7 +178,7 @@ function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
 
 function extractImageSizeAdjustmentHint(it: LlmRequestLogListItem): { from?: string; to?: string; ratioAdjusted?: boolean } | null {
   const reqType = normalizeRequestType(it.requestType);
-  if (!(reqType === 'imagegen' || reqType === 'image_gen' || reqType === 'image-generate')) return null;
+  if (!(reqType === 'generation' || reqType === 'imagegen' || reqType === 'image_gen' || reqType === 'image-generate')) return null;
 
   const err = String(it.error ?? '');
   const ans = String(it.answerPreview ?? '');
@@ -234,14 +234,8 @@ function extractImageGenUpstreamPreviewFromAnswerText(answerText: string | null 
   }
 }
 
-// 判断是否为大模型请求（非外部 HTTP 请求）
-function isLlmRequest(requestType: string | null | undefined): boolean {
-  const v = normalizeRequestType(requestType);
-  // 外部 HTTP 请求：更新模型
-  if (v === 'update-model' || v === 'update_model' || v === 'models' || v === 'model') return false;
-  // 大模型请求：推理/意图/识图/生图 等
-  return true;
-}
+// 注意：isLlmRequest 函数已移除，因为后端已经将非 LLM 请求（如更新模型列表）归类到系统日志中
+// 前端无需再做过滤
 
 function tryPrettyJsonText(text: string): string {
   const raw = (text ?? '').trim();
@@ -1030,7 +1024,7 @@ export default function LlmLogsPage() {
   const artifactOutputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'output_image'), [artifactsSorted]);
   const isImageGenRequest = useMemo(() => {
     const v = normalizeRequestType(detail?.requestType);
-    return v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
+    return v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
   const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
   const bodyHasInitImage = useMemo(() => {
@@ -1123,26 +1117,48 @@ export default function LlmLogsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="h-full min-h-0 flex flex-col gap-4">
       <TabBar
         items={tabs}
         activeKey={tab}
         onChange={(key) => setTab(key as 'llm' | 'system')}
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => load()}
-            disabled={loading}
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-            刷新
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setQProvider('');
+                setQModel('');
+                setQStatus('');
+                setQRequestId('');
+                setQUserId('');
+                setQGroupId('');
+                setQSessionId('');
+                setQRequestPurpose('');
+                setPage(1);
+                setTimeout(() => load({ resetPage: true }), 0);
+              }}
+              disabled={loading}
+            >
+              <Eraser size={16} />
+              清空
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => load()}
+              disabled={loading}
+            >
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+              刷新
+            </Button>
+          </div>
         }
       />
 
       <GlassCard glow className="p-4">
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+        <div className="grid gap-3 grid-cols-4 md:grid-cols-8">
           <Select
             value={qProvider}
             onChange={(e) => setQProvider(e.target.value)}
@@ -1232,45 +1248,10 @@ export default function LlmLogsPage() {
             />
           </div>
         </div>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            共 {total} 条 · 第 {page}/{totalPages} 页
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => load({ resetPage: true })} disabled={loading}>
-              <Filter size={16} />
-              应用过滤
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setQProvider('');
-                setQModel('');
-                setQStatus('');
-                setQRequestId('');
-                setQUserId('');
-                setQGroupId('');
-                setQSessionId('');
-                setQRequestPurpose('');
-                setPage(1);
-                // 立即刷新
-                setTimeout(() => load({ resetPage: true }), 0);
-              }}
-              disabled={loading}
-            >
-              <Eraser size={16} />
-              清空
-            </Button>
-          </div>
-        </div>
       </GlassCard>
 
-      <GlassCard glow className="p-0 overflow-hidden">
-        <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>请求列表</div>
-        </div>
-        <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+      <GlassCard glow className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-auto">
           <div className="divide-y divide-white/10">
           {loading ? (
             <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
@@ -1308,9 +1289,9 @@ export default function LlmLogsPage() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
+                      {/* 第一部分：状态 + 应用信息 + appCallerCode */}
                       <div className="flex items-center gap-2 min-w-0">
-                        {/* 平台标签 */}
-                        <PlatformLabel name={it.platformName || pm.platform} />
+                        {statusBadge(it.status)}
                         {/* 功能描述（中文标题） */}
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {getFeatureDescriptionFromRequestPurpose(it.requestPurpose)}
@@ -1326,7 +1307,6 @@ export default function LlmLogsPage() {
                             {it.requestPurpose}
                           </span>
                         )}
-                        {statusBadge(it.status)}
                       </div>
                       <div className="mt-1 text-xs truncate flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
                         <Hash size={12} />
@@ -1336,52 +1316,60 @@ export default function LlmLogsPage() {
                           {it.sessionId ? ` · sessionId: ${it.sessionId}` : ''}
                         </span>
                       </div>
+                      {/* 第三部分：大模型匹配信息 */}
                       <div className="mt-1 flex items-center gap-2 min-w-0">
-                        {/* 大模型/外部请求 标签 */}
-                        {isLlmRequest(it.requestType) ? (
-                          <label
-                            className="inline-flex items-center gap-1 rounded-full px-2 h-5 text-[11px] font-semibold tracking-wide shrink-0"
-                            title="大模型请求"
-                            style={{ background: 'rgba(139, 92, 246, 0.12)', border: '1px solid rgba(139, 92, 246, 0.28)', color: 'rgba(139, 92, 246, 0.95)' }}
-                          >
-                            <Sparkles size={10} />
-                            LLM
-                          </label>
-                        ) : (
-                          <label
-                            className="inline-flex items-center gap-1 rounded-full px-2 h-5 text-[11px] font-semibold tracking-wide shrink-0"
-                            title="外部 HTTP 请求"
-                            style={{ background: 'rgba(107, 114, 128, 0.12)', border: '1px solid rgba(107, 114, 128, 0.28)', color: 'rgba(107, 114, 128, 0.95)' }}
-                          >
-                            <RefreshCw size={10} />
-                            HTTP
-                          </label>
-                        )}
-                        {/* 模型池标签（默认/专属） */}
+                        {/* 模型池标签：专属模型池 / 默认模型池 / 直连单模型（三者互斥） */}
                         {(() => {
-                          const isDefault = it.isDefaultModelGroup ?? true;
-                          const groupName = it.modelGroupName || '';
+                          const groupId = it.modelGroupId || '';
+                          const groupName = (it.modelGroupName || '').trim();
+                          const isDefault = it.isDefaultModelGroup;
                           const b = requestTypeToBadge(it.requestType);
 
-                          if (isDefault) {
-                            // 默认模型池 - 使用与请求类型相同的颜色
+                          // 三种情况判断：
+                          // 1. 直连单模型：ModelGroupId/ModelGroupName 为空 且 isDefaultModelGroup 为 null
+                          // 2. 默认模型池：有 ModelGroupName 且 isDefaultModelGroup === true
+                          // 3. 专属模型池：有 ModelGroupName 且 isDefaultModelGroup === false
+
+                          if (!groupId && !groupName && isDefault === null) {
+                            // 直连单模型
                             return (
                               <button
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                                title={`默认${b.label}（点击跳转到应用配置）`}
+                                title="直连单模型（点击跳转到模型管理）"
+                                style={{
+                                  background: 'rgba(156, 163, 175, 0.12)',
+                                  border: '1px solid rgba(156, 163, 175, 0.28)',
+                                  color: 'rgba(156, 163, 175, 0.95)'
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.href = '/mds?tab=models';
+                                }}
+                              >
+                                <Zap size={10} />
+                                直连单模型
+                              </button>
+                            );
+                          } else if (isDefault === true && groupName) {
+                            // 默认模型池
+                            return (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                                title={`默认模型池：${groupName}（点击跳转到模型池管理）`}
                                 style={requestTypeChipStyle(b.tone)}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  window.location.href = '/mds?tab=apps';
+                                  window.location.href = '/mds?tab=pools';
                                 }}
                               >
                                 {b.icon}
-                                默认{b.label}
+                                默认模型池：{groupName}
                               </button>
                             );
-                          } else {
-                            // 专属模型池 - 使用蓝色（与模型池图标颜色一致）
+                          } else if (isDefault === false && groupName) {
+                            // 专属模型池
                             return (
                               <button
                                 type="button"
@@ -1398,7 +1386,24 @@ export default function LlmLogsPage() {
                                 }}
                               >
                                 <Layers size={10} />
-                                专属模型池：{groupName || b.label}
+                                专属模型池：{groupName}
+                              </button>
+                            );
+                          } else {
+                            // 兜底：显示默认标签
+                            return (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                                title={`默认${b.label}（点击跳转到应用配置）`}
+                                style={requestTypeChipStyle(b.tone)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.href = '/mds?tab=apps';
+                                }}
+                              >
+                                {b.icon}
+                                默认{b.label}
                               </button>
                             );
                           }
@@ -1424,14 +1429,20 @@ export default function LlmLogsPage() {
                           // 这里应展示 modelId（按全局契约：仅展示 modelId；不要默认展示 name/displayName）。
                           // 兼容：部分历史/接口可能仍使用 model 字段承载 modelId。
                           const modelId = String((it as any).modelId ?? it.model ?? '').trim();
-                          if (!modelId) return null;
+                          const platformName = it.platformName || pm.platform;
+                          if (!modelId && !platformName) return null;
                           return (
-                            <div
-                              className="min-w-0 text-[11px] font-semibold truncate"
-                              style={{ color: 'var(--text-muted)' }}
-                              title={`模型：${modelId}`}
-                            >
-                              模型：{modelId}
+                            <div className="inline-flex items-center gap-1.5 min-w-0">
+                              {platformName && <PlatformLabel name={platformName} />}
+                              {modelId && (
+                                <span
+                                  className="text-[11px] font-semibold truncate"
+                                  style={{ color: 'var(--text-secondary)' }}
+                                  title={modelId}
+                                >
+                                  {modelId}
+                                </span>
+                              )}
                             </div>
                           );
                         })()}

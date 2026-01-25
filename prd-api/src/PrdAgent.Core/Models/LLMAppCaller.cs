@@ -96,7 +96,7 @@ public static class ModelTypes
     public const string Vision = "vision";
     
     /// <summary>图片生成</summary>
-    public const string ImageGen = "image-gen";
+    public const string ImageGen = "generation";
     
     /// <summary>代码生成（预留）</summary>
     public const string Code = "code";

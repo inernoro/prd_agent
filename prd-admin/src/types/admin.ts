@@ -104,6 +104,8 @@ export type LlmRequestLogListItem = {
   isDefaultModelGroup?: boolean | null;
   groupId?: string | null;
   sessionId?: string | null;
+  /** 发起请求的用户 ID */
+  userId?: string | null;
   viewRole?: string | null;
   /** 这次调用的类型：reasoning/intent/vision/imageGen/unknown/... */
   requestType?: string | null;

@@ -32,7 +32,7 @@ const MODEL_TYPES = [
   { value: 'chat', label: '对话模型' },
   { value: 'intent', label: '意图识别' },
   { value: 'vision', label: '视觉理解' },
-  { value: 'image-gen', label: '图像生成' },
+  { value: 'generation', label: '图像生成' },
   { value: 'code', label: '代码生成' },
   { value: 'long-context', label: '长上下文' },
   { value: 'embedding', label: '向量嵌入' },

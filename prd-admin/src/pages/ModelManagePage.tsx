@@ -3,7 +3,6 @@ import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { Select } from '@/components/design/Select';
-import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -16,13 +15,13 @@ import {
   clearImageGenModel,
   createModel,
   createPlatform,
+  createModelGroup,
   deleteModel,
   deletePlatform,
   getImageGenSizeCaps,
   getLlmModelStats,
   getModels,
   getPlatforms,
-  updateModelPriorities,
   setMainModel,
   setIntentModel,
   setVisionModel,
@@ -34,7 +33,9 @@ import {
 } from '@/services';
 import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, Cpu, DatabaseZap, Eye, EyeOff, GripVertical, ImagePlus, LayoutGrid, LayoutList, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { ModelHealthStatus } from '@/types/modelGroup';
+import type { ModelGroupItem } from '@/types/modelGroup';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
@@ -279,21 +280,30 @@ export default function ModelManagePage() {
   const [platformCheckMsg, setPlatformCheckMsg] = useState<string | null>(null);
 
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [draggingModelId, setDraggingModelId] = useState<string | null>(null);
-  const [modelOrderIds, setModelOrderIds] = useState<string[]>([]);
-  const [prioritySaving, setPrioritySaving] = useState(false);
 
   const [modelStatsDays, setModelStatsDays] = useState(7);
   const [modelStatsByModel, setModelStatsByModel] = useState<Record<string, AggregatedModelStats>>({});
   const [modelStatsLoading, setModelStatsLoading] = useState(false);
   const [imageGenSizeCapsByModelId, setImageGenSizeCapsByModelId] = useState<Record<string, { allowedCount: number; updatedAt: string }>>({});
   const [adapterInfoByModelId, setAdapterInfoByModelId] = useState<Record<string, ModelAdapterInfoBrief>>({});
-  const [densityMode, setDensityMode] = useState<'compact' | 'detailed'>('compact');
   const [expandedStatsModelIds, setExpandedStatsModelIds] = useState<Set<string>>(new Set());
   const [allStatsExpanded, setAllStatsExpanded] = useState(false);
   const [platformSidebarCollapsed, setPlatformSidebarCollapsed] = useState(false);
   const [modelActionMenuOpenId, setModelActionMenuOpenId] = useState<string | null>(null);
   const [stubCreating, setStubCreating] = useState(false);
+
+  // 一键添加到模型池弹窗状态
+  const [addToPoolDialogOpen, setAddToPoolDialogOpen] = useState(false);
+  const [addToPoolModel, setAddToPoolModel] = useState<Model | null>(null);
+  const [addToPoolForm, setAddToPoolForm] = useState({
+    name: '',
+    code: '',
+    priority: 50,
+    modelType: 'chat',
+    isDefaultForType: false,
+    description: '',
+  });
+  const [addToPoolSaving, setAddToPoolSaving] = useState(false);
 
   const loadModelStats = async () => {
     setModelStatsLoading(true);
@@ -444,6 +454,86 @@ export default function ModelManagePage() {
     await load({ silent: true });
   };
 
+  // 打开一键添加到模型池弹窗
+  const openAddToPoolDialog = (m: Model) => {
+    // 根据模型的角色和适配器信息推断模型类型
+    let modelType = 'chat';
+    
+    // 优先使用模型角色标识
+    if (m.isImageGen) {
+      modelType = 'generation';
+    } else if (m.isVision) {
+      modelType = 'vision';
+    } else if (m.isIntent) {
+      modelType = 'intent';
+    } else {
+      // 其次检查适配器信息（用于识别生图模型）
+      const adapterInfo = adapterInfoByModelId[m.id];
+      if (adapterInfo?.matched) {
+        // 如果有适配器信息，说明是生图模型
+        modelType = 'generation';
+      }
+    }
+
+    setAddToPoolModel(m);
+    setAddToPoolForm({
+      name: m.modelName || m.name,
+      code: (m.modelName || m.name).toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+      priority: 50,
+      modelType,
+      isDefaultForType: false,
+      description: `基于 ${m.name} 创建的模型池`,
+    });
+    setAddToPoolDialogOpen(true);
+  };
+
+  // 保存模型池
+  const handleSaveModelPool = async () => {
+    if (!addToPoolModel) return;
+    if (!addToPoolForm.name.trim()) {
+      toast.warning('验证失败', '模型池名称不能为空');
+      return;
+    }
+    if (!addToPoolForm.code.trim()) {
+      toast.warning('验证失败', '模型池代码不能为空');
+      return;
+    }
+
+    setAddToPoolSaving(true);
+    try {
+      const models: ModelGroupItem[] = [{
+        platformId: addToPoolModel.platformId,
+        modelId: addToPoolModel.modelName,
+        priority: 1,
+        healthStatus: ModelHealthStatus.Healthy,
+        consecutiveFailures: 0,
+        consecutiveSuccesses: 0,
+      }];
+
+      const res = await createModelGroup({
+        name: addToPoolForm.name,
+        code: addToPoolForm.code,
+        priority: addToPoolForm.priority,
+        modelType: addToPoolForm.modelType,
+        isDefaultForType: addToPoolForm.isDefaultForType,
+        description: addToPoolForm.description,
+        models,
+      });
+
+      if (!res.success) {
+        throw new Error(res.error?.message || '创建失败');
+      }
+
+      toast.success('创建成功', `模型池"${addToPoolForm.name}"已创建`);
+      setAddToPoolDialogOpen(false);
+      setAddToPoolModel(null);
+    } catch (error) {
+      toast.error('创建失败', error instanceof Error ? error.message : String(error));
+    } finally {
+      setAddToPoolSaving(false);
+    }
+  };
+
   const closePlatformCtxMenu = () => {
     setPlatformCtxMenu({ open: false, x: 0, y: 0, platform: null });
   };
@@ -498,25 +588,24 @@ export default function ModelManagePage() {
   }, [selectedPlatform?.id]);
 
   const platformById = useMemo(() => new Map(platforms.map((p) => [p.id, p])), [platforms]);
+  const platformOrderMap = useMemo(() => new Map(platforms.map((p, idx) => [p.id, idx])), [platforms]);
 
   const orderedModels = useMemo(() => {
-    // 默认顺序：priority 越小越靠前；再按 name/modelName 稳定兜底
+    // 按平台顺序 -> 平台内优先级 -> 名称兜底
     const list = [...filteredModels];
     list.sort((a, b) => {
+      const ao = platformOrderMap.get(a.platformId) ?? 1e9;
+      const bo = platformOrderMap.get(b.platformId) ?? 1e9;
+      if (ao !== bo) return ao - bo;
       const ap = typeof a.priority === 'number' ? a.priority : 1e9;
       const bp = typeof b.priority === 'number' ? b.priority : 1e9;
       if (ap !== bp) return ap - bp;
-        const an = (a.name || a.modelName || '').trim();
-        const bn = (b.name || b.modelName || '').trim();
-        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
-      });
+      const an = (a.name || a.modelName || '').trim();
+      const bn = (b.name || b.modelName || '').trim();
+      return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+    });
     return list;
-  }, [filteredModels]);
-
-  // 同步本地排序（用于拖拽）
-  useEffect(() => {
-    setModelOrderIds(orderedModels.map((m) => m.id));
-  }, [orderedModels]);
+  }, [filteredModels, platformOrderMap]);
 
   const existingModelByName = useMemo(() => {
     const map = new Map<string, Model>();
@@ -528,48 +617,7 @@ export default function ModelManagePage() {
     return map;
   }, [models, selectedPlatform?.id]);
 
-  const displayedModels = useMemo(() => {
-    const byId = new Map(orderedModels.map((m) => [m.id, m]));
-    // 若 orderIds 与当前列表不一致（比如 filter 切换），回退 orderedModels
-    if (modelOrderIds.length !== orderedModels.length) return orderedModels;
-    const list: Model[] = [];
-    for (const id of modelOrderIds) {
-      const m = byId.get(id);
-      if (m) list.push(m);
-    }
-    return list.length === orderedModels.length ? list : orderedModels;
-  }, [modelOrderIds, orderedModels]);
-
-  const canDragSort = !selectedPlatformId || selectedPlatformId === '__all__';
-
-  const persistPriorityOrder = async (idsInOrder: string[]) => {
-    // 只允许在“全部”视图拖拽（priority 是全局排序，避免在单平台里制造不可预期的全局重排）
-    if (!canDragSort) return;
-    if (prioritySaving) return;
-    setPrioritySaving(true);
-    try {
-      // priority 越小越靠前：从 1 开始即可
-      const updates = idsInOrder.map((id, idx) => ({ id, priority: idx + 1 }));
-      const res = await updateModelPriorities(updates);
-      if (!res.success) {
-        toast.error(res.error?.message || '保存排序失败');
-        return;
-      }
-      await load({ silent: true });
-    } finally {
-      setPrioritySaving(false);
-    }
-  };
-
-  const moveId = (ids: string[], fromId: string, toId: string) => {
-    const from = ids.indexOf(fromId);
-    const to = ids.indexOf(toId);
-    if (from < 0 || to < 0 || from === to) return ids;
-    const next = ids.slice();
-    const [x] = next.splice(from, 1);
-    next.splice(to, 0, x);
-    return next;
-  };
+  const displayedModels = orderedModels;
 
   const toggleModel = async (m: AvailableModel) => {
     if (!selectedPlatform) return;
@@ -1372,18 +1420,6 @@ export default function ModelManagePage() {
                     placeholder="搜索模型..."
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setDensityMode((m) => (m === 'compact' ? 'detailed' : 'compact'))}
-                  className="inline-flex items-center justify-center h-10 w-10 rounded-[14px] transition-colors hover:bg-white/6"
-                  style={{
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: 'var(--text-secondary)',
-                  }}
-                  title={densityMode === 'compact' ? '切换到详情模式' : '切换到简洁模式'}
-                >
-                  {densityMode === 'compact' ? <LayoutList size={18} /> : <LayoutGrid size={18} />}
-                </button>
               </div>
               <Tooltip
                 content={
@@ -1566,157 +1602,105 @@ export default function ModelManagePage() {
                       <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无模型</div>
                     ) : (
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {canDragSort ? '提示：拖拽左侧把手可调整“全部模型”的全局优先级' : '提示：切换到“全部”后可拖拽调整全局优先级'}
-                          </div>
-                          {prioritySaving ? (
-                            <div className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                              <RefreshCw size={14} className="animate-spin" />
-                              保存排序中...
-                            </div>
-                                      ) : null}
-                                    </div>
-
                         <div className="rounded-[16px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
-                            <div className="divide-y divide-white/30">
+                          <div className="divide-y divide-white/30">
                             {displayedModels.map((m) => (
-                                <div
-                                  key={m.id}
-                                  className={[
-                                    'px-4 py-3 flex items-center justify-between hover:bg-white/2',
-                                    mainJustSetId === m.id ? 'main-row-flash' : '',
-                                  ].join(' ')}
-                                draggable={canDragSort}
-                                onDragStart={(e) => {
-                                  if (!canDragSort) return;
-                                  setDraggingModelId(m.id);
-                                  e.dataTransfer.effectAllowed = 'move';
-                                  try {
-                                    e.dataTransfer.setData('text/plain', m.id);
-                                  } catch {
-                                    // ignore
-                                  }
-                                }}
-                                onDragEnd={() => setDraggingModelId(null)}
-                                onDragOver={(e) => {
-                                  if (!canDragSort) return;
-                                  e.preventDefault();
-                                  if (!draggingModelId) return;
-                                  if (draggingModelId === m.id) return;
-                                  setModelOrderIds((prev) => moveId(prev, draggingModelId, m.id));
-                                }}
-                                onDrop={(e) => {
-                                  if (!canDragSort) return;
-                                  e.preventDefault();
-                                  void persistPriorityOrder(modelOrderIds);
-                                }}
+                              <div
+                                key={m.id}
+                                className={[
+                                  'px-4 py-3 flex items-center justify-between hover:bg-white/2',
+                                  mainJustSetId === m.id ? 'main-row-flash' : '',
+                                ].join(' ')}
                               >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <div
-                                        className="inline-flex items-center justify-center h-[18px] w-[18px] rounded-[6px] cursor-grab active:cursor-grabbing shrink-0"
-                                        title={canDragSort ? '拖拽排序（优先级）' : '切换到全部后可拖拽排序'}
-                                        style={{
-                                          border: '1px solid rgba(255,255,255,0.10)',
-                                          color: canDragSort ? 'var(--text-secondary)' : 'rgba(255,255,255,0.25)',
-                                          background: 'rgba(255,255,255,0.03)',
-                                        }}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                      >
-                                        <GripVertical size={12} />
-                                      </div>
-
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                          {isAll ? (() => {
-                                            const p = platformById.get(m.platformId);
-                                            if (!p) return null;
-                                            return <PlatformLabel name={p.name} />;
-                                          })() : null}
-                                          <div
-                                            className="text-sm font-semibold truncate flex-1 min-w-0"
-                                        style={{ color: 'var(--text-primary)' }}
-                                        title={m.modelName}
-                                      >
-                                        {m.name}
-                                      </div>
+                                <div className="min-w-0 flex-1">
+                                  {/* 第一行：平台标签 + 模型名称 + 适配器标签 */}
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {isAll ? (() => {
+                                      const p = platformById.get(m.platformId);
+                                      if (!p) return null;
+                                      return <PlatformLabel name={p.name} />;
+                                    })() : null}
+                                    <div
+                                      className="text-sm font-semibold truncate"
+                                      style={{ color: 'var(--text-primary)' }}
+                                      title={m.modelName}
+                                    >
+                                      {m.name}
                                     </div>
-                                        {/* 适配器标签：放在模型名称下方 */}
-                                        {(() => {
-                                          const info = adapterInfoByModelId[m.id];
-                                          if (!info?.matched) return null;
-                                          const tooltipLines = [
-                                            `适配器: ${info.displayName ?? info.adapterName}`,
-                                            info.provider ? `提供商: ${info.provider}` : null,
-                                            info.sizeConstraintType ? `约束类型: ${info.sizeConstraintType}` : null,
-                                            info.allowedSizesCount ? `支持尺寸: ${info.allowedSizesCount} 种` : null,
-                                            info.allowedRatios?.length ? `比例: ${info.allowedRatios.join(', ')}` : null,
-                                            ...(info.notes ?? []),
-                                          ].filter(Boolean);
-                                          return (
-                                            <Tooltip content={tooltipLines.join('\n')}>
-                                              <span
-                                                className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded"
-                                                style={{
-                                                  background: 'rgba(59, 130, 246, 0.10)',
-                                                  color: 'rgba(59, 130, 246, 0.95)',
-                                                }}
-                                              >
-                                                <Sparkles size={10} />
-                                                {info.adapterName ?? 'adapter'}
-                                              </span>
-                                            </Tooltip>
-                                          );
-                                        })()}
+                                    {/* 适配器标签 */}
+                                    {(() => {
+                                      const info = adapterInfoByModelId[m.id];
+                                      if (!info?.matched) return null;
+                                      const tooltipLines = [
+                                        `适配器: ${info.displayName ?? info.adapterName}`,
+                                        info.provider ? `提供商: ${info.provider}` : null,
+                                        info.sizeConstraintType ? `约束类型: ${info.sizeConstraintType}` : null,
+                                        info.allowedSizesCount ? `支持尺寸: ${info.allowedSizesCount} 种` : null,
+                                        info.allowedRatios?.length ? `比例: ${info.allowedRatios.join(', ')}` : null,
+                                        ...(info.notes ?? []),
+                                      ].filter(Boolean);
+                                      return (
+                                        <Tooltip content={tooltipLines.join('\n')}>
+                                          <span
+                                            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded"
+                                            style={{
+                                              background: 'rgba(59, 130, 246, 0.10)',
+                                              color: 'rgba(59, 130, 246, 0.95)',
+                                            }}
+                                          >
+                                            <Sparkles size={10} />
+                                            {info.adapterName ?? 'adapter'}
+                                          </span>
+                                        </Tooltip>
+                                      );
+                                    })()}
+                                  </div>
+
+                                  {/* 第二行：KPI Rail - 居左显示 */}
+                                  {(() => {
+                                    if (modelStatsLoading) return null;
+                                    const key = String(m.modelName ?? '').trim().toLowerCase();
+                                    const sFromLogs = key ? modelStatsByModel[key] : undefined;
+                                    const reqFromModel = Math.max(0, Number(m.callCount ?? 0));
+                                    const avgFromModel = Number(m.averageDuration ?? 0);
+
+                                    const successFromModel = Math.max(0, Number(m.successCount ?? 0));
+                                    const failFromModel = Math.max(0, Number(m.failCount ?? 0));
+                                    const totalFromModel = successFromModel + failFromModel;
+                                    const estimatedSuccessCount = totalFromModel > 0 ? successFromModel : (reqFromModel > 0 ? Math.round(reqFromModel * 0.95) : 0);
+
+                                    const s: AggregatedModelStats | null =
+                                      sFromLogs
+                                        ? {
+                                            ...sFromLogs,
+                                            successCount: totalFromModel > 0 ? successFromModel : estimatedSuccessCount,
+                                          }
+                                        : (reqFromModel > 0
+                                          ? {
+                                            requestCount: reqFromModel,
+                                            avgDurationMs: Number.isFinite(avgFromModel) && avgFromModel > 0 ? Math.round(avgFromModel) : null,
+                                            avgTtfbMs: null,
+                                            totalInputTokens: 0,
+                                            totalOutputTokens: 0,
+                                            successCount: estimatedSuccessCount,
+                                          }
+                                          : null);
+
+                                    if (!s) return null;
+
+                                    const pricing = pricingByPlatformId[m.platformId] ?? null;
+                                    const titlePrefix = `近${modelStatsDays}天`;
+
+                                    return (
+                                      <div className="mt-1">
+                                        <ModelKpiRail
+                                          stats={s}
+                                          pricing={pricing}
+                                          titlePrefix={titlePrefix}
+                                        />
                                       </div>
-
-                                      {/* KPI Rail：3个核心指标（TTFB、成功率、成本/量级） */}
-                                      {(() => {
-                                        if (modelStatsLoading) return null;
-                                        const key = String(m.modelName ?? '').trim().toLowerCase();
-                                        const sFromLogs = key ? modelStatsByModel[key] : undefined;
-                                        const reqFromModel = Math.max(0, Number(m.callCount ?? 0));
-                                        const avgFromModel = Number(m.averageDuration ?? 0);
-
-                                        const successFromModel = Math.max(0, Number(m.successCount ?? 0));
-                                        const failFromModel = Math.max(0, Number(m.failCount ?? 0));
-                                        const totalFromModel = successFromModel + failFromModel;
-                                        const estimatedSuccessCount = totalFromModel > 0 ? successFromModel : (reqFromModel > 0 ? Math.round(reqFromModel * 0.95) : 0);
-
-                                        const s: AggregatedModelStats | null =
-                                          sFromLogs
-                                            ? {
-                                                ...sFromLogs,
-                                                successCount: totalFromModel > 0 ? successFromModel : estimatedSuccessCount,
-                                              }
-                                            : (reqFromModel > 0
-                                              ? {
-                                                requestCount: reqFromModel,
-                                                avgDurationMs: Number.isFinite(avgFromModel) && avgFromModel > 0 ? Math.round(avgFromModel) : null,
-                                                avgTtfbMs: null,
-                                                totalInputTokens: 0,
-                                                totalOutputTokens: 0,
-                                                successCount: estimatedSuccessCount,
-                                              }
-                                              : null);
-
-                                        if (!s) return null;
-
-                                        const pricing = pricingByPlatformId[m.platformId] ?? null;
-                                        const titlePrefix = `近${modelStatsDays}天`;
-
-                                        return (
-                                          <div className="flex-1 min-w-0 flex justify-center">
-                                            <ModelKpiRail
-                                              stats={s}
-                                              pricing={pricing}
-                                              titlePrefix={titlePrefix}
-                                            />
-                                      </div>
-                                        );
-                                      })()}
-                                    </div>
+                                    );
+                                  })()}
 
                                     {/* 第二行：统计信息（统一折叠，默认折叠） */}
                                     {(() => {
@@ -1798,19 +1782,19 @@ export default function ModelManagePage() {
                                   </div>
 
                                   <div className="flex items-center gap-2">
+                                    {/* 一键添加到模型池按钮 */}
                                     <button
                                       type="button"
                                       className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
                                       style={{
                                         border: '1px solid rgba(255,255,255,0.10)',
-                                        color: m.enablePromptCache ? 'rgba(34,197,94,0.95)' : 'var(--text-secondary)',
+                                        color: 'var(--text-secondary)',
                                       }}
-                                      title={m.enablePromptCache ? 'Prompt Cache：开（点击关闭）' : 'Prompt Cache：关（点击开启）'}
-                                      aria-label="切换 Prompt Cache"
-                                      disabled={modelCacheTogglingId != null}
-                                      onClick={() => void toggleModelPromptCache(m)}
+                                      title="一键添加到模型池"
+                                      aria-label="一键添加到模型池"
+                                      onClick={() => openAddToPoolDialog(m)}
                                     >
-                                      <DatabaseZap size={16} />
+                                      <Database size={16} />
                                     </button>
 
                                     <button
@@ -1945,6 +1929,21 @@ export default function ModelManagePage() {
                                           }}
                                           onClick={(e) => e.stopPropagation()}
                                         >
+                                          {/* Prompt Cache 切换 */}
+                                          <DropdownMenu.Item
+                                            className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                            style={{ color: m.enablePromptCache ? 'rgba(34,197,94,0.95)' : 'var(--text-primary)' }}
+                                            disabled={modelCacheTogglingId != null}
+                                            onSelect={(e) => {
+                                              e.preventDefault();
+                                              void toggleModelPromptCache(m);
+                                              setModelActionMenuOpenId(null);
+                                            }}
+                                          >
+                                            <DatabaseZap size={14} />
+                                            {m.enablePromptCache ? 'Prompt Cache: 开' : 'Prompt Cache: 关'}
+                                          </DropdownMenu.Item>
+                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
                                           <DropdownMenu.Item
                                             className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
                                             style={{ color: 'var(--text-primary)' }}
@@ -2330,6 +2329,127 @@ export default function ModelManagePage() {
           await load({ silent: true });
         }}
       />
+
+      {/* 一键添加到模型池弹窗 */}
+      {addToPoolDialogOpen && addToPoolModel && (
+        <Dialog
+          open={addToPoolDialogOpen}
+          onOpenChange={(open) => {
+            setAddToPoolDialogOpen(open);
+            if (!open) setAddToPoolModel(null);
+          }}
+          title="一键添加到模型池"
+          description={`将模型"${addToPoolModel.name}"添加到新模型池`}
+          maxWidth={520}
+          content={
+            <div className="space-y-4">
+              <div className="grid gap-2">
+                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型池名称</div>
+                <input
+                  value={addToPoolForm.name}
+                  onChange={(e) => setAddToPoolForm((s) => ({ ...s, name: e.target.value }))}
+                  className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={inputStyle}
+                  placeholder="例如：主对话模型池"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型池代码</div>
+                <input
+                  value={addToPoolForm.code}
+                  onChange={(e) => setAddToPoolForm((s) => ({ ...s, code: e.target.value }))}
+                  className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={inputStyle}
+                  placeholder="例如：main-chat-pool"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型类型</div>
+                  <Select
+                    value={addToPoolForm.modelType}
+                    onChange={(e) => setAddToPoolForm((s) => ({ ...s, modelType: e.target.value }))}
+                    className="h-10 w-full rounded-[14px] text-sm"
+                    style={inputStyle}
+                  >
+                    <option value="chat">对话模型</option>
+                    <option value="intent">意图识别</option>
+                    <option value="vision">视觉理解</option>
+                    <option value="generation">图像生成</option>
+                    <option value="code">代码生成</option>
+                    <option value="long-context">长上下文</option>
+                    <option value="embedding">向量嵌入</option>
+                    <option value="rerank">重排序</option>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2">
+                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>优先级</div>
+                  <input
+                    type="number"
+                    value={addToPoolForm.priority}
+                    onChange={(e) => setAddToPoolForm((s) => ({ ...s, priority: parseInt(e.target.value) || 50 }))}
+                    className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                    style={inputStyle}
+                    min={1}
+                    max={100}
+                    title="数字越小优先级越高"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>描述（可选）</div>
+                <textarea
+                  value={addToPoolForm.description}
+                  onChange={(e) => setAddToPoolForm((s) => ({ ...s, description: e.target.value }))}
+                  className="w-full px-4 py-3 rounded-[14px] text-sm outline-none resize-none"
+                  style={inputStyle}
+                  rows={2}
+                  placeholder="模型池用途说明..."
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <input
+                  type="checkbox"
+                  checked={addToPoolForm.isDefaultForType}
+                  onChange={(e) => setAddToPoolForm((s) => ({ ...s, isDefaultForType: e.target.checked }))}
+                />
+                设为该类型的默认模型池
+              </label>
+
+              {/* 预览将添加的模型 */}
+              <div className="rounded-[12px] p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                  将添加的模型
+                </div>
+                <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>#1</span>
+                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {addToPoolModel.modelName}
+                  </span>
+                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                    ({platforms.find(p => p.id === addToPoolModel.platformId)?.name || addToPoolModel.platformId})
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setAddToPoolDialogOpen(false)}>
+                  取消
+                </Button>
+                <Button variant="primary" size="sm" onClick={handleSaveModelPool} disabled={addToPoolSaving}>
+                  {addToPoolSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                  创建模型池
+                </Button>
+              </div>
+            </div>
+          }
+        />
+      )}
     </div>
   );
 }

@@ -1720,7 +1720,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setModelsLoading(true);
     Promise.all([
       getModels(),
-      modelGroupsService.getModelGroups('image-gen').catch(() => ({ success: false, data: [] as ModelGroup[] })),
+      modelGroupsService.getModelGroups('generation').catch(() => ({ success: false, data: [] as ModelGroup[] })),
     ])
       .then(([modelsRes, poolsRes]) => {
         if (modelsRes.success) setModels(modelsRes.data ?? []);

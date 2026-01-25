@@ -1604,17 +1604,17 @@ export default function UsersPage() {
               </div>
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>角色</div>
-                <select
+                <Select
                   value={bulkRole}
                   onChange={(e) => setBulkRole(e.target.value as UserRow['role'])}
-                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  uiSize="md"
+                  className="mt-2"
                 >
                   <option value="PM">PM</option>
                   <option value="DEV">DEV</option>
                   <option value="QA">QA</option>
                   <option value="ADMIN">ADMIN</option>
-                </select>
+                </Select>
               </div>
             </div>
 
@@ -2066,18 +2066,18 @@ export default function UsersPage() {
 
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>系统角色（systemRoleKey）</div>
-              <select
+              <Select
                 value={authzSystemRoleKey}
                 onChange={(e) => setAuthzSystemRoleKey(e.target.value)}
                 disabled={authzLoading || authzSaving}
-                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                uiSize="md"
+                className="mt-2"
               >
                 {authzSystemRoles.map((r) => (
                   <option key={r.key} value={r.key}>{r.name}（{r.key}）</option>
                 ))}
                 {authzSystemRoles.length === 0 ? <option value="none">无权限（none）</option> : null}
-              </select>
+              </Select>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

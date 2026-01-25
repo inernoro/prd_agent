@@ -34,13 +34,13 @@ export interface ParsedAppCallerKey {
  * 将后端/历史/别名的 modelType 归一到“期望值枚举”（固定值，前端 UI 按此设定图标与展示名）
  *
  * 期望值来自 ModelAppGroupPage 的固定枚举：
- * - chat / intent / vision / image-gen / code / long-context / embedding / rerank
+ * - chat / intent / vision / generation / code / long-context / embedding / rerank
  */
 export type ExpectedModelType =
   | 'chat'
   | 'intent'
   | 'vision'
-  | 'image-gen'
+  | 'generation'
   | 'code'
   | 'long-context'
   | 'embedding'
@@ -64,14 +64,14 @@ export function normalizeModelType(rawModelType: string | null | undefined): Exp
 
   // 生图：历史/后端常见别名 generation/imageGen/image_generation
   if (
+    v === 'generation' ||
     v === 'image-gen' ||
     v === 'imagegen' ||
     v === 'image-generate' ||
     v === 'image-generation' ||
-    v === 'generation' ||
     v === 'img-gen'
   ) {
-    return 'image-gen';
+    return 'generation';
   }
 
   // 代码
@@ -235,7 +235,7 @@ export function getModelTypeDisplayName(modelType: string): string {
     'chat': '对话模型',
     'intent': '意图识别',
     'vision': '视觉理解',
-    'image-gen': '图像生成',
+    'generation': '图像生成',
     'code': '代码生成',
     'long-context': '长上下文',
     'embedding': '向量嵌入',
@@ -257,7 +257,7 @@ export function getModelTypeIcon(modelType: string): ComponentType<any> {
     'chat': MessageSquare,    // 对话气泡 - 对话/推理模型
     'intent': Brain,          // 大脑 - 意图识别/理解
     'vision': Eye,            // 眼睛 - 视觉理解
-    'image-gen': Palette,     // 调色板 - 图像生成/创作
+    'generation': Palette,    // 调色板 - 图像生成/创作
     'code': Code2,            // 代码符号 - 代码生成
     'long-context': ScrollText, // 长文档 - 长上下文
     'embedding': Layers,      // 层叠 - 向量嵌入
