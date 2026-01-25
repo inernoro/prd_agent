@@ -127,4 +127,14 @@ public class UserService : IUserService
         await _inviteCodeRepository.InsertAsync(inviteCode);
         return code;
     }
+
+    public async Task UpdatePasswordAsync(string userId, string passwordHash)
+    {
+        await _userRepository.UpdatePasswordAsync(userId, passwordHash);
+    }
+
+    public async Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword)
+    {
+        await _userRepository.UpdateMustResetPasswordAsync(userId, mustResetPassword);
+    }
 }

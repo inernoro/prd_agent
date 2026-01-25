@@ -5,14 +5,37 @@ description: API 协议/错误码/角色等全局契约
 
 # API 全局契约
 
-## API 规范
+## API 路由规范（重要）
+
+### 路由设计原则
+
+1. **禁止版本化路由**
+   - **禁止** `/v1/`、`/v2/` 等版本号路径段（规避与 OpenAI 等第三方 API 风格冲突）
+   - 版本迭代通过字段扩展或新端点实现，不在路径中体现
+
+2. **前后台路由分离**
+
+   | 场景 | 路由前缀 | 示例 | 权限要求 |
+   |------|----------|------|----------|
+   | **后台管理** | `/api/{module}` | `/api/users`、`/api/mds`、`/api/authz` | 需要 `AdminController` 注解，受 RBAC 控制 |
+   | **前台/客户端** | `/{module}` | `/sessions`、`/groups`、`/documents` | 普通 JWT 认证，按业务逻辑鉴权 |
+
+3. **路由命名规范**
+   - 使用 `kebab-case`（如 `/api/visual-agent/image-gen`）
+   - 模块名清晰表达功能域（如 `mds`=模型管理、`authz`=权限、`dashboard`=仪表盘）
+
+### 现有路由迁移说明
+
+> **历史遗留**：部分老接口仍使用 `/api/v1/` 前缀，新增接口必须遵循上述规范。
+> 迁移计划：逐步将 `/api/v1/xxx` 迁移为 `/api/xxx`（后台）或 `/xxx`（前台）。
+
+## API 协议规范
 
 - RESTful + SSE 流式响应
-- 基础路径: `/api/v1/`
 - 认证: Bearer JWT
-- 成功:
+- 成功响应:
   - `{ "success": true, "data": {}, "error": null }`
-- 失败:
+- 失败响应:
   - `{ "success": false, "data": null, "error": { "code": "ERROR_CODE", "message": "描述" } }`
 - 写接口支持 `Idempotency-Key`
 

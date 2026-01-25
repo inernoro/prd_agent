@@ -15,6 +15,15 @@ export type LoginResponse = {
   accessToken: string;
   refreshToken: string;
   sessionKey: string;
+  /** 是否需要重置密码（首次登录时为 true） */
+  mustResetPassword?: boolean;
 };
 
 export type LoginContract = (username: string, password: string) => Promise<ApiResponse<LoginResponse>>;
+
+export type ResetPasswordResponse = {
+  userId: string;
+  resetAt: string;
+};
+
+export type ResetPasswordContract = (userId: string, newPassword: string, confirmPassword: string) => Promise<ApiResponse<ResetPasswordResponse>>;

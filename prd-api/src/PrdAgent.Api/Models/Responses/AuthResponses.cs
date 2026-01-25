@@ -24,6 +24,9 @@ public class LoginResponse
 
     /// <summary>用户信息</summary>
     public UserInfo User { get; set; } = new();
+
+    /// <summary>是否需要重置密码（首次登录时为 true）</summary>
+    public bool MustResetPassword { get; set; } = false;
 }
 
 /// <summary>

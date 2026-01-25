@@ -25,6 +25,17 @@ globs: prd-admin/**
 - React 组件: PascalCase
 - CSS 类名: Tailwind 原子类
 
+## 视觉规范（管理后台）
+- 页面级列表/卡片集合必须放在「背板/容器」内，避免直接裸露在大面积背景上
+- 背板推荐使用 `GlassCard` 的 `subtle` 变体且关闭 `glow`，避免与内层卡片叠加产生色差
+
+## API 路由约定
+
+- **后台 API 基础路径**: `/api/{module}`（如 `/api/users`、`/api/mds`、`/api/authz`）
+- **禁止版本化路径**: 新增 API 不得使用 `/v1/`、`/v2/` 等版本号
+- **历史兼容**: 老接口 `/api/v1/xxx` 暂时保留，新接口必须使用 `/api/{module}` 格式
+- API 路径定义统一在 `src/services/api.ts` 维护
+
 ## 局部前置自检（避免 CI 才爆）
 
 当你改动了 `prd-admin/src/**`、依赖、Vite 配置时，必须执行：

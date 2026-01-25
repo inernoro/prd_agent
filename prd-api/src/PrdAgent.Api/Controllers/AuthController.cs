@@ -242,7 +242,8 @@ public class AuthController : ControllerBase
                 BotKind = user.BotKind,
                 AvatarFileName = user.AvatarFileName,
                 AvatarUrl = avatarUrl
-            }
+            },
+            MustResetPassword = user.MustResetPassword
         };
 
         _logger.LogInformation("User logged in: {Username}", user.Username);
@@ -374,6 +375,77 @@ public class AuthController : ControllerBase
 
         return Ok(ApiResponse<LoginResponse>.Ok(response));
     }
+
+    /// <summary>
+    /// 重置密码（用户首次登录后强制重置密码）
+    /// </summary>
+    [HttpPost("reset-password")]
+    [ProducesResponseType(typeof(ApiResponse<ResetPasswordResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        // 验证请求参数
+        if (string.IsNullOrWhiteSpace(request?.UserId))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "userId 不能为空"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request?.NewPassword))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "新密码不能为空"));
+        }
+
+        if (request.NewPassword != request.ConfirmPassword)
+        {
+            return BadRequest(ApiResponse<object>.Fail("PASSWORD_MISMATCH", "两次输入的密码不一致"));
+        }
+
+        // 验证新密码强度
+        var passwordError = PasswordValidator.Validate(request.NewPassword);
+        if (passwordError != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("WEAK_PASSWORD", passwordError));
+        }
+
+        // 获取用户
+        var user = await _userService.GetByIdAsync(request.UserId);
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        // 更新密码和 MustResetPassword 标志
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        await _userService.UpdatePasswordAsync(user.UserId, passwordHash);
+        await _userService.UpdateMustResetPasswordAsync(user.UserId, false);
+
+        _logger.LogInformation("User {UserId} reset password (first login)", user.UserId);
+
+        return Ok(ApiResponse<ResetPasswordResponse>.Ok(new ResetPasswordResponse
+        {
+            UserId = user.UserId,
+            ResetAt = DateTime.UtcNow
+        }));
+    }
+}
+
+/// <summary>
+/// 重置密码请求
+/// </summary>
+public class ResetPasswordRequest
+{
+    public string UserId { get; set; } = string.Empty;
+    public string NewPassword { get; set; } = string.Empty;
+    public string ConfirmPassword { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 重置密码响应
+/// </summary>
+public class ResetPasswordResponse
+{
+    public string UserId { get; set; } = string.Empty;
+    public DateTime ResetAt { get; set; }
 }
 
 /// <summary>

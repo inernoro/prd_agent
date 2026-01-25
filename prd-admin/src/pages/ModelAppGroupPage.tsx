@@ -40,7 +40,6 @@ import {
   Box,
   ChevronDown,
   ChevronRight,
-  Circle,
   Eye,
   Layers,
   Link2,
@@ -1091,6 +1090,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       // 从后端解析结果获取默认模型信息
                       const resolveKey = `${app.appCode || ''}::${req?.modelType || featureItem.parsed.modelType}`;
                       const resolvedModel = isDefaultGroup ? resolvedModels[resolveKey] : null;
+                      const isLegacySingle = isDefaultGroup && resolvedModel?.source === 'legacy';
+                      const isDefaultPool = isDefaultGroup && !isLegacySingle;
 
                       // 判断模型列表是否折叠
                       const featureKey = `${app.id}-${idx}`;
@@ -1122,6 +1123,37 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                         return platform?.name || platformId;
                       };
 
+                      const modeBadge = boundGroups.length > 0
+                        ? {
+                          label: '专属模型池',
+                          icon: Layers,
+                          bg: 'rgba(59, 130, 246, 0.18)',
+                          color: 'rgba(59, 130, 246, 0.95)',
+                          border: 'rgba(59, 130, 246, 0.4)',
+                        }
+                        : isLegacySingle
+                          ? {
+                            label: '直连单模型',
+                            icon: Zap,
+                            bg: 'rgba(148, 163, 184, 0.18)',
+                            color: 'rgba(148, 163, 184, 0.95)',
+                            border: 'rgba(148, 163, 184, 0.35)',
+                          }
+                          : {
+                            label: resolvedModel ? '默认模型池' : '默认未配置',
+                            icon: Layers,
+                            bg: resolvedModel ? 'rgba(148, 163, 184, 0.16)' : 'rgba(251, 191, 36, 0.18)',
+                            color: resolvedModel ? 'rgba(148, 163, 184, 0.95)' : 'rgba(251, 191, 36, 0.95)',
+                            border: resolvedModel ? 'rgba(148, 163, 184, 0.3)' : 'rgba(251, 191, 36, 0.35)',
+                          };
+                      const ModeBadgeIcon = modeBadge.icon;
+                      const FeatureIcon = isLegacySingle ? Zap : ModelTypeIcon;
+                      const featureAccent = isLegacySingle
+                        ? 'rgba(148, 163, 184, 0.95)'
+                        : isDefaultPool
+                          ? (resolvedModel ? 'rgba(148, 163, 184, 0.95)' : 'rgba(251, 191, 36, 0.95)')
+                          : 'rgba(59, 130, 246, 0.9)';
+
                       return (
                         <div key={idx} className="p-4">
                           {/* 功能头部 - 左侧竖线指示器 */}
@@ -1130,15 +1162,19 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                             <div
                               className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
                               style={{
-                                background: isDefaultGroup ? 'rgba(255, 255, 255, 0.05)' : 'rgba(59, 130, 246, 0.1)',
-                                border: isDefaultGroup ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(59, 130, 246, 0.2)',
+                                background: isLegacySingle
+                                  ? 'rgba(148, 163, 184, 0.12)'
+                                  : isDefaultPool
+                                    ? (resolvedModel ? 'rgba(148, 163, 184, 0.12)' : 'rgba(251, 191, 36, 0.12)')
+                                    : 'rgba(59, 130, 246, 0.1)',
+                                border: isLegacySingle
+                                  ? '1px solid rgba(148, 163, 184, 0.25)'
+                                  : isDefaultPool
+                                    ? (resolvedModel ? '1px solid rgba(148, 163, 184, 0.25)' : '1px solid rgba(251, 191, 36, 0.28)')
+                                    : '1px solid rgba(59, 130, 246, 0.2)',
                               }}
                             >
-                              {isDefaultGroup ? (
-                                <Circle size={20} style={{ color: 'var(--text-muted)' }} />
-                              ) : (
-                                <ModelTypeIcon size={20} style={{ color: 'rgba(59, 130, 246, 0.9)' }} />
-                              )}
+                              <FeatureIcon size={20} style={{ color: featureAccent }} />
                             </div>
 
                             {/* 功能信息 */}
@@ -1148,6 +1184,17 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                                       {featureDescription}
+                                    </span>
+                                    <span
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                      style={{
+                                        background: modeBadge.bg,
+                                        color: modeBadge.color,
+                                        border: `1px solid ${modeBadge.border}`,
+                                      }}
+                                    >
+                                      <ModeBadgeIcon size={10} />
+                                      {modeBadge.label}
                                     </span>
                                     <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                                       <AppCallerKeyIcon size={11} className="opacity-60" />

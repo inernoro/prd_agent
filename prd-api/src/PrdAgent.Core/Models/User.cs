@@ -74,4 +74,10 @@ public class User
     /// 客户端应使用“可配置的头像基础 URL”拼接展示（避免把域名写死在数据库/代码中）。
     /// </summary>
     public string? AvatarFileName { get; set; }
+
+    /// <summary>
+    /// 是否需要重置密码（首次登录时为 true，重置后变为 false）。
+    /// 当此标志为 true 时，登录成功后前端应强制用户修改密码。
+    /// </summary>
+    public bool MustResetPassword { get; set; } = false;
 }

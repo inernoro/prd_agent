@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { getAdminAuthzMe, login } from '@/services';
+import { getAdminAuthzMe, login, resetPassword } from '@/services';
 import { Button } from '@/components/design/Button';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
@@ -23,7 +23,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // 首次登录重置密码相关状态
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetUserId, setResetUserId] = useState('');
+  const [resetAccessToken, setResetAccessToken] = useState('');
+  const [resetRefreshToken, setResetRefreshToken] = useState('');
+  const [resetSessionKey, setResetSessionKey] = useState('');
+  const [resetUserData, setResetUserData] = useState<Parameters<typeof setAuth>[0] | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+
   const canSubmit = useMemo(() => Boolean(username.trim() && password.trim()), [username, password]);
+  const canResetSubmit = useMemo(() => Boolean(newPassword.trim() && confirmPassword.trim()), [newPassword, confirmPassword]);
 
   useEffect(() => {
     if (isAuthed) navigate('/', { replace: true });
@@ -39,32 +52,96 @@ export default function LoginPage() {
         setError(res.error?.message || '登录失败');
         return;
       }
-      setAuth(res.data.user, res.data.accessToken);
-      setTokens(res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
-      setPermissionsLoaded(false);
 
-      // 拉取后台权限（决定菜单/路由可见性与准入）
-      const authz = await getAdminAuthzMe();
-      if (!authz.success) {
-        // 若无 admin.access 权限，后端会 403，这里直接回到登录态
-        logout();
-        setError(authz.error?.message || '无权限进入管理后台');
+      // 检查是否需要重置密码
+      if (res.data.mustResetPassword) {
+        setResetUserId(res.data.user.userId);
+        setResetAccessToken(res.data.accessToken);
+        setResetRefreshToken(res.data.refreshToken);
+        setResetSessionKey(res.data.sessionKey);
+        setResetUserData(res.data.user);
+        setShowResetPassword(true);
         return;
       }
-      setPermissions(authz.data.effectivePermissions || []);
-      setPermissionsLoaded(true);
-      // 让主页面承接登录页背景：动 2 秒后冻结
-      try {
-        sessionStorage.setItem('prd-postlogin-fx', '1');
-      } catch {
-        // ignore
-      }
-      navigate('/', { replace: true });
+
+      // 不需要重置密码，正常登录流程
+      await completeLogin(res.data.user, res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : '登录失败');
     } finally {
       setLoading(false);
     }
+  };
+
+  const completeLogin = async (
+    user: Parameters<typeof setAuth>[0],
+    accessToken: string,
+    refreshToken: string,
+    sessionKey: string
+  ) => {
+    setAuth(user, accessToken);
+    setTokens(accessToken, refreshToken, sessionKey);
+    setPermissionsLoaded(false);
+
+    // 拉取后台权限（决定菜单/路由可见性与准入）
+    const authz = await getAdminAuthzMe();
+    if (!authz.success) {
+      // 若无 admin.access 权限，后端会 403，这里直接回到登录态
+      logout();
+      setError(authz.error?.message || '无权限进入管理后台');
+      return;
+    }
+    setPermissions(authz.data.effectivePermissions || []);
+    setPermissionsLoaded(true);
+    // 让主页面承接登录页背景：动 2 秒后冻结
+    try {
+      sessionStorage.setItem('prd-postlogin-fx', '1');
+    } catch {
+      // ignore
+    }
+    navigate('/', { replace: true });
+  };
+
+  const onResetPassword = async () => {
+    if (!canResetSubmit || resetLoading) return;
+    setResetLoading(true);
+    setResetError(null);
+
+    // 前端校验两次密码是否一致
+    if (newPassword !== confirmPassword) {
+      setResetError('两次输入的密码不一致');
+      setResetLoading(false);
+      return;
+    }
+
+    try {
+      const res = await resetPassword(resetUserId, newPassword, confirmPassword);
+      if (!res.success) {
+        setResetError(res.error?.message || '重置密码失败');
+        return;
+      }
+
+      // 重置密码成功，继续登录流程
+      if (resetUserData) {
+        await completeLogin(resetUserData, resetAccessToken, resetRefreshToken, resetSessionKey);
+      }
+    } catch (e) {
+      setResetError(e instanceof Error ? e.message : '重置密码失败');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const onBackToLogin = () => {
+    setShowResetPassword(false);
+    setResetUserId('');
+    setResetAccessToken('');
+    setResetRefreshToken('');
+    setResetSessionKey('');
+    setResetUserData(null);
+    setNewPassword('');
+    setConfirmPassword('');
+    setResetError(null);
   };
 
   return (
@@ -112,67 +189,146 @@ export default function LoginPage() {
 
       <div className="relative z-10 h-full w-full flex items-center justify-center px-6 py-10">
         <div className="prd-login-card w-full max-w-[440px] rounded-[22px] p-8">
-          <div className="flex items-center gap-4">
-            <div
-              className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
-              style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
-            >
-              MAP
-            </div>
-            <div className="min-w-0">
-              <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>MAP Admin</div>
-              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>使用管理员账号登录</div>
-            </div>
-          </div>
-
-          <div className="mt-8 grid gap-4">
-            <label className="grid gap-2">
-              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>用户名</span>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="admin"
-                autoComplete="username"
-              />
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>密码</span>
-              <input
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="admin"
-                type="password"
-                autoComplete="current-password"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') onSubmit();
-                }}
-              />
-            </label>
-
-            {error && (
-              <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
-                {error}
+          {!showResetPassword ? (
+            // 登录界面
+            <>
+              <div className="flex items-center gap-4">
+                <div
+                  className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
+                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
+                >
+                  MAP
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>MAP Admin</div>
+                  <div className="text-sm" style={{ color: 'var(--text-muted)' }}>使用管理员账号登录</div>
+                </div>
               </div>
-            )}
 
-            <Button
-              onClick={onSubmit}
-              disabled={!canSubmit || loading}
-              className="w-full"
-              variant="primary"
-            >
-              {loading ? '登录中...' : '登录'}
-            </Button>
+              <div className="mt-8 grid gap-4">
+                <label className="grid gap-2">
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>用户名</span>
+                  <input
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    placeholder="admin"
+                    autoComplete="username"
+                  />
+                </label>
 
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              默认管理员：admin / admin（首次登录后请修改密码）
-            </div>
-          </div>
+                <label className="grid gap-2">
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>密码</span>
+                  <input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    placeholder="admin"
+                    type="password"
+                    autoComplete="current-password"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') onSubmit();
+                    }}
+                  />
+                </label>
+
+                {error && (
+                  <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
+                    {error}
+                  </div>
+                )}
+
+                <Button
+                  onClick={onSubmit}
+                  disabled={!canSubmit || loading}
+                  className="w-full"
+                  variant="primary"
+                >
+                  {loading ? '登录中...' : '登录'}
+                </Button>
+
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  默认管理员：admin / admin（首次登录后请修改密码）
+                </div>
+              </div>
+            </>
+          ) : (
+            // 首次登录重置密码界面
+            <>
+              <div className="flex items-center gap-4">
+                <div
+                  className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
+                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
+                >
+                  MAP
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>设置新密码</div>
+                  <div className="text-sm" style={{ color: 'var(--text-muted)' }}>首次登录需要重置密码</div>
+                </div>
+              </div>
+
+              <div className="mt-8 grid gap-4">
+                <label className="grid gap-2">
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>新密码</span>
+                  <input
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    placeholder="请输入新密码"
+                    type="password"
+                    autoComplete="new-password"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>确认密码</span>
+                  <input
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    placeholder="请再次输入新密码"
+                    type="password"
+                    autoComplete="new-password"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') onResetPassword();
+                    }}
+                  />
+                </label>
+
+                {resetError && (
+                  <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
+                    {resetError}
+                  </div>
+                )}
+
+                <Button
+                  onClick={onResetPassword}
+                  disabled={!canResetSubmit || resetLoading}
+                  className="w-full"
+                  variant="primary"
+                >
+                  {resetLoading ? '设置中...' : '确认设置'}
+                </Button>
+
+                <button
+                  onClick={onBackToLogin}
+                  className="text-sm underline"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  返回登录
+                </button>
+
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  密码要求：至少6位，包含字母和数字
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -15,6 +15,7 @@ export const api = {
     register: () => '/api/v1/auth/register',
     refresh: () => '/api/v1/auth/refresh',
     validatePassword: () => '/api/v1/auth/validate-password',
+    resetPassword: () => '/api/v1/auth/reset-password',
   },
 
   // ============ Authz 权限 ============

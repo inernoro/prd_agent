@@ -1,6 +1,6 @@
 // 生产环境：严禁 mock/假数据。此处只允许真实后端实现。
 
-import type { LoginContract } from '@/services/contracts/auth';
+import type { LoginContract, ResetPasswordContract } from '@/services/contracts/auth';
 import type {
   GetAdminAuthzMeContract,
   GetAdminPermissionCatalogContract,
@@ -164,7 +164,7 @@ import type {
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
-import { loginReal } from '@/services/real/auth';
+import { loginReal, resetPasswordReal } from '@/services/real/auth';
 import {
   getAdminAuthzMeReal,
   getAdminPermissionCatalogReal,
@@ -340,6 +340,7 @@ function withAuth<TArgs extends unknown[], TResult>(
 }
 
 export const login: LoginContract = loginReal;
+export const resetPassword: ResetPasswordContract = resetPasswordReal;
 
 export const getAdminAuthzMe: GetAdminAuthzMeContract = withAuth(getAdminAuthzMeReal);
 export const getAdminPermissionCatalog: GetAdminPermissionCatalogContract = withAuth(getAdminPermissionCatalogReal);

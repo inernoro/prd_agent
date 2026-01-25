@@ -33,4 +33,10 @@ public interface IUserService
     
     /// <summary>创建邀请码</summary>
     Task<string> CreateInviteCodeAsync(string creatorId);
+
+    /// <summary>更新密码（传入已哈希的密码）</summary>
+    Task UpdatePasswordAsync(string userId, string passwordHash);
+
+    /// <summary>更新 MustResetPassword 标志</summary>
+    Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword);
 }

@@ -25,6 +25,26 @@ globs: prd-api/**
 - MongoDB 字段: camelCase
 - API 路径: kebab-case
 
+## API 路由规范（强制）
+
+### 路由分类
+
+| 类型 | 路由前缀 | Controller 位置 | 权限控制 |
+|------|----------|-----------------|----------|
+| **后台管理** | `/api/{module}` | `Controllers/Api/` | 需要 `[AdminController]` 注解 |
+| **前台客户端** | `/{module}` | `Controllers/` (根目录) | 普通 JWT 认证 |
+
+### 禁止事项
+
+- **禁止使用版本化路由**：不得使用 `/v1/`、`/v2/` 等版本号路径段
+- **禁止混用风格**：新增接口必须严格遵循上述分类，不得出现 `/api/v1/xxx`
+
+### 迁移说明
+
+历史遗留的 `/api/v1/xxx` 接口暂时保留，但：
+- 新增接口**必须**使用新规范
+- 逐步将老接口迁移到正确路径
+
 ## 目录约定
 - 后端分层: Api -> Core -> Infrastructure
 - Prompt 模板: `Infrastructure/Prompts/Templates/`

@@ -34,7 +34,7 @@
 ```csharp
 // 正确做法：在 Controller 中硬编码 appKey
 [ApiController]
-[Route("api/v1/admin/visual-agent")]
+[Route("api/visual-agent")]  // 后台管理接口使用 /api/{module} 格式，禁止 /v1/ 版本号
 public class VisualAgentController : ControllerBase
 {
     private const string AppKey = "visual-agent";

@@ -84,12 +84,13 @@ export default function UsersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createUsername, setCreateUsername] = useState('');
   const [createDisplayName, setCreateDisplayName] = useState('');
+  const [createDisplayNameManuallyEdited, setCreateDisplayNameManuallyEdited] = useState(false);
   const [createRole, setCreateRole] = useState<UserRow['role']>('DEV');
   const [createPwd, setCreatePwd] = useState('');
-  const [createPwd2, setCreatePwd2] = useState('');
+  const [createSystemRoleKey, setCreateSystemRoleKey] = useState('agent_tester');
+  const [createSystemRoles, setCreateSystemRoles] = useState<Array<{ key: string; name: string }>>([]);
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [createResult, setCreateResult] = useState<{ userId: string; username: string } | null>(null);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkPrefix, setBulkPrefix] = useState('');
@@ -186,20 +187,9 @@ export default function UsersPage() {
     return /^[a-zA-Z0-9_]+$/.test(u);
   }, [createUsername]);
 
-  const createPwdChecks = useMemo(() => {
-    const v = createPwd ?? '';
-    const touched = v.length > 0;
-    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
-  }, [createPwd]);
-
   const createPwdNonEmptyOk = useMemo(() => {
     return (createPwd ?? '').trim().length > 0;
   }, [createPwd]);
-
-  const createPwdMatchOk = useMemo(() => {
-    if (!createPwd || !createPwd2) return false;
-    return createPwd === createPwd2;
-  }, [createPwd, createPwd2]);
 
   const bulkPwdChecks = useMemo(() => {
     const v = bulkPwd ?? '';
@@ -270,29 +260,38 @@ export default function UsersPage() {
     await navigator.clipboard.writeText(text);
   };
 
-  const openCreateUser = () => {
+  const openCreateUser = async () => {
     setCreateUsername('');
     setCreateDisplayName('');
+    setCreateDisplayNameManuallyEdited(false);
     setCreateRole('DEV');
     setCreatePwd('');
-    setCreatePwd2('');
+    setCreateSystemRoleKey('agent_tester');
     setCreateError(null);
-    setCreateResult(null);
     setCreateSubmitting(false);
     setCreateOpen(true);
+    
+    // 加载系统角色列表
+    try {
+      const res = await getSystemRoles();
+      if (res.success) {
+        setCreateSystemRoles(res.data.map((r) => ({ key: r.key, name: r.name })));
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const submitCreateUser = async () => {
     if (!createUsernameOk) return;
     if (!createPwdNonEmptyOk) return;
-    if (!createPwdMatchOk) return;
 
     setCreateSubmitting(true);
     setCreateError(null);
     try {
       const res = await createUser({
         username: createUsername.trim(),
-        displayName: createDisplayName.trim() || undefined,
+        displayName: createDisplayName.trim() || createUsername.trim(),
         role: createRole,
         password: createPwd,
       });
@@ -300,7 +299,36 @@ export default function UsersPage() {
         setCreateError(res.error?.message || '创建失败');
         return;
       }
-      setCreateResult({ userId: res.data.userId, username: res.data.username });
+      
+      // 设置权限角色
+      if (createSystemRoleKey && createSystemRoleKey !== 'none') {
+        try {
+          await updateUserAuthz(res.data.userId, {
+            systemRoleKey: createSystemRoleKey,
+            permAllow: [],
+            permDeny: [],
+          });
+        } catch {
+          // 权限设置失败不影响用户创建成功
+        }
+      }
+      
+      toast.success('创建成功', `用户 ${res.data.username} 已创建，可继续设置头像`);
+      setCreateOpen(false);
+      
+      // 打开头像编辑对话框
+      setAvatarTargetUser({
+        userId: res.data.userId,
+        username: res.data.username,
+        displayName: res.data.displayName,
+        role: res.data.role,
+        status: res.data.status,
+        createdAt: res.data.createdAt,
+        avatarFileName: null,
+        avatarUrl: null,
+      });
+      setAvatarOpen(true);
+      
       await load();
     } finally {
       setCreateSubmitting(false);
@@ -851,7 +879,6 @@ export default function UsersPage() {
               {items.map((u) => {
                 const displayName = (u.displayName || u.username).trim();
                 const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
-                const isAdmin = String(u.role ?? '').toUpperCase() === 'ADMIN';
                 const roleColors: Record<string, { bg: string; border: string; text: string }> = {
                   PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
                   DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
@@ -1089,7 +1116,7 @@ export default function UsersPage() {
 
                     {/* 紧凑卡片内容 */}
                     <div className="flex items-center gap-2.5">
-                      {/* 头像（悬浮显示用户详情） */}
+                      {/* 头像（悬浮/点击显示用户详情） */}
                       <UserProfilePopover
                         userId={u.userId}
                         username={u.username}
@@ -1097,10 +1124,11 @@ export default function UsersPage() {
                         botKind={u.botKind}
                         avatarFileName={u.avatarFileName}
                         avatarUrl={u.avatarUrl}
+                        role={u.role}
+                        onChangeAvatar={() => openChangeAvatar(u)}
                       >
                         <div
                           className="relative h-9 w-9 rounded-[8px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all"
-                          onClick={() => openChangeAvatar(u)}
                         >
                           {(() => {
                             const url = resolveAvatarUrl({
@@ -1126,14 +1154,41 @@ export default function UsersPage() {
                               />
                             );
                           })()}
-                          {/* 状态指示点 */}
-                          <span
-                            className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2"
-                            style={{
-                              background: u.status === 'Active' ? 'rgba(34,197,94,0.95)' : 'rgba(120,120,128,0.5)',
-                              borderColor: 'rgba(0,0,0,0.4)',
-                            }}
-                          />
+                          {/* 角色图标（右下角） */}
+                          {(() => {
+                            const roleIconConfig: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
+                              PM: {
+                                bg: 'rgba(59,130,246,0.9)',
+                                color: '#fff',
+                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>,
+                              },
+                              DEV: {
+                                bg: 'rgba(34,197,94,0.9)',
+                                color: '#fff',
+                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" /></svg>,
+                              },
+                              QA: {
+                                bg: 'rgba(168,85,247,0.9)',
+                                color: '#fff',
+                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>,
+                              },
+                              ADMIN: {
+                                bg: 'rgba(214,178,106,0.95)',
+                                color: '#000',
+                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" /></svg>,
+                              },
+                            };
+                            const cfg = roleIconConfig[u.role] || roleIconConfig.DEV;
+                            return (
+                              <span
+                                className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center border-2"
+                                style={{ background: cfg.bg, borderColor: 'rgba(0,0,0,0.5)', color: cfg.color }}
+                                title={u.role}
+                              >
+                                {cfg.icon}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </UserProfilePopover>
 
@@ -1165,18 +1220,6 @@ export default function UsersPage() {
                               <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                                 <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
                                 <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
-                              </svg>
-                            </span>
-                          )}
-                          {/* Admin 盾牌 */}
-                          {isAdmin && !isBot && (
-                            <span
-                              className="shrink-0 inline-flex items-center justify-center h-4 w-4 rounded-[4px]"
-                              style={{ background: 'rgba(214,178,106,0.12)', color: 'var(--accent-gold)' }}
-                              title="管理员"
-                            >
-                              <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" />
                               </svg>
                             </span>
                           )}
@@ -1226,156 +1269,183 @@ export default function UsersPage() {
           if (!v) {
             setCreateUsername('');
             setCreateDisplayName('');
+            setCreateDisplayNameManuallyEdited(false);
             setCreateRole('DEV');
             setCreatePwd('');
-            setCreatePwd2('');
+            setCreateSystemRoleKey('agent_tester');
             setCreateError(null);
-            setCreateResult(null);
             setCreateSubmitting(false);
           }
         }}
         title="创建用户"
-        description="创建账号（用户名）+ 密码 + 角色"
+        description="创建账号（用户名）+ 密码 + 角色 + 权限"
         content={
           <div className="space-y-4">
-            <div className="grid gap-3">
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>用户名</div>
-                <input
-                  value={createUsername}
-                  onChange={(e) => {
-                    setCreateUsername(e.target.value);
-                    setCreateError(null);
-                    setCreateResult(null);
-                  }}
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="4-32 位，仅字母/数字/下划线"
-                  autoComplete="off"
-                />
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>显示名称（可选）</div>
-                <input
-                  value={createDisplayName}
-                  onChange={(e) => {
-                    setCreateDisplayName(e.target.value);
-                    setCreateError(null);
-                    setCreateResult(null);
-                  }}
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="默认同用户名（上限 50）"
-                  autoComplete="off"
-                />
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>角色</div>
-                <select
-                  value={createRole}
-                  onChange={(e) => setCreateRole(e.target.value as UserRow['role'])}
-                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            {/* 第一行：头像 + 用户名 + 显示名称 */}
+            <div className="flex items-start gap-4">
+              {/* 头像预览（点击提示创建后可修改） */}
+              <div className="shrink-0">
+                <div
+                  className="h-16 w-16 rounded-[12px] overflow-hidden flex items-center justify-center relative group cursor-pointer"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  title="创建成功后可设置头像"
+                  onClick={() => toast.info('提示', '请先完成用户创建，创建成功后将自动弹出头像设置')}
                 >
-                  <option value="PM">PM</option>
-                  <option value="DEV">DEV</option>
-                  <option value="QA">QA</option>
-                  <option value="ADMIN">ADMIN</option>
-                </select>
+                  <img
+                    src={resolveNoHeadAvatarUrl()}
+                    alt="default avatar"
+                    className="h-full w-full object-cover transition-opacity group-hover:opacity-70"
+                  />
+                  {/* 悬浮提示 */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Pencil size={16} className="text-white" />
+                  </div>
+                </div>
+                <div className="text-[10px] text-center mt-1" style={{ color: 'var(--text-muted)' }}>
+                  创建后可改
+                </div>
               </div>
-
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>密码</div>
-                <input
-                  value={createPwd}
-                  onChange={(e) => {
-                    setCreatePwd(e.target.value);
-                    setCreateError(null);
-                    setCreateResult(null);
-                  }}
-                  type="password"
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="任意非空（强烈建议使用复杂密码）"
-                  autoComplete="new-password"
-                />
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认密码</div>
-                <input
-                  value={createPwd2}
-                  onChange={(e) => {
-                    setCreatePwd2(e.target.value);
-                    setCreateError(null);
-                    setCreateResult(null);
-                  }}
-                  type="password"
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="再次输入密码"
-                  autoComplete="new-password"
-                />
-              </div>
-            </div>
-
-            <div
-              className="rounded-[16px] px-4 py-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-            >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码建议（不影响创建）</div>
-              <div className="mt-2 grid gap-1">
-                {createPwdChecks.map((r) => {
-                  const ok = r.touched ? r.ok : false;
-                  const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok ? 'ok' : 'bad';
-                  const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
-                  const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
-                  return (
-                    <div key={r.key} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
-                      <Icon size={16} style={{ color }} />
-                      <span style={{ color: 'var(--text-primary)' }}>{r.label}</span>
-                    </div>
-                  );
-                })}
-                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
-                  {createPwd2.length === 0 ? (
-                    <Circle size={16} style={{ color: 'var(--text-muted)' }} />
-                  ) : createPwdMatchOk ? (
-                    <CheckCircle2 size={16} style={{ color: 'rgba(34,197,94,0.95)' }} />
-                  ) : (
-                    <XCircle size={16} style={{ color: 'rgba(239,68,68,0.95)' }} />
-                  )}
-                  <span style={{ color: 'var(--text-primary)' }}>两次输入一致</span>
+              
+              {/* 用户名 + 显示名称 */}
+              <div className="flex-1 grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>用户名</div>
+                  <input
+                    value={createUsername}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCreateUsername(val);
+                      setCreateError(null);
+                      // 自动同步到显示名称（如果没有手动编辑过）
+                      if (!createDisplayNameManuallyEdited) {
+                        setCreateDisplayName(val);
+                      }
+                    }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    placeholder="4-32位"
+                    autoComplete="off"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>显示名称</div>
+                  <input
+                    value={createDisplayName}
+                    onChange={(e) => {
+                      setCreateDisplayName(e.target.value);
+                      setCreateDisplayNameManuallyEdited(true);
+                      setCreateError(null);
+                    }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    placeholder="自动同步"
+                    autoComplete="off"
+                  />
                 </div>
               </div>
             </div>
 
+            {/* 第二行：密码 */}
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>密码</div>
+              <input
+                value={createPwd}
+                onChange={(e) => {
+                  setCreatePwd(e.target.value);
+                  setCreateError(null);
+                }}
+                type="password"
+                className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                placeholder="设置登录密码"
+                autoComplete="new-password"
+              />
+            </div>
+
+            {/* 第三行：角色 + 权限（等高布局） */}
+            <div className="grid grid-cols-2 gap-4 items-stretch">
+              {/* 角色选择 */}
+              <div className="flex flex-col">
+                <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>角色</div>
+                <div
+                  className="rounded-[10px] p-2 space-y-1 flex-1"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  {([
+                    { key: 'PM', label: 'PM', desc: '产品经理' },
+                    { key: 'DEV', label: 'DEV', desc: '开发' },
+                    { key: 'QA', label: 'QA', desc: '测试' },
+                    { key: 'ADMIN', label: 'ADMIN', desc: '管理员' },
+                  ] as const).map((r) => (
+                    <label
+                      key={r.key}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
+                    >
+                      <input
+                        type="radio"
+                        name="createRole"
+                        value={r.key}
+                        checked={createRole === r.key}
+                        onChange={() => setCreateRole(r.key)}
+                        className="accent-[var(--accent-gold)]"
+                      />
+                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{r.label}</span>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{r.desc}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* 权限选择 */}
+              <div className="flex flex-col">
+                <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>权限</div>
+                <div
+                  className="rounded-[10px] p-2 space-y-1 flex-1"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  {(createSystemRoles.length > 0 ? createSystemRoles : [
+                    { key: 'admin', name: '管理员' },
+                    { key: 'operator', name: '运营/运维' },
+                    { key: 'viewer', name: '只读' },
+                    { key: 'agent_tester', name: 'Agent 体验者' },
+                    { key: 'none', name: '无权限' },
+                  ]).map((r) => (
+                    <label
+                      key={r.key}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
+                    >
+                      <input
+                        type="radio"
+                        name="createSystemRole"
+                        value={r.key}
+                        checked={createSystemRoleKey === r.key}
+                        onChange={() => setCreateSystemRoleKey(r.key)}
+                        className="accent-[var(--accent-gold)]"
+                      />
+                      <span className="text-[12px]" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 错误提示 */}
             {!createUsernameOk && createUsername.trim().length > 0 && (
               <div className="text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
                 用户名不合法：4-32 位，仅字母/数字/下划线
               </div>
             )}
 
-            {createResult && (
-              <div
-                className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
-              >
-                已创建：{createResult.username}（{createResult.userId}）
-              </div>
-            )}
-
             {createError && (
               <div
-                className="rounded-[14px] px-4 py-3 text-sm"
+                className="rounded-[10px] px-3 py-2 text-sm"
                 style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
               >
                 {createError}
               </div>
             )}
 
+            {/* 按钮 */}
             <div className="flex items-center justify-end gap-2 pt-1">
               <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)} disabled={createSubmitting}>
                 取消
@@ -1384,7 +1454,7 @@ export default function UsersPage() {
                 variant="primary"
                 size="sm"
                 onClick={submitCreateUser}
-                disabled={createSubmitting || !createUsernameOk || !createPwdNonEmptyOk || !createPwdMatchOk}
+                disabled={createSubmitting || !createUsernameOk || !createPwdNonEmptyOk}
               >
                 {createSubmitting ? '创建中...' : '确认创建'}
               </Button>

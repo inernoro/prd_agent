@@ -510,7 +510,8 @@ public class UsersController : ControllerBase
             Role = role,
             Status = UserStatus.Active,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            MustResetPassword = true  // 首次登录需要重置密码
         };
 
         try
@@ -667,7 +668,8 @@ public class UsersController : ControllerBase
                 Role = x.role,
                 Status = UserStatus.Active,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(x.password),
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                MustResetPassword = true  // 首次登录需要重置密码
             });
         }
 

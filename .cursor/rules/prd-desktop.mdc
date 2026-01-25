@@ -31,6 +31,15 @@ globs: prd-desktop/**
 - React 组件: PascalCase
 - Rust: snake_case（函数/变量），PascalCase（类型/结构体）
 
+## API 路由约定
+
+- **前台 API 基础路径**: `/{module}`（如 `/sessions`、`/groups`、`/documents`）
+- **禁止版本化路径**: 新增 API 不得使用 `/v1/`、`/v2/` 等版本号
+- **历史兼容**: 老接口 `/api/v1/xxx` 暂时保留，新接口应迁移到 `/{module}` 格式
+- 前台 API 与后台 API 通过路径前缀区分：
+  - `/api/xxx` = 后台管理接口（需要 AdminController 权限）
+  - `/xxx` = 前台/客户端接口（普通 JWT 认证）
+
 ## 局部前置自检（避免 CI 才爆）
 
 当你改动了 `prd-desktop/src-tauri/**`、`tauri.conf.json`、`Cargo.toml` 时，必须执行：

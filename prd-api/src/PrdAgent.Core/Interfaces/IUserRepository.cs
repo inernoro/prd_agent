@@ -12,6 +12,8 @@ public interface IUserRepository
     Task InsertAsync(User user);
     Task UpdateLastLoginAsync(string userId);
     Task UpdateLastActiveAsync(string userId, DateTime atUtc);
+    Task UpdatePasswordAsync(string userId, string passwordHash);
+    Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword);
 }
 
 /// <summary>

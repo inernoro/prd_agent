@@ -265,120 +265,120 @@ export function ModelPoolManagePage() {
       />
 
       {/* 模型池列表 */}
-      <div className="flex-1 min-h-0 overflow-auto">
-        {loading ? (
-          <GlassCard glow className="p-12 text-center">
-            <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
-          </GlassCard>
-        ) : filteredPools.length === 0 ? (
-          <GlassCard glow className="p-12 text-center">
-            <div style={{ color: 'var(--text-muted)' }}>
+      <GlassCard variant="subtle" className="flex-1 min-h-0">
+        <div className="h-full min-h-0 overflow-auto">
+          {loading ? (
+            <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+              加载中...
+            </div>
+          ) : filteredPools.length === 0 ? (
+            <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
               <Database size={48} className="mx-auto mb-4 opacity-40" />
               <div className="text-sm">暂无模型池</div>
               <div className="mt-2 text-xs">点击"新建模型池"创建你的第一个模型池</div>
             </div>
-          </GlassCard>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filteredPools.map((pool) => {
-              const ModelTypeIcon = getModelTypeIcon(pool.modelType || 'chat');
-              const modelTypeLabel = getModelTypeDisplayName(pool.modelType || 'chat');
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {filteredPools.map((pool) => {
+                const ModelTypeIcon = getModelTypeIcon(pool.modelType || 'chat');
+                const modelTypeLabel = getModelTypeDisplayName(pool.modelType || 'chat');
 
-              return (
-                <GlassCard glow key={pool.id} className="p-0 overflow-hidden">
-                  <div className="p-4 border-b border-white/10">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <span className="shrink-0" style={{ color: 'var(--text-secondary)' }} title={modelTypeLabel}>
-                          <ModelTypeIcon size={20} />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {pool.name}
-                          </div>
-                          <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                            {pool.code || pool.id} | {modelTypeLabel} | 优先级: {pool.priority ?? 50}
-                            {pool.isDefaultForType && (
-                              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
-                                默认
-                              </span>
-                            )}
+                return (
+                  <GlassCard glow key={pool.id} className="p-0 overflow-hidden">
+                    <div className="p-4 border-b border-white/10">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <span className="shrink-0" style={{ color: 'var(--text-secondary)' }} title={modelTypeLabel}>
+                            <ModelTypeIcon size={20} />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              {pool.name}
+                            </div>
+                            <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                              {pool.code || pool.id} | {modelTypeLabel} | 优先级: {pool.priority ?? 50}
+                              {pool.isDefaultForType && (
+                                <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
+                                  默认
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Tooltip content="复制为新模型池">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={() => handleCopyPool(pool)}
-                          >
-                            <Copy size={14} style={{ color: 'var(--text-muted)' }} />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="编辑模型池">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={() => handleEditPool(pool)}
-                          >
-                            <Edit size={14} style={{ color: 'var(--text-muted)' }} />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="删除模型池">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={() => handleDeletePool(pool)}
-                          >
-                            <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4">
-                    <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
-                      模型列表 ({pool.models?.length || 0})
-                    </div>
-                    {!pool.models || pool.models.length === 0 ? (
-                      <div className="text-[12px] py-3 text-center" style={{ color: 'var(--text-muted)' }}>
-                        暂无模型，点击编辑添加
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5 max-h-[140px] overflow-auto">
-                        {pool.models.map((model, idx) => {
-                          const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
-                          return (
-                            <div
-                              key={keyOfModel(model)}
-                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg"
-                              style={{ background: 'rgba(255,255,255,0.03)' }}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Tooltip content="复制为新模型池">
+                            <button
+                              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                              onClick={() => handleCopyPool(pool)}
                             >
-                              <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                  #{idx + 1}
-                                </span>
-                                <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
-                                  {model.modelId}
+                              <Copy size={14} style={{ color: 'var(--text-muted)' }} />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="编辑模型池">
+                            <button
+                              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                              onClick={() => handleEditPool(pool)}
+                            >
+                              <Edit size={14} style={{ color: 'var(--text-muted)' }} />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="删除模型池">
+                            <button
+                              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                              onClick={() => handleDeletePool(pool)}
+                            >
+                              <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4">
+                      <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                        模型列表 ({pool.models?.length || 0})
+                      </div>
+                      {!pool.models || pool.models.length === 0 ? (
+                        <div className="text-[12px] py-3 text-center" style={{ color: 'var(--text-muted)' }}>
+                          暂无模型，点击编辑添加
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[140px] overflow-auto">
+                          {pool.models.map((model, idx) => {
+                            const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                            return (
+                              <div
+                                key={keyOfModel(model)}
+                                className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg"
+                                style={{ background: 'rgba(255,255,255,0.03)' }}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                    #{idx + 1}
+                                  </span>
+                                  <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                                    {model.modelId}
+                                  </span>
+                                </div>
+                                <span
+                                  className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                                  style={{ background: status.bg, color: status.color }}
+                                >
+                                  {status.label}
                                 </span>
                               </div>
-                              <span
-                                className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
-                                style={{ background: status.bg, color: status.color }}
-                              >
-                                {status.label}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </GlassCard>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </GlassCard>
 
       {/* 新建/编辑模型池弹窗 */}
       {showPoolDialog && (

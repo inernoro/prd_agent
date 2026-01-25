@@ -50,6 +50,24 @@ public class UserRepository : IUserRepository
             u => u.UserId == userId,
             update);
     }
+
+    public async Task UpdatePasswordAsync(string userId, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return;
+        
+        await _users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
+    }
+
+    public async Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return;
+        
+        await _users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.Set(u => u.MustResetPassword, mustResetPassword));
+    }
 }
 
 /// <summary>

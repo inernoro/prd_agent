@@ -1100,11 +1100,6 @@ export default function ModelManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <TabBar
-        title="模型管理"
-        icon={<Cpu size={16} />}
-      />
-
       <div className={`grid gap-5 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格） */}
         <GlassCard glow className="p-0 overflow-hidden flex flex-col">
@@ -1353,6 +1348,43 @@ export default function ModelManagePage() {
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search
+                    size={16}
+                    className="absolute left-3 top-1/2 -translate-y-1/2"
+                    style={{ color: 'var(--text-muted)' }}
+                  />
+                  <input
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    type="search"
+                    name="model-search"
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    data-bwignore="true"
+                    className="h-10 rounded-[14px] pl-9 pr-4 text-sm outline-none"
+                    style={{ ...inputStyle, width: 260 }}
+                    placeholder="搜索模型..."
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDensityMode((m) => (m === 'compact' ? 'detailed' : 'compact'))}
+                  className="inline-flex items-center justify-center h-10 w-10 rounded-[14px] transition-colors hover:bg-white/6"
+                  style={{
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: 'var(--text-secondary)',
+                  }}
+                  title={densityMode === 'compact' ? '切换到详情模式' : '切换到简洁模式'}
+                >
+                  {densityMode === 'compact' ? <LayoutList size={18} /> : <LayoutGrid size={18} />}
+                </button>
+              </div>
               <Tooltip
                 content={
                   <div className="leading-snug">
@@ -1529,50 +1561,6 @@ export default function ModelManagePage() {
                 )}
 
                 <div>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>模型</div>
-                      <Badge variant="subtle">{filteredModels.length}</Badge>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Search
-                          size={16}
-                          className="absolute left-3 top-1/2 -translate-y-1/2"
-                          style={{ color: 'var(--text-muted)' }}
-                        />
-                        <input
-                          value={modelSearch}
-                          onChange={(e) => setModelSearch(e.target.value)}
-                          type="search"
-                          name="model-search"
-                          autoComplete="off"
-                          spellCheck={false}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                          data-lpignore="true"
-                          data-1p-ignore="true"
-                          data-bwignore="true"
-                          className="h-10 rounded-[14px] pl-9 pr-4 text-sm outline-none"
-                          style={{ ...inputStyle, width: 260 }}
-                          placeholder="搜索模型..."
-                        />
-                      </div>
-                                        <button
-                                          type="button"
-                        onClick={() => setDensityMode((m) => (m === 'compact' ? 'detailed' : 'compact'))}
-                        className="inline-flex items-center justify-center h-10 w-10 rounded-[14px] transition-colors hover:bg-white/6"
-                                          style={{
-                          border: '1px solid rgba(255,255,255,0.12)',
-                          color: 'var(--text-secondary)',
-                        }}
-                        title={densityMode === 'compact' ? '切换到详情模式' : '切换到简洁模式'}
-                      >
-                        {densityMode === 'compact' ? <LayoutList size={18} /> : <LayoutGrid size={18} />}
-                                        </button>
-                    </div>
-                  </div>
-
                   <div className="mt-4">
                     {displayedModels.length === 0 ? (
                       <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无模型</div>
