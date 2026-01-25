@@ -92,6 +92,11 @@ public class MongoDbContext
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
 
+    // Defect Agent 缺陷管理
+    public IMongoCollection<DefectTemplate> DefectTemplates => _database.GetCollection<DefectTemplate>("defect_templates");
+    public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
+    public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
@@ -627,5 +632,42 @@ public class MongoDbContext
         WatermarkConfigs.Indexes.CreateOne(new CreateIndexModel<WatermarkConfig>(
             Builders<WatermarkConfig>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.AppKeys),
             new CreateIndexOptions { Name = "idx_watermark_configs_user_appkeys" }));
+
+        // DefectTemplates：按 isDefault 查询默认模板
+        DefectTemplates.Indexes.CreateOne(new CreateIndexModel<DefectTemplate>(
+            Builders<DefectTemplate>.IndexKeys.Descending(x => x.IsDefault).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_templates_default" }));
+
+        // DefectReports：按 reporterId + status 查询；按 assigneeId + status 查询
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.ReporterId).Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_reporter_status" }));
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.AssigneeId).Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_assignee_status" }));
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_status" }));
+        // defectNo 唯一
+        try
+        {
+            DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+                Builders<DefectReport>.IndexKeys.Ascending(x => x.DefectNo),
+                new CreateIndexOptions<DefectReport>
+                {
+                    Name = "uniq_defect_reports_no",
+                    Unique = true,
+                    PartialFilterExpression = new BsonDocument("DefectNo", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // DefectMessages：按 defectId + seq 查询
+        DefectMessages.Indexes.CreateOne(new CreateIndexModel<DefectMessage>(
+            Builders<DefectMessage>.IndexKeys.Ascending(x => x.DefectId).Ascending(x => x.Seq),
+            new CreateIndexOptions { Name = "idx_defect_messages_defect_seq" }));
     }
 }

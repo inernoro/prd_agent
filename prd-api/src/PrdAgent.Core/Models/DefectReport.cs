@@ -1,0 +1,144 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 缺陷报告
+/// </summary>
+public class DefectReport
+{
+    /// <summary>主键（Guid）</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>缺陷编号（如 DEF-2025-0001，自动生成）</summary>
+    public string DefectNo { get; set; } = string.Empty;
+
+    /// <summary>使用的模板 ID</summary>
+    public string? TemplateId { get; set; }
+
+    /// <summary>缺陷标题（AI 提取或用户填写）</summary>
+    public string? Title { get; set; }
+
+    /// <summary>用户原始输入文本</summary>
+    public string RawContent { get; set; } = string.Empty;
+
+    /// <summary>AI 提取后的结构化数据</summary>
+    public Dictionary<string, string> StructuredData { get; set; } = new();
+
+    /// <summary>附件列表</summary>
+    public List<DefectAttachment> Attachments { get; set; } = new();
+
+    /// <summary>
+    /// 缺陷状态：
+    /// - draft: 草稿
+    /// - reviewing: AI 审核中
+    /// - awaiting: 待补充信息
+    /// - submitted: 已提交
+    /// - assigned: 已指派
+    /// - processing: 处理中
+    /// - resolved: 已解决
+    /// - rejected: 已拒绝
+    /// - closed: 已关闭
+    /// </summary>
+    public string Status { get; set; } = DefectStatus.Draft;
+
+    /// <summary>严重程度：blocker, critical, major, minor, suggestion</summary>
+    public string? Severity { get; set; }
+
+    /// <summary>优先级：high, medium, low</summary>
+    public string? Priority { get; set; }
+
+    /// <summary>当前缺失的必填字段</summary>
+    public List<string> MissingFields { get; set; } = new();
+
+    /// <summary>报告人 UserId</summary>
+    public string ReporterId { get; set; } = string.Empty;
+
+    /// <summary>报告人用户名（冗余，便于展示）</summary>
+    public string? ReporterName { get; set; }
+
+    /// <summary>被指派人 UserId</summary>
+    public string? AssigneeId { get; set; }
+
+    /// <summary>被指派人用户名（冗余，便于展示）</summary>
+    public string? AssigneeName { get; set; }
+
+    /// <summary>指派时间</summary>
+    public DateTime? AssignedAt { get; set; }
+
+    /// <summary>解决说明</summary>
+    public string? Resolution { get; set; }
+
+    /// <summary>拒绝原因</summary>
+    public string? RejectReason { get; set; }
+
+    /// <summary>正式提交时间</summary>
+    public DateTime? SubmittedAt { get; set; }
+
+    /// <summary>解决时间</summary>
+    public DateTime? ResolvedAt { get; set; }
+
+    /// <summary>关闭时间</summary>
+    public DateTime? ClosedAt { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 缺陷附件
+/// </summary>
+public class DefectAttachment
+{
+    /// <summary>附件 ID</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>文件名</summary>
+    public string FileName { get; set; } = string.Empty;
+
+    /// <summary>文件大小 (bytes)</summary>
+    public long FileSize { get; set; }
+
+    /// <summary>MIME 类型</summary>
+    public string MimeType { get; set; } = string.Empty;
+
+    /// <summary>COS 存储 URL</summary>
+    public string CosUrl { get; set; } = string.Empty;
+
+    /// <summary>缩略图 URL（图片类型）</summary>
+    public string? ThumbnailUrl { get; set; }
+
+    /// <summary>上传时间</summary>
+    public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 缺陷状态常量
+/// </summary>
+public static class DefectStatus
+{
+    public const string Draft = "draft";
+    public const string Reviewing = "reviewing";
+    public const string Awaiting = "awaiting";
+    public const string Submitted = "submitted";
+    public const string Assigned = "assigned";
+    public const string Processing = "processing";
+    public const string Resolved = "resolved";
+    public const string Rejected = "rejected";
+    public const string Closed = "closed";
+
+    public static readonly string[] All = { Draft, Reviewing, Awaiting, Submitted, Assigned, Processing, Resolved, Rejected, Closed };
+}
+
+/// <summary>
+/// 缺陷严重程度常量
+/// </summary>
+public static class DefectSeverity
+{
+    public const string Blocker = "blocker";
+    public const string Critical = "critical";
+    public const string Major = "major";
+    public const string Minor = "minor";
+    public const string Suggestion = "suggestion";
+
+    public static readonly string[] All = { Blocker, Critical, Major, Minor, Suggestion };
+}

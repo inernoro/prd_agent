@@ -179,6 +179,36 @@ public static class LiteraryAgent
 }
 
 /// <summary>
+/// Defect Agent 缺陷管理
+/// </summary>
+public static class DefectAgent
+{
+    public const string AppName = "Defect Agent";
+
+    public static class Review
+    {
+        [AppCallerMetadata(
+            "缺陷审核对话",
+            "AI 审核缺陷信息是否完整",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "defect-agent.review::chat";
+    }
+
+    public static class Extract
+    {
+        [AppCallerMetadata(
+            "信息提取结构化",
+            "从用户描述中提取结构化缺陷信息",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Extract"
+        )]
+        public const string Chat = "defect-agent.extract::chat";
+    }
+}
+
+/// <summary>
 /// Open Platform 开放平台
 /// </summary>
 public static class OpenPlatform
