@@ -43,7 +43,6 @@ import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
-  ArrowUp,
   ArrowUpToLine,
   ArrowDownToLine,
   Check,
@@ -638,9 +637,22 @@ function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
 // 从尺寸字符串检测比例
 function detectAspectFromSize(size: string): string {
   const s = (size || '').trim().toLowerCase();
+  // 先从 ASPECT_OPTIONS 匹配
   for (const opt of ASPECT_OPTIONS) {
     if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
       return opt.id;
+    }
+  }
+  // 解析尺寸并计算比例
+  const m = /(\d+)\s*[xX×]\s*(\d+)/.exec(s);
+  if (m) {
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (w > 0 && h > 0) {
+      const g = gcd(w, h);
+      const rw = Math.round(w / g);
+      const rh = Math.round(h / g);
+      return `${rw}:${rh}`;
     }
   }
   return '1:1';
@@ -822,11 +834,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 白名单检测（用于尺寸选择器）
   // 优先使用基于模型名的适配器配置，回退到数据库缓存
   const [allowedSizes, setAllowedSizes] = useState<string[]>([]);
+  type SizeOption = { size: string; aspectRatio: string | null; resolution: string | null };
+  const [sizeOptions, setSizeOptions] = useState<SizeOption[]>([]);
   useEffect(() => {
     const modelName = effectiveModel?.modelName;
     const modelId = effectiveModel?.id;
     if (!modelName && !modelId) {
       setAllowedSizes([]);
+      setSizeOptions([]);
       return;
     }
 
@@ -834,8 +849,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (modelName) {
       getAdapterInfoByModelName(modelName)
         .then((res) => {
-          if (res.success && res.data?.matched && Array.isArray(res.data.allowedSizes) && res.data.allowedSizes.length > 0) {
-            setAllowedSizes(res.data.allowedSizes.map((s) => String(s).trim().toLowerCase()));
+          if (res.success && res.data?.matched) {
+            const sizes = Array.isArray(res.data.allowedSizes) ? res.data.allowedSizes : [];
+            const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
+            setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
+            setSizeOptions(options.map((opt) => ({
+              size: String(opt.size ?? '').trim(),
+              aspectRatio: opt.aspectRatio ?? null,
+              resolution: opt.resolution ? String(opt.resolution).trim().toLowerCase() : null,
+            })));
             return;
           }
           // 适配器没有配置，回退到数据库缓存
@@ -844,33 +866,64 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               .then((capsRes) => {
                 if (!capsRes.success) {
                   setAllowedSizes([]);
+                  setSizeOptions([]);
                   return;
                 }
                 const caps = (capsRes.data?.items ?? []).find((x) => x.modelId === modelId);
                 const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
                 setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
+                setSizeOptions([]);
               })
-              .catch(() => setAllowedSizes([]));
+              .catch(() => { setAllowedSizes([]); setSizeOptions([]); });
           } else {
             setAllowedSizes([]);
+            setSizeOptions([]);
           }
         })
-        .catch(() => setAllowedSizes([]));
+        .catch(() => { setAllowedSizes([]); setSizeOptions([]); });
     } else if (modelId) {
       // 没有 modelName，只能用数据库缓存
       getImageGenSizeCaps({ includeFallback: true })
         .then((res) => {
           if (!res.success) {
             setAllowedSizes([]);
+            setSizeOptions([]);
             return;
           }
           const caps = (res.data?.items ?? []).find((x) => x.modelId === modelId);
           const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
           setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
+          setSizeOptions([]);
         })
-        .catch(() => setAllowedSizes([]));
+        .catch(() => { setAllowedSizes([]); setSizeOptions([]); });
     }
   }, [effectiveModel?.modelName, effectiveModel?.id]);
+
+  // 按分辨率分组的 sizeOptions
+  const sizeOptionsByResolution = useMemo(() => {
+    const bucket: Record<'1k' | '2k' | '4k', SizeOption[]> = { '1k': [], '2k': [], '4k': [] };
+    for (const opt of sizeOptions) {
+      const r = opt.resolution;
+      if (r === '1k' || r === '2k' || r === '4k') bucket[r].push(opt);
+    }
+    return bucket;
+  }, [sizeOptions]);
+
+  // 按比例分组，每个比例只保留一个尺寸
+  const ratiosByResolution = useMemo(() => {
+    const result: Record<'1k' | '2k' | '4k', Map<string, SizeOption>> = {
+      '1k': new Map(),
+      '2k': new Map(),
+      '4k': new Map(),
+    };
+    for (const tier of ['1k', '2k', '4k'] as const) {
+      for (const opt of sizeOptionsByResolution[tier]) {
+        const ratio = opt.aspectRatio || 'unknown';
+        if (!result[tier].has(ratio)) result[tier].set(ratio, opt);
+      }
+    }
+    return result;
+  }, [sizeOptionsByResolution]);
 
   // 初始化水印配置
   useEffect(() => {
@@ -3181,18 +3234,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   };
 
-
-  const onSend = async () => {
-    const raw = input.trim();
-    if (!raw) return;
-    // 只有 (@size:...) 而没有实际内容时，不应清空输入
-    const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
-    if (!clean) return;
-    setInput('');
-    composerSizeAutoRef.current = true;
-    if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(raw);
-  };
 
   // 富文本编辑器发送
   const onSendRich = async () => {
@@ -5704,12 +5745,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <div
             className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col"
             style={{
-              width: 280,
-              maxHeight: 'calc(85% - 24px)',
+              width: 350,
+              height: '75%',
             }}
           >
             <div
-              className="flex flex-col p-2.5 rounded-[14px]"
+              className="flex flex-col p-2.5 rounded-[14px] h-full"
               style={{
                 background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
                 border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
@@ -5752,7 +5793,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
-            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5" style={{ maxHeight: 360 }}>
+            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5">
               {messages.map((m) => {
                 const isUser = m.role === 'User';
                 // 过滤历史遗留的"本次使用模型/直连模式..."提示（用户要求移除）
@@ -6047,7 +6088,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
             <div
               ref={inputPanelRef}
-              className="mt-2 rounded-[12px] p-2 relative"
+              className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
                 border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
                 background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
@@ -6156,22 +6197,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       </span>
                     </button>
                   ))}
-
-                  {/* 右侧显示当前选中的模型 */}
-                  {effectiveModel ? (
-                    <span
-                      className="ml-auto inline-flex items-center rounded-full px-2 h-5 text-[10px] font-medium truncate max-w-[140px]"
-                      style={{
-                        background: 'rgba(99, 102, 241, 0.12)',
-                        border: '1px solid rgba(99, 102, 241, 0.35)',
-                        color: 'rgba(129, 140, 248, 0.95)',
-                        pointerEvents: 'none',
-                      }}
-                      title={effectiveModel.modelName || effectiveModel.name || ''}
-                    >
-                      {effectiveModel.modelName || effectiveModel.name || ''}
-                    </span>
-                  ) : null}
                 </div>
               ) : null}
 
@@ -6363,6 +6388,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                             const currentTier = detectTierFromSize(currentSize);
                             const isSelected = currentTier === tier;
+                            const tierHasOptions = sizeOptions.length > 0 && ratiosByResolution[tier].size > 0;
                             const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
                             return (
                               <button
@@ -6373,22 +6399,40 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
                                   border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
                                   color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                  opacity: sizeOptions.length === 0 || tierHasOptions ? 1 : 0.4,
                                 }}
                                 onClick={() => {
-                                  const currentAspect = detectAspectFromSize(currentSize);
-                                  const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                                  if (!targetOpt) return;
-                                  const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                  const sizeKey = newSize.trim().toLowerCase();
-                                  const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-                                  if (!supported) {
-                                    const fallback = findClosestSize(newSize, allowedSizes);
-                                    if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
+                                  if (sizeOptions.length > 0) {
+                                    // 使用后端 sizeOptions
+                                    const currentAspect = detectAspectFromSize(currentSize);
+                                    const targetOpt = ratiosByResolution[tier].get(currentAspect);
+                                    if (targetOpt) {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(targetOpt.size);
+                                    } else {
+                                      // 当前比例在目标分辨率不存在，选第一个
+                                      const first = ratiosByResolution[tier].values().next().value;
+                                      if (first) {
+                                        composerSizeAutoRef.current = false;
+                                        setComposerSize(first.size);
+                                      }
+                                    }
                                   } else {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(newSize);
+                                    // 回退到 ASPECT_OPTIONS
+                                    const currentAspect = detectAspectFromSize(currentSize);
+                                    const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                                    if (!targetOpt) return;
+                                    const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
+                                    const sizeKey = newSize.trim().toLowerCase();
+                                    const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                                    if (!supported) {
+                                      const fallback = findClosestSize(newSize, allowedSizes);
+                                      if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
+                                    } else {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(newSize);
+                                    }
                                   }
-                                  // 点击分辨率不关闭面板，只有点击 Size 才关闭
                                 }}
                               >
                                 {label}
@@ -6400,45 +6444,97 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         {/* 比例 */}
                         <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
                         <div className="grid grid-cols-4 gap-1.5">
-                          {ASPECT_OPTIONS.map((opt) => {
+                          {(() => {
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                            const currentAspect = detectAspectFromSize(currentSize);
                             const currentTier = detectTierFromSize(currentSize);
-                            const isSelected = currentAspect === opt.id;
-                            const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                            const sizeKey = targetSize.trim().toLowerCase();
-                            const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-                            return (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[8px] transition-colors"
-                                style={{
-                                  background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                  color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                  opacity: supported ? 1 : 0.5,
-                                }}
-                                onClick={() => {
-                                  if (!supported) {
-                                    const fallback = findClosestSize(targetSize, allowedSizes);
-                                    if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
-                                  } else {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(targetSize);
-                                  }
-                                  setSizeSelectorOpen(false);
-                                }}
-                              >
-                                <AspectIcon size={targetSize} />
-                                <span className="text-[10px] font-semibold">{opt.label}</span>
-                              </button>
-                            );
-                          })}
+                            const currentAspect = detectAspectFromSize(currentSize);
+
+                            if (sizeOptions.length > 0) {
+                              // 使用后端 sizeOptions 按比例分组
+                              const ratios = ratiosByResolution[currentTier];
+                              return Array.from(ratios.entries()).map(([ratio, opt]) => {
+                                const isSelected = ratio === currentAspect;
+                                const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [1, 1];
+                                const aspectVal = rw && rh ? rw / rh : 1;
+                                const iconW = aspectVal >= 1 ? 24 : Math.round(24 * aspectVal);
+                                const iconH = aspectVal <= 1 ? 24 : Math.round(24 / aspectVal);
+                                return (
+                                  <button
+                                    key={ratio}
+                                    type="button"
+                                    className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
+                                    style={{
+                                      background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
+                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                    }}
+                                    onClick={() => {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(opt.size);
+                                      setSizeSelectorOpen(false);
+                                    }}
+                                  >
+                                    <div style={{ width: iconW, height: iconH, border: '1.5px solid currentColor', borderRadius: 3, opacity: 0.7 }} />
+                                    <span className="text-[10px] font-medium">{ratio}</span>
+                                  </button>
+                                );
+                              });
+                            }
+
+                            // 回退到 ASPECT_OPTIONS
+                            return ASPECT_OPTIONS.map((opt) => {
+                              const isSelected = currentAspect === opt.id;
+                              const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+                              const sizeKey = targetSize.trim().toLowerCase();
+                              const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[8px] transition-colors"
+                                  style={{
+                                    background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
+                                    border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                    color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                    opacity: supported ? 1 : 0.5,
+                                  }}
+                                  onClick={() => {
+                                    if (!supported) {
+                                      const fallback = findClosestSize(targetSize, allowedSizes);
+                                      if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
+                                    } else {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(targetSize);
+                                    }
+                                    setSizeSelectorOpen(false);
+                                  }}
+                                >
+                                  <AspectIcon size={targetSize} />
+                                  <span className="text-[10px] font-semibold">{opt.label}</span>
+                                </button>
+                              );
+                            });
+                          })()}
                         </div>
                       </div>
                   ) : null}
                 </div>
+
+                {/* 中间：当前选中的模型 */}
+                {effectiveModel ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[160px]"
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.12)',
+                      border: '1px solid rgba(99, 102, 241, 0.35)',
+                      color: 'rgba(129, 140, 248, 0.95)',
+                    }}
+                    title={effectiveModel.modelName || effectiveModel.name || ''}
+                  >
+                    <Sparkles size={10} className="shrink-0" />
+                    <span className="truncate">{effectiveModel.modelName || effectiveModel.name || ''}</span>
+                  </span>
+                ) : null}
 
                 {/* 右侧：模型偏好 + 发送 */}
                 <div className="flex items-center gap-1.5">
@@ -6635,23 +6731,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       {runningCount}/{pendingCount}
                     </div>
                   ) : null}
-
-                  {/* 图2：发送（圆形箭头） */}
-                  <button
-                    type="button"
-                    onClick={() => void onSend()}
-                    disabled={!input.trim()}
-                    className="h-8 w-8 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{
-                      border: '1px solid rgba(255,255,255,0.10)',
-                      background: !input.trim() ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)',
-                      color: !input.trim() ? 'rgba(255,255,255,0.45)' : 'var(--text-primary)',
-                    }}
-                    aria-label="生成"
-                    title="生成"
-                  >
-                    <ArrowUp size={16} />
-                  </button>
                 </div>
               </div>
             </div>
