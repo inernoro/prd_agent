@@ -903,6 +903,8 @@ public class SmartModelScheduler : ISmartModelScheduler
     {
         if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
         {
+            _logger.LogWarning("[ResolveModel] appCallerCode or modelType is empty: appCallerCode={AppCallerCode}, modelType={ModelType}", 
+                appCallerCode, modelType);
             return null;
         }
 
@@ -910,9 +912,14 @@ public class SmartModelScheduler : ISmartModelScheduler
         {
             // 查找应用调用者
             var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+            _logger.LogInformation("[ResolveModel] AppCaller lookup: appCallerCode={AppCallerCode}, found={Found}", 
+                appCallerCode, app != null);
             
             // 查找该应用对该类型模型的需求
             var requirement = app?.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
+            _logger.LogInformation("[ResolveModel] Requirement lookup: modelType={ModelType}, found={Found}, modelGroupIds={Ids}", 
+                modelType, requirement != null, 
+                requirement?.ModelGroupIds != null ? string.Join(",", requirement.ModelGroupIds) : "null");
 
             // Step 1 & 2: 从模型池中查找（专属模型池或默认模型池）
             var group = await GetModelGroupFromRequirementAsync(
@@ -920,6 +927,9 @@ public class SmartModelScheduler : ISmartModelScheduler
                 modelType,
                 expectedModelCode: null,
                 ct);
+            
+            _logger.LogInformation("[ResolveModel] ModelGroup lookup: found={Found}, groupId={GroupId}, groupName={GroupName}, modelsCount={Count}",
+                group != null, group?.Id, group?.Name, group?.Models?.Count ?? 0);
 
             if (group != null && group.Models.Count > 0)
             {

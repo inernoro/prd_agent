@@ -185,6 +185,11 @@ public class OpenAIImageClient
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         // 说明：某些路径（如 Volces 降级）会把 initImageBase64 清空，但我们仍希望日志能追溯“用户是否提供过参考图”
         var initImageProvidedForLog = initImageProvided || initImageBase64 != null;
+        if (isVolces && initImageBase64 != null)
+        {
+            // Volces/豆包不支持 OpenAI images/edits，避免 404；降级为文生图
+            initImageBase64 = null;
+        }
         var initImageUsedForCall = initImageBase64 != null;
         var endpoint = initImageBase64 == null ? GetImagesEndpoint(apiUrl) : GetImagesEditEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
@@ -445,7 +450,10 @@ public class OpenAIImageClient
                     RequestType: (ctx?.RequestType ?? "imageGen"),
                     RequestPurpose: (ctx?.RequestPurpose ?? "prd-agent-web::image-gen.generate"),
                     PlatformId: platformIdForLog,
-                    PlatformName: platformNameForLog),
+                    PlatformName: platformNameForLog,
+                    ModelGroupId: ctx?.ModelGroupId,
+                    ModelGroupName: ctx?.ModelGroupName,
+                    IsDefaultModelGroup: ctx?.IsDefaultModelGroup),
                 ct);
         }
 

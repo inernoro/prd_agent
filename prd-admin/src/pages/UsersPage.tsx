@@ -789,51 +789,53 @@ export default function UsersPage() {
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex-1 min-w-[200px] max-w-[320px]">
-            <div className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
-                className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
-                placeholder="搜索用户名或昵称"
-              />
+          <div className="flex items-center gap-2.5 flex-nowrap min-w-0">
+            <div className="flex-1 min-w-[200px] max-w-[320px]">
+              <div className="relative">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <input
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(1);
+                  }}
+                  className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                  placeholder="搜索用户名或昵称"
+                />
+              </div>
             </div>
+
+            <Select
+              value={role}
+              onChange={(e) => {
+                setRole((e.target.value as UserRow['role'] | '') ?? '');
+                setPage(1);
+              }}
+              uiSize="sm"
+              className="min-w-[88px] font-medium"
+            >
+              <option value="">角色</option>
+              <option value="PM">PM</option>
+              <option value="DEV">DEV</option>
+              <option value="QA">QA</option>
+              <option value="ADMIN">ADMIN</option>
+            </Select>
+
+            <Select
+              value={status}
+              onChange={(e) => {
+                setStatus((e.target.value as UserRow['status'] | '') ?? '');
+                setPage(1);
+              }}
+              uiSize="sm"
+              className="min-w-[88px] font-medium"
+            >
+              <option value="">状态</option>
+              <option value="Active">正常</option>
+              <option value="Disabled">禁用</option>
+            </Select>
           </div>
-
-          <Select
-            value={role}
-            onChange={(e) => {
-              setRole((e.target.value as UserRow['role'] | '') ?? '');
-              setPage(1);
-            }}
-            uiSize="sm"
-            className="min-w-[88px] font-medium"
-          >
-            <option value="">角色</option>
-            <option value="PM">PM</option>
-            <option value="DEV">DEV</option>
-            <option value="QA">QA</option>
-            <option value="ADMIN">ADMIN</option>
-          </Select>
-
-          <Select
-            value={status}
-            onChange={(e) => {
-              setStatus((e.target.value as UserRow['status'] | '') ?? '');
-              setPage(1);
-            }}
-            uiSize="sm"
-            className="min-w-[88px] font-medium"
-          >
-            <option value="">状态</option>
-            <option value="Active">正常</option>
-            <option value="Disabled">禁用</option>
-          </Select>
 
           <div className="ml-auto flex items-center gap-2 shrink-0 flex-wrap justify-end">
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
