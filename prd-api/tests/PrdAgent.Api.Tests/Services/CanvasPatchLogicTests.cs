@@ -6,14 +6,16 @@ namespace PrdAgent.Api.Tests.Services;
 
 /// <summary>
 /// Canvas 回填逻辑测试
-/// 
+///
 /// 关键测试场景：
 /// 1. 使用 id 字段查找元素（与前端保持一致）
 /// 2. running 状态的占位元素能被正确回填
 /// 3. 新元素使用 id 字段创建
-/// 
+///
 /// 运行方式：dotnet test --filter "FullyQualifiedName~CanvasPatchLogicTests"
 /// </summary>
+[Trait("Category", TestCategories.CI)]
+[Trait("Category", TestCategories.Unit)]
 public class CanvasPatchLogicTests
 {
     /// <summary>

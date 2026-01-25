@@ -12,10 +12,12 @@ using Xunit;
 namespace PrdAgent.Api.Tests.Run;
 
 /// <summary>
-/// ChatRun 关键分支“闭环套件”（纯内存 + FakeChatService）：
+/// ChatRun 关键分支"闭环套件"（纯内存 + FakeChatService）：
 /// - done / error / cancel-before / cancel-mid
 /// - snapshot 兜底（短回答也必须能恢复）
 /// </summary>
+[Trait("Category", TestCategories.CI)]
+[Trait("Category", TestCategories.Unit)]
 public class ChatRunSuiteTests
 {
     private static IServiceProvider BuildSp(IChatService chat)

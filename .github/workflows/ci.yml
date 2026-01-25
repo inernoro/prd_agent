@@ -72,8 +72,8 @@ jobs:
       - name: Build
         run: dotnet build PrdAgent.sln -c Release --no-restore
 
-      - name: Run tests
-        run: dotnet test PrdAgent.sln -c Release --no-build --verbosity normal
+      - name: Run CI tests (in-memory, no external dependencies)
+        run: dotnet test PrdAgent.sln -c Release --no-build --verbosity normal --filter "Category=CI"
 
   # Web 管理后台构建
   admin-build:
@@ -118,6 +118,9 @@ jobs:
 
       - name: Type check
         run: pnpm tsc --noEmit
+
+      - name: Run tests
+        run: pnpm test --run
 
       - name: Build
         run: pnpm build

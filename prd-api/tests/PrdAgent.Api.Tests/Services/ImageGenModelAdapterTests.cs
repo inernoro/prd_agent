@@ -7,6 +7,8 @@ namespace PrdAgent.Api.Tests.Services;
 /// 图片生成模型适配器测试
 /// 覆盖模型匹配、尺寸适配、参数转换等核心功能
 /// </summary>
+[Trait("Category", TestCategories.CI)]
+[Trait("Category", TestCategories.Unit)]
 public class ImageGenModelAdapterTests
 {
     #region TryMatch 模型匹配测试

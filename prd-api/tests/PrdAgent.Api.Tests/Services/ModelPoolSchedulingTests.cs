@@ -6,6 +6,8 @@ namespace PrdAgent.Api.Tests.Services;
 /// <summary>
 /// 模型池调度逻辑测试
 /// </summary>
+[Trait("Category", TestCategories.CI)]
+[Trait("Category", TestCategories.Unit)]
 public class ModelPoolSchedulingTests
 {
     #region Code 与优先级测试

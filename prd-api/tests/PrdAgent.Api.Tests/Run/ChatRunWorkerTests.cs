@@ -10,6 +10,8 @@ using Xunit;
 
 namespace PrdAgent.Api.Tests.Run;
 
+[Trait("Category", TestCategories.CI)]
+[Trait("Category", TestCategories.Unit)]
 public class ChatRunWorkerTests
 {
     private sealed class FakeChatService : IChatService
