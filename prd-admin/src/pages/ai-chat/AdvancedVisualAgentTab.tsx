@@ -13,7 +13,6 @@ import {
   createWorkspaceImageGenRun,
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
-  getImageGenSizeCaps,
   getAdapterInfoByModelName,
   getModels,
   getWatermarkByApp,
@@ -58,7 +57,6 @@ import {
   Maximize2,
   MousePointer2,
   Plus,
-  SlidersHorizontal,
   Sparkles,
   Square,
   Type,
@@ -658,47 +656,6 @@ function detectAspectFromSize(size: string): string {
   return '1:1';
 }
 
-// 从白名单中找到最接近的尺寸（基于比例和像素面积）
-function findClosestSize(requestedSize: string, allowedSizes: string[]): string | null {
-  if (allowedSizes.length === 0) return null;
-
-  const parseSize = (s: string) => {
-    const m = /(\d+)\s*[xX×]\s*(\d+)/.exec(s);
-    if (!m) return null;
-    return { w: Number(m[1]), h: Number(m[2]) };
-  };
-
-  const req = parseSize(requestedSize);
-  if (!req) return null;
-
-  const reqRatio = req.w / req.h;
-  const reqArea = req.w * req.h;
-
-  let bestMatch: string | null = null;
-  let bestScore = Infinity;
-
-  for (const allowed of allowedSizes) {
-    const a = parseSize(allowed);
-    if (!a) continue;
-
-    const aRatio = a.w / a.h;
-    const aArea = a.w * a.h;
-
-    // 评分：比例差异权重 0.7，面积差异权重 0.3
-    const ratioDiff = Math.abs(reqRatio - aRatio) / reqRatio;
-    const areaDiff = Math.abs(reqArea - aArea) / reqArea;
-    const score = ratioDiff * 0.7 + areaDiff * 0.3;
-
-    if (score < bestScore) {
-      bestScore = score;
-      bestMatch = allowed;
-    }
-  }
-
-  return bestMatch;
-}
-
-
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return await new Promise<string>((resolve) => {
     const reader = new FileReader();
@@ -831,73 +788,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return byId ?? serverDefaultModel;
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
-  // 白名单检测（用于尺寸选择器）
-  // 优先使用基于模型名的适配器配置，回退到数据库缓存
-  const [allowedSizes, setAllowedSizes] = useState<string[]>([]);
+  // 尺寸选项（从后端获取）
   type SizeOption = { size: string; aspectRatio: string | null; resolution: string | null };
   const [sizeOptions, setSizeOptions] = useState<SizeOption[]>([]);
   useEffect(() => {
     const modelName = effectiveModel?.modelName;
-    const modelId = effectiveModel?.id;
-    if (!modelName && !modelId) {
-      setAllowedSizes([]);
+    if (!modelName) {
       setSizeOptions([]);
       return;
     }
 
-    // 优先使用模型名直接查询适配器配置（无需数据库）
-    if (modelName) {
-      getAdapterInfoByModelName(modelName)
-        .then((res) => {
-          if (res.success && res.data?.matched) {
-            const sizes = Array.isArray(res.data.allowedSizes) ? res.data.allowedSizes : [];
-            const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
-            setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
-            setSizeOptions(options.map((opt) => ({
-              size: String(opt.size ?? '').trim(),
-              aspectRatio: opt.aspectRatio ?? null,
-              resolution: opt.resolution ? String(opt.resolution).trim().toLowerCase() : null,
-            })));
-            return;
-          }
-          // 适配器没有配置，回退到数据库缓存
-          if (modelId) {
-            getImageGenSizeCaps({ includeFallback: true })
-              .then((capsRes) => {
-                if (!capsRes.success) {
-                  setAllowedSizes([]);
-                  setSizeOptions([]);
-                  return;
-                }
-                const caps = (capsRes.data?.items ?? []).find((x) => x.modelId === modelId);
-                const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
-                setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
-                setSizeOptions([]);
-              })
-              .catch(() => { setAllowedSizes([]); setSizeOptions([]); });
-          } else {
-            setAllowedSizes([]);
-            setSizeOptions([]);
-          }
-        })
-        .catch(() => { setAllowedSizes([]); setSizeOptions([]); });
-    } else if (modelId) {
-      // 没有 modelName，只能用数据库缓存
-      getImageGenSizeCaps({ includeFallback: true })
-        .then((res) => {
-          if (!res.success) {
-            setAllowedSizes([]);
-            setSizeOptions([]);
-            return;
-          }
-          const caps = (res.data?.items ?? []).find((x) => x.modelId === modelId);
-          const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
-          setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
+    getAdapterInfoByModelName(modelName)
+      .then((res) => {
+        if (res.success && res.data?.matched) {
+          const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
+          setSizeOptions(options.map((opt) => ({
+            size: String(opt.size ?? '').trim(),
+            aspectRatio: opt.aspectRatio ?? null,
+            resolution: opt.resolution ? String(opt.resolution).trim().toLowerCase() : null,
+          })));
+        } else {
           setSizeOptions([]);
-        })
-        .catch(() => { setAllowedSizes([]); setSizeOptions([]); });
-    }
-  }, [effectiveModel?.modelName, effectiveModel?.id]);
+        }
+      })
+      .catch(() => setSizeOptions([]));
+  }, [effectiveModel?.modelName]);
 
   // 按分辨率分组的 sizeOptions
   const sizeOptionsByResolution = useMemo(() => {
@@ -6388,7 +6303,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                             const currentTier = detectTierFromSize(currentSize);
                             const isSelected = currentTier === tier;
-                            const tierHasOptions = sizeOptions.length > 0 && ratiosByResolution[tier].size > 0;
+                            const tierHasOptions = ratiosByResolution[tier].size > 0;
                             const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
                             return (
                               <button
@@ -6399,38 +6314,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
                                   border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
                                   color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                  opacity: sizeOptions.length === 0 || tierHasOptions ? 1 : 0.4,
+                                  opacity: tierHasOptions ? 1 : 0.4,
                                 }}
                                 onClick={() => {
-                                  if (sizeOptions.length > 0) {
-                                    // 使用后端 sizeOptions
-                                    const currentAspect = detectAspectFromSize(currentSize);
-                                    const targetOpt = ratiosByResolution[tier].get(currentAspect);
-                                    if (targetOpt) {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(targetOpt.size);
-                                    } else {
-                                      // 当前比例在目标分辨率不存在，选第一个
-                                      const first = ratiosByResolution[tier].values().next().value;
-                                      if (first) {
-                                        composerSizeAutoRef.current = false;
-                                        setComposerSize(first.size);
-                                      }
-                                    }
+                                  if (!tierHasOptions) return;
+                                  const currentAspect = detectAspectFromSize(currentSize);
+                                  const targetOpt = ratiosByResolution[tier].get(currentAspect);
+                                  if (targetOpt) {
+                                    composerSizeAutoRef.current = false;
+                                    setComposerSize(targetOpt.size);
                                   } else {
-                                    // 回退到 ASPECT_OPTIONS
-                                    const currentAspect = detectAspectFromSize(currentSize);
-                                    const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                                    if (!targetOpt) return;
-                                    const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                    const sizeKey = newSize.trim().toLowerCase();
-                                    const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
-                                    if (!supported) {
-                                      const fallback = findClosestSize(newSize, allowedSizes);
-                                      if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
-                                    } else {
+                                    // 当前比例在目标分辨率不存在，选第一个
+                                    const first = ratiosByResolution[tier].values().next().value;
+                                    if (first) {
                                       composerSizeAutoRef.current = false;
-                                      setComposerSize(newSize);
+                                      setComposerSize(first.size);
                                     }
                                   }
                                 }}
@@ -6448,69 +6346,32 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                             const currentTier = detectTierFromSize(currentSize);
                             const currentAspect = detectAspectFromSize(currentSize);
+                            const ratios = ratiosByResolution[currentTier];
 
-                            if (sizeOptions.length > 0) {
-                              // 使用后端 sizeOptions 按比例分组
-                              const ratios = ratiosByResolution[currentTier];
-                              return Array.from(ratios.entries()).map(([ratio, opt]) => {
-                                const isSelected = ratio === currentAspect;
-                                const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [1, 1];
-                                const aspectVal = rw && rh ? rw / rh : 1;
-                                const iconW = aspectVal >= 1 ? 24 : Math.round(24 * aspectVal);
-                                const iconH = aspectVal <= 1 ? 24 : Math.round(24 / aspectVal);
-                                return (
-                                  <button
-                                    key={ratio}
-                                    type="button"
-                                    className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
-                                    style={{
-                                      background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                    }}
-                                    onClick={() => {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(opt.size);
-                                      setSizeSelectorOpen(false);
-                                    }}
-                                  >
-                                    <div style={{ width: iconW, height: iconH, border: '1.5px solid currentColor', borderRadius: 3, opacity: 0.7 }} />
-                                    <span className="text-[10px] font-medium">{ratio}</span>
-                                  </button>
-                                );
-                              });
-                            }
-
-                            // 回退到 ASPECT_OPTIONS
-                            return ASPECT_OPTIONS.map((opt) => {
-                              const isSelected = currentAspect === opt.id;
-                              const targetSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                              const sizeKey = targetSize.trim().toLowerCase();
-                              const supported = allowedSizes.length === 0 || allowedSizes.includes(sizeKey);
+                            return Array.from(ratios.entries()).map(([ratio, opt]) => {
+                              const isSelected = ratio === currentAspect;
+                              const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [1, 1];
+                              const aspectVal = rw && rh ? rw / rh : 1;
+                              const iconW = aspectVal >= 1 ? 24 : Math.round(24 * aspectVal);
+                              const iconH = aspectVal <= 1 ? 24 : Math.round(24 / aspectVal);
                               return (
                                 <button
-                                  key={opt.id}
+                                  key={ratio}
                                   type="button"
-                                  className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[8px] transition-colors"
+                                  className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
                                   style={{
                                     background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
                                     border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
                                     color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                    opacity: supported ? 1 : 0.5,
                                   }}
                                   onClick={() => {
-                                    if (!supported) {
-                                      const fallback = findClosestSize(targetSize, allowedSizes);
-                                      if (fallback) { composerSizeAutoRef.current = false; setComposerSize(fallback); }
-                                    } else {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(targetSize);
-                                    }
+                                    composerSizeAutoRef.current = false;
+                                    setComposerSize(opt.size);
                                     setSizeSelectorOpen(false);
                                   }}
                                 >
-                                  <AspectIcon size={targetSize} />
-                                  <span className="text-[10px] font-semibold">{opt.label}</span>
+                                  <div style={{ width: iconW, height: iconH, border: '1.5px solid currentColor', borderRadius: 3, opacity: 0.7 }} />
+                                  <span className="text-[10px] font-medium">{ratio}</span>
                                 </button>
                               );
                             });
@@ -6520,39 +6381,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   ) : null}
                 </div>
 
-                {/* 中间：当前选中的模型 */}
-                {effectiveModel ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[160px]"
-                    style={{
-                      background: 'rgba(99, 102, 241, 0.12)',
-                      border: '1px solid rgba(99, 102, 241, 0.35)',
-                      color: 'rgba(129, 140, 248, 0.95)',
-                    }}
-                    title={effectiveModel.modelName || effectiveModel.name || ''}
-                  >
-                    <Sparkles size={10} className="shrink-0" />
-                    <span className="truncate">{effectiveModel.modelName || effectiveModel.name || ''}</span>
-                  </span>
-                ) : null}
-
-                {/* 右侧：模型偏好 + 发送 */}
+                {/* 右侧：模型偏好 + 水印 */}
                 <div className="flex items-center gap-1.5">
-                  {/* 图2：发送左边的按钮是"模型偏好" */}
+                  {/* 模型名称 + 模型偏好下拉菜单 */}
                   <DropdownMenu.Root open={modelPrefOpen} onOpenChange={setModelPrefOpen}>
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="h-7 w-7 rounded-full inline-flex items-center justify-center"
+                        className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
                         style={{
-                          border: '1px solid rgba(255,255,255,0.10)',
-                          background: 'rgba(255,255,255,0.04)',
-                          color: 'var(--text-secondary)',
+                          background: 'rgba(99, 102, 241, 0.12)',
+                          border: '1px solid rgba(99, 102, 241, 0.35)',
+                          color: 'rgba(129, 140, 248, 0.95)',
                         }}
                         aria-label="模型偏好"
-                        title="模型偏好"
+                        title={effectiveModel ? `${effectiveModel.modelName || effectiveModel.name || ''} - 点击切换模型` : '选择模型'}
                       >
-                        <SlidersHorizontal size={14} />
+                        <Sparkles size={10} className="shrink-0" />
+                        <span className="truncate">{effectiveModel?.modelName || effectiveModel?.name || '选择模型'}</span>
+                        <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                       </button>
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
