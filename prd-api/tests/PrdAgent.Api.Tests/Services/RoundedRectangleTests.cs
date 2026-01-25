@@ -9,6 +9,7 @@ using SixLabors.ImageSharp.Drawing;
 using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System.Linq;
 using Xunit;
 using Xunit.Abstractions;
 using IOPath = System.IO.Path;
@@ -310,8 +311,24 @@ public class RoundedRectangleTests
         using var image = new Image<Rgba32>(imageWidth, imageHeight);
         image.Mutate(ctx => ctx.Fill(Color.FromRgba(50, 50, 50, 255))); // 灰色背景
 
-        // 使用系统默认字体进行测试
-        var font = SystemFonts.CreateFont("Arial", fontSize);
+        // 使用系统字体进行测试（CI 上可能没有 Arial）
+        Font font;
+        try
+        {
+            font = SystemFonts.CreateFont("Arial", fontSize);
+        }
+        catch (FontFamilyNotFoundException)
+        {
+            var fallbackFamily = SystemFonts.Collection.Families.FirstOrDefault();
+            if (fallbackFamily is null)
+            {
+                _output.WriteLine("No system fonts available; skip watermark simulation.");
+                return;
+            }
+
+            _output.WriteLine($"Arial not found; fallback to {fallbackFamily.Name}.");
+            font = fallbackFamily.CreateFont(fontSize);
+        }
         var textOptions = new TextOptions(font);
         var textSize = TextMeasurer.MeasureSize(text, textOptions);
 
