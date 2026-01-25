@@ -105,6 +105,7 @@ export class ModelGroupsService implements IModelGroupsService {
     if (request.name !== undefined) payload.name = String(request.name ?? '').trim();
     if (request.code !== undefined) payload.code = String(request.code ?? '').trim();
     if (request.priority !== undefined) payload.priority = request.priority;
+    if (request.modelType !== undefined) payload.modelType = String(request.modelType ?? '').trim();
     if (request.description !== undefined) payload.description = request.description;
     if (request.models !== undefined) payload.models = request.models;
     if (request.isDefaultForType !== undefined) payload.isDefaultForType = !!request.isDefaultForType;

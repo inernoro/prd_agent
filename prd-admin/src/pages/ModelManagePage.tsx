@@ -455,10 +455,10 @@ export default function ModelManagePage() {
   };
 
   // 打开一键添加到模型池弹窗
-  const openAddToPoolDialog = (m: Model) => {
+  const openAddToPoolDialog = async (m: Model) => {
     // 根据模型的角色和适配器信息推断模型类型
     let modelType = 'chat';
-    
+
     // 优先使用模型角色标识
     if (m.isImageGen) {
       modelType = 'generation';
@@ -468,7 +468,18 @@ export default function ModelManagePage() {
       modelType = 'intent';
     } else {
       // 其次检查适配器信息（用于识别生图模型）
-      const adapterInfo = adapterInfoByModelId[m.id];
+      let adapterInfo = adapterInfoByModelId[m.id];
+      if (!adapterInfo) {
+        try {
+          const res = await getModelsAdapterInfoBatch([m.id]);
+          if (res.success && res.data) {
+            setAdapterInfoByModelId((prev) => ({ ...prev, ...res.data }));
+            adapterInfo = res.data[m.id];
+          }
+        } catch {
+          // ignore
+        }
+      }
       if (adapterInfo?.matched) {
         // 如果有适配器信息，说明是生图模型
         modelType = 'generation';
@@ -1792,7 +1803,7 @@ export default function ModelManagePage() {
                                       }}
                                       title="一键添加到模型池"
                                       aria-label="一键添加到模型池"
-                                      onClick={() => openAddToPoolDialog(m)}
+                                      onClick={() => void openAddToPoolDialog(m)}
                                     >
                                       <Database size={16} />
                                     </button>

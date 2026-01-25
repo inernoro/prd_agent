@@ -280,6 +280,30 @@ public static class ImageGenModelAdapterRegistry
         };
     }
 
+    /// <summary>
+    /// 将允许尺寸转换为可直接展示的尺寸选项（包含比例与分辨率档位）
+    /// </summary>
+    public static List<ImageGenSizeOption> BuildSizeOptions(List<string> allowedSizes, List<string> allowedRatios)
+    {
+        var results = new List<ImageGenSizeOption>();
+        if (allowedSizes == null || allowedSizes.Count == 0) return results;
+
+        foreach (var size in allowedSizes)
+        {
+            if (!TryParseSize(size, out var w, out var h)) continue;
+            var ratio = DetectAspectRatio(w, h, allowedRatios ?? new List<string>());
+            var resolution = DetectResolution(w, h);
+            results.Add(new ImageGenSizeOption
+            {
+                Size = $"{w}x{h}",
+                AspectRatio = ratio,
+                Resolution = resolution
+            });
+        }
+
+        return results;
+    }
+
     #region Helper Methods
 
     private static bool MatchPattern(string pattern, string input)
@@ -399,4 +423,14 @@ public class ImageGenAdapterInfo
     public List<string> Notes { get; set; } = new();
     public bool SupportsImageToImage { get; set; }
     public bool SupportsInpainting { get; set; }
+}
+
+/// <summary>
+/// 生图尺寸选项（用于前端展示）
+/// </summary>
+public class ImageGenSizeOption
+{
+    public string Size { get; set; } = string.Empty;
+    public string? AspectRatio { get; set; }
+    public string? Resolution { get; set; }
 }

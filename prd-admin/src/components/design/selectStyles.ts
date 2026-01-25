@@ -33,7 +33,7 @@ export const selectTriggerStyle: React.CSSProperties = {
   color: 'var(--text-primary)',
 };
 
-export const selectContentClass = 'z-50 rounded-[14px] overflow-hidden';
+export const selectContentClass = 'z-[120] rounded-[14px] overflow-hidden';
 
 export const selectContentStyle: React.CSSProperties = {
   background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',

@@ -162,6 +162,16 @@ public class ModelGroupsController : ControllerBase
             group.Priority = request.Priority.Value;
         }
 
+        // 更新 ModelType（可选）
+        if (!string.IsNullOrWhiteSpace(request.ModelType) && request.ModelType != group.ModelType)
+        {
+            if (!ModelTypes.AllTypes.Contains(request.ModelType))
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_TYPE", $"无效的模型类型: {request.ModelType}"));
+            }
+            group.ModelType = request.ModelType;
+        }
+
         if (request.Description != null)
         {
             group.Description = request.Description;
@@ -192,6 +202,21 @@ public class ModelGroupsController : ControllerBase
             }
 
             group.IsDefaultForType = request.IsDefaultForType.Value;
+        }
+
+        // 如果修改了类型且当前为默认分组，需要验证新类型是否已有默认分组
+        if (!string.IsNullOrWhiteSpace(request.ModelType) && group.IsDefaultForType)
+        {
+            var existingDefault = await _db.ModelGroups
+                .Find(g => g.ModelType == group.ModelType && g.IsDefaultForType && g.Id != id)
+                .FirstOrDefaultAsync();
+
+            if (existingDefault != null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "DEFAULT_GROUP_EXISTS",
+                    $"该类型已存在默认分组: {existingDefault.Name}"));
+            }
         }
 
         group.UpdatedAt = DateTime.UtcNow;
@@ -257,6 +282,8 @@ public class UpdateModelGroupRequest
     public string? Code { get; set; }
     /// <summary>优先级（数字越小优先级越高）</summary>
     public int? Priority { get; set; }
+    /// <summary>模型类型（chat/intent/vision/image-gen等）</summary>
+    public string? ModelType { get; set; }
     public string? Description { get; set; }
     public List<ModelGroupItem>? Models { get; set; }
     public bool? IsDefaultForType { get; set; }

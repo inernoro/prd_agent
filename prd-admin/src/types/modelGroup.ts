@@ -68,6 +68,7 @@ export interface UpdateModelGroupRequest {
   code?: string;
   /** 优先级（数字越小优先级越高） */
   priority?: number;
+  modelType?: string;
   description?: string;
   models?: ModelGroupItem[];
   isDefaultForType?: boolean;

@@ -52,7 +52,6 @@ import {
   Copy,
   Download,
   Droplet,
-  Eraser,
   Grid3X3,
   Hand,
   ImagePlus,
@@ -1491,44 +1490,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [rightWidth, setRightWidth] = useState(0);
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
-
-  const oneClickCleanLocalCache = useCallback(async () => {
-    const keys = Array.from(
-      new Set([splitKey, modelPrefKey, directPromptKey].map((x) => String(x ?? '').trim()).filter(Boolean))
-    );
-    if (keys.length === 0) {
-      toast.info('当前账号暂无可清理的本地缓存');
-      return;
-    }
-
-    const ok = await systemDialog.confirm({
-      title: '一键清理',
-      message: `将清理本页本地缓存（${keys.length} 项），用于修复历史异常数据/布局问题。是否继续？`,
-      confirmText: '清理',
-      cancelText: '取消',
-      tone: 'danger',
-    });
-    if (!ok) return;
-
-    try {
-      keys.forEach((k) => localStorage.removeItem(k));
-    } catch {
-      // ignore
-    }
-
-    // 重置到默认值（避免“已清理但 UI 仍是旧状态”）
-    setModelPrefAuto(true);
-    setModelPrefModelId('');
-    setDirectPrompt(true);
-    setDirectPromptReady(true);
-
-    const cw = containerRef.current?.clientWidth ?? 0;
-    const fallback = Math.round((cw || 1200) * 0.2);
-    const def = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, fallback));
-    setRightWidth(def);
-
-    toast.success('已清理本地缓存。若仍异常，建议刷新页面。');
-  }, [SPLIT_MAX, SPLIT_MIN, directPromptKey, modelPrefKey, splitKey]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
@@ -6196,6 +6157,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </button>
                   ))}
 
+                  {/* 右侧显示当前选中的模型 */}
+                  {effectiveModel ? (
+                    <span
+                      className="ml-auto inline-flex items-center rounded-full px-2 h-5 text-[10px] font-medium truncate max-w-[140px]"
+                      style={{
+                        background: 'rgba(99, 102, 241, 0.12)',
+                        border: '1px solid rgba(99, 102, 241, 0.35)',
+                        color: 'rgba(129, 140, 248, 0.95)',
+                        pointerEvents: 'none',
+                      }}
+                      title={effectiveModel.modelName || effectiveModel.name || ''}
+                    >
+                      {effectiveModel.modelName || effectiveModel.name || ''}
+                    </span>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -6466,21 +6442,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                 {/* 右侧：模型偏好 + 发送 */}
                 <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    className="h-7 w-7 rounded-full inline-flex items-center justify-center"
-                    style={{
-                      border: '1px solid rgba(255,255,255,0.10)',
-                      background: 'rgba(255,255,255,0.04)',
-                      color: 'var(--text-secondary)',
-                    }}
-                    aria-label="一键清理"
-                    title="一键清理（清理本页本地缓存）"
-                    onClick={() => void oneClickCleanLocalCache()}
-                  >
-                    <Eraser size={14} />
-                  </button>
-
                   {/* 图2：发送左边的按钮是"模型偏好" */}
                   <DropdownMenu.Root open={modelPrefOpen} onOpenChange={setModelPrefOpen}>
                     <DropdownMenu.Trigger asChild>

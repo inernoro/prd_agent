@@ -741,6 +741,7 @@ public class ModelsController : ControllerBase
             },
             allowedSizes = adapterInfo.AllowedSizes,
             allowedRatios = adapterInfo.AllowedRatios,
+            sizeOptions = Infrastructure.LLM.ImageGenModelAdapterRegistry.BuildSizeOptions(adapterInfo.AllowedSizes, adapterInfo.AllowedRatios),
             sizeParamFormat = adapterInfo.SizeParamFormat,
             limitations = new
             {
@@ -798,6 +799,7 @@ public class ModelsController : ControllerBase
             },
             allowedSizes = adapterInfo.AllowedSizes,
             allowedRatios = adapterInfo.AllowedRatios,
+            sizeOptions = Infrastructure.LLM.ImageGenModelAdapterRegistry.BuildSizeOptions(adapterInfo.AllowedSizes, adapterInfo.AllowedRatios),
             sizeParamFormat = adapterInfo.SizeParamFormat,
             limitations = new
             {

@@ -64,6 +64,7 @@ export type ModelAdapterInfo = {
   sizeConstraint?: ModelAdapterSizeConstraint;
   allowedSizes?: string[];
   allowedRatios?: string[];
+  sizeOptions?: Array<{ size: string; aspectRatio?: string | null; resolution?: string | null }>;
   sizeParamFormat?: string;
   limitations?: ModelAdapterLimitations;
   supportsImageToImage?: boolean;
