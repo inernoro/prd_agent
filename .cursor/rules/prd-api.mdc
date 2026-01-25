@@ -7,27 +7,36 @@ globs: prd-api/**
 
 ## 技术栈
 - .NET 8.0 / ASP.NET Core / C# 12
-- MongoDB 8.0+ / Redis / Serilog
+- MongoDB.Driver 2.29
+- StackExchange.Redis 2.8
+- Serilog（日志）
+- JWT Bearer Authentication
+- Swashbuckle/Swagger（API 文档）
+- SixLabors.ImageSharp（图片/水印处理）
+- PdfPig（PDF 解析）
+- Polly（重试/熔断）
+- Markdig（Markdown 解析）
+- Tencent QCloud COS SDK（云存储）
 
 ## 命名约定
-- 后端类/方法: PascalCase
-- 后端变量: camelCase
-- MongoDB集合: 全小写（users, groups, messages）
-- MongoDB字段: camelCase
-- API路径: kebab-case
+- 类/方法: PascalCase
+- 变量: camelCase
+- MongoDB 集合: 全小写（users, groups, messages）
+- MongoDB 字段: camelCase
+- API 路径: kebab-case
 
 ## 目录约定
 - 后端分层: Api -> Core -> Infrastructure
-- Prompt模板: `Infrastructure/Prompts/Templates/`
+- Prompt 模板: `Infrastructure/Prompts/Templates/`
 
 ## MongoDB 约束（强制）
 
 ### ID 规范（必须遵守）
-- **禁止使用 MongoDB 原生类型作为任何字段的存储类型**（尤其是 `ObjectId`）。
-- **禁止使用** `BsonType.ObjectId` / `StringObjectIdGenerator` / 任何会把 `_id` 写成 `ObjectId` 的序列化配置。
-- **禁止使用** `[BsonId]` 把业务字段（如 `Code`、`Username`）当作 `_id`。
-- **统一要求**：集合主键 `_id` 必须映射到实体的 `public string Id { get; set; }`，并且写入值为 **Guid 字符串**（推荐 `Guid.NewGuid().ToString("N")`）。
-- 若业务需要唯一字段（如邀请码 `Code`），请通过 **唯一索引** 实现，而不是把它当 `_id`。
+- **禁止使用 MongoDB 原生类型**（尤其是 `ObjectId`）作为任何字段的存储类型
+- **禁止使用** `BsonType.ObjectId` / `StringObjectIdGenerator` / 任何会把 `_id` 写成 `ObjectId` 的序列化配置
+- **禁止使用** `[BsonId]` 把业务字段（如 `Code`、`Username`）当作 `_id`
+- **统一要求**：集合主键 `_id` 必须映射到 `public string Id { get; set; }`，写入值为 **Guid 字符串**（推荐 `Guid.NewGuid().ToString("N")`）
+- 若业务需要唯一字段（如邀请码 `Code`），请通过 **唯一索引** 实现，而不是把它当 `_id`
 
 ## 局部前置自检（避免 CI 才爆）
 

@@ -9,9 +9,12 @@ import type {
   GetLlmLogsParams,
   GetLlmModelStatsContract,
   GetLlmModelStatsParams,
+  GetBatchModelStatsContract,
+  BatchModelStatsParams,
   LlmLogsListData,
   LlmLogsMetaData,
   LlmModelStatsData,
+  BatchModelStatsData,
 } from '@/services/contracts/llmLogs';
 
 function toQuery(params?: GetLlmLogsParams) {
@@ -41,5 +44,12 @@ export const getLlmLogsMetaReal: GetLlmLogsMetaContract = async (): Promise<ApiR
 
 export const getLlmModelStatsReal: GetLlmModelStatsContract = async (params?: GetLlmModelStatsParams): Promise<ApiResponse<LlmModelStatsData>> => {
   return await apiRequest<LlmModelStatsData>(`${api.logs.llm.modelStats()}${toQuery(params)}`, { method: 'GET' });
+};
+
+export const getBatchModelStatsReal: GetBatchModelStatsContract = async (params: BatchModelStatsParams): Promise<ApiResponse<BatchModelStatsData>> => {
+  return await apiRequest<BatchModelStatsData>(api.logs.llm.batchModelStats(), { 
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
 };
 

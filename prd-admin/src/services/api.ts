@@ -77,6 +77,8 @@ export const api = {
     imageGenModel: () => '/api/mds/image-gen-model',
     adapterInfoBatch: () => '/api/mds/adapter-info/batch',
     adapterInfo: (modelId: string) => `/api/mds/${modelId}/adapter-info`,
+    /** 根据平台侧模型ID（modelName）直接获取适配信息，无需查询数据库 */
+    adapterInfoByModelName: (modelName: string) => `/api/mds/adapter-info?modelId=${encodeURIComponent(modelName)}`,
 
     // 平台
     platforms: {
@@ -149,6 +151,7 @@ export const api = {
       byId: (id: string) => `/api/logs/llm/${id}`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
+      batchModelStats: () => '/api/logs/llm/model-stats/batch',
     },
     desktopPresence: {
       list: () => '/api/logs/desktop-presence',
@@ -303,6 +306,8 @@ export const api = {
       byId: (id: string) => `/api/open-platform/app-callers/${id}`,
       stats: (id: string) => `/api/open-platform/app-callers/${id}/stats`,
       scan: () => '/api/open-platform/app-callers/scan',
+      resolveModel: () => '/api/open-platform/app-callers/resolve-model',
+      resolveModels: () => '/api/open-platform/app-callers/resolve-models',
     },
   },
 

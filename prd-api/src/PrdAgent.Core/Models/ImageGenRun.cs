@@ -26,6 +26,21 @@ public class ImageGenRun
     /// </summary>
     public string? ModelId { get; set; }
 
+    /// <summary>
+    /// 模型池 ID（用于日志记录）
+    /// </summary>
+    public string? ModelGroupId { get; set; }
+
+    /// <summary>
+    /// 模型池名称（用于日志记录）
+    /// </summary>
+    public string? ModelGroupName { get; set; }
+
+    /// <summary>
+    /// 是否使用默认模型池
+    /// </summary>
+    public bool? IsDefaultModelGroup { get; set; }
+
     public string Size { get; set; } = "1024x1024";
 
     /// <summary>
@@ -66,12 +81,15 @@ public class ImageGenRun
     // ---------------------------
 
     /// <summary>
-    /// 可选：任务用途（如 "imageMaster"）。用于 worker 做不同的后处理。
+    /// AppCallerCode（如 "visual-agent.image::generation"）。
+    /// 用于 SmartModelScheduler 获取模型池绑定、日志记录。
+    /// 数据库字段名: "AppCallerCode"（已从旧字段 "Purpose" 迁移）
     /// </summary>
-    public string? Purpose { get; set; }
+    public string? AppCallerCode { get; set; }
 
     /// <summary>
-    /// 应用标识（如 "visual_agent", "literary_agent"）。用于水印等功能的隔离。
+    /// 应用标识（如 "visual-agent", "literary-agent"）。
+    /// 用于水印等功能的隔离。是 AppCallerCode 的前缀部分。
     /// </summary>
     public string? AppKey { get; set; }
 

@@ -19,9 +19,11 @@ import {
   // simulateRecover, // 暂时未使用
   getSchedulerConfig,
   updateSchedulerConfig,
-  getLlmModelStats,
+  getBatchModelStats,
+  resolveModels,
 } from '@/services';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
+import type { ResolvedModelInfo } from '@/services/contracts/appCallers';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
@@ -42,6 +44,7 @@ import {
   Eye,
   Layers,
   Link2,
+  Loader2,
   Plus,
   RefreshCw,
   Search,
@@ -60,6 +63,7 @@ import {
   getModelTypeDisplayName,
   getModelTypeIcon,
   normalizeModelType,
+  AppCallerKeyIcon,
 } from '@/lib/appCallerUtils';
 import type { AppGroup } from '@/lib/appCallerUtils';
 
@@ -101,8 +105,14 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [modelTypeFilter, setModelTypeFilter] = useState('all');
-  // 模型调用统计数据 (key: platformId:modelId)
-  const [modelStats, setModelStats] = useState<Record<string, LlmModelStatsItem>>({});
+  // 模型池统计数据 (key: appCallerCode:platformId:modelId) - 按应用+模型组合统计
+  const [poolModelStats, setPoolModelStats] = useState<Record<string, LlmModelStatsItem | null>>({});
+  
+  // 后端解析的默认模型信息（key: appCallerCode::modelType）
+  const [resolvedModels, setResolvedModels] = useState<Record<string, ResolvedModelInfo | null>>({});
+  
+  // 加载状态
+  const [isLoading, setIsLoading] = useState(true);
   
   // 树形结构状态
   const [, setAppGroups] = useState<AppGroup[]>([]);
@@ -168,11 +178,14 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   useEffect(() => {
     loadData();
-    loadModelStats();
   }, []);
 
+  // 初次加载标记，用于区分初次加载和后续切换应用
+  const isInitialLoadRef = useRef(true);
+
   useEffect(() => {
-    if (selectedAppId) {
+    // 非初次加载时，切换应用才加载监控数据
+    if (selectedAppId && !isInitialLoadRef.current) {
       loadMonitoringForApp(selectedAppId);
     }
   }, [selectedAppId]);
@@ -193,8 +206,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       // 平台列表（用于"添加模型"选择可用模型）
       try {
         const ps = await getPlatforms();
-        if (ps.success) setPlatforms(ps.data || []);
-        else setPlatforms([]);
+        if (ps.success) {
+          setPlatforms(ps.data || []);
+        } else {
+          setPlatforms([]);
+        }
       } catch {
         setPlatforms([]);
       }
@@ -217,11 +233,61 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         recoverySuccessThreshold: config.recoverySuccessThreshold,
         statsWindowMinutes: config.statsWindowMinutes,
       });
+      
+      // 设置默认选中的应用，并加载其监控数据
       if (apps.length > 0 && !selectedAppId) {
-        setSelectedAppId(apps[0].id);
+        const firstAppId = apps[0].id;
+        setSelectedAppId(firstAppId);
+        
+        // 初次加载时，等待监控数据加载完成后再结束 loading 状态
+        const firstApp = apps[0];
+        if (firstApp) {
+          const groupIds = firstApp.modelRequirements
+            .flatMap((r: AppModelRequirement) => r.modelGroupIds || [])
+            .filter((id): id is string => !!id);
+
+          const data: Record<string, ModelGroupMonitoringData> = {};
+          await Promise.all(
+            groupIds.map(async (groupId: string) => {
+              try {
+                const monitoring = await getGroupMonitoring(groupId);
+                data[groupId] = monitoring;
+              } catch (error) {
+                console.error(`Failed to load monitoring for group ${groupId}:`, error);
+              }
+            })
+          );
+          setMonitoringData(data);
+        }
+        
+        // 加载后端解析的默认模型信息
+        const resolveItems: { appCallerCode: string; modelType: string }[] = [];
+        for (const caller of apps) {
+          for (const req of caller.modelRequirements) {
+            if (!req.modelGroupIds || req.modelGroupIds.length === 0) {
+              resolveItems.push({
+                appCallerCode: caller.appCode || '',
+                modelType: req.modelType,
+              });
+            }
+          }
+        }
+        if (resolveItems.length > 0) {
+          try {
+            const res = await resolveModels(resolveItems);
+            if (res.success && res.data) {
+              setResolvedModels(res.data);
+            }
+          } catch (e) {
+            console.error('Failed to resolve models:', e);
+          }
+        }
       }
     } catch (error) {
       toast.error('加载失败', String(error));
+    } finally {
+      isInitialLoadRef.current = false;
+      setIsLoading(false);
     }
   };
 
@@ -247,37 +313,83 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       })
     );
     setMonitoringData(data);
-
-    // 同时加载模型统计数据
-    loadModelStats();
+    
+    // 加载默认模型解析结果（针对未绑定专属模型池的功能）
+    loadResolvedModels();
+    
+    // 加载模型池中模型的统计数据（按 appCallerCode + model 组合）
+    loadPoolModelStats(app, data);
   };
-
-  // 加载模型调用统计数据
-  const loadModelStats = async () => {
-    try {
-      const res = await getLlmModelStats({ days: 7 });
-      if (res.success && res.data?.items) {
-        const statsMap: Record<string, LlmModelStatsItem> = {};
-        for (const item of res.data.items) {
-          // 使用 platformId:model 作为 key
-          const key = `${item.platformId || ''}:${item.model}`.toLowerCase();
-          // 如果同一个 key 已存在，累加统计
-          if (statsMap[key]) {
-            statsMap[key].requestCount += item.requestCount;
-            if (item.totalInputTokens) {
-              statsMap[key].totalInputTokens = (statsMap[key].totalInputTokens || 0) + item.totalInputTokens;
-            }
-            if (item.totalOutputTokens) {
-              statsMap[key].totalOutputTokens = (statsMap[key].totalOutputTokens || 0) + item.totalOutputTokens;
-            }
-          } else {
-            statsMap[key] = { ...item };
+  
+  // 加载模型池中模型的统计数据（按 appCallerCode + model 组合）
+  const loadPoolModelStats = async (app: LLMAppCaller, monitoringData: Record<string, ModelGroupMonitoringData>) => {
+    // 收集所有需要统计的 (appCallerCode, platformId, modelId) 组合
+    const items: { appCallerCode: string; platformId: string; modelId: string }[] = [];
+    
+    for (const req of app.modelRequirements) {
+      if (req.modelGroupIds && req.modelGroupIds.length > 0) {
+        for (const groupId of req.modelGroupIds) {
+          const monitoring = monitoringData[groupId];
+          const group = modelGroups.find(g => g.id === groupId);
+          const models = monitoring?.models && monitoring.models.length > 0 
+            ? monitoring.models 
+            : (group?.models || []);
+          
+          for (const model of models) {
+            items.push({
+              appCallerCode: app.appCode || '',
+              platformId: model.platformId,
+              modelId: model.modelId,
+            });
           }
         }
-        setModelStats(statsMap);
       }
-    } catch (error) {
-      console.error('Failed to load model stats:', error);
+    }
+    
+    if (items.length === 0) {
+      setPoolModelStats({});
+      return;
+    }
+    
+    try {
+      const res = await getBatchModelStats({ days: 7, items });
+      if (res.success && res.data?.items) {
+        setPoolModelStats(res.data.items);
+      }
+    } catch (e) {
+      console.error('Failed to load pool model stats:', e);
+    }
+  };
+  
+  // 加载后端解析的默认模型信息
+  const loadResolvedModels = async () => {
+    // 收集所有未绑定专属模型池的 appCallerCode::modelType 组合
+    const items: { appCallerCode: string; modelType: string }[] = [];
+    
+    for (const caller of appCallers) {
+      for (const req of caller.modelRequirements) {
+        // 只有未绑定专属模型池的才需要解析
+        if (!req.modelGroupIds || req.modelGroupIds.length === 0) {
+          items.push({
+            appCallerCode: caller.appCode || '',
+            modelType: req.modelType,
+          });
+        }
+      }
+    }
+    
+    if (items.length === 0) {
+      setResolvedModels({});
+      return;
+    }
+    
+    try {
+      const res = await resolveModels(items);
+      if (res.success && res.data) {
+        setResolvedModels(res.data);
+      }
+    } catch (e) {
+      console.error('Failed to resolve models:', e);
     }
   };
 
@@ -778,6 +890,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
 
+      {/* 固定三栏布局：左侧320px，右侧分上下两栏（上栏60px固定，下栏占满） */}
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
         <GlassCard glow className="flex flex-col min-h-0 p-0 overflow-hidden">
@@ -819,7 +932,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           </div>
 
           <div className="flex-1 overflow-auto">
-            {filteredAppGroups.length === 0 ? (
+            {isLoading ? (
+              <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                <Loader2 size={32} className="mx-auto mb-2 opacity-40 animate-spin" />
+                <div className="text-sm">加载中...</div>
+              </div>
+            ) : filteredAppGroups.length === 0 ? (
               <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={32} className="mx-auto mb-2 opacity-40" />
                 <div className="text-sm">暂无应用</div>
@@ -878,55 +996,72 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           </div>
         </GlassCard>
 
-        {/* 右侧：功能与模型池配置 */}
-        <div className="flex flex-col gap-4 min-h-0">
-          {!selectedAppGroup ? (
-            <GlassCard glow className="flex-1 flex items-center justify-center">
+        {/* 右侧：固定上下两栏布局（上栏60px，下栏占满剩余空间） */}
+        <div className="grid grid-rows-[60px_1fr] gap-4 min-h-0">
+          {/* 上栏：应用信息卡片（固定60px高度） */}
+          <GlassCard glow className="p-4 overflow-hidden">
+            {isLoading ? (
+              <div className="h-full flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+                <Loader2 size={20} className="animate-spin mr-2" />
+                <span className="text-sm">加载中...</span>
+              </div>
+            ) : !selectedAppGroup ? (
+              <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                请选择一个应用
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-between gap-4">
+                {/* 左侧：应用名称和标识 */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <h3 className="text-base font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {selectedAppGroup.appName}
+                  </h3>
+                  <Badge variant="subtle" size="sm" className="shrink-0">
+                    {selectedAppFeatures.length} 个功能
+                  </Badge>
+                  <span className="text-[13px] truncate hidden sm:block" style={{ color: 'var(--text-muted)' }}>
+                    {selectedAppGroup.app}
+                  </span>
+                </div>
+                {/* 右侧：统计数据 */}
+                <div className="flex items-center gap-4 text-[12px] shrink-0">
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    总调用: <span style={{ color: 'var(--text-secondary)' }}>
+                      {selectedAppFeatures.reduce((sum, f) => sum + f.stats.totalCalls, 0).toLocaleString()}
+                    </span>
+                  </span>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    成功: <span style={{ color: 'rgba(34,197,94,0.95)' }}>
+                      {selectedAppFeatures.reduce((sum, f) => sum + f.stats.successCalls, 0).toLocaleString()}
+                    </span>
+                  </span>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    失败: <span style={{ color: 'rgba(239,68,68,0.95)' }}>
+                      {selectedAppFeatures.reduce((sum, f) => sum + f.stats.failedCalls, 0).toLocaleString()}
+                    </span>
+                  </span>
+                </div>
+              </div>
+            )}
+          </GlassCard>
+
+          {/* 下栏：功能列表（占满剩余空间） */}
+          {isLoading ? (
+            <GlassCard glow className="flex items-center justify-center overflow-hidden">
+              <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+                <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin" />
+                <div className="text-sm">加载中...</div>
+              </div>
+            </GlassCard>
+          ) : !selectedAppGroup ? (
+            <GlassCard glow className="flex items-center justify-center overflow-hidden">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={48} className="mx-auto mb-4 opacity-40" />
                 <div className="text-sm">请选择一个应用</div>
               </div>
             </GlassCard>
           ) : (
-            <>
-              {/* 应用信息卡片 */}
-              <GlassCard glow className="p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {selectedAppGroup.appName}
-                      </h3>
-                      <Badge variant="subtle" size="sm">
-                        {selectedAppFeatures.length} 个功能
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      {selectedAppGroup.app}
-                    </div>
-                    <div className="mt-3 flex items-center gap-4 text-[12px]">
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        总调用: <span style={{ color: 'var(--text-secondary)' }}>
-                          {selectedAppFeatures.reduce((sum, f) => sum + f.stats.totalCalls, 0).toLocaleString()}
-                        </span>
-                      </span>
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        成功: <span style={{ color: 'rgba(34,197,94,0.95)' }}>
-                          {selectedAppFeatures.reduce((sum, f) => sum + f.stats.successCalls, 0).toLocaleString()}
-                        </span>
-                      </span>
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        失败: <span style={{ color: 'rgba(239,68,68,0.95)' }}>
-                          {selectedAppFeatures.reduce((sum, f) => sum + f.stats.failedCalls, 0).toLocaleString()}
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </GlassCard>
-
-              {/* 功能列表 */}
-              <GlassCard glow className="flex-1 min-h-0 overflow-auto p-0">
+            <GlassCard glow className="min-h-0 overflow-auto p-0">
                 {selectedAppFeatures.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center py-12">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>
@@ -952,6 +1087,10 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                       // 判断是否使用默认模型池（未绑定专属模型池）
                       const isDefaultGroup = boundGroups.length === 0;
+                      
+                      // 从后端解析结果获取默认模型信息
+                      const resolveKey = `${app.appCode || ''}::${req?.modelType || featureItem.parsed.modelType}`;
+                      const resolvedModel = isDefaultGroup ? resolvedModels[resolveKey] : null;
 
                       // 判断模型列表是否折叠
                       const featureKey = `${app.id}-${idx}`;
@@ -1010,52 +1149,150 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                     <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                                       {featureDescription}
                                     </span>
-                                    {isDefaultGroup ? (
-                                      <span
-                                        className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
-                                        style={{
-                                          background: 'rgba(255, 255, 255, 0.06)',
-                                          color: 'var(--text-muted)',
-                                        }}
-                                      >
-                                        使用默认 {modelTypeLabel}
-                                      </span>
-                                    ) : (
-                                      boundGroups.map((g) => (
-                                        <span
-                                          key={g.id}
-                                          className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
-                                          style={{
-                                            background: 'rgba(59, 130, 246, 0.12)',
-                                            color: 'rgba(59, 130, 246, 0.95)',
-                                          }}
-                                        >
-                                          {g.name}
-                                        </span>
-                                      ))
-                                    )}
-                                    {/* 折叠/展开按钮 - 只在有模型池时显示 */}
-                                    {boundGroups.length > 0 && totalModelsCount > 0 && (
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          toggleCollapse();
-                                        }}
-                                        className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-white/10 transition-colors"
-                                        title={isCollapsed ? '展开模型列表' : '折叠模型列表'}
-                                      >
-                                        {isCollapsed ? (
-                                          <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
-                                        ) : (
-                                          <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
-                                        )}
-                                      </button>
-                                    )}
+                                    <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                      <AppCallerKeyIcon size={11} className="opacity-60" />
+                                      {featureItem.appCallerKey}
+                                    </span>
                                   </div>
-                                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                    {featureItem.appCallerKey}
-                                    {boundGroups.length > 0 && totalModelsCount > 0 && (
-                                      <span className="ml-2">· {boundGroups.length} 个模型池 · {totalModelsCount} 个模型</span>
+                                  <div className="mt-1">
+                                    {isDefaultGroup ? (
+                                      resolvedModel ? (
+                                        (() => {
+                                          // 使用后端返回的统计数据（基于 appCallerCode + model 组合）
+                                          const defaultStats = resolvedModel.stats;
+                                          const defaultStatus = HEALTH_STATUS_MAP[resolvedModel.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                                          return (
+                                            <div
+                                              className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
+                                              style={{ background: 'rgba(255, 255, 255, 0.02)' }}
+                                              onMouseEnter={(e) => {
+                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                                              }}
+                                              title={resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
+                                            >
+                                              {/* 序号 */}
+                                              <span className="text-[10px] font-medium w-5 text-center shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                1
+                                              </span>
+                                              {/* 平台 */}
+                                              <span
+                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
+                                                style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
+                                              >
+                                                <Server size={10} />
+                                                {resolvedModel.platformName}
+                                              </span>
+                                              {/* 模型名 */}
+                                              <div className="flex items-center gap-1 min-w-0 flex-1">
+                                                <Box size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
+                                                <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                                  {resolvedModel.modelId}
+                                                </span>
+                                              </div>
+                                              {/* 调用统计（基于 appCallerCode + model 组合） */}
+                                              {defaultStats ? (
+                                                <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                  <span title="近7天请求次数（该功能+此模型）">
+                                                    {defaultStats.requestCount.toLocaleString()}次
+                                                  </span>
+                                                  {defaultStats.avgDurationMs != null && (
+                                                    <span title="平均耗时">
+                                                      {defaultStats.avgDurationMs}ms
+                                                    </span>
+                                                  )}
+                                                  {defaultStats.avgTtfbMs != null && (
+                                                    <span title="首字延迟(TTFB)">
+                                                      TTFB:{defaultStats.avgTtfbMs}ms
+                                                    </span>
+                                                  )}
+                                                  {(defaultStats.totalInputTokens != null || defaultStats.totalOutputTokens != null) && (
+                                                    <span title="输入/输出Token">
+                                                      {((defaultStats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((defaultStats.totalOutputTokens || 0) / 1000).toFixed(1)}k
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                  暂无统计
+                                                </span>
+                                              )}
+                                              {/* 状态 */}
+                                              <span
+                                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                style={{ background: defaultStatus.bg, color: defaultStatus.color }}
+                                              >
+                                                {defaultStatus.label}
+                                              </span>
+                                              {/* 查看日志按钮 - hover 显示 */}
+                                              <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                  className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
+                                                  onClick={() => {
+                                                    const params = new URLSearchParams();
+                                                    params.set('tab', 'llm');
+                                                    if (resolvedModel.platformName) params.set('provider', resolvedModel.platformName);
+                                                    if (resolvedModel.modelId) params.set('model', resolvedModel.modelId);
+                                                    navigate(`/logs?${params.toString()}`);
+                                                  }}
+                                                  title="查看该模型的调用日志"
+                                                >
+                                                  <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                                </button>
+                                              </div>
+                                            </div>
+                                          );
+                                        })()
+                                      ) : (
+                                        <div
+                                          className="flex items-center gap-2 py-1.5 px-2 rounded-lg"
+                                          style={{ background: 'rgba(251, 191, 36, 0.08)' }}
+                                          title="未配置默认模型"
+                                        >
+                                          <span className="text-[12px]" style={{ color: 'rgba(251, 191, 36, 0.95)' }}>
+                                            (未配置默认{modelTypeLabel})
+                                          </span>
+                                        </div>
+                                      )
+                                    ) : (
+                                      <>
+                                        {boundGroups.map((g) => (
+                                          <span
+                                            key={g.id}
+                                            className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
+                                            style={{
+                                              background: 'rgba(59, 130, 246, 0.12)',
+                                              color: 'rgba(59, 130, 246, 0.95)',
+                                            }}
+                                          >
+                                            {g.name}
+                                          </span>
+                                        ))}
+                                        {totalModelsCount > 0 && (
+                                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                            {boundGroups.length} 个模型池 · {totalModelsCount} 个模型
+                                          </span>
+                                        )}
+                                        {/* 折叠/展开按钮 */}
+                                        {totalModelsCount > 0 && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              toggleCollapse();
+                                            }}
+                                            className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-white/10 transition-colors"
+                                            title={isCollapsed ? '展开模型列表' : '折叠模型列表'}
+                                          >
+                                            {isCollapsed ? (
+                                              <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                                            ) : (
+                                              <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                                            )}
+                                          </button>
+                                        )}
+                                      </>
                                     )}
                                   </div>
                                 </div>
@@ -1130,9 +1367,9 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           poolModels.map((model: any, modelIdx: number) => {
                                             const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
                                             const platformName = getPlatformName(model.platformId);
-                                            // 获取模型统计数据
-                                            const statsKey = `${model.platformId}:${model.modelId}`.toLowerCase();
-                                            const stats = modelStats[statsKey];
+                                            // 获取模型统计数据（按 appCallerCode + model 组合）
+                                            const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
+                                            const stats = poolModelStats[poolStatsKey] || null;
                                             return (
                                               <div
                                                 key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
@@ -1245,8 +1482,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     })}
                   </div>
                 )}
-              </GlassCard>
-            </>
+            </GlassCard>
           )}
         </div>
       </div>

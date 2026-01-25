@@ -1296,7 +1296,7 @@ public class ImageMasterController : ControllerBase
                 LastSeq = 0,
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
-                Purpose = "visual-agent.image::generation", // 完整 AppCallerCode 用于日志追踪
+                AppCallerCode = "visual-agent.image::generation",
                 AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,

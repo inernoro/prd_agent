@@ -232,8 +232,16 @@ public class ImageGenRunWorker : BackgroundService
                             }
                         }
 
-                        _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, Purpose={Purpose}",
-                            run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.Purpose ?? "(null)");
+                        _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
+                            run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
+
+                        // AppCallerCode: 优先使用 run.AppCallerCode，否则根据 AppKey 生成，最后回退到默认值
+                        var appCallerCode = run.AppCallerCode;
+                        if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
+                        {
+                            appCallerCode = $"{run.AppKey}.image::generation";
+                        }
+                        appCallerCode ??= "prd-agent-web.image::generation"; // 最终回退（符合命名规范）
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
@@ -245,7 +253,11 @@ public class ImageGenRunWorker : BackgroundService
                             DocumentHash: null,
                             SystemPromptRedacted: "[IMAGE_GEN_RUN]",
                             RequestType: "imageGen",
-                            RequestPurpose: string.IsNullOrWhiteSpace(run.Purpose) ? "prd-agent-web::image-gen.run" : run.Purpose));
+                            RequestPurpose: appCallerCode,
+                            PlatformId: run.PlatformId,
+                            ModelGroupId: run.ModelGroupId,
+                            ModelGroupName: run.ModelGroupName,
+                            IsDefaultModelGroup: run.IsDefaultModelGroup));
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 

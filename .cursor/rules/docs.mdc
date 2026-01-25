@@ -1,15 +1,38 @@
 ---
 description: 文档维护与反向更新规则（避免 doc 过时）
+alwaysApply: true
 ---
 
-# 文档维护规则（doc/）
+# 文档维护规则
 
-目标：让 `doc/` 的 SRS/PRD 始终可用，且能跟随代码演进而不持续过时。
+目标：让 `doc/`、`.cursor/rules/`、`.claude/skills/` 保持同步，避免过时和冲突。
 
 ## 适用范围
 
 - `doc/**`
-- `.cursor/rules/**`（与文档相关的规范）
+- `.cursor/rules/**`
+- `.claude/skills/**`
+
+## 文档关联矩阵（修改时必须同步）
+
+| 主题 | 源文档 | 关联的 Rules | 关联的 Skills |
+|------|--------|--------------|---------------|
+| 创建 Agent | `doc/12.app-feature-naming-convention.md` | - | `create-agent` |
+| 技术栈 | 各子项目 `package.json` / `csproj` | `prd-admin.mdc`, `prd-api.mdc`, `prd-desktop.mdc` | - |
+| 模型标识 | `doc/2.srs.md` 4.17节 | `model-identity.mdc` | - |
+| API 契约 | `doc/2.srs.md` 第6章 | `api-contract.mdc` | `api-debug` |
+| 安全约束 | `doc/2.srs.md` 第8章 | `security.mdc` | - |
+| 版本发布 | `doc/5.step.md` | - | `release-version` |
+| 应用初始化 | `doc/13.init-strategy-implementation.md` | - | - |
+
+## 同步更新规则
+
+当修改以下内容时，**必须检查并同步更新关联文件**：
+
+1. **修改 Rules 时**：检查是否有对应的源文档或 Skill 需要同步
+2. **修改 Skills 时**：检查是否有对应的源文档或 Rule 需要同步
+3. **修改 doc/ 时**：检查是否有 Rule 或 Skill 引用了该内容
+4. **技术栈变更时**：必须同步更新对应子项目的 `.mdc` 规则文件
 
 ## 基本原则
 

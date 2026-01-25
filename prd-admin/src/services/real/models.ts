@@ -17,6 +17,7 @@ import type {
   UpdateModelInput,
   GetModelAdapterInfoContract,
   GetModelsAdapterInfoBatchContract,
+  GetAdapterInfoByModelNameContract,
   ModelAdapterInfo,
   ModelAdapterInfoBrief,
 } from '@/services/contracts/models';
@@ -179,5 +180,10 @@ export const getModelsAdapterInfoBatchReal: GetModelsAdapterInfoBatchContract = 
     method: 'POST',
     body: modelIds,
   });
+};
+
+/** 根据平台侧模型名直接获取适配信息（无需查询数据库） */
+export const getAdapterInfoByModelNameReal: GetAdapterInfoByModelNameContract = async (modelName: string) => {
+  return await apiRequest<ModelAdapterInfo>(api.mds.adapterInfoByModelName(modelName));
 };
 

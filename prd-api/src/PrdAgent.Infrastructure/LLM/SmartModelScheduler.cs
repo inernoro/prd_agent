@@ -838,4 +838,170 @@ public class SmartModelScheduler : ISmartModelScheduler
                 break;
         }
     }
+
+    /// <summary>
+    /// 获取应用绑定的模型池信息（仅返回池信息，不创建客户端）
+    /// </summary>
+    public async Task<ModelGroup?> GetModelGroupForAppAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
+        {
+            return null;
+        }
+
+        try
+        {
+            // 查找应用调用者
+            var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+            if (app == null)
+            {
+                return null;
+            }
+
+            // 查找该应用对该类型模型的需求
+            var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
+            if (requirement == null || requirement.ModelGroupIds.Count == 0)
+            {
+                // 没有配置，返回默认模型池
+                return await _db.ModelGroups
+                    .Find(g => g.ModelType == modelType && g.IsDefaultForType)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            // 返回第一个可用的模型池
+            foreach (var groupId in requirement.ModelGroupIds)
+            {
+                var group = await _db.ModelGroups
+                    .Find(g => g.Id == groupId)
+                    .FirstOrDefaultAsync(ct);
+                if (group != null)
+                {
+                    return group;
+                }
+            }
+
+            // 所有配置的模型池都不可用，返回默认
+            return await _db.ModelGroups
+                .Find(g => g.ModelType == modelType && g.IsDefaultForType)
+                .FirstOrDefaultAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "获取模型池信息失败: appCallerCode={AppCallerCode}, modelType={ModelType}", appCallerCode, modelType);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 解析应用实际会调用的模型（不创建客户端，仅返回模型信息）
+    /// 按优先级查找：1.专属模型池 2.默认模型池 3.传统配置模型
+    /// </summary>
+    public async Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
+        {
+            return null;
+        }
+
+        try
+        {
+            // 查找应用调用者
+            var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+            
+            // 查找该应用对该类型模型的需求
+            var requirement = app?.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
+
+            // Step 1 & 2: 从模型池中查找（专属模型池或默认模型池）
+            var group = await GetModelGroupFromRequirementAsync(
+                requirement ?? new AppModelRequirement { ModelType = modelType, ModelGroupIds = new List<string>() },
+                modelType,
+                expectedModelCode: null,
+                ct);
+
+            if (group != null && group.Models.Count > 0)
+            {
+                var bestModel = SelectBestModelFromGroup(group);
+                if (bestModel != null)
+                {
+                    // 获取平台名称
+                    var platform = await _db.LLMPlatforms.Find(p => p.Id == bestModel.PlatformId).FirstOrDefaultAsync(ct);
+                    
+                    // 查询该 appCallerCode + model 组合的统计数据（近 7 天）
+                    var stats = await GetModelStatsAsync(appCallerCode, bestModel.PlatformId, bestModel.ModelId, ct);
+                    
+                    return new ResolvedModelInfo(
+                        Source: group.Id.StartsWith("legacy-") ? "legacy" : "pool",
+                        ModelGroupId: group.Id.StartsWith("legacy-") ? null : group.Id,
+                        ModelGroupName: group.Id.StartsWith("legacy-") ? null : group.Name,
+                        IsDefaultForType: group.IsDefaultForType,
+                        PlatformId: bestModel.PlatformId,
+                        PlatformName: platform?.Name ?? bestModel.PlatformId,
+                        ModelId: bestModel.ModelId,
+                        ModelDisplayName: null, // 模型池中不存储显示名称
+                        HealthStatus: bestModel.HealthStatus.ToString(),
+                        Stats: stats);
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "解析模型失败: appCallerCode={AppCallerCode}, modelType={ModelType}", appCallerCode, modelType);
+            return null;
+        }
+    }
+    
+    /// <summary>
+    /// 获取指定 appCallerCode + model 组合的近 7 天统计数据
+    /// </summary>
+    private async Task<ResolvedModelStats?> GetModelStatsAsync(string appCallerCode, string platformId, string modelId, CancellationToken ct)
+    {
+        try
+        {
+            var from = DateTime.UtcNow.AddDays(-7);
+            
+            // 构建 requestPurpose 匹配模式（appCallerCode 可能是 appCode 或完整的 appCallerKey）
+            // RequestPurpose 存储的是完整的 appCallerKey，如 "prd-agent-desktop.chat.sendmessage::chat"
+            // appCallerCode 可能是 "prd-agent-desktop" 或完整的 key
+            var filter = Builders<LlmRequestLog>.Filter.And(
+                Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, from),
+                Builders<LlmRequestLog>.Filter.Eq(x => x.PlatformId, platformId),
+                Builders<LlmRequestLog>.Filter.Eq(x => x.Model, modelId),
+                Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, new MongoDB.Bson.BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(appCallerCode)}"))
+            );
+            
+            var logs = await _db.LlmRequestLogs.Find(filter).ToListAsync(ct);
+            
+            if (logs.Count == 0)
+            {
+                return null;
+            }
+            
+            var requestCount = logs.Count;
+            var avgDurationMs = logs.Where(l => l.DurationMs.HasValue).Select(l => l.DurationMs!.Value).DefaultIfEmpty(0).Average();
+            var avgTtfbMs = logs.Where(l => l.FirstByteAt.HasValue)
+                .Select(l => (l.FirstByteAt!.Value - l.StartedAt).TotalMilliseconds)
+                .DefaultIfEmpty(0).Average();
+            var totalInputTokens = logs.Sum(l => l.InputTokens ?? 0);
+            var totalOutputTokens = logs.Sum(l => l.OutputTokens ?? 0);
+            var successCount = logs.Count(l => l.Status == "succeeded");
+            var failCount = logs.Count(l => l.Status == "failed");
+            
+            return new ResolvedModelStats(
+                RequestCount: requestCount,
+                AvgDurationMs: avgDurationMs > 0 ? (int)Math.Round(avgDurationMs) : null,
+                AvgTtfbMs: avgTtfbMs > 0 ? (int)Math.Round(avgTtfbMs) : null,
+                TotalInputTokens: totalInputTokens > 0 ? totalInputTokens : null,
+                TotalOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : null,
+                SuccessCount: successCount > 0 ? successCount : null,
+                FailCount: failCount > 0 ? failCount : null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "获取模型统计失败: appCallerCode={AppCallerCode}, platformId={PlatformId}, modelId={ModelId}", 
+                appCallerCode, platformId, modelId);
+            return null;
+        }
+    }
 }

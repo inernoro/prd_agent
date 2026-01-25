@@ -5,7 +5,7 @@ import type {
   UpdateAppCallerRequest,
   AppCallerStats,
 } from '../../types/appCaller';
-import type { IAppCallersService } from '../contracts/appCallers';
+import type { IAppCallersService, ResolvedModelInfo } from '../contracts/appCallers';
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 
@@ -139,5 +139,24 @@ export class AppCallersService implements IAppCallersService {
     ApiResponse<{ discovered: string[]; message: string }>
   > {
     return this.scanApps();
+  }
+
+  async resolveModels(
+    items: { appCallerCode: string; modelType: string }[]
+  ): Promise<ApiResponse<Record<string, ResolvedModelInfo | null>>> {
+    const res = await fetch(`${API_BASE}${api.openPlatform.appCallers.resolveModels()}`, {
+      method: 'POST',
+      headers: {
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ items }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`解析模型失败: ${res.status}`);
+    }
+
+    return res.json();
   }
 }

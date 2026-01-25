@@ -6,22 +6,42 @@ globs: prd-desktop/**
 # prd-desktop（Tauri 桌面端）规则
 
 ## 技术栈
-- Tauri 2.0+ / Rust 1.70+ / React 18 / TypeScript 5 / Zustand / Tailwind + Radix UI
+
+### 前端
+- React 18.3 / TypeScript 5.6 / Vite 6.0
+- Radix UI (dialog, dropdown-menu, select, tabs, tooltip)
+- Tailwind CSS 3.4 + tailwind-merge + clsx
+- Zustand 5.0（状态管理）
+- Mermaid 11.12（流程图）
+- react-markdown + remark-gfm + rehype-raw + remark-breaks
+
+### Rust/Tauri
+- Tauri 2.1 / Rust Edition 2021
+- tauri-plugin-fs 2.1（文件系统）
+- tauri-plugin-clipboard-manager 2.1（剪贴板）
+- tauri-plugin-shell 2.1（Shell 命令）
+- tauri-plugin-updater 2.1（自动更新）
+- tauri-plugin-dialog 2.6（对话框）
+- reqwest 0.12（HTTP 客户端）
+- tokio（异步运行时）
+- serde/serde_json（序列化）
 
 ## 命名约定
 - 前端变量/函数: camelCase
 - React 组件: PascalCase
+- Rust: snake_case（函数/变量），PascalCase（类型/结构体）
 
 ## 局部前置自检（避免 CI 才爆）
 
-当你改动了 `prd-desktop/src-tauri/**`、尤其是 `src-tauri/icons/**`、`tauri.conf.json`、`Cargo.toml`/Rust 代码时，必须执行：
-- `cargo build -p prd-agent-desktop`（或项目约定的 desktop build 命令）
+当你改动了 `prd-desktop/src-tauri/**`、`tauri.conf.json`、`Cargo.toml` 时，必须执行：
+- `cargo build -p prd-agent-desktop`
 
 ## 资源格式硬约束（重点）
 
-- Tauri icons 必须是 RGBA（带 alpha 通道）的 PNG；否则可能出现 `icon ... is not RGBA` 并导致 `proc macro panicked`
+- Tauri icons 必须是 RGBA（带 alpha 通道）的 PNG
+- 否则可能出现 `icon ... is not RGBA` 并导致 `proc macro panicked`
 - 改了 icon 时必须做本地校验（macOS）：
   - `sips -g hasAlpha prd-desktop/src-tauri/icons/32x32.png`
   - 若 `hasAlpha: no`，不要手动修补，直接用 Tauri 重新生成：
     - `cargo tauri icon <source.png>`（使用带透明通道的源图）
-- 注意：CI（Linux）对图片格式更严格；本地能跑不代表 CI 一定过，icon 相关必须按上面校验
+- 注意：CI（Linux）对图片格式更严格；本地能跑不代表 CI 一定过

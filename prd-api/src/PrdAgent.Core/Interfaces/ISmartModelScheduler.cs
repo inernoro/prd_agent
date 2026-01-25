@@ -10,6 +10,50 @@ public record ScheduledClientResult(
     bool IsDefaultModelGroup);
 
 /// <summary>
+/// 模型解析结果（不创建客户端，仅返回模型信息）
+/// </summary>
+public record ResolvedModelInfo(
+    /// <summary>模型来源：pool（模型池）、legacy（传统配置）</summary>
+    string Source,
+    /// <summary>模型池ID（如果来自模型池）</summary>
+    string? ModelGroupId,
+    /// <summary>模型池名称（如果来自模型池）</summary>
+    string? ModelGroupName,
+    /// <summary>是否为该类型的默认模型池</summary>
+    bool IsDefaultForType,
+    /// <summary>平台ID</summary>
+    string PlatformId,
+    /// <summary>平台名称</summary>
+    string PlatformName,
+    /// <summary>模型ID（实际调用名）</summary>
+    string ModelId,
+    /// <summary>模型显示名称</summary>
+    string? ModelDisplayName,
+    /// <summary>健康状态</summary>
+    string HealthStatus,
+    /// <summary>统计数据（可选）</summary>
+    ResolvedModelStats? Stats = null);
+
+/// <summary>
+/// 模型解析结果中的统计数据
+/// </summary>
+public record ResolvedModelStats(
+    /// <summary>请求次数</summary>
+    int RequestCount,
+    /// <summary>平均耗时（毫秒）</summary>
+    int? AvgDurationMs,
+    /// <summary>首字延迟（毫秒）</summary>
+    int? AvgTtfbMs,
+    /// <summary>总输入Token</summary>
+    long? TotalInputTokens,
+    /// <summary>总输出Token</summary>
+    long? TotalOutputTokens,
+    /// <summary>成功次数</summary>
+    int? SuccessCount,
+    /// <summary>失败次数</summary>
+    int? FailCount);
+
+/// <summary>
 /// 智能模型调度器 - 负责根据应用需求选择最佳模型并处理降权恢复
 /// </summary>
 public interface ISmartModelScheduler
@@ -56,4 +100,23 @@ public interface ISmartModelScheduler
     /// <param name="ct">取消令牌</param>
     /// <returns>应用调用者</returns>
     Task<Core.Models.LLMAppCaller> GetOrCreateAppCallerAsync(string appCallerCode, CancellationToken ct = default);
+
+    /// <summary>
+    /// 获取应用绑定的模型池信息（仅返回池信息，不创建客户端）
+    /// </summary>
+    /// <param name="appCallerCode">应用标识</param>
+    /// <param name="modelType">模型类型</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>模型池信息，如果未找到则返回 null</returns>
+    Task<Core.Models.ModelGroup?> GetModelGroupForAppAsync(string appCallerCode, string modelType, CancellationToken ct = default);
+
+    /// <summary>
+    /// 解析应用实际会调用的模型（不创建客户端，仅返回模型信息）
+    /// 按优先级查找：1.专属模型池 2.默认模型池 3.传统配置模型
+    /// </summary>
+    /// <param name="appCallerCode">应用标识</param>
+    /// <param name="modelType">模型类型</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>解析后的模型信息，如果未找到则返回 null</returns>
+    Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default);
 }

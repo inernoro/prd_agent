@@ -43,6 +43,7 @@ export type GetLlmModelStatsParams = {
   model?: string;
   status?: string;
   platformId?: string;
+  requestPurpose?: string;
 };
 
 export type LlmModelStatsItem = {
@@ -64,6 +65,27 @@ export type LlmModelStatsData = {
 };
 
 export type GetLlmModelStatsContract = (params?: GetLlmModelStatsParams) => Promise<ApiResponse<LlmModelStatsData>>;
+
+// 批量统计请求项
+export type BatchModelStatsItem = {
+  appCallerCode?: string;
+  platformId: string;
+  modelId: string;
+};
+
+// 批量统计请求参数
+export type BatchModelStatsParams = {
+  days?: number;
+  items: BatchModelStatsItem[];
+};
+
+// 批量统计响应数据（key 格式：appCallerCode:platformId:modelId）
+export type BatchModelStatsData = {
+  days: number;
+  items: Record<string, LlmModelStatsItem | null>;
+};
+
+export type GetBatchModelStatsContract = (params: BatchModelStatsParams) => Promise<ApiResponse<BatchModelStatsData>>;
 
 
 

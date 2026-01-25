@@ -275,7 +275,8 @@ public class LlmLogsController : ControllerBase
         [FromQuery] string? provider = null,
         [FromQuery] string? model = null,
         [FromQuery] string? status = null,
-        [FromQuery] string? platformId = null)
+        [FromQuery] string? platformId = null,
+        [FromQuery] string? requestPurpose = null)
     {
         days = Math.Clamp(days, 1, 30);
         var from = DateTime.UtcNow.AddDays(-days);
@@ -285,6 +286,7 @@ public class LlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
         if (!string.IsNullOrWhiteSpace(platformId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.PlatformId, platformId);
+        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.RequestPurpose, requestPurpose);
 
         // 用聚合管道避免把大量日志拉回内存
         var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
@@ -400,5 +402,90 @@ public class LlmLogsController : ControllerBase
         // 返回 object：与现有 List/Meta 保持一致
         return Ok(ApiResponse<object>.Ok(new { days, items = safeItems }));
     }
+
+    /// <summary>
+    /// 批量获取多个 (appCallerCode, platformId, modelId) 组合的统计数据
+    /// 用于模型池页面按应用+模型组合展示调用统计
+    /// </summary>
+    [HttpPost("model-stats/batch")]
+    public async Task<IActionResult> BatchModelStats([FromBody] BatchModelStatsRequest request)
+    {
+        var days = Math.Clamp(request.Days, 1, 30);
+        var from = DateTime.UtcNow.AddDays(-days);
+
+        var results = new Dictionary<string, object?>();
+
+        foreach (var item in request.Items ?? new List<BatchModelStatsItem>())
+        {
+            if (string.IsNullOrWhiteSpace(item.PlatformId) || string.IsNullOrWhiteSpace(item.ModelId))
+                continue;
+
+            var key = $"{item.AppCallerCode ?? ""}:{item.PlatformId}:{item.ModelId}".ToLowerInvariant();
+            
+            // 避免重复计算
+            if (results.ContainsKey(key))
+                continue;
+
+            var filter = Builders<LlmRequestLog>.Filter.And(
+                Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, from),
+                Builders<LlmRequestLog>.Filter.Eq(x => x.PlatformId, item.PlatformId),
+                Builders<LlmRequestLog>.Filter.Eq(x => x.Model, item.ModelId)
+            );
+
+            // 如果指定了 appCallerCode，则按前缀匹配 RequestPurpose
+            if (!string.IsNullOrWhiteSpace(item.AppCallerCode))
+            {
+                filter = Builders<LlmRequestLog>.Filter.And(
+                    filter,
+                    Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, 
+                        new MongoDB.Bson.BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(item.AppCallerCode)}"))
+                );
+            }
+
+            var logs = await _db.LlmRequestLogs.Find(filter).ToListAsync();
+
+            if (logs.Count == 0)
+            {
+                results[key] = null;
+                continue;
+            }
+
+            var requestCount = logs.Count;
+            var avgDurationMs = logs.Where(l => l.DurationMs.HasValue).Select(l => l.DurationMs!.Value).DefaultIfEmpty(0).Average();
+            var avgTtfbMs = logs.Where(l => l.FirstByteAt.HasValue)
+                .Select(l => (l.FirstByteAt!.Value - l.StartedAt).TotalMilliseconds)
+                .DefaultIfEmpty(0).Average();
+            var totalInputTokens = logs.Sum(l => l.InputTokens ?? 0);
+            var totalOutputTokens = logs.Sum(l => l.OutputTokens ?? 0);
+            var successCount = logs.Count(l => l.Status == "succeeded");
+            var failCount = logs.Count(l => l.Status == "failed");
+
+            results[key] = new
+            {
+                requestCount,
+                avgDurationMs = avgDurationMs > 0 ? (int)Math.Round(avgDurationMs) : (int?)null,
+                avgTtfbMs = avgTtfbMs > 0 ? (int)Math.Round(avgTtfbMs) : (int?)null,
+                totalInputTokens = totalInputTokens > 0 ? totalInputTokens : (long?)null,
+                totalOutputTokens = totalOutputTokens > 0 ? totalOutputTokens : (long?)null,
+                successCount = successCount > 0 ? successCount : (int?)null,
+                failCount = failCount > 0 ? failCount : (int?)null,
+            };
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { days, items = results }));
+    }
+}
+
+public class BatchModelStatsRequest
+{
+    public int Days { get; set; } = 7;
+    public List<BatchModelStatsItem>? Items { get; set; }
+}
+
+public class BatchModelStatsItem
+{
+    public string? AppCallerCode { get; set; }
+    public string PlatformId { get; set; } = string.Empty;
+    public string ModelId { get; set; } = string.Empty;
 }
 

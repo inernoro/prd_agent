@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
@@ -18,11 +19,13 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AppCallersController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly ISmartModelScheduler _scheduler;
     private readonly ILogger<AppCallersController> _logger;
 
-    public AppCallersController(MongoDbContext db, ILogger<AppCallersController> logger)
+    public AppCallersController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<AppCallersController> logger)
     {
         _db = db;
+        _scheduler = scheduler;
         _logger = logger;
     }
 
@@ -275,6 +278,59 @@ public class AppCallersController : ControllerBase
 
         return Ok(ApiResponse<LLMAppCaller>.Ok(app));
     }
+
+    /// <summary>
+    /// 解析单个应用实际会调用的模型
+    /// 按优先级查找：1.专属模型池 2.默认模型池 3.传统配置模型
+    /// </summary>
+    [HttpGet("resolve-model")]
+    public async Task<IActionResult> ResolveModel(
+        [FromQuery] string appCallerCode,
+        [FromQuery] string modelType,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_PARAMS", "appCallerCode 和 modelType 不能为空"));
+        }
+
+        var result = await _scheduler.ResolveModelAsync(appCallerCode, modelType, ct);
+
+        return Ok(ApiResponse<ResolvedModelInfo?>.Ok(result));
+    }
+
+    /// <summary>
+    /// 批量解析多个应用实际会调用的模型
+    /// </summary>
+    [HttpPost("resolve-models")]
+    public async Task<IActionResult> ResolveModels(
+        [FromBody] BatchResolveModelsRequest request,
+        CancellationToken ct)
+    {
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            return Ok(ApiResponse<Dictionary<string, ResolvedModelInfo?>>.Ok(new Dictionary<string, ResolvedModelInfo?>()));
+        }
+
+        var results = new Dictionary<string, ResolvedModelInfo?>();
+
+        // 并行解析所有模型
+        var tasks = request.Items.Select(async item =>
+        {
+            var key = $"{item.AppCallerCode}::{item.ModelType}";
+            var result = await _scheduler.ResolveModelAsync(item.AppCallerCode, item.ModelType, ct);
+            return (key, result);
+        });
+
+        var resolvedItems = await Task.WhenAll(tasks);
+
+        foreach (var (key, result) in resolvedItems)
+        {
+            results[key] = result;
+        }
+
+        return Ok(ApiResponse<Dictionary<string, ResolvedModelInfo?>>.Ok(results));
+    }
 }
 
 public class CreateAppCallerRequest
@@ -296,4 +352,21 @@ public class UpdateBindingsRequest
 {
     /// <summary>绑定的模型池 ID 列表</summary>
     public List<string>? ModelGroupIds { get; set; }
+}
+
+/// <summary>
+/// 批量解析模型请求
+/// </summary>
+public class BatchResolveModelsRequest
+{
+    /// <summary>要解析的应用模型类型列表</summary>
+    public List<ResolveModelItem> Items { get; set; } = new();
+}
+
+public class ResolveModelItem
+{
+    /// <summary>应用标识（appCallerCode）</summary>
+    public string AppCallerCode { get; set; } = string.Empty;
+    /// <summary>模型类型</summary>
+    public string ModelType { get; set; } = string.Empty;
 }

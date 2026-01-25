@@ -9,12 +9,19 @@ import {
   Brain,          // 意图识别
   Code2,          // 代码生成
   Eye,            // 视觉理解
+  FileCode,       // appCallerKey 标识
   HelpCircle,     // 未知
   Layers,         // 向量嵌入
   MessageSquare,  // 对话模型
   Palette,        // 图像生成
   ScrollText,     // 长上下文
 } from 'lucide-react';
+
+/**
+ * AppCallerKey 图标组件
+ * 用于标识 appCallerKey/requestPurpose 字段
+ */
+export const AppCallerKeyIcon = FileCode;
 
 export interface ParsedAppCallerKey {
   app: string;              // 应用名称，如 desktop, visual-agent
@@ -387,27 +394,15 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
 }
 
 /**
- * 获取功能的详细描述（谁在使用、怎么使用）
+ * 获取功能的详细描述（不含应用前缀，简洁版）
  * 
  * @param parsed - 解析后的 App Caller Key
- * @returns 中文描述，如 "桌面端：用户发送聊天消息"
+ * @returns 中文描述，如 "用户发送聊天消息"
  */
 export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
   const { app, features, modelType } = parsed;
   
-  // 应用主体
-  const appSubject: Record<string, string> = {
-    desktop: '桌面端',
-    'prd-agent-desktop': '桌面端',
-    'visual-agent': '视觉创作',
-    'literary-agent': '文学创作',
-    'open-platform': '开放平台',
-    'open-platform-agent': '开放平台',
-    admin: '管理后台',
-    'prd-agent-web': '管理后台',
-  };
-  
-  // 功能描述映射
+  // 功能描述映射（不含应用前缀）
   const descriptions: Record<string, Record<string, string>> = {
     desktop: {
       'chat.sendmessage::chat': '用户发送聊天消息',
@@ -417,6 +412,8 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
       'prd.preview::chat': 'PRD 预览问答',
       'gap.detection::chat': 'Gap 差异检测',
       'gap.summarization::chat': 'Gap 差异总结',
+      'group-name.suggest::intent': '群组名称建议',
+      'preview-ask.section::chat': '预览章节问答',
     },
     'prd-agent-desktop': {
       'chat.sendmessage::chat': '用户发送聊天消息',
@@ -426,49 +423,55 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
       'prd.preview::chat': 'PRD 预览问答',
       'gap.detection::chat': 'Gap 差异检测',
       'gap.summarization::chat': 'Gap 差异总结',
+      'group-name.suggest::intent': '群组名称建议',
+      'preview-ask.section::chat': '预览章节问答',
     },
     'visual-agent': {
-      'image::generation': '生成配图',
-      'image::vision': '验证图片质量',
-      'image::chat': '生成图片描述',
+      'image::generation': '生成图片',
+      'image::vision': '图片分析',
+      'image::chat': '创意对话',
     },
     'literary-agent': {
-      'content::chat': '生成文学内容',
-      'illustration::generation': '生成文章配图',
-      'illustration::vision': '验证配图质量',
+      'content::chat': '内容生成',
+      'content.polishing::chat': '内容润色',
+      'illustration::generation': '配图生成',
+      'illustration::vision': '配图验证',
     },
     'open-platform': {
-      'proxy::chat': 'API 对话代理',
-      'proxy::vision': 'API 视觉代理',
-      'proxy::generation': 'API 生图代理',
+      'proxy::chat': '对话代理',
+      'proxy::vision': '视觉代理',
+      'proxy::generation': '生图代理',
+      'proxy::embedding': '向量嵌入',
+      'proxy::rerank': '重排序',
     },
     'open-platform-agent': {
-      'proxy::chat': 'API 对话代理',
-      'proxy::vision': 'API 视觉代理',
-      'proxy::generation': 'API 生图代理',
+      'proxy::chat': '对话代理',
+      'proxy::vision': '视觉代理',
+      'proxy::generation': '生图代理',
+      'proxy::embedding': '向量嵌入',
+      'proxy::rerank': '重排序',
     },
     admin: {
-      'lab::chat': '实验室模型测试',
-      'lab::vision': '实验室视觉测试',
-      'lab::generation': '实验室生图测试',
+      'lab::chat': '对话测试',
+      'lab::vision': '视觉测试',
+      'lab::generation': '生图测试',
     },
     'prd-agent-web': {
-      'lab::chat': '实验室模型测试',
-      'lab::vision': '实验室视觉测试',
-      'lab::generation': '实验室生图测试',
+      'lab::chat': '对话测试',
+      'lab::vision': '视觉测试',
+      'lab::generation': '生图测试',
     },
   };
   
-  const subject = appSubject[app] || app;
   const fullPath = features.join('.') + '::' + modelType;
   const description = descriptions[app]?.[fullPath];
   
   if (description) {
-    return `${subject}：${description}`;
+    return description;
   }
   
   // 回退：基于功能和模型类型生成通用描述
   const featureName = getFeatureDisplayName(features[0] || '');
   const modelTypeName = getModelTypeDisplayName(modelType);
-  return `${subject}：${featureName} - ${modelTypeName}`;
+  return `${featureName} - ${modelTypeName}`;
 }

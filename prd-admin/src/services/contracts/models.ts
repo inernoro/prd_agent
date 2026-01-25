@@ -83,3 +83,6 @@ export type ModelAdapterInfoBrief = {
 
 export type GetModelAdapterInfoContract = (modelId: string) => Promise<ApiResponse<ModelAdapterInfo>>;
 export type GetModelsAdapterInfoBatchContract = (modelIds: string[]) => Promise<ApiResponse<Record<string, ModelAdapterInfoBrief>>>;
+
+/** 根据平台侧模型名直接获取适配信息（无需查询数据库） */
+export type GetAdapterInfoByModelNameContract = (modelName: string) => Promise<ApiResponse<ModelAdapterInfo>>;

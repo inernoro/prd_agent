@@ -2,60 +2,53 @@
 alwaysApply: true
 ---
 
-# 工作流与状态管�?
-## 全局偏好与协作约�?
-- 任何内容不允许使�?emoji
-- Year is 2025.
+# Workflow Rules
+
+## Global Constraints (MUST follow)
+
+- **No emoji**: Do not use emoji in any content
+- Year is 2025
 - Fast dev phase: no backward compatibility; ok to delete the database
-- I will run multiple agents in parallel; do not revert any code without my explicit permission.
-- With multi-agent parallel work, keep git isolation and avoid touching other agent areas.
-## 执行纪律
+- Multi-agent parallel work: keep git isolation, avoid touching other agent areas
+- Do not revert any code without explicit permission
 
-### 先读后改
-- 修改代码前必须先读相关文件，禁止猜测
-- 优先并行读取多个可能相关的文件（减少往返）
-- 用户指定路径时，必须先打开确认再改
+## Execution Discipline
 
-### 任务管理（Todo�?
-#### 何时使用 Todo
-- 任务 **>=3 步骤**、跨多个文件、或有明显依赖关系时，必须创�?todo 列表
-- 用户提供多项任务（编�?逗号分隔）时，必须拆分为独立 todo
-- 简单单步任务（如改一行配置、回答问题）可跳�?
-#### Todo 状态规�?- **同一时间只允�?1 �?`in_progress`**
-- 开始新任务前先标记 `in_progress`
-- 完成后立即标�?`completed`
-- 需求变更时：先取消�?todo（`cancelled`），再新�?- 不要为“测试改动”单独加 todo，除非用户明确要�?
-#### 状态流�?```
-pending -> in_progress -> completed
-                      \-> cancelled
-```
+### Read Before Write
+- Must read related files before modifying code, no guessing
+- Prefer parallel reads for multiple potentially related files
+- When user specifies a path, must open and confirm before modifying
 
-### 局部自检
-- 修改后只对改动范围做 lint/类型检�?- 不主动对全仓库运�?lint（除非用户要求）
-- 发现 lint 错误必须修复后再继续
-- 子项目的“必做自检命令”下沉到对应规则文件�?  - `prd-admin/`：见 `.cursor/rules/prd-admin.mdc`
-  - `prd-desktop/`：见 `.cursor/rules/prd-desktop.mdc`
-  - `prd-api/`：见 `.cursor/rules/prd-api.mdc`
+### Local Self-Check
+- After modification, only lint/type-check the changed scope
+- Do not proactively lint the entire repo (unless user requests)
+- Must fix lint errors before continuing
+- Sub-project required self-check commands are in corresponding rule files:
+  - `prd-admin/`: see `.cursor/rules/prd-admin.mdc`
+  - `prd-desktop/`: see `.cursor/rules/prd-desktop.mdc`
+  - `prd-api/`: see `.cursor/rules/prd-api.mdc`
 
-### 提交纪律
-- commit message 聚焦“为什么改”而非“改了什么�?- 不在 commit/PR 中包含敏感信�?- 使用 HEREDOC 格式传递多�?commit message
+### Commit Discipline
+- Commit message focuses on "why" not "what"
+- Do not include sensitive info in commit/PR
+- Use HEREDOC format for multi-line commit messages
 
-## 文档地图（按任务类型优先阅读�?
-项目文档位于 `doc/` 目录，执行任务前应根据任务类型优先阅读对应文档：
+## Documentation Map (read by task type)
 
-| 文档 | 用�?| 何时阅读 |
-|------|------|----------|
-| `doc/1.why.md` | 项目背景、设计原则（做减法、专�?Agent、Cache>RAG�?| 理解产品边界、拒答策略、核心理�?|
-| `doc/2.srs.md` | **需求基�?*：架构、接口协议、数据模型、非功能性指�?| 实现接口/数据结构/性能要求�?|
-| `doc/3.prd.md` | **功能基线**：用户场景、功能清单、验收标准、迭代规�?| 新增功能/理解业务流程�?|
-| `doc/4.dev.md` | **开发指�?*：目录结构、环境搭建、命名规范、测试与部署 | 写代�?配置环境/提交代码�?|
-| `doc/5.step.md` | 进度跟踪、发布流程、CI/CD 配置清单 | 查看里程�?发布步骤（敏感信息仅作占位参考） |
+| Doc | Purpose | When to Read |
+|-----|---------|--------------|
+| `doc/1.why.md` | Project background, design principles | Understanding product boundaries |
+| `doc/2.srs.md` | **Requirement baseline**: architecture, API, data model | Implementing interfaces/data structures |
+| `doc/3.prd.md` | **Feature baseline**: user scenarios, feature list | Adding features/understanding business flow |
+| `doc/4.dev.md` | **Dev handbook**: directory structure, setup, naming | Writing code/configuring environment |
+| `doc/5.step.md` | Progress tracking, release flow | Checking milestones, release steps |
 
-### 引用优先�?1. **需�?规格冲突**：以 `doc/2.srs.md`（技术规格）�?`doc/3.prd.md`（产品需求）为准�?2. **实现/工程冲突**：以 `doc/4.dev.md` 为准�?3. **进度/发布**：`doc/5.step.md` 仅作流程参考，其中敏感信息（密钥、证书）禁止复制到代�?commit�?
-### 快速索�?- 要改接口/数据模型 -> 先看 `doc/2.srs.md` �?章（外部接口）、第7章（数据模型�?- 要加新功�?-> 先看 `doc/3.prd.md` �?章（详细功能说明�?- 要改目录结构/命名 -> 先看 `doc/4.dev.md` �?章（项目结构）、第8章（开发规范）
-- 要理解为什么这么设�?-> 先看 `doc/1.why.md`（四味药/做减法）
+### Reference Priority
+1. **Requirement/Spec conflict**: `doc/2.srs.md` and `doc/3.prd.md` take precedence
+2. **Implementation/Engineering conflict**: `doc/4.dev.md` takes precedence
+3. **Progress/Release**: `doc/5.step.md` is for reference only
 
-## 并行优化
-- 多个独立读取/搜索操作应并行发�?- 多个独立文件修改可批量执行（无依赖时�?- 避免在循环中串行调用工具
-
-
+## Parallel Optimization
+- Multiple independent read/search operations should be initiated in parallel
+- Multiple independent file modifications can be batched (when no dependencies)
+- Avoid serial tool calls in loops

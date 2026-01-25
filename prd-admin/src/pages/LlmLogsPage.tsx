@@ -10,7 +10,7 @@ import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Filter, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
-import { getFeatureDescriptionFromRequestPurpose } from '@/lib/appCallerUtils';
+import { getFeatureDescriptionFromRequestPurpose, AppCallerKeyIcon } from '@/lib/appCallerUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1318,10 +1318,11 @@ export default function LlmLogsPage() {
                         {/* 原始 requestPurpose（appCallerCode） */}
                         {it.requestPurpose && (
                           <span
-                            className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
+                            className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
                             style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
                             title={`requestPurpose: ${it.requestPurpose}`}
                           >
+                            <AppCallerKeyIcon size={10} className="opacity-60" />
                             {it.requestPurpose}
                           </span>
                         )}

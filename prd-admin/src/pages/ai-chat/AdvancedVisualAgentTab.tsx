@@ -14,6 +14,7 @@ import {
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
   getImageGenSizeCaps,
+  getAdapterInfoByModelName,
   getModels,
   getWatermarkByApp,
   modelGroupsService,
@@ -820,25 +821,57 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
   // 白名单检测（用于尺寸选择器）
+  // 优先使用基于模型名的适配器配置，回退到数据库缓存
   const [allowedSizes, setAllowedSizes] = useState<string[]>([]);
   useEffect(() => {
+    const modelName = effectiveModel?.modelName;
     const modelId = effectiveModel?.id;
-    if (!modelId) {
+    if (!modelName && !modelId) {
       setAllowedSizes([]);
       return;
     }
-    getImageGenSizeCaps({ includeFallback: true })
-      .then((res) => {
-        if (!res.success) {
-          setAllowedSizes([]);
-          return;
-        }
-        const caps = (res.data?.items ?? []).find((x) => x.modelId === modelId);
-        const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
-        setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
-      })
-      .catch(() => setAllowedSizes([]));
-  }, [effectiveModel?.id]);
+
+    // 优先使用模型名直接查询适配器配置（无需数据库）
+    if (modelName) {
+      getAdapterInfoByModelName(modelName)
+        .then((res) => {
+          if (res.success && res.data?.matched && Array.isArray(res.data.allowedSizes) && res.data.allowedSizes.length > 0) {
+            setAllowedSizes(res.data.allowedSizes.map((s) => String(s).trim().toLowerCase()));
+            return;
+          }
+          // 适配器没有配置，回退到数据库缓存
+          if (modelId) {
+            getImageGenSizeCaps({ includeFallback: true })
+              .then((capsRes) => {
+                if (!capsRes.success) {
+                  setAllowedSizes([]);
+                  return;
+                }
+                const caps = (capsRes.data?.items ?? []).find((x) => x.modelId === modelId);
+                const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
+                setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
+              })
+              .catch(() => setAllowedSizes([]));
+          } else {
+            setAllowedSizes([]);
+          }
+        })
+        .catch(() => setAllowedSizes([]));
+    } else if (modelId) {
+      // 没有 modelName，只能用数据库缓存
+      getImageGenSizeCaps({ includeFallback: true })
+        .then((res) => {
+          if (!res.success) {
+            setAllowedSizes([]);
+            return;
+          }
+          const caps = (res.data?.items ?? []).find((x) => x.modelId === modelId);
+          const sizes = Array.isArray(caps?.allowedSizes) ? caps.allowedSizes : [];
+          setAllowedSizes(sizes.map((s) => String(s).trim().toLowerCase()));
+        })
+        .catch(() => setAllowedSizes([]));
+    }
+  }, [effectiveModel?.modelName, effectiveModel?.id]);
 
   // 初始化水印配置
   useEffect(() => {

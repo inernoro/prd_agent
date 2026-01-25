@@ -30,6 +30,7 @@ public class ImageGenController : ControllerBase
     private readonly IModelDomainService _modelDomain;
     private readonly OpenAIImageClient _imageClient;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly ISmartModelScheduler _scheduler;
     private readonly ILogger<ImageGenController> _logger;
     private readonly IAppSettingsService _settingsService;
     private readonly IAssetStorage _assetStorage;
@@ -43,6 +44,7 @@ public class ImageGenController : ControllerBase
         IModelDomainService modelDomain,
         OpenAIImageClient imageClient,
         ILLMRequestContextAccessor llmRequestContext,
+        ISmartModelScheduler scheduler,
         ILogger<ImageGenController> logger,
         IAppSettingsService settingsService,
         IAssetStorage assetStorage,
@@ -53,6 +55,7 @@ public class ImageGenController : ControllerBase
         _modelDomain = modelDomain;
         _imageClient = imageClient;
         _llmRequestContext = llmRequestContext;
+        _scheduler = scheduler;
         _logger = logger;
         _settingsService = settingsService;
         _assetStorage = assetStorage;
@@ -838,6 +841,29 @@ public class ImageGenController : ControllerBase
         }
         if (string.IsNullOrWhiteSpace(appKey)) appKey = null;
 
+        // 获取模型池信息（用于日志记录）
+        string? modelGroupId = null;
+        string? modelGroupName = null;
+        bool? isDefaultModelGroup = null;
+        if (!string.IsNullOrWhiteSpace(appKey))
+        {
+            var appCallerCode = $"{appKey}.image::generation";
+            try
+            {
+                var groupInfo = await _scheduler.GetModelGroupForAppAsync(appCallerCode, "image", ct);
+                if (groupInfo != null)
+                {
+                    modelGroupId = groupInfo.Id;
+                    modelGroupName = groupInfo.Name;
+                    isDefaultModelGroup = groupInfo.IsDefaultForType;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "获取模型池信息失败: appKey={AppKey}", appKey);
+            }
+        }
+
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
@@ -845,6 +871,9 @@ public class ImageGenController : ControllerBase
             ConfigModelId = cfgModelId,
             PlatformId = platformId,
             ModelId = modelId,
+            ModelGroupId = modelGroupId,
+            ModelGroupName = modelGroupName,
+            IsDefaultModelGroup = isDefaultModelGroup,
             Size = size,
             ResponseFormat = responseFormat,
             MaxConcurrency = maxConc,
@@ -856,7 +885,8 @@ public class ImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
-            Purpose = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation", // 完整 AppCallerCode
+            // 格式: {app}.{feature}::modelType（符合 doc/12.app-feature-naming-convention.md）
+            AppCallerCode = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation",
             AppKey = appKey,
             CreatedAt = DateTime.UtcNow
         };
