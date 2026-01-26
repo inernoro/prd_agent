@@ -619,7 +619,7 @@ public class DefectAgentController : ControllerBase
     /// 发送消息
     /// </summary>
     [HttpPost("defects/{id}/messages")]
-    public async Task<IActionResult> SendMessage(string id, [FromBody] SendMessageRequest request, CancellationToken ct)
+    public async Task<IActionResult> SendMessage(string id, [FromBody] DefectSendMessageRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
         var isAdmin = HasManagePermission();
@@ -900,7 +900,7 @@ public class RejectDefectRequest
     public string Reason { get; set; } = string.Empty;
 }
 
-public class SendMessageRequest
+public class DefectSendMessageRequest
 {
     public string Content { get; set; } = string.Empty;
     public List<string>? AttachmentIds { get; set; }
