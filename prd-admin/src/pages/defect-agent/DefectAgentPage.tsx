@@ -1,21 +1,27 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
+import { toast } from '@/lib/toast';
+import { DefectStatus } from '@/services/contracts/defectAgent';
 import { Bug, Plus, FileText, RefreshCw } from 'lucide-react';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
 import { DefectDetailPanel } from './components/DefectDetailPanel';
 import { TemplateDialog } from './components/TemplateDialog';
 
+const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
+
 export default function DefectAgentPage() {
   const {
+    defects,
     loading,
     error,
     filter,
     setFilter,
     selectedDefectId,
+    setSelectedDefectId,
     showSubmitPanel,
     setShowSubmitPanel,
     showTemplateDialog,
@@ -23,9 +29,43 @@ export default function DefectAgentPage() {
     loadAll,
   } = useDefectStore();
 
+  const notifiedRef = useRef(false);
+
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  // 显示待处理缺陷的通知（每次会话显示一次）
+  useEffect(() => {
+    if (loading || notifiedRef.current) return;
+    if (filter !== 'assigned') return;
+
+    // 获取已通知的缺陷 ID（使用 sessionStorage，每次登录清空）
+    const notifiedIdsStr = sessionStorage.getItem(NOTIFICATION_STORAGE_KEY);
+    const notifiedIds = new Set<string>(notifiedIdsStr ? JSON.parse(notifiedIdsStr) : []);
+
+    // 找出待处理的缺陷（待处理、处理中状态）
+    const pendingStatuses = [DefectStatus.Pending, DefectStatus.Working];
+    const pendingDefects = defects.filter(
+      (d) => pendingStatuses.includes(d.status as typeof DefectStatus.Pending) && !notifiedIds.has(d.id)
+    );
+
+    if (pendingDefects.length > 0) {
+      notifiedRef.current = true;
+
+      // 显示通知
+      if (pendingDefects.length === 1) {
+        const d = pendingDefects[0];
+        toast.warning(`有待处理缺陷: ${d.defectNo}`, undefined, 8000);
+      } else {
+        toast.warning(`有 ${pendingDefects.length} 个待处理缺陷等待您处理`, undefined, 8000);
+      }
+
+      // 记录已通知的缺陷 ID
+      pendingDefects.forEach((d) => notifiedIds.add(d.id));
+      sessionStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify([...notifiedIds]));
+    }
+  }, [defects, loading, filter]);
 
   const tabItems = useMemo(
     () => [
