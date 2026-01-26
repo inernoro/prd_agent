@@ -16,8 +16,6 @@ using IOPath = System.IO.Path;
 
 namespace PrdAgent.Api.Tests.Services;
 
-[Trait("Category", TestCategories.CI)]
-[Trait("Category", TestCategories.Image)]
 public class RoundedRectangleTests
 {
     private readonly ITestOutputHelper _output;

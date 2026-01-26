@@ -72,8 +72,8 @@ jobs:
       - name: Build
         run: dotnet build PrdAgent.sln -c Release --no-restore
 
-      - name: Run CI tests (in-memory, no external dependencies)
-        run: dotnet test PrdAgent.sln -c Release --no-build --verbosity normal --filter "Category=CI"
+      - name: Run tests (exclude integration tests)
+        run: dotnet test PrdAgent.sln -c Release --no-build --verbosity normal --filter "Category!=Integration"
 
   # Web 管理后台构建
   admin-build:

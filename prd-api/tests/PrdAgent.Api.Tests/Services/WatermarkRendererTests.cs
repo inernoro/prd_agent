@@ -11,8 +11,6 @@ using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
-[Trait("Category", TestCategories.CI)]
-[Trait("Category", TestCategories.Image)]
 public class WatermarkRendererTests
 {
     private static (WatermarkRenderer renderer, WatermarkFontRegistry registry) BuildRenderer()

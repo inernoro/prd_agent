@@ -16,8 +16,6 @@ namespace PrdAgent.Api.Tests.Run;
 /// - done / error / cancel-before / cancel-mid
 /// - snapshot 兜底（短回答也必须能恢复）
 /// </summary>
-[Trait("Category", TestCategories.CI)]
-[Trait("Category", TestCategories.Unit)]
 public class ChatRunSuiteTests
 {
     private static IServiceProvider BuildSp(IChatService chat)

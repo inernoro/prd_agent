@@ -5,8 +5,6 @@ using Xunit;
 
 namespace PrdAgent.Api.Tests.Run;
 
-[Trait("Category", TestCategories.CI)]
-[Trait("Category", TestCategories.Unit)]
 public class InMemoryRunEventStoreTests
 {
     [Fact]

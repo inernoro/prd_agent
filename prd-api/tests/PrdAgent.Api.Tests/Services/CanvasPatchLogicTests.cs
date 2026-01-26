@@ -14,8 +14,6 @@ namespace PrdAgent.Api.Tests.Services;
 ///
 /// 运行方式：dotnet test --filter "FullyQualifiedName~CanvasPatchLogicTests"
 /// </summary>
-[Trait("Category", TestCategories.CI)]
-[Trait("Category", TestCategories.Unit)]
 public class CanvasPatchLogicTests
 {
     /// <summary>

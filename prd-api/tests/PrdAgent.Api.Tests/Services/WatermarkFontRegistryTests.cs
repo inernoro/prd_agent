@@ -4,8 +4,6 @@ using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
-[Trait("Category", TestCategories.CI)]
-[Trait("Category", TestCategories.Unit)]
 public class WatermarkFontRegistryTests
 {
     [Fact]
