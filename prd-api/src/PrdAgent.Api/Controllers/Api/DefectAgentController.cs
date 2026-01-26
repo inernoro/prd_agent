@@ -287,16 +287,42 @@ public class DefectAgentController : ControllerBase
         // 生成缺陷编号
         var defectNo = await GenerateDefectNo(ct);
 
+        // 自动提取标题：使用提供的标题，或从内容第一行提取（限50字）
+        var content = request.Content?.Trim() ?? string.Empty;
+        var title = request.Title?.Trim();
+        if (string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(content))
+        {
+            var firstLine = content.Split('\n')[0].Trim();
+            title = firstLine.Length > 50 ? firstLine[..50] + "..." : firstLine;
+        }
+
+        // 查询指派用户信息
+        string? assigneeId = null;
+        string? assigneeName = null;
+        if (!string.IsNullOrEmpty(request.AssigneeUserId))
+        {
+            var assignee = await _db.Users.Find(x => x.UserId == request.AssigneeUserId).FirstOrDefaultAsync(ct);
+            if (assignee != null)
+            {
+                assigneeId = assignee.UserId;
+                assigneeName = assignee.DisplayName ?? assignee.Username;
+            }
+        }
+
         var defect = new DefectReport
         {
             Id = Guid.NewGuid().ToString("N"),
             DefectNo = defectNo,
             TemplateId = request.TemplateId,
-            Title = request.Title?.Trim(),
-            RawContent = request.Content?.Trim() ?? string.Empty,
+            Title = title,
+            RawContent = content,
             Status = DefectStatus.Draft,
+            Severity = request.Severity ?? DefectSeverity.Major,
+            Priority = request.Priority ?? DefectPriority.Medium,
             ReporterId = userId,
             ReporterName = username,
+            AssigneeId = assigneeId,
+            AssigneeName = assigneeName,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -900,6 +926,9 @@ public class CreateDefectRequest
     public string? TemplateId { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
+    public string? AssigneeUserId { get; set; }
+    public string? Severity { get; set; }
+    public string? Priority { get; set; }
 }
 
 public class UpdateDefectRequest

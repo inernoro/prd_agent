@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
@@ -18,6 +18,9 @@ import {
   Upload,
 } from 'lucide-react';
 
+const STORAGE_KEY_TEMPLATE = 'defect-agent-last-template';
+const STORAGE_KEY_ASSIGNEE = 'defect-agent-last-assignee';
+
 export function DefectSubmitPanel() {
   const {
     templates,
@@ -27,11 +30,29 @@ export function DefectSubmitPanel() {
     loadStats,
   } = useDefectStore();
 
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
-  const [assigneeUserId, setAssigneeUserId] = useState<string>('');
+  // 从 localStorage 读取上次选择
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
+    return localStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
+  });
+  const [assigneeUserId, setAssigneeUserId] = useState<string>(() => {
+    return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
+  });
   const [content, setContent] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // 当用户/模板选择变化时保存到 localStorage
+  useEffect(() => {
+    if (assigneeUserId) {
+      localStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
+    }
+  }, [assigneeUserId]);
+
+  useEffect(() => {
+    if (selectedTemplateId) {
+      localStorage.setItem(STORAGE_KEY_TEMPLATE, selectedTemplateId);
+    }
+  }, [selectedTemplateId]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -91,7 +112,7 @@ export function DefectSubmitPanel() {
       // Create defect
       const createRes = await createDefect({
         templateId: selectedTemplateId || undefined,
-        rawContent: content.trim(),
+        content: content.trim(),
         assigneeUserId,
       });
 

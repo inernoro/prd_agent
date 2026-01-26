@@ -173,7 +173,7 @@ export type GetDefectContract = (input: { id: string }) => Promise<ApiResponse<{
 
 export type CreateDefectContract = (input: {
   templateId?: string;
-  rawContent: string;
+  content: string;
   assigneeUserId: string;
   severity?: string;
   priority?: string;
@@ -182,7 +182,7 @@ export type CreateDefectContract = (input: {
 export type UpdateDefectContract = (input: {
   id: string;
   title?: string;
-  rawContent?: string;
+  content?: string;
   structuredData?: Record<string, string>;
   severity?: string;
   priority?: string;

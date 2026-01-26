@@ -6,13 +6,23 @@ import { Bug } from 'lucide-react';
 export function DefectList() {
   const { defects, loading, filter } = useDefectStore();
 
-  if (!loading && defects.length === 0) {
+  if (loading) {
+    return (
+      <GlassCard glow className="py-2 px-3">
+        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+          加载中...
+        </div>
+      </GlassCard>
+    );
+  }
+
+  if (defects.length === 0) {
     return (
       <GlassCard glow className="py-8 px-4">
         <div className="text-center">
           <Bug
             size={40}
-            style={{ color: 'var(--text-muted)', margin: '0 auto 12px' }}
+            style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.5 }}
           />
           <div
             className="text-[13px] font-medium"
@@ -34,7 +44,7 @@ export function DefectList() {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
       {defects.map((defect) => (
         <DefectCard key={defect.id} defect={defect} />
       ))}

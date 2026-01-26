@@ -1,8 +1,9 @@
 import { GlassCard } from '@/components/design/GlassCard';
+import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import type { DefectReport } from '@/services/contracts/defectAgent';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
-import { ArrowRight, Clock } from 'lucide-react';
+import { Bug, ArrowRight, Clock, Eye, Trash2 } from 'lucide-react';
 
 interface DefectCardProps {
   defect: DefectReport;
@@ -57,70 +58,137 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
+function getPreviewText(content: string | undefined | null, maxChars = 150) {
+  const raw = String(content ?? '').trim();
+  if (!raw) return '(暂无描述)';
+  if (raw.length <= maxChars) return raw;
+  return raw.slice(0, maxChars) + '...';
+}
+
 export function DefectCard({ defect }: DefectCardProps) {
   const { selectedDefectId, setSelectedDefectId } = useDefectStore();
   const isSelected = selectedDefectId === defect.id;
 
-  const title = defect.title || defect.rawContent?.slice(0, 50) || '无标题';
+  const title = defect.title || '无标题';
   const statusLabel = statusLabels[defect.status] || defect.status;
   const statusColor = statusColors[defect.status] || 'var(--text-muted)';
   const severityLabel = severityLabels[defect.severity] || defect.severity;
   const severityColor = severityColors[defect.severity] || 'var(--text-muted)';
 
   return (
-    <GlassCard
-      glow={isSelected}
-      className="p-0 overflow-hidden cursor-pointer transition-all"
-      style={{
-        border: isSelected
-          ? '1px solid rgba(214,178,106,0.4)'
-          : '1px solid rgba(255,255,255,0.06)',
-      }}
-      onClick={() => setSelectedDefectId(isSelected ? null : defect.id)}
-    >
-      <div className="px-3 py-2.5">
-        {/* Header: DefectNo + Severity + Status */}
-        <div className="flex items-center gap-2 mb-1.5">
-          <span
-            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-            style={{
-              background: 'rgba(255,255,255,0.06)',
-              color: 'var(--text-muted)',
-            }}
+    <GlassCard glow={isSelected} className="p-0 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        title={title}
+        className={[
+          'group relative cursor-pointer select-none',
+          'transition-colors',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
+          'flex flex-col h-full',
+        ].join(' ')}
+        onClick={() => setSelectedDefectId(isSelected ? null : defect.id)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setSelectedDefectId(isSelected ? null : defect.id);
+          }
+        }}
+      >
+        {/* Header: DefectNo + Title */}
+        <div className="p-3 pb-2 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Bug size={14} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+            <span
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {defect.defectNo}
+            </span>
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+              style={{ background: `${severityColor}20`, color: severityColor }}
+            >
+              {severityLabel}
+            </span>
+          </div>
+          <div
+            className="font-medium text-[13px] truncate mt-2"
+            style={{ color: 'var(--text-primary)' }}
           >
-            {defect.defectNo}
-          </span>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: `${severityColor}20`, color: severityColor }}
+            {title}
+          </div>
+        </div>
+
+        {/* Content Preview */}
+        <div className="px-3 pb-3 flex-1 min-h-0 overflow-hidden">
+          <div
+            className="h-full overflow-hidden border rounded-lg text-[11px] flex flex-col"
+            style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
           >
-            {severityLabel}
-          </span>
+            {/* Preview Text */}
+            <div
+              className="p-2 flex-1 overflow-hidden line-clamp-3"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {getPreviewText(defect.rawContent)}
+            </div>
+
+            {/* Footer: Reporter -> Assignee + Actions */}
+            <div
+              className="px-2 py-1.5 text-[10px] border-t flex items-center"
+              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+            >
+              {/* Action buttons (visible on hover) */}
+              <div
+                className={[
+                  'flex items-center gap-0.5',
+                  'opacity-0 pointer-events-none transition-opacity duration-100',
+                  'group-hover:opacity-100 group-hover:pointer-events-auto',
+                ].join(' ')}
+              >
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="h-5 w-5 p-0 rounded-md gap-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedDefectId(defect.id);
+                  }}
+                  title="查看详情"
+                >
+                  <Eye size={10} />
+                </Button>
+              </div>
+
+              {/* Reporter -> Assignee */}
+              <div className="flex-1 text-right truncate flex items-center justify-end gap-1">
+                <span className="truncate max-w-[60px]">{defect.reporterName || '未知'}</span>
+                <ArrowRight size={10} className="flex-shrink-0" />
+                <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom bar: Status + Time */}
+        <div
+          className="px-3 py-2 flex items-center justify-between border-t"
+          style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+        >
           <span
-            className="text-[10px] px-1.5 py-0.5 rounded ml-auto"
+            className="text-[10px] px-2 py-0.5 rounded-md"
             style={{ background: `${statusColor}20`, color: statusColor }}
           >
             {statusLabel}
           </span>
-        </div>
-
-        {/* Title */}
-        <div
-          className="text-[13px] font-medium truncate mb-1.5"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          {title}
-        </div>
-
-        {/* Footer: Reporter -> Assignee + Time */}
-        <div
-          className="flex items-center gap-2 text-[11px]"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          <span>{defect.reporterName || '未知'}</span>
-          <ArrowRight size={10} />
-          <span>{defect.assigneeName || '未指派'}</span>
-          <span className="ml-auto flex items-center gap-1">
+          <span
+            className="text-[10px] flex items-center gap-1"
+            style={{ color: 'var(--text-muted)' }}
+          >
             <Clock size={10} />
             {formatDate(defect.createdAt)}
           </span>

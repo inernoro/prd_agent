@@ -136,23 +136,35 @@ export function TemplateDialog() {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)' }}
-      onClick={() => setShowTemplateDialog(false)}
-    >
+    <>
+      {/* 遮罩层 */}
       <div
-        className="w-[480px] max-h-[80vh] flex flex-col rounded-xl overflow-hidden"
-        style={{ background: 'var(--bg-base)' }}
+        className="fixed inset-0 z-40"
+        style={{ background: 'rgba(0, 0, 0, 0.5)' }}
+        onClick={() => setShowTemplateDialog(false)}
+      />
+
+      {/* 弹窗内容 - 使用液态玻璃样式 */}
+      <div
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[480px] max-h-[80vh] overflow-hidden rounded-2xl flex flex-col"
+        style={{
+          background:
+            'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          boxShadow:
+            '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
-          className="flex items-center justify-between px-4 py-3 border-b"
-          style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
           <div
-            className="text-[14px] font-medium"
+            className="text-[15px] font-semibold"
             style={{ color: 'var(--text-primary)' }}
           >
             我的模板
@@ -166,7 +178,7 @@ export function TemplateDialog() {
             )}
             <button
               onClick={() => setShowTemplateDialog(false)}
-              className="p-1 rounded hover:bg-white/10 transition-colors"
+              className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
             >
               <X size={16} style={{ color: 'var(--text-muted)' }} />
             </button>
@@ -190,7 +202,7 @@ export function TemplateDialog() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="模板名称"
-                  className="w-full px-3 py-1.5 rounded-md text-[12px] outline-none"
+                  className="w-full px-3 py-2 rounded-lg text-[13px] outline-none"
                   style={{
                     background: 'rgba(255,255,255,0.06)',
                     border: '1px solid rgba(255,255,255,0.1)',
@@ -202,7 +214,7 @@ export function TemplateDialog() {
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="模板描述（可选）"
                   rows={2}
-                  className="w-full px-3 py-1.5 rounded-md text-[12px] outline-none resize-none"
+                  className="w-full px-3 py-2 rounded-lg text-[13px] outline-none resize-none"
                   style={{
                     background: 'rgba(255,255,255,0.06)',
                     border: '1px solid rgba(255,255,255,0.1)',
@@ -214,12 +226,13 @@ export function TemplateDialog() {
                     type="checkbox"
                     checked={isDefault}
                     onChange={(e) => setIsDefault(e.target.checked)}
+                    className="rounded"
                   />
                   <span style={{ color: 'var(--text-secondary)' }}>
                     设为默认模板
                   </span>
                 </label>
-                <div className="flex items-center gap-2 justify-end">
+                <div className="flex items-center gap-2 justify-end pt-2">
                   <Button variant="secondary" size="sm" onClick={cancelEdit}>
                     取消
                   </Button>
@@ -239,7 +252,7 @@ export function TemplateDialog() {
           {/* My Templates */}
           {myTemplates.length === 0 && !isCreating ? (
             <div
-              className="text-center py-8 text-[12px]"
+              className="text-center py-10 text-[13px]"
               style={{ color: 'var(--text-muted)' }}
             >
               暂无模板，点击右上角新建
@@ -249,7 +262,7 @@ export function TemplateDialog() {
               {myTemplates.map((template) => (
                 <div
                   key={template.id}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors hover:bg-white/5"
                   style={{
                     background: 'rgba(255,255,255,0.03)',
                     border: '1px solid rgba(255,255,255,0.06)',
@@ -258,14 +271,14 @@ export function TemplateDialog() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span
-                        className="text-[12px] font-medium truncate"
+                        className="text-[13px] font-medium truncate"
                         style={{ color: 'var(--text-primary)' }}
                       >
                         {template.name}
                       </span>
                       {template.isDefault && (
                         <Star
-                          size={10}
+                          size={12}
                           fill="rgba(214,178,106,0.9)"
                           style={{ color: 'rgba(214,178,106,0.9)' }}
                         />
@@ -273,7 +286,7 @@ export function TemplateDialog() {
                     </div>
                     {template.description && (
                       <div
-                        className="text-[10px] mt-0.5 truncate"
+                        className="text-[11px] mt-1 truncate"
                         style={{ color: 'var(--text-muted)' }}
                       >
                         {template.description}
@@ -283,24 +296,24 @@ export function TemplateDialog() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => startEdit(template)}
-                      className="p-1.5 rounded hover:bg-white/10 transition-colors"
+                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
                       title="编辑"
                     >
-                      <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
+                      <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
                     </button>
                     <button
-                      className="p-1.5 rounded hover:bg-white/10 transition-colors"
+                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
                       title="分享"
                     >
-                      <Share2 size={12} style={{ color: 'var(--text-muted)' }} />
+                      <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
                     </button>
                     <button
                       onClick={() => handleDelete(template)}
-                      className="p-1.5 rounded hover:bg-white/10 transition-colors"
+                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
                       title="删除"
                     >
                       <Trash2
-                        size={12}
+                        size={14}
                         style={{ color: 'rgba(255,100,100,0.8)' }}
                       />
                     </button>
@@ -315,13 +328,13 @@ export function TemplateDialog() {
             <div className="mt-4">
               <button
                 onClick={() => setShowShared(!showShared)}
-                className="flex items-center gap-2 text-[11px] mb-2"
+                className="flex items-center gap-2 text-[12px] mb-2 hover:opacity-80 transition-opacity"
                 style={{ color: 'var(--text-muted)' }}
               >
                 {showShared ? (
-                  <ChevronUp size={12} />
+                  <ChevronUp size={14} />
                 ) : (
-                  <ChevronDown size={12} />
+                  <ChevronDown size={14} />
                 )}
                 收到的分享 ({sharedTemplates.length})
               </button>
@@ -330,7 +343,7 @@ export function TemplateDialog() {
                   {sharedTemplates.map((template) => (
                     <div
                       key={template.id}
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl"
                       style={{
                         background: 'rgba(255,255,255,0.02)',
                         border: '1px solid rgba(255,255,255,0.04)',
@@ -338,13 +351,13 @@ export function TemplateDialog() {
                     >
                       <div className="flex-1 min-w-0">
                         <div
-                          className="text-[12px] truncate"
+                          className="text-[13px] truncate"
                           style={{ color: 'var(--text-secondary)' }}
                         >
                           {template.name}
                         </div>
                         <div
-                          className="text-[10px] mt-0.5"
+                          className="text-[11px] mt-1"
                           style={{ color: 'var(--text-muted)' }}
                         >
                           来自: {template.sharedFrom}
@@ -358,6 +371,6 @@ export function TemplateDialog() {
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
