@@ -1,6 +1,7 @@
 import type { ApiResponse } from '@/types/api';
 import type {
   ModelGroup,
+  ModelGroupForApp,
   CreateModelGroupRequest,
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
@@ -11,6 +12,11 @@ export interface IModelGroupsService {
    * 获取模型分组列表
    */
   getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>>;
+
+  /**
+   * 按应用标识获取模型分组列表（按优先级排序：专属池 > 默认池 > 传统配置）
+   */
+  getModelGroupsForApp(appCallerCode: string | null, modelType: string): Promise<ApiResponse<ModelGroupForApp[]>>;
 
   /**
    * 获取单个模型分组

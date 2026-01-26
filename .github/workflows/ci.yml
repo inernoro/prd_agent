@@ -120,7 +120,7 @@ jobs:
         run: pnpm tsc --noEmit
 
       - name: Run tests
-        run: pnpm test --run
+        run: pnpm test
 
       - name: Build
         run: pnpm build

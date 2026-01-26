@@ -22,7 +22,7 @@ import {
   saveVisualAgentWorkspaceCanvas,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
-import type { ModelGroup } from '@/types/modelGroup';
+import type { ModelGroupForApp } from '@/types/modelGroup';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -698,10 +698,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [imageGenPools, setImageGenPools] = useState<ModelGroup[]>([]);
+  const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
   // 将模型池转换为 Model 兼容对象，用于选择器展示
-  const poolModels = useMemo<Model[]>(() => {
+  // 扩展 Model 类型以包含来源标记
+  type ModelWithSource = Model & {
+    resolutionType?: 'DedicatedPool' | 'DefaultPool' | 'DirectModel';
+    isDedicated?: boolean;
+    isDefault?: boolean;
+    isLegacy?: boolean;
+  };
+  const poolModels = useMemo<ModelWithSource[]>(() => {
     if (imageGenPools.length === 0) return [];
     return imageGenPools
       .filter((g) => g.models && g.models.length > 0)
@@ -717,14 +724,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           isImageGen: true,
           enablePromptCache: false,
           priority: g.priority ?? 50,
-        } as Model;
+          // 来源标记
+          resolutionType: g.resolutionType,
+          isDedicated: g.isDedicated,
+          isDefault: g.isDefault,
+          isLegacy: g.isLegacy,
+        } as ModelWithSource;
       });
   }, [imageGenPools]);
 
   // 合并模型列表：优先使用模型池；如果没有池则回退到 llm_models
-  const allImageGenModels = useMemo<Model[]>(() => {
+  const allImageGenModels = useMemo<ModelWithSource[]>(() => {
     if (poolModels.length > 0) return poolModels;
-    return (models ?? []).filter((m) => m.isImageGen);
+    return (models ?? []).filter((m) => m.isImageGen) as ModelWithSource[];
   }, [poolModels, models]);
 
   const serverDefaultModel = useMemo(() => {
@@ -1647,9 +1659,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
+    // 按优先级加载模型池：appCallerCode 绑定的专属池 > 默认池 > 传统 isImageGen 配置
+    const appCallerCode = 'visual-agent.image::generation';
     Promise.all([
       getModels(),
-      modelGroupsService.getModelGroups('generation').catch(() => ({ success: false, data: [] as ModelGroup[] })),
+      modelGroupsService.getModelGroupsForApp(appCallerCode, 'generation').catch(() => ({ success: false, data: [] as ModelGroupForApp[] })),
     ])
       .then(([modelsRes, poolsRes]) => {
         if (modelsRes.success) setModels(modelsRes.data ?? []);
@@ -4966,7 +4980,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           }}
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
-                            {poolModels.length > 0 ? '绘图模型（模型池）' : '绘图模型（isImageGen）'}
+                            {(() => {
+                              const first = allImageGenModels[0];
+                              if (first?.isDedicated) return '绘图模型（专属模型池）';
+                              if (first?.isDefault) return '绘图模型（默认模型池）';
+                              if (first?.isLegacy) return '绘图模型（默认生图）';
+                              return '绘图模型';
+                            })()}
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
                             {allImageGenModels
@@ -4981,6 +5001,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
                                 const isPool = m.id.startsWith('pool_');
+                                // 根据来源类型生成标签
+                                const getSourceLabel = () => {
+                                  if (m.isDedicated) return '专属池';
+                                  if (m.isDefault) return '默认池';
+                                  if (m.isLegacy) return '默认生图';
+                                  if (isPool) return '模型池';
+                                  return disabled ? '已禁用' : '已启用';
+                                };
+                                const sourceLabel = getSourceLabel();
                                 return (
                                   <button
                                     key={m.id}
@@ -4993,12 +5022,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     }}
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
-                                      <div className="min-w-0">
-                                        <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
-                                          {m.name || m.modelName}
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
+                                            {m.name || m.modelName}
+                                          </div>
+                                          {m.isDedicated && (
+                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.15)', color: 'rgb(147,51,234)' }}>
+                                              专属
+                                            </span>
+                                          )}
+                                          {m.isDefault && !m.isDedicated && (
+                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.15)', color: 'rgb(34,197,94)' }}>
+                                              默认
+                                            </span>
+                                          )}
+                                          {m.isLegacy && (
+                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.15)', color: 'rgb(180,140,20)' }}>
+                                              传统
+                                            </span>
+                                          )}
                                         </div>
                                         <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(0,0,0,0.40)' }}>
-                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : '已启用')}
+                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
                                         </div>
                                       </div>
                                       <div className="ml-auto shrink-0">{using ? <Check size={16} color="#0b0b0f" /> : null}</div>
