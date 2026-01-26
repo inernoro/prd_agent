@@ -1,0 +1,235 @@
+import type { ApiResponse } from '@/types/api';
+
+/**
+ * 缺陷模板字段
+ */
+export interface DefectTemplateField {
+  name: string;
+  label: string;
+  type: 'text' | 'textarea' | 'select' | 'number';
+  required: boolean;
+  options?: string[];
+  placeholder?: string;
+}
+
+/**
+ * 缺陷模板
+ */
+export interface DefectTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  requiredFields: DefectTemplateField[];
+  aiSystemPrompt?: string;
+  isDefault: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  // 分享相关
+  sharedWith?: string[];
+  sharedFrom?: string;
+}
+
+/**
+ * 缺陷附件
+ */
+export interface DefectAttachment {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  cosKey: string;
+  url?: string;
+  uploadedAt: string;
+}
+
+/**
+ * 缺陷报告
+ */
+export interface DefectReport {
+  id: string;
+  defectNo: string;
+  templateId?: string;
+  title?: string;
+  rawContent: string;
+  structuredData: Record<string, string>;
+  attachments: DefectAttachment[];
+  status: string;
+  severity: string;
+  priority: string;
+  reporterUserId: string;
+  reporterName?: string;
+  assigneeUserId?: string;
+  assigneeName?: string;
+  missingFields?: string[];
+  resolvedAt?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * 缺陷消息
+ */
+export interface DefectMessage {
+  id: string;
+  defectId: string;
+  seq: number;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  attachmentIds?: string[];
+  extractedFields?: Record<string, string>;
+  createdAt: string;
+}
+
+/**
+ * 缺陷状态常量
+ */
+export const DefectStatus = {
+  Draft: 'draft',
+  Pending: 'pending',
+  Working: 'working',
+  Resolved: 'resolved',
+  Rejected: 'rejected',
+  Closed: 'closed',
+} as const;
+
+/**
+ * 缺陷严重程度
+ */
+export const DefectSeverity = {
+  Critical: 'critical',
+  Major: 'major',
+  Minor: 'minor',
+  Trivial: 'trivial',
+} as const;
+
+/**
+ * 缺陷优先级
+ */
+export const DefectPriority = {
+  Urgent: 'urgent',
+  High: 'high',
+  Medium: 'medium',
+  Low: 'low',
+} as const;
+
+/**
+ * 缺陷统计
+ */
+export interface DefectStats {
+  total: number;
+  byStatus: Record<string, number>;
+  bySeverity: Record<string, number>;
+  mySubmitted: number;
+  myAssigned: number;
+}
+
+/**
+ * 用户简要信息
+ */
+export interface DefectUser {
+  id: string;
+  username: string;
+  displayName?: string;
+}
+
+// ========== Contract Types ==========
+
+export type ListDefectTemplatesContract = () => Promise<ApiResponse<{ items: DefectTemplate[] }>>;
+
+export type CreateDefectTemplateContract = (input: {
+  name: string;
+  description?: string;
+  requiredFields: DefectTemplateField[];
+  aiSystemPrompt?: string;
+  isDefault?: boolean;
+}) => Promise<ApiResponse<{ template: DefectTemplate }>>;
+
+export type UpdateDefectTemplateContract = (input: {
+  id: string;
+  name?: string;
+  description?: string;
+  requiredFields?: DefectTemplateField[];
+  aiSystemPrompt?: string;
+  isDefault?: boolean;
+}) => Promise<ApiResponse<{ template: DefectTemplate }>>;
+
+export type DeleteDefectTemplateContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type ShareDefectTemplateContract = (input: {
+  id: string;
+  targetUserIds: string[];
+}) => Promise<ApiResponse<{ shared: boolean }>>;
+
+export type ListDefectsContract = (input?: {
+  filter?: 'submitted' | 'assigned' | 'all';
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) => Promise<ApiResponse<{ items: DefectReport[]; total: number }>>;
+
+export type GetDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type CreateDefectContract = (input: {
+  templateId?: string;
+  rawContent: string;
+  assigneeUserId: string;
+  severity?: string;
+  priority?: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type UpdateDefectContract = (input: {
+  id: string;
+  title?: string;
+  rawContent?: string;
+  structuredData?: Record<string, string>;
+  severity?: string;
+  priority?: string;
+  assigneeUserId?: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type DeleteDefectContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type SubmitDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type ProcessDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type ResolveDefectContract = (input: {
+  id: string;
+  resolution?: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type RejectDefectContract = (input: {
+  id: string;
+  reason?: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type CloseDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type ReopenDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type GetDefectMessagesContract = (input: {
+  id: string;
+  afterSeq?: number;
+}) => Promise<ApiResponse<{ items: DefectMessage[] }>>;
+
+export type SendDefectMessageContract = (input: {
+  id: string;
+  content: string;
+  attachmentIds?: string[];
+}) => Promise<ApiResponse<{ message: DefectMessage }>>;
+
+export type AddDefectAttachmentContract = (input: {
+  id: string;
+  file: File;
+}) => Promise<ApiResponse<{ attachment: DefectAttachment }>>;
+
+export type DeleteDefectAttachmentContract = (input: {
+  id: string;
+  attachmentId: string;
+}) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type GetDefectStatsContract = () => Promise<ApiResponse<DefectStats>>;
+
+export type GetDefectUsersContract = () => Promise<ApiResponse<{ items: DefectUser[] }>>;

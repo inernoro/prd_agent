@@ -142,6 +142,30 @@ import type {
   UpdateLiteraryPromptContract,
   DeleteLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
+import type {
+  ListDefectTemplatesContract,
+  CreateDefectTemplateContract,
+  UpdateDefectTemplateContract,
+  DeleteDefectTemplateContract,
+  ShareDefectTemplateContract,
+  ListDefectsContract,
+  GetDefectContract,
+  CreateDefectContract,
+  UpdateDefectContract,
+  DeleteDefectContract,
+  SubmitDefectContract,
+  ProcessDefectContract,
+  ResolveDefectContract,
+  RejectDefectContract,
+  CloseDefectContract,
+  ReopenDefectContract,
+  GetDefectMessagesContract,
+  SendDefectMessageContract,
+  AddDefectAttachmentContract,
+  DeleteDefectAttachmentContract,
+  GetDefectStatsContract,
+  GetDefectUsersContract,
+} from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
@@ -318,6 +342,30 @@ import {
   updateLiteraryPromptReal,
   deleteLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
+import {
+  listDefectTemplatesReal,
+  createDefectTemplateReal,
+  updateDefectTemplateReal,
+  deleteDefectTemplateReal,
+  shareDefectTemplateReal,
+  listDefectsReal,
+  getDefectReal,
+  createDefectReal,
+  updateDefectReal,
+  deleteDefectReal,
+  submitDefectReal,
+  processDefectReal,
+  resolveDefectReal,
+  rejectDefectReal,
+  closeDefectReal,
+  reopenDefectReal,
+  getDefectMessagesReal,
+  sendDefectMessageReal,
+  addDefectAttachmentReal,
+  deleteDefectAttachmentReal,
+  getDefectStatsReal,
+  getDefectUsersReal,
+} from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
@@ -531,6 +579,30 @@ export const listLiteraryPrompts: ListLiteraryPromptsContract = withAuth(listLit
 export const createLiteraryPrompt: CreateLiteraryPromptContract = withAuth(createLiteraryPromptReal);
 export const updateLiteraryPrompt: UpdateLiteraryPromptContract = withAuth(updateLiteraryPromptReal);
 export const deleteLiteraryPrompt: DeleteLiteraryPromptContract = withAuth(deleteLiteraryPromptReal);
+
+// Defect Agent
+export const listDefectTemplates: ListDefectTemplatesContract = withAuth(listDefectTemplatesReal);
+export const createDefectTemplate: CreateDefectTemplateContract = withAuth(createDefectTemplateReal);
+export const updateDefectTemplate: UpdateDefectTemplateContract = withAuth(updateDefectTemplateReal);
+export const deleteDefectTemplate: DeleteDefectTemplateContract = withAuth(deleteDefectTemplateReal);
+export const shareDefectTemplate: ShareDefectTemplateContract = withAuth(shareDefectTemplateReal);
+export const listDefects: ListDefectsContract = withAuth(listDefectsReal);
+export const getDefect: GetDefectContract = withAuth(getDefectReal);
+export const createDefect: CreateDefectContract = withAuth(createDefectReal);
+export const updateDefect: UpdateDefectContract = withAuth(updateDefectReal);
+export const deleteDefect: DeleteDefectContract = withAuth(deleteDefectReal);
+export const submitDefect: SubmitDefectContract = withAuth(submitDefectReal);
+export const processDefect: ProcessDefectContract = withAuth(processDefectReal);
+export const resolveDefect: ResolveDefectContract = withAuth(resolveDefectReal);
+export const rejectDefect: RejectDefectContract = withAuth(rejectDefectReal);
+export const closeDefect: CloseDefectContract = withAuth(closeDefectReal);
+export const reopenDefect: ReopenDefectContract = withAuth(reopenDefectReal);
+export const getDefectMessages: GetDefectMessagesContract = withAuth(getDefectMessagesReal);
+export const sendDefectMessage: SendDefectMessageContract = withAuth(sendDefectMessageReal);
+export const addDefectAttachment: AddDefectAttachmentContract = withAuth(addDefectAttachmentReal);
+export const deleteDefectAttachment: DeleteDefectAttachmentContract = withAuth(deleteDefectAttachmentReal);
+export const getDefectStats: GetDefectStatsContract = withAuth(getDefectStatsReal);
+export const getDefectUsers: GetDefectUsersContract = withAuth(getDefectUsersReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();
