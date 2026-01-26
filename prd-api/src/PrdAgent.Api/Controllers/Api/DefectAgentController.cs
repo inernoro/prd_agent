@@ -982,8 +982,8 @@ public class DefectAgentController : ControllerBase
                 }
             }
 
-            // 获取 LLM 客户端
-            var client = await _scheduler.GetClientAsync($"{AppKey}.polish", "chat", ct);
+            // 获取 LLM 客户端（使用注册的 AppCallerCode）
+            var client = await _scheduler.GetClientAsync(AppCallerRegistry.DefectAgent.Polish.Chat, "chat", ct);
 
             // 调用 LLM
             var messages = new List<LLMMessage>

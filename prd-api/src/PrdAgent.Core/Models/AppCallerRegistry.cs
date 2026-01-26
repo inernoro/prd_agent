@@ -206,6 +206,17 @@ public static class DefectAgent
         )]
         public const string Chat = "defect-agent.extract::chat";
     }
+
+    public static class Polish
+    {
+        [AppCallerMetadata(
+            "缺陷描述润色",
+            "AI 润色/填充缺陷描述内容",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Polish"
+        )]
+        public const string Chat = "defect-agent.polish::chat";
+    }
 }
 
 /// <summary>
