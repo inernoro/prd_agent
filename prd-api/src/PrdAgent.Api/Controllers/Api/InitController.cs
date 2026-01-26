@@ -230,7 +230,7 @@ public class InitController : ControllerBase
                     ModelType = mt,
                     Purpose = $"用于{def.DisplayName}",
                     IsRequired = true,
-                    ModelGroupId = null // 使用默认分组
+                    ModelGroupIds = new List<string>() // 空列表表示使用默认分组
                 }).ToList(),
                 IsSystemDefault = true,  // 标记为系统默认
                 IsAutoRegistered = false,

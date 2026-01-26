@@ -319,13 +319,14 @@ public class RoundedRectangleTests
         }
         catch (FontFamilyNotFoundException)
         {
-            var fallbackFamily = SystemFonts.Collection.Families.FirstOrDefault();
-            if (fallbackFamily is null)
+            var availableFamilies = SystemFonts.Collection.Families.ToList();
+            if (availableFamilies.Count == 0)
             {
                 _output.WriteLine("No system fonts available; skip watermark simulation.");
                 return;
             }
 
+            var fallbackFamily = availableFamilies[0];
             _output.WriteLine($"Arial not found; fallback to {fallbackFamily.Name}.");
             font = fallbackFamily.CreateFont(fontSize);
         }
