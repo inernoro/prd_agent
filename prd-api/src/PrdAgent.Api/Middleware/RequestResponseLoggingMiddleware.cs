@@ -223,10 +223,9 @@ public class RequestResponseLoggingMiddleware
                 : LogLevel.Information;
 
         // 单行输出（控制台更清爽）
-        // 示例：
-        // 完成 GET http://localhost:*/api/v1/config/models?page=1 - 200 null 3ms
+        // 示例：GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
         _logger.Log(level,
-            "完成 {Method} {Url} - {StatusCode} null {DurationMs}ms",
+            "{Method} {Url} - {StatusCode} {DurationMs}ms",
             method,
             absoluteUrl,
             statusCode,
