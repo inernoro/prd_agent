@@ -142,3 +142,15 @@ public static class DefectSeverity
 
     public static readonly string[] All = { Blocker, Critical, Major, Minor, Suggestion };
 }
+
+/// <summary>
+/// 缺陷优先级常量
+/// </summary>
+public static class DefectPriority
+{
+    public const string High = "high";
+    public const string Medium = "medium";
+    public const string Low = "low";
+
+    public static readonly string[] All = { High, Medium, Low };
+}
