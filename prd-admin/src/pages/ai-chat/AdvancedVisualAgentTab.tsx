@@ -4980,7 +4980,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           }}
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
-                            绘图模型
+                            {(() => {
+                              const first = allImageGenModels[0];
+                              if (first?.isDedicated) return '绘图模型（专属模型池）';
+                              if (first?.isDefault) return '绘图模型（默认模型池）';
+                              if (first?.isLegacy) return '绘图模型（默认生图）';
+                              return '绘图模型';
+                            })()}
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
                             {allImageGenModels
