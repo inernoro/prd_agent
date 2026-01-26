@@ -46,13 +46,16 @@ public class DefectAgentController : ControllerBase
     #region 模板管理
 
     /// <summary>
-    /// 获取模板列表
+    /// 获取模板列表（个人模板 + 收到的分享）
     /// </summary>
     [HttpGet("templates")]
     public async Task<IActionResult> ListTemplates(CancellationToken ct)
     {
+        var userId = GetUserId();
+
+        // 获取自己创建的模板 + 分享给自己的模板
         var items = await _db.DefectTemplates
-            .Find(FilterDefinition<DefectTemplate>.Empty)
+            .Find(x => x.CreatedBy == userId || (x.SharedWith != null && x.SharedWith.Contains(userId)))
             .SortByDescending(x => x.IsDefault)
             .ThenByDescending(x => x.CreatedAt)
             .ToListAsync(ct);
@@ -80,14 +83,11 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 创建模板（需要管理权限）
+    /// 创建模板（个人模板）
     /// </summary>
     [HttpPost("templates")]
     public async Task<IActionResult> CreateTemplate([FromBody] CreateTemplateRequest request, CancellationToken ct)
     {
-        if (!HasManagePermission())
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理模板"));
-
         var userId = GetUserId();
 
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -123,17 +123,19 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 更新模板（需要管理权限）
+    /// 更新模板（只能更新自己的模板）
     /// </summary>
     [HttpPut("templates/{id}")]
     public async Task<IActionResult> UpdateTemplate(string id, [FromBody] UpdateTemplateRequest request, CancellationToken ct)
     {
-        if (!HasManagePermission())
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理模板"));
+        var userId = GetUserId();
 
         var template = await _db.DefectTemplates.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (template == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "模板不存在"));
+
+        if (template.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能修改自己创建的模板"));
 
         if (!string.IsNullOrWhiteSpace(request.Name))
             template.Name = request.Name.Trim();
@@ -164,20 +166,19 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 删除模板（需要管理权限）
+    /// 删除模板（只能删除自己的模板）
     /// </summary>
     [HttpDelete("templates/{id}")]
     public async Task<IActionResult> DeleteTemplate(string id, CancellationToken ct)
     {
-        if (!HasManagePermission())
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理模板"));
+        var userId = GetUserId();
 
         var template = await _db.DefectTemplates.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (template == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "模板不存在"));
 
-        if (template.IsDefault)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "默认模板不能删除，请先设置其他模板为默认"));
+        if (template.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能删除自己创建的模板"));
 
         await _db.DefectTemplates.DeleteOneAsync(x => x.Id == id, ct);
 
@@ -846,6 +847,29 @@ public class DefectAgentController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+    }
+
+    #endregion
+
+    #region 用户查询
+
+    /// <summary>
+    /// 获取用户列表（用于选择提交对象）
+    /// </summary>
+    [HttpGet("users")]
+    public async Task<IActionResult> GetUsers(CancellationToken ct)
+    {
+        var users = await _db.Users
+            .Find(x => x.Status == UserStatus.Active && x.UserType == UserType.Human)
+            .Project(x => new
+            {
+                id = x.UserId,
+                username = x.Username,
+                displayName = x.DisplayName
+            })
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = users }));
     }
 
     #endregion

@@ -512,4 +512,178 @@ public class DefectAgentTests
     }
 
     #endregion
+
+    #region Template Ownership Tests
+
+    [Fact]
+    public void DefectTemplate_CreatedBy_ShouldTrackOwner()
+    {
+        // Arrange & Act
+        var template = new DefectTemplate
+        {
+            Name = "我的模板",
+            CreatedBy = "user123"
+        };
+
+        // Assert
+        Assert.Equal("user123", template.CreatedBy);
+    }
+
+    [Fact]
+    public void DefectTemplate_SharedWith_ShouldBeNullByDefault()
+    {
+        // Arrange & Act
+        var template = new DefectTemplate();
+
+        // Assert
+        Assert.Null(template.SharedWith);
+    }
+
+    [Fact]
+    public void DefectTemplate_ShareToUsers_ShouldWork()
+    {
+        // Arrange
+        var template = new DefectTemplate
+        {
+            Name = "共享模板",
+            CreatedBy = "owner123",
+            SharedWith = new List<string>()
+        };
+
+        // Act
+        template.SharedWith.Add("user456");
+        template.SharedWith.Add("user789");
+
+        // Assert
+        Assert.Equal(2, template.SharedWith.Count);
+        Assert.Contains("user456", template.SharedWith);
+        Assert.Contains("user789", template.SharedWith);
+    }
+
+    [Fact]
+    public void DefectTemplate_CheckOwnership_ShouldMatchCreatedBy()
+    {
+        // Arrange
+        var template = new DefectTemplate
+        {
+            Name = "测试模板",
+            CreatedBy = "owner123"
+        };
+
+        // Act & Assert
+        Assert.True(template.CreatedBy == "owner123");
+        Assert.False(template.CreatedBy == "other_user");
+    }
+
+    [Fact]
+    public void DefectTemplate_CheckSharedAccess_ShouldWork()
+    {
+        // Arrange
+        var template = new DefectTemplate
+        {
+            CreatedBy = "owner123",
+            SharedWith = new List<string> { "user456", "user789" }
+        };
+
+        // Act & Assert
+        // Owner has access
+        Assert.True(template.CreatedBy == "owner123");
+
+        // Shared users have access
+        Assert.Contains("user456", template.SharedWith);
+        Assert.Contains("user789", template.SharedWith);
+
+        // Non-shared user doesn't have access
+        Assert.DoesNotContain("user999", template.SharedWith);
+    }
+
+    #endregion
+
+    #region Defect Assignment Tests
+
+    [Fact]
+    public void DefectReport_AssignToUser_ShouldWork()
+    {
+        // Arrange
+        var defect = new DefectReport
+        {
+            ReporterId = "reporter123",
+            ReporterName = "提交人"
+        };
+
+        // Act
+        defect.AssigneeId = "assignee456";
+        defect.AssigneeName = "处理人";
+
+        // Assert
+        Assert.Equal("reporter123", defect.ReporterId);
+        Assert.Equal("assignee456", defect.AssigneeId);
+        Assert.NotEqual(defect.ReporterId, defect.AssigneeId);
+    }
+
+    [Fact]
+    public void DefectReport_SelfAssign_ShouldBeAllowed()
+    {
+        // Arrange & Act
+        var defect = new DefectReport
+        {
+            ReporterId = "user123",
+            ReporterName = "张三",
+            AssigneeId = "user123",
+            AssigneeName = "张三"
+        };
+
+        // Assert - 可以提交给自己
+        Assert.Equal(defect.ReporterId, defect.AssigneeId);
+    }
+
+    [Fact]
+    public void DefectReport_ChangeAssignee_ShouldWork()
+    {
+        // Arrange
+        var defect = new DefectReport
+        {
+            AssigneeId = "user1",
+            AssigneeName = "用户1",
+            Status = DefectStatus.Assigned
+        };
+
+        // Act - 重新指派
+        defect.AssigneeId = "user2";
+        defect.AssigneeName = "用户2";
+
+        // Assert
+        Assert.Equal("user2", defect.AssigneeId);
+        Assert.Equal("用户2", defect.AssigneeName);
+    }
+
+    #endregion
+
+    #region Priority Tests
+
+    [Fact]
+    public void DefectPriority_All_ShouldContainAllPriorities()
+    {
+        // Assert
+        Assert.Contains(DefectPriority.Urgent, DefectPriority.All);
+        Assert.Contains(DefectPriority.High, DefectPriority.All);
+        Assert.Contains(DefectPriority.Medium, DefectPriority.All);
+        Assert.Contains(DefectPriority.Low, DefectPriority.All);
+        Assert.Equal(4, DefectPriority.All.Length);
+    }
+
+    [Fact]
+    public void DefectReport_SetPriority_ShouldWork()
+    {
+        // Arrange
+        var defect = new DefectReport();
+
+        // Act
+        defect.Priority = DefectPriority.Urgent;
+
+        // Assert
+        Assert.Equal(DefectPriority.Urgent, defect.Priority);
+    }
+
+    #endregion
 }
