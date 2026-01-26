@@ -1,32 +1,38 @@
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 调度器返回结果，包含客户端和模型池信息
+/// 模型解析类型（调用大模型的方式）
 /// </summary>
+public enum ModelResolutionType
+{
+    /// <summary>直连单模型（传统配置，未使用模型池）</summary>
+    DirectModel = 0,
+    /// <summary>默认模型池（IsDefaultForType = true）</summary>
+    DefaultPool = 1,
+    /// <summary>专属模型池（应用绑定的模型池，IsDefaultForType = false）</summary>
+    DedicatedPool = 2
+}
+
 /// <summary>
 /// 调度器返回结果，包含客户端和模型池信息
-/// - 专属模型池：ModelGroupId/ModelGroupName 有值，IsDefaultModelGroup = false
-/// - 默认模型池：ModelGroupId/ModelGroupName 有值，IsDefaultModelGroup = true
-/// - 直连单模型：ModelGroupId/ModelGroupName 为 null，IsDefaultModelGroup = null
 /// </summary>
 public record ScheduledClientResult(
     ILLMClient Client,
+    /// <summary>模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）</summary>
+    ModelResolutionType ResolutionType,
     string? ModelGroupId,
-    string? ModelGroupName,
-    bool? IsDefaultModelGroup);
+    string? ModelGroupName);
 
 /// <summary>
 /// 模型解析结果（不创建客户端，仅返回模型信息）
 /// </summary>
 public record ResolvedModelInfo(
-    /// <summary>模型来源：pool（模型池）、legacy（传统配置）</summary>
-    string Source,
+    /// <summary>模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）</summary>
+    ModelResolutionType ResolutionType,
     /// <summary>模型池ID（如果来自模型池）</summary>
     string? ModelGroupId,
     /// <summary>模型池名称（如果来自模型池）</summary>
     string? ModelGroupName,
-    /// <summary>是否为该类型的默认模型池</summary>
-    bool IsDefaultForType,
     /// <summary>平台ID</summary>
     string PlatformId,
     /// <summary>平台名称</summary>

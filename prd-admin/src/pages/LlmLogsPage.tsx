@@ -1320,17 +1320,18 @@ export default function LlmLogsPage() {
                       <div className="mt-1 flex items-center gap-2 min-w-0">
                         {/* 模型池标签：专属模型池 / 默认模型池 / 直连单模型（三者互斥） */}
                         {(() => {
-                          const groupId = it.modelGroupId || '';
                           const groupName = (it.modelGroupName || '').trim();
-                          const isDefault = it.isDefaultModelGroup;
+                          // modelResolutionType: 0=直连单模型, 1=默认模型池, 2=专属模型池
+                          const resolutionType = it.modelResolutionType;
                           const b = requestTypeToBadge(it.requestType);
 
-                          // 三种情况判断：
-                          // 1. 直连单模型：ModelGroupId/ModelGroupName 为空 且 isDefaultModelGroup 为 null
-                          // 2. 默认模型池：有 ModelGroupName 且 isDefaultModelGroup === true
-                          // 3. 专属模型池：有 ModelGroupName 且 isDefaultModelGroup === false
+                          // 优先使用新字段 modelResolutionType，兼容旧数据使用 isDefaultModelGroup
+                          const effectiveType = resolutionType ?? (
+                            it.isDefaultModelGroup === null ? 0 :
+                            it.isDefaultModelGroup === true ? 1 : 2
+                          );
 
-                          if (!groupId && !groupName && isDefault === null) {
+                          if (effectiveType === 0) {
                             // 直连单模型
                             return (
                               <button
@@ -1351,7 +1352,7 @@ export default function LlmLogsPage() {
                                 直连单模型
                               </button>
                             );
-                          } else if (isDefault === true && groupName) {
+                          } else if (effectiveType === 1) {
                             // 默认模型池
                             return (
                               <button
@@ -1368,7 +1369,7 @@ export default function LlmLogsPage() {
                                 默认模型池：{groupName}
                               </button>
                             );
-                          } else if (isDefault === false && groupName) {
+                          } else if (effectiveType === 2) {
                             // 专属模型池
                             return (
                               <button
