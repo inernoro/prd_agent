@@ -62,6 +62,8 @@ export interface DefectReport {
   assigneeUserId?: string;
   assigneeName?: string;
   missingFields?: string[];
+  resolution?: string;
+  rejectReason?: string;
   resolvedAt?: string;
   closedAt?: string;
   createdAt: string;

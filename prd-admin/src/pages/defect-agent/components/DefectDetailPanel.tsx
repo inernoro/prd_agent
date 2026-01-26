@@ -1,14 +1,15 @@
 import { useMemo } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import {
+  deleteDefect,
   processDefect,
   resolveDefect,
   rejectDefect,
   closeDefect,
 } from '@/services';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import {
   X,
@@ -20,6 +21,8 @@ import {
   XCircle,
   Archive,
   ExternalLink,
+  Trash2,
+  Bug,
 } from 'lucide-react';
 
 const statusLabels: Record<string, string> = {
@@ -31,11 +34,27 @@ const statusLabels: Record<string, string> = {
   [DefectStatus.Closed]: '已关闭',
 };
 
+const statusColors: Record<string, string> = {
+  [DefectStatus.Draft]: 'rgba(150,150,150,0.9)',
+  [DefectStatus.Pending]: 'rgba(255,180,70,0.9)',
+  [DefectStatus.Working]: 'rgba(100,180,255,0.9)',
+  [DefectStatus.Resolved]: 'rgba(100,200,120,0.9)',
+  [DefectStatus.Rejected]: 'rgba(255,100,100,0.9)',
+  [DefectStatus.Closed]: 'rgba(120,120,120,0.9)',
+};
+
 const severityLabels: Record<string, string> = {
   [DefectSeverity.Critical]: '致命',
   [DefectSeverity.Major]: '严重',
   [DefectSeverity.Minor]: '一般',
   [DefectSeverity.Trivial]: '轻微',
+};
+
+const severityColors: Record<string, string> = {
+  [DefectSeverity.Critical]: 'rgba(255,80,80,0.9)',
+  [DefectSeverity.Major]: 'rgba(255,140,60,0.9)',
+  [DefectSeverity.Minor]: 'rgba(255,200,80,0.9)',
+  [DefectSeverity.Trivial]: 'rgba(150,200,100,0.9)',
 };
 
 function formatDateTime(iso: string | null | undefined) {
@@ -52,6 +71,7 @@ export function DefectDetailPanel() {
     selectedDefectId,
     setSelectedDefectId,
     updateDefectInList,
+    removeDefectFromList,
     loadStats,
   } = useDefectStore();
 
@@ -60,18 +80,28 @@ export function DefectDetailPanel() {
     [defects, selectedDefectId]
   );
 
-  if (!defect) {
-    return (
-      <GlassCard glow className="h-full flex items-center justify-center">
-        <div
-          className="text-[12px]"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          选择一个缺陷查看详情
-        </div>
-      </GlassCard>
-    );
-  }
+  if (!defect) return null;
+
+  const handleClose = () => setSelectedDefectId(null);
+
+  const handleDelete = async () => {
+    const confirmed = await systemDialog.confirm({
+      title: '删除缺陷',
+      message: `确定要删除缺陷「${defect.defectNo}」吗？此操作不可恢复。`,
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+
+    const res = await deleteDefect({ id: defect.id });
+    if (res.success) {
+      removeDefectFromList(defect.id);
+      toast.success('缺陷已删除');
+      loadStats();
+    } else {
+      toast.error(res.error?.message || '删除失败');
+    }
+  };
 
   const handleProcess = async () => {
     const res = await processDefect({ id: defect.id });
@@ -96,7 +126,16 @@ export function DefectDetailPanel() {
   };
 
   const handleReject = async () => {
-    const res = await rejectDefect({ id: defect.id, reason: '无法复现' });
+    const reason = await systemDialog.prompt({
+      title: '驳回缺陷',
+      message: '请输入驳回原因：',
+      placeholder: '如：无法复现、信息不足等',
+      confirmText: '驳回',
+      cancelText: '取消',
+    });
+    if (!reason) return;
+
+    const res = await rejectDefect({ id: defect.id, reason });
     if (res.success && res.data) {
       updateDefectInList(res.data.defect);
       toast.success('已驳回');
@@ -106,7 +145,7 @@ export function DefectDetailPanel() {
     }
   };
 
-  const handleClose = async () => {
+  const handleCloseDefect = async () => {
     const res = await closeDefect({ id: defect.id });
     if (res.success && res.data) {
       updateDefectInList(res.data.defect);
@@ -118,192 +157,289 @@ export function DefectDetailPanel() {
   };
 
   // Determine available actions based on status
+  const canDelete = defect.status === DefectStatus.Draft;
   const canProcess = defect.status === DefectStatus.Pending;
   const canResolve = defect.status === DefectStatus.Working;
   const canReject =
     defect.status === DefectStatus.Pending ||
     defect.status === DefectStatus.Working;
-  const canClose =
+  const canCloseDefect =
     defect.status === DefectStatus.Resolved ||
     defect.status === DefectStatus.Rejected;
 
+  const statusLabel = statusLabels[defect.status] || defect.status;
+  const statusColor = statusColors[defect.status] || 'var(--text-muted)';
+  const severityLabel = severityLabels[defect.severity] || defect.severity;
+  const severityColor = severityColors[defect.severity] || 'var(--text-muted)';
+
   return (
-    <GlassCard glow className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
+    <>
+      {/* 遮罩层 */}
       <div
-        className="flex items-center justify-between px-3 py-2.5 border-b flex-shrink-0"
-        style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+        className="fixed inset-0 z-40"
+        style={{ background: 'rgba(0, 0, 0, 0.5)' }}
+        onClick={handleClose}
+      />
+
+      {/* 弹窗内容 - 液态玻璃样式 */}
+      <div
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[560px] max-h-[85vh] overflow-hidden rounded-2xl flex flex-col"
+        style={{
+          background:
+            'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          boxShadow:
+            '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+        }}
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2">
-          <span
-            className="text-[11px] font-mono px-1.5 py-0.5 rounded"
-            style={{
-              background: 'rgba(255,255,255,0.06)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            {defect.defectNo}
-          </span>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{
-              background: 'rgba(214,178,106,0.15)',
-              color: 'rgba(214,178,106,0.9)',
-            }}
-          >
-            {statusLabels[defect.status] || defect.status}
-          </span>
-        </div>
-        <button
-          onClick={() => setSelectedDefectId(null)}
-          className="p-1 rounded hover:bg-white/10 transition-colors"
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
-          <X size={14} style={{ color: 'var(--text-muted)' }} />
-        </button>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3">
-        {/* Title */}
-        <div>
-          <div
-            className="text-[10px] mb-1"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            标题
-          </div>
-          <div
-            className="text-[13px] font-medium"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            {defect.title || defect.rawContent?.slice(0, 50) || '无标题'}
-          </div>
-        </div>
-
-        {/* Meta */}
-        <div className="flex items-center gap-4 text-[11px]">
-          <div className="flex items-center gap-1.5">
-            <span style={{ color: 'var(--text-muted)' }}>严重程度:</span>
-            <span style={{ color: 'var(--text-secondary)' }}>
-              {severityLabels[defect.severity] || defect.severity}
+          <div className="flex items-center gap-3">
+            <Bug size={18} style={{ color: 'var(--accent-primary)' }} />
+            <span
+              className="text-[12px] font-mono px-2 py-1 rounded"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {defect.defectNo}
+            </span>
+            <span
+              className="text-[11px] px-2 py-1 rounded"
+              style={{ background: `${statusColor}20`, color: statusColor }}
+            >
+              {statusLabel}
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span style={{ color: 'var(--text-muted)' }}>
-              {defect.reporterName}
-            </span>
-            <ArrowRight size={10} style={{ color: 'var(--text-muted)' }} />
-            <span style={{ color: 'var(--text-secondary)' }}>
-              {defect.assigneeName || '未指派'}
-            </span>
-          </div>
+          <button
+            onClick={handleClose}
+            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          >
+            <X size={16} style={{ color: 'var(--text-muted)' }} />
+          </button>
         </div>
 
-        {/* Description */}
-        <div>
-          <div
-            className="text-[10px] mb-1"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            描述
-          </div>
-          <div
-            className="text-[12px] whitespace-pre-wrap p-2 rounded"
-            style={{
-              background: 'rgba(255,255,255,0.03)',
-              color: 'var(--text-secondary)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
-          >
-            {defect.rawContent || '(无描述)'}
-          </div>
-        </div>
-
-        {/* Attachments */}
-        {defect.attachments && defect.attachments.length > 0 && (
+        {/* Content */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Title */}
           <div>
             <div
-              className="text-[10px] mb-1 flex items-center gap-1"
+              className="text-[16px] font-semibold leading-relaxed"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {defect.title || '无标题'}
+            </div>
+          </div>
+
+          {/* Meta Info */}
+          <div
+            className="flex flex-wrap items-center gap-4 text-[12px] p-3 rounded-xl"
+            style={{ background: 'rgba(255,255,255,0.03)' }}
+          >
+            <div className="flex items-center gap-2">
+              <span style={{ color: 'var(--text-muted)' }}>严重程度</span>
+              <span
+                className="px-2 py-0.5 rounded"
+                style={{ background: `${severityColor}20`, color: severityColor }}
+              >
+                {severityLabel}
+              </span>
+            </div>
+            <div
+              className="w-px h-4"
+              style={{ background: 'rgba(255,255,255,0.1)' }}
+            />
+            <div className="flex items-center gap-2">
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {defect.reporterName || '未知'}
+              </span>
+              <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />
+              <span style={{ color: 'var(--text-primary)' }}>
+                {defect.assigneeName || '未指派'}
+              </span>
+            </div>
+          </div>
+
+          {/* Description */}
+          <div>
+            <div
+              className="text-[11px] mb-2 font-medium"
               style={{ color: 'var(--text-muted)' }}
             >
-              <Paperclip size={10} />
-              附件 ({defect.attachments.length})
+              问题描述
             </div>
-            <div className="flex flex-wrap gap-2">
-              {defect.attachments.map((att) => (
-                <a
-                  key={att.id}
-                  href={att.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] hover:bg-white/10 transition-colors"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <Paperclip size={10} />
-                  <span className="max-w-[120px] truncate">{att.fileName}</span>
-                  <ExternalLink size={10} />
-                </a>
-              ))}
+            <div
+              className="text-[13px] leading-relaxed whitespace-pre-wrap p-4 rounded-xl"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                color: 'var(--text-secondary)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                minHeight: '100px',
+              }}
+            >
+              {defect.rawContent || '(无描述)'}
             </div>
           </div>
-        )}
 
-        {/* Timestamps */}
-        <div className="text-[10px] space-y-1" style={{ color: 'var(--text-muted)' }}>
-          <div className="flex items-center gap-1.5">
-            <Clock size={10} />
-            创建: {formatDateTime(defect.createdAt)}
+          {/* Attachments */}
+          {defect.attachments && defect.attachments.length > 0 && (
+            <div>
+              <div
+                className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <Paperclip size={12} />
+                附件 ({defect.attachments.length})
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {defect.attachments.map((att) => (
+                  <a
+                    key={att.id}
+                    href={att.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:bg-white/10 transition-colors"
+                    style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <Paperclip size={12} />
+                    <span className="max-w-[150px] truncate">{att.fileName}</span>
+                    <ExternalLink size={12} style={{ opacity: 0.6 }} />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Resolution / Reject Reason */}
+          {defect.resolution && (
+            <div>
+              <div
+                className="text-[11px] mb-2 font-medium"
+                style={{ color: 'rgba(100,200,120,0.9)' }}
+              >
+                解决说明
+              </div>
+              <div
+                className="text-[12px] p-3 rounded-lg"
+                style={{
+                  background: 'rgba(100,200,120,0.1)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {defect.resolution}
+              </div>
+            </div>
+          )}
+
+          {defect.rejectReason && (
+            <div>
+              <div
+                className="text-[11px] mb-2 font-medium"
+                style={{ color: 'rgba(255,100,100,0.9)' }}
+              >
+                驳回原因
+              </div>
+              <div
+                className="text-[12px] p-3 rounded-lg"
+                style={{
+                  background: 'rgba(255,100,100,0.1)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {defect.rejectReason}
+              </div>
+            </div>
+          )}
+
+          {/* Timestamps */}
+          <div
+            className="text-[11px] space-y-1.5 pt-2"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <div className="flex items-center gap-2">
+              <Clock size={12} />
+              <span>创建于 {formatDateTime(defect.createdAt)}</span>
+            </div>
+            {defect.resolvedAt && (
+              <div className="flex items-center gap-2">
+                <CheckCircle size={12} style={{ color: 'rgba(100,200,120,0.9)' }} />
+                <span>解决于 {formatDateTime(defect.resolvedAt)}</span>
+              </div>
+            )}
+            {defect.closedAt && (
+              <div className="flex items-center gap-2">
+                <Archive size={12} />
+                <span>关闭于 {formatDateTime(defect.closedAt)}</span>
+              </div>
+            )}
           </div>
-          {defect.resolvedAt && (
-            <div className="flex items-center gap-1.5">
-              <CheckCircle size={10} />
-              解决: {formatDateTime(defect.resolvedAt)}
-            </div>
-          )}
-          {defect.closedAt && (
-            <div className="flex items-center gap-1.5">
-              <Archive size={10} />
-              关闭: {formatDateTime(defect.closedAt)}
-            </div>
-          )}
+        </div>
+
+        {/* Actions */}
+        <div
+          className="px-5 py-4 flex items-center justify-between flex-shrink-0"
+          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+        >
+          {/* Left: Delete */}
+          <div>
+            {canDelete && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDelete}
+                className="text-red-400 hover:text-red-300"
+              >
+                <Trash2 size={14} />
+                删除
+              </Button>
+            )}
+          </div>
+
+          {/* Right: Status Actions */}
+          <div className="flex items-center gap-2">
+            {canProcess && (
+              <Button variant="primary" size="sm" onClick={handleProcess}>
+                <Play size={14} />
+                开始处理
+              </Button>
+            )}
+            {canResolve && (
+              <Button variant="primary" size="sm" onClick={handleResolve}>
+                <CheckCircle size={14} />
+                标记解决
+              </Button>
+            )}
+            {canReject && (
+              <Button variant="secondary" size="sm" onClick={handleReject}>
+                <XCircle size={14} />
+                驳回
+              </Button>
+            )}
+            {canCloseDefect && (
+              <Button variant="secondary" size="sm" onClick={handleCloseDefect}>
+                <Archive size={14} />
+                关闭
+              </Button>
+            )}
+            {!canProcess && !canResolve && !canReject && !canCloseDefect && !canDelete && (
+              <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                无可用操作
+              </span>
+            )}
+          </div>
         </div>
       </div>
-
-      {/* Actions */}
-      {(canProcess || canResolve || canReject || canClose) && (
-        <div
-          className="px-3 py-2.5 border-t flex flex-wrap gap-2 flex-shrink-0"
-          style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-        >
-          {canProcess && (
-            <Button variant="secondary" size="sm" onClick={handleProcess}>
-              <Play size={12} />
-              开始处理
-            </Button>
-          )}
-          {canResolve && (
-            <Button variant="primary" size="sm" onClick={handleResolve}>
-              <CheckCircle size={12} />
-              已解决
-            </Button>
-          )}
-          {canReject && (
-            <Button variant="secondary" size="sm" onClick={handleReject}>
-              <XCircle size={12} />
-              驳回
-            </Button>
-          )}
-          {canClose && (
-            <Button variant="secondary" size="sm" onClick={handleClose}>
-              <Archive size={12} />
-              关闭
-            </Button>
-          )}
-        </div>
-      )}
-    </GlassCard>
+    </>
   );
 }

@@ -282,7 +282,10 @@ public class DefectAgentController : ControllerBase
     public async Task<IActionResult> CreateDefect([FromBody] CreateDefectRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
-        var username = GetUsername();
+
+        // 查询报告人信息
+        var reporter = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var reporterName = reporter?.DisplayName ?? reporter?.Username ?? GetUsername() ?? "未知用户";
 
         // 生成缺陷编号
         var defectNo = await GenerateDefectNo(ct);
@@ -320,7 +323,7 @@ public class DefectAgentController : ControllerBase
             Severity = request.Severity ?? DefectSeverity.Major,
             Priority = request.Priority ?? DefectPriority.Medium,
             ReporterId = userId,
-            ReporterName = username,
+            ReporterName = reporterName,
             AssigneeId = assigneeId,
             AssigneeName = assigneeName,
             CreatedAt = DateTime.UtcNow,

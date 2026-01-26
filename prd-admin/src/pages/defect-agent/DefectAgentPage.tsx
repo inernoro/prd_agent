@@ -98,19 +98,12 @@ export default function DefectAgentPage() {
       )}
 
       {/* Content */}
-      <div className="flex-1 min-h-0 flex gap-4">
-        {/* List */}
-        <div className="flex-1 min-h-0 overflow-auto">
-          <DefectList />
-        </div>
-
-        {/* Detail Panel (if selected) */}
-        {selectedDefectId && (
-          <div className="w-[400px] min-h-0 flex-shrink-0">
-            <DefectDetailPanel />
-          </div>
-        )}
+      <div className="flex-1 min-h-0 overflow-auto">
+        <DefectList />
       </div>
+
+      {/* Detail Modal */}
+      {selectedDefectId && <DefectDetailPanel />}
 
       {/* Submit Panel (slide-over) */}
       {showSubmitPanel && <DefectSubmitPanel />}
