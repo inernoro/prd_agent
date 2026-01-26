@@ -190,7 +190,7 @@ public class ModelGroupsController : ControllerBase
                         }
                     },
                     CreatedAt = legacyModel.CreatedAt,
-                    UpdatedAt = legacyModel.UpdatedAt ?? legacyModel.CreatedAt,
+                    UpdatedAt = legacyModel.UpdatedAt,
                     ResolutionType = "DirectModel",
                     IsDedicated = false,
                     IsDefault = false,
