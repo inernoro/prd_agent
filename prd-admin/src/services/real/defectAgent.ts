@@ -25,6 +25,7 @@ import type {
   DeleteDefectAttachmentContract,
   GetDefectStatsContract,
   GetDefectUsersContract,
+  PolishDefectContract,
   DefectTemplate,
   DefectReport,
   DefectMessage,
@@ -241,4 +242,13 @@ export const getDefectStatsReal: GetDefectStatsContract = async () => {
 
 export const getDefectUsersReal: GetDefectUsersContract = async () => {
   return await apiRequest<{ items: DefectUser[] }>(api.defectAgent.users(), { method: 'GET' });
+};
+
+// ========== AI ==========
+
+export const polishDefectReal: PolishDefectContract = async (input) => {
+  return await apiRequest<{ content: string }>(api.defectAgent.polish(), {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 };

@@ -23,7 +23,7 @@ export interface GlassCardProps {
   /** 是否可交互（hover 效果） */
   interactive?: boolean;
   /** 点击事件 */
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLDivElement>;
   /** 自定义样式 */
   style?: React.CSSProperties;
   /** 是否隐藏溢出内容（默认 false，不裁剪内容） */

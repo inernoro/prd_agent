@@ -21,7 +21,6 @@ export default function DefectAgentPage() {
     filter,
     setFilter,
     selectedDefectId,
-    setSelectedDefectId,
     showSubmitPanel,
     setShowSubmitPanel,
     showTemplateDialog,

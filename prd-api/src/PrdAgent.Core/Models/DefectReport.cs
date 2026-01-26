@@ -79,9 +79,45 @@ public class DefectReport
     /// <summary>关闭时间</summary>
     public DateTime? ClosedAt { get; set; }
 
+    /// <summary>当前版本号</summary>
+    public int Version { get; set; } = 1;
+
+    /// <summary>版本历史</summary>
+    public List<DefectVersion> Versions { get; set; } = new();
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 缺陷版本历史记录
+/// </summary>
+public class DefectVersion
+{
+    /// <summary>版本号</summary>
+    public int Version { get; set; }
+
+    /// <summary>标题</summary>
+    public string? Title { get; set; }
+
+    /// <summary>原始内容</summary>
+    public string RawContent { get; set; } = string.Empty;
+
+    /// <summary>结构化数据</summary>
+    public Dictionary<string, string>? StructuredData { get; set; }
+
+    /// <summary>修改人 ID</summary>
+    public string ModifiedBy { get; set; } = string.Empty;
+
+    /// <summary>修改人名称</summary>
+    public string? ModifiedByName { get; set; }
+
+    /// <summary>修改时间</summary>
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>修改说明</summary>
+    public string? ChangeNote { get; set; }
 }
 
 /// <summary>

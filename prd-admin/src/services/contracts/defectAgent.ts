@@ -66,8 +66,24 @@ export interface DefectReport {
   rejectReason?: string;
   resolvedAt?: string;
   closedAt?: string;
+  version: number;
+  versions?: DefectVersion[];
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * 缺陷版本历史
+ */
+export interface DefectVersion {
+  version: number;
+  title?: string;
+  rawContent: string;
+  structuredData?: Record<string, string>;
+  modifiedBy: string;
+  modifiedByName?: string;
+  modifiedAt: string;
+  changeNote?: string;
 }
 
 /**
@@ -231,6 +247,11 @@ export type DeleteDefectAttachmentContract = (input: {
   id: string;
   attachmentId: string;
 }) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type PolishDefectContract = (input: {
+  content: string;
+  templateId?: string;
+}) => Promise<ApiResponse<{ content: string }>>;
 
 export type GetDefectStatsContract = () => Promise<ApiResponse<DefectStats>>;
 

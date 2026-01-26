@@ -165,6 +165,7 @@ import type {
   DeleteDefectAttachmentContract,
   GetDefectStatsContract,
   GetDefectUsersContract,
+  PolishDefectContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
@@ -365,6 +366,7 @@ import {
   deleteDefectAttachmentReal,
   getDefectStatsReal,
   getDefectUsersReal,
+  polishDefectReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { ModelGroupsService } from '@/services/real/modelGroups';
@@ -603,6 +605,7 @@ export const addDefectAttachment: AddDefectAttachmentContract = withAuth(addDefe
 export const deleteDefectAttachment: DeleteDefectAttachmentContract = withAuth(deleteDefectAttachmentReal);
 export const getDefectStats: GetDefectStatsContract = withAuth(getDefectStatsReal);
 export const getDefectUsers: GetDefectUsersContract = withAuth(getDefectUsersReal);
+export const polishDefect: PolishDefectContract = withAuth(polishDefectReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();

@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Claims;
+using System.Text;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -19,11 +21,13 @@ public class DefectAgentController : ControllerBase
 {
     private const string AppKey = "defect-agent";
     private readonly MongoDbContext _db;
+    private readonly ISmartModelScheduler _scheduler;
     private readonly ILogger<DefectAgentController> _logger;
 
-    public DefectAgentController(MongoDbContext db, ILogger<DefectAgentController> logger)
+    public DefectAgentController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<DefectAgentController> logger)
     {
         _db = db;
+        _scheduler = scheduler;
         _logger = logger;
     }
 
@@ -338,12 +342,14 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 更新缺陷
+    /// 更新缺陷（带版本历史）
     /// </summary>
     [HttpPut("defects/{id}")]
     public async Task<IActionResult> UpdateDefect(string id, [FromBody] UpdateDefectRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
+        var reporter = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var userName = reporter?.DisplayName ?? reporter?.Username ?? GetUsername() ?? "未知用户";
 
         var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (defect == null)
@@ -355,6 +361,27 @@ public class DefectAgentController : ControllerBase
 
         if (defect.Status != DefectStatus.Draft && defect.Status != DefectStatus.Awaiting)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能编辑草稿或待补充状态的缺陷"));
+
+        // 保存当前版本到历史（如果有实质性修改）
+        var hasChanges = (!string.IsNullOrWhiteSpace(request.Title) && request.Title.Trim() != defect.Title)
+                      || (!string.IsNullOrWhiteSpace(request.Content) && request.Content.Trim() != defect.RawContent);
+
+        if (hasChanges)
+        {
+            defect.Versions ??= new List<DefectVersion>();
+            defect.Versions.Add(new DefectVersion
+            {
+                Version = defect.Version,
+                Title = defect.Title,
+                RawContent = defect.RawContent,
+                StructuredData = defect.StructuredData?.ToDictionary(x => x.Key, x => x.Value),
+                ModifiedBy = userId,
+                ModifiedByName = userName,
+                ModifiedAt = DateTime.UtcNow,
+                ChangeNote = request.ChangeNote
+            });
+            defect.Version++;
+        }
 
         if (!string.IsNullOrWhiteSpace(request.Title))
             defect.Title = request.Title.Trim();
@@ -902,6 +929,95 @@ public class DefectAgentController : ControllerBase
     }
 
     #endregion
+
+    #region AI 辅助
+
+    /// <summary>
+    /// AI 润色/填充缺陷描述
+    /// </summary>
+    [HttpPost("defects/polish")]
+    public async Task<IActionResult> PolishDefect([FromBody] PolishDefectRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内容不能为空"));
+
+        try
+        {
+            // 获取模板信息（如果有）
+            DefectTemplate? template = null;
+            if (!string.IsNullOrWhiteSpace(request.TemplateId))
+            {
+                template = await _db.DefectTemplates.Find(x => x.Id == request.TemplateId).FirstOrDefaultAsync(ct);
+            }
+
+            // 构建系统提示词
+            var systemPrompt = new StringBuilder();
+            systemPrompt.AppendLine("你是一个专业的缺陷描述优化助手。请帮助用户润色和完善缺陷描述。");
+            systemPrompt.AppendLine();
+            systemPrompt.AppendLine("要求：");
+            systemPrompt.AppendLine("1. 保持原意不变，但使描述更加清晰、专业");
+            systemPrompt.AppendLine("2. 如果描述不完整，补充必要的信息（如复现步骤、期望结果、实际结果）");
+            systemPrompt.AppendLine("3. 使用简洁明了的语言");
+            systemPrompt.AppendLine("4. 直接输出润色后的内容，不要添加额外的解释或标记");
+
+            if (template != null)
+            {
+                systemPrompt.AppendLine();
+                systemPrompt.AppendLine($"参考模板: {template.Name}");
+                if (!string.IsNullOrWhiteSpace(template.Description))
+                    systemPrompt.AppendLine($"模板说明: {template.Description}");
+                if (template.RequiredFields?.Count > 0)
+                {
+                    systemPrompt.AppendLine("必填字段:");
+                    foreach (var field in template.RequiredFields)
+                    {
+                        systemPrompt.AppendLine($"- {field.Label}: {field.Description ?? ""}");
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(template.AiSystemPrompt))
+                {
+                    systemPrompt.AppendLine();
+                    systemPrompt.AppendLine("模板特定指令:");
+                    systemPrompt.AppendLine(template.AiSystemPrompt);
+                }
+            }
+
+            // 获取 LLM 客户端
+            var client = await _scheduler.GetClientAsync($"{AppKey}.polish", "chat", ct);
+
+            // 调用 LLM
+            var messages = new List<LLMMessage>
+            {
+                new() { Role = "user", Content = $"请润色以下缺陷描述：\n\n{request.Content}" }
+            };
+
+            var resultBuilder = new StringBuilder();
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt.ToString(), messages, ct))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    resultBuilder.Append(chunk.Content);
+                }
+                else if (chunk.Type == "error")
+                {
+                    _logger.LogWarning("[{AppKey}] AI polish error: {Error}", AppKey, chunk.ErrorMessage);
+                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.SERVER_ERROR, chunk.ErrorMessage ?? "AI 处理失败"));
+                }
+            }
+
+            var polishedContent = resultBuilder.ToString().Trim();
+            _logger.LogInformation("[{AppKey}] Defect polished successfully", AppKey);
+
+            return Ok(ApiResponse<object>.Ok(new { content = polishedContent }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.SERVER_ERROR, "AI 润色失败，请稍后重试"));
+        }
+    }
+
+    #endregion
 }
 
 #region Request DTOs
@@ -939,6 +1055,13 @@ public class UpdateDefectRequest
     public string? Title { get; set; }
     public string? Content { get; set; }
     public Dictionary<string, string>? StructuredData { get; set; }
+    public string? ChangeNote { get; set; }
+}
+
+public class PolishDefectRequest
+{
+    public string Content { get; set; } = string.Empty;
+    public string? TemplateId { get; set; }
 }
 
 public class AssignDefectRequest
