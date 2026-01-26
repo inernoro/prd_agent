@@ -26,6 +26,9 @@ public class DefectTemplate
     /// <summary>创建人 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
+    /// <summary>分享给的用户 ID 列表</summary>
+    public List<string>? SharedWith { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
