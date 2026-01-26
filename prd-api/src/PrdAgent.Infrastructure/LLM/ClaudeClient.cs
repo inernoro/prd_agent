@@ -234,9 +234,9 @@ public class ClaudeClient : ILLMClient
                     StartedAt: startedAt,
                     PlatformId: _platformId,
                     PlatformName: _platformName,
+                    ModelResolutionType: ctx?.ModelResolutionType,
                     ModelGroupId: ctx?.ModelGroupId,
-                    ModelGroupName: ctx?.ModelGroupName,
-                    IsDefaultModelGroup: ctx?.IsDefaultModelGroup),
+                    ModelGroupName: ctx?.ModelGroupName),
                 cancellationToken);
         }
 

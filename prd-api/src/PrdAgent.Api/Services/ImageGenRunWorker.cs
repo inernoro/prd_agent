@@ -258,9 +258,9 @@ public class ImageGenRunWorker : BackgroundService
                             RequestType: "imageGen",
                             RequestPurpose: appCallerCode,
                             PlatformId: run.PlatformId,
+                            ModelResolutionType: run.ModelResolutionType,
                             ModelGroupId: run.ModelGroupId,
-                            ModelGroupName: run.ModelGroupName,
-                            IsDefaultModelGroup: run.IsDefaultModelGroup));
+                            ModelGroupName: run.ModelGroupName));
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 
@@ -677,27 +677,27 @@ public class ImageGenRunWorker : BackgroundService
 
     /// <summary>
     /// 模型池调度：统一在 Worker 中处理，确保所有来源的 Run 都能正确关联模型池
-    /// 优先级：1. AppCaller 绑定的模型池 2. 根据 platformId+modelId 反查模型池
+    /// 仅通过 AppCaller 绑定关系查询模型池，不进行 platformId+modelId 反查
     /// </summary>
     private async Task ResolveModelGroupAsync(ImageGenRun run, CancellationToken ct)
     {
         _logger.LogInformation("[ImageGenRunWorker] ResolveModelGroupAsync called: runId={RunId}, appKey={AppKey}, appCallerCode={AppCallerCode}, platformId={PlatformId}, modelId={ModelId}, existingModelGroupId={ModelGroupId}",
             run.Id, run.AppKey, run.AppCallerCode, run.PlatformId, run.ModelId, run.ModelGroupId);
 
-        // 如果已经有模型池信息，跳过
-        if (!string.IsNullOrWhiteSpace(run.ModelGroupId))
+        // 如果已经有模型解析类型信息，跳过
+        if (run.ModelResolutionType.HasValue)
         {
-            _logger.LogInformation("[ImageGenRunWorker] 已有模型池信息，跳过: modelGroupId={ModelGroupId}", run.ModelGroupId);
+            _logger.LogInformation("[ImageGenRunWorker] 已有模型解析类型信息，跳过: resolutionType={ResolutionType}", run.ModelResolutionType);
             return;
         }
 
+        ModelResolutionType resolutionType = ModelResolutionType.DirectModel; // 默认为直连单模型
         string? modelGroupId = null;
         string? modelGroupName = null;
-        bool? isDefaultModelGroup = null;
         string? resolvedPlatformId = null;
         string? resolvedModelId = null;
 
-        // 方式1：通过 AppCaller 从模型池中选择模型
+        // 通过 AppCaller 从模型池中选择模型（唯一方式）
         var appCallerCode = run.AppCallerCode;
         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
         {
@@ -712,88 +712,50 @@ public class ImageGenRunWorker : BackgroundService
                 var scheduler = scope.ServiceProvider.GetRequiredService<ISmartModelScheduler>();
                 var resolved = await scheduler.ResolveModelAsync(appCallerCode, "generation", ct);
 
-                _logger.LogInformation("[ImageGenRunWorker] ResolveModelAsync: appCallerCode={AppCallerCode}, resolved={Resolved}, modelGroupId={ModelGroupId}",
-                    appCallerCode, resolved != null, resolved?.ModelGroupId);
+                _logger.LogInformation("[ImageGenRunWorker] ResolveModelAsync: appCallerCode={AppCallerCode}, resolved={Resolved}, resolutionType={ResolutionType}, modelGroupId={ModelGroupId}",
+                    appCallerCode, resolved != null, resolved?.ResolutionType, resolved?.ModelGroupId);
 
-                if (resolved != null && !string.IsNullOrWhiteSpace(resolved.ModelGroupId))
+                if (resolved != null)
                 {
+                    resolutionType = resolved.ResolutionType;
                     modelGroupId = resolved.ModelGroupId;
                     modelGroupName = resolved.ModelGroupName;
-                    isDefaultModelGroup = resolved.IsDefaultForType;
                     resolvedPlatformId = resolved.PlatformId;
                     resolvedModelId = resolved.ModelId;
 
-                    _logger.LogInformation("生图使用模型池调度: appCallerCode={AppCallerCode}, modelGroup={ModelGroup}, platformId={PlatformId}, modelId={ModelId}",
-                        appCallerCode, modelGroupName, resolvedPlatformId, resolvedModelId);
+                    _logger.LogInformation("生图使用模型池调度: appCallerCode={AppCallerCode}, resolutionType={ResolutionType}, modelGroup={ModelGroup}, platformId={PlatformId}, modelId={ModelId}",
+                        appCallerCode, resolutionType, modelGroupName, resolvedPlatformId, resolvedModelId);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}", appCallerCode);
-            }
-        }
-
-        // 方式2：根据 platformId + modelId 反查模型池（兜底）
-        if (string.IsNullOrWhiteSpace(modelGroupId) && !string.IsNullOrWhiteSpace(run.PlatformId) && !string.IsNullOrWhiteSpace(run.ModelId))
-        {
-            try
-            {
-                _logger.LogInformation("[ImageGenRunWorker] 尝试反查模型池: platformId={PlatformId}, modelId={ModelId}",
-                    run.PlatformId, run.ModelId);
-
-                // 使用 ElemMatch 进行嵌套文档查询（MongoDB 驱动兼容性更好）
-                var filter = Builders<ModelGroup>.Filter.And(
-                    Builders<ModelGroup>.Filter.Eq(g => g.ModelType, "generation"),
-                    Builders<ModelGroup>.Filter.ElemMatch(g => g.Models, 
-                        m => m.PlatformId == run.PlatformId && m.ModelId == run.ModelId)
-                );
-                var matchingGroup = await _db.ModelGroups.Find(filter).FirstOrDefaultAsync(ct);
-
-                _logger.LogInformation("[ImageGenRunWorker] 反查结果: found={Found}",
-                    matchingGroup != null);
-
-                if (matchingGroup != null)
-                {
-                    modelGroupId = matchingGroup.Id;
-                    modelGroupName = matchingGroup.Name;
-                    isDefaultModelGroup = matchingGroup.IsDefaultForType;
-
-                    _logger.LogInformation("生图通过 platformId+modelId 反查到模型池: platformId={PlatformId}, modelId={ModelId}, modelGroup={ModelGroup}",
-                        run.PlatformId, run.ModelId, modelGroupName);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "反查模型池失败: platformId={PlatformId}, modelId={ModelId}", run.PlatformId, run.ModelId);
+                _logger.LogWarning(ex, "通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用直连单模型", appCallerCode);
             }
         }
 
         // 更新 Run 对象和数据库
-        if (!string.IsNullOrWhiteSpace(modelGroupId))
+        var updateDef = Builders<ImageGenRun>.Update
+            .Set(x => x.ModelResolutionType, resolutionType)
+            .Set(x => x.ModelGroupId, modelGroupId)
+            .Set(x => x.ModelGroupName, modelGroupName);
+
+        // 如果通过模型池调度获取了新的 platformId 和 modelId，也一并更新
+        if (!string.IsNullOrWhiteSpace(resolvedPlatformId) && !string.IsNullOrWhiteSpace(resolvedModelId))
         {
-            var updateDef = Builders<ImageGenRun>.Update
-                .Set(x => x.ModelGroupId, modelGroupId)
-                .Set(x => x.ModelGroupName, modelGroupName)
-                .Set(x => x.IsDefaultModelGroup, isDefaultModelGroup);
-
-            // 如果通过模型池调度获取了新的 platformId 和 modelId，也一并更新
-            if (!string.IsNullOrWhiteSpace(resolvedPlatformId) && !string.IsNullOrWhiteSpace(resolvedModelId))
-            {
-                updateDef = updateDef
-                    .Set(x => x.PlatformId, resolvedPlatformId)
-                    .Set(x => x.ModelId, resolvedModelId)
-                    .Set(x => x.ConfigModelId, null); // 清空，避免后续再次查询
-                run.PlatformId = resolvedPlatformId;
-                run.ModelId = resolvedModelId;
-                run.ConfigModelId = null;
-            }
-
-            run.ModelGroupId = modelGroupId;
-            run.ModelGroupName = modelGroupName;
-            run.IsDefaultModelGroup = isDefaultModelGroup;
-
-            await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
+            updateDef = updateDef
+                .Set(x => x.PlatformId, resolvedPlatformId)
+                .Set(x => x.ModelId, resolvedModelId)
+                .Set(x => x.ConfigModelId, null); // 清空，避免后续再次查询
+            run.PlatformId = resolvedPlatformId;
+            run.ModelId = resolvedModelId;
+            run.ConfigModelId = null;
         }
+
+        run.ModelResolutionType = resolutionType;
+        run.ModelGroupId = modelGroupId;
+        run.ModelGroupName = modelGroupName;
+
+        await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
     }
 }
 

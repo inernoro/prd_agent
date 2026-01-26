@@ -1,3 +1,5 @@
+using PrdAgent.Core.Interfaces;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -27,6 +29,11 @@ public class ImageGenRun
     public string? ModelId { get; set; }
 
     /// <summary>
+    /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）
+    /// </summary>
+    public ModelResolutionType? ModelResolutionType { get; set; }
+
+    /// <summary>
     /// 模型池 ID（用于日志记录）
     /// </summary>
     public string? ModelGroupId { get; set; }
@@ -35,11 +42,6 @@ public class ImageGenRun
     /// 模型池名称（用于日志记录）
     /// </summary>
     public string? ModelGroupName { get; set; }
-
-    /// <summary>
-    /// 是否使用默认模型池
-    /// </summary>
-    public bool? IsDefaultModelGroup { get; set; }
 
     public string Size { get; set; } = "1024x1024";
 
