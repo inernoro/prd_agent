@@ -1322,16 +1322,10 @@ export default function LlmLogsPage() {
                         {(() => {
                           const groupName = (it.modelGroupName || '').trim();
                           // modelResolutionType: 0=直连单模型, 1=默认模型池, 2=专属模型池
-                          const resolutionType = it.modelResolutionType;
+                          const resolutionType = it.modelResolutionType ?? 0;
                           const b = requestTypeToBadge(it.requestType);
 
-                          // 优先使用新字段 modelResolutionType，兼容旧数据使用 isDefaultModelGroup
-                          const effectiveType = resolutionType ?? (
-                            it.isDefaultModelGroup === null ? 0 :
-                            it.isDefaultModelGroup === true ? 1 : 2
-                          );
-
-                          if (effectiveType === 0) {
+                          if (resolutionType === 0) {
                             // 直连单模型
                             return (
                               <button
@@ -1352,7 +1346,7 @@ export default function LlmLogsPage() {
                                 直连单模型
                               </button>
                             );
-                          } else if (effectiveType === 1) {
+                          } else if (resolutionType === 1) {
                             // 默认模型池
                             return (
                               <button
@@ -1369,7 +1363,7 @@ export default function LlmLogsPage() {
                                 默认模型池：{groupName}
                               </button>
                             );
-                          } else if (effectiveType === 2) {
+                          } else if (resolutionType === 2) {
                             // 专属模型池
                             return (
                               <button

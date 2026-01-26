@@ -43,12 +43,6 @@ public class ImageGenRun
     /// </summary>
     public string? ModelGroupName { get; set; }
 
-    /// <summary>
-    /// 是否使用默认模型池（已废弃，请使用 ModelResolutionType）
-    /// </summary>
-    [Obsolete("请使用 ModelResolutionType 字段")]
-    public bool? IsDefaultModelGroup { get; set; }
-
     public string Size { get; set; } = "1024x1024";
 
     /// <summary>

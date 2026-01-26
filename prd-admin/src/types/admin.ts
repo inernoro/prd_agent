@@ -102,8 +102,6 @@ export type LlmRequestLogListItem = {
   modelGroupId?: string | null;
   /** 模型池名称 */
   modelGroupName?: string | null;
-  /** 是否使用默认模型池（已废弃，请使用 modelResolutionType） */
-  isDefaultModelGroup?: boolean | null;
   groupId?: string | null;
   sessionId?: string | null;
   /** 发起请求的用户 ID */

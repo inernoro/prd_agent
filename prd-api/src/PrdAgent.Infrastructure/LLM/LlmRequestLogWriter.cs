@@ -54,14 +54,6 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
                 ModelGroupName = start.ModelGroupName,
-#pragma warning disable CS0618 // 保持向后兼容
-                IsDefaultModelGroup = start.ModelResolutionType switch
-                {
-                    Core.Interfaces.ModelResolutionType.DefaultPool => true,
-                    Core.Interfaces.ModelResolutionType.DedicatedPool => false,
-                    _ => null
-                },
-#pragma warning restore CS0618
                 RequestHeadersRedacted = start.RequestHeadersRedacted,
                 RequestBodyRedacted = requestBodyStored,
                 RequestBodyHash = start.RequestBodyHash ?? Sha256Hex(requestBodyRaw),
