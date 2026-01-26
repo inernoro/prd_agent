@@ -44,6 +44,20 @@ export interface ModelGroup {
 }
 
 /**
+ * 按应用标识获取的模型分组（包含来源标记）
+ */
+export interface ModelGroupForApp extends ModelGroup {
+  /** 解析类型：DedicatedPool(专属池)、DefaultPool(默认池)、DirectModel(传统配置) */
+  resolutionType: 'DedicatedPool' | 'DefaultPool' | 'DirectModel';
+  /** 是否为该应用的专属模型池 */
+  isDedicated: boolean;
+  /** 是否为该类型的默认模型池 */
+  isDefault: boolean;
+  /** 是否为传统配置模型（isImageGen 等标记） */
+  isLegacy: boolean;
+}
+
+/**
  * 创建模型分组请求
  */
 export interface CreateModelGroupRequest {

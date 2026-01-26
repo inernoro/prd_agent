@@ -67,6 +67,137 @@ public class ModelGroupsController : ControllerBase
     }
 
     /// <summary>
+    /// 按应用标识获取模型池列表（按优先级排序：专属池 > 默认池）
+    /// 用于前端加载可用模型列表，按正确的优先级顺序展示
+    /// </summary>
+    /// <param name="appCallerCode">应用标识（如 visual-agent.image::generation）</param>
+    /// <param name="modelType">模型类型（如 generation）</param>
+    [HttpGet("for-app")]
+    public async Task<IActionResult> GetModelGroupsForApp(
+        [FromQuery] string? appCallerCode,
+        [FromQuery] string modelType)
+    {
+        if (string.IsNullOrWhiteSpace(modelType))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_TYPE", "modelType 不能为空"));
+        }
+
+        var result = new List<ModelGroupForAppResponse>();
+        var addedGroupIds = new HashSet<string>();
+
+        // Step 1: 查找 appCallerCode 绑定的专属模型池
+        if (!string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync();
+            if (app != null)
+            {
+                var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
+                if (requirement != null && requirement.ModelGroupIds.Count > 0)
+                {
+                    var dedicatedGroups = await _db.ModelGroups
+                        .Find(g => requirement.ModelGroupIds.Contains(g.Id))
+                        .SortBy(g => g.Priority)
+                        .ToListAsync();
+
+                    foreach (var group in dedicatedGroups)
+                    {
+                        result.Add(new ModelGroupForAppResponse
+                        {
+                            Id = group.Id,
+                            Name = group.Name,
+                            Code = group.Code,
+                            Priority = group.Priority,
+                            ModelType = group.ModelType,
+                            IsDefaultForType = group.IsDefaultForType,
+                            Description = group.Description,
+                            Models = group.Models,
+                            CreatedAt = group.CreatedAt,
+                            UpdatedAt = group.UpdatedAt,
+                            // 标记来源
+                            ResolutionType = "DedicatedPool",
+                            IsDedicated = true,
+                            IsDefault = group.IsDefaultForType
+                        });
+                        addedGroupIds.Add(group.Id);
+                    }
+                }
+            }
+        }
+
+        // Step 2: 查找该类型的默认模型池
+        var defaultGroups = await _db.ModelGroups
+            .Find(g => g.ModelType == modelType && g.IsDefaultForType && !addedGroupIds.Contains(g.Id))
+            .SortBy(g => g.Priority)
+            .ToListAsync();
+
+        foreach (var group in defaultGroups)
+        {
+            result.Add(new ModelGroupForAppResponse
+            {
+                Id = group.Id,
+                Name = group.Name,
+                Code = group.Code,
+                Priority = group.Priority,
+                ModelType = group.ModelType,
+                IsDefaultForType = group.IsDefaultForType,
+                Description = group.Description,
+                Models = group.Models,
+                CreatedAt = group.CreatedAt,
+                UpdatedAt = group.UpdatedAt,
+                // 标记来源
+                ResolutionType = "DefaultPool",
+                IsDedicated = false,
+                IsDefault = true
+            });
+            addedGroupIds.Add(group.Id);
+        }
+
+        // Step 3: 查找传统配置的 isImageGen 模型（仅当 modelType 为 generation 时）
+        if (modelType == "generation")
+        {
+            var legacyModel = await _db.LLMModels
+                .Find(m => m.IsImageGen && m.Enabled)
+                .FirstOrDefaultAsync();
+
+            if (legacyModel != null)
+            {
+                // 构造虚拟模型池
+                result.Add(new ModelGroupForAppResponse
+                {
+                    Id = $"legacy-{legacyModel.Id}",
+                    Name = $"默认生图 - {legacyModel.Name}",
+                    Code = $"legacy-generation",
+                    Priority = 9999, // 最低优先级
+                    ModelType = modelType,
+                    IsDefaultForType = false,
+                    Description = "传统配置的默认生图模型（isImageGen）",
+                    Models = new List<ModelGroupItem>
+                    {
+                        new ModelGroupItem
+                        {
+                            ModelId = legacyModel.ModelName,
+                            PlatformId = legacyModel.PlatformId ?? string.Empty,
+                            Priority = 1,
+                            HealthStatus = ModelHealthStatus.Healthy,
+                            EnablePromptCache = legacyModel.EnablePromptCache,
+                            MaxTokens = legacyModel.MaxTokens
+                        }
+                    },
+                    CreatedAt = legacyModel.CreatedAt,
+                    UpdatedAt = legacyModel.UpdatedAt ?? legacyModel.CreatedAt,
+                    // 标记来源
+                    ResolutionType = "DirectModel",
+                    IsDedicated = false,
+                    IsDefault = false,
+                    IsLegacy = true
+                });
+            }
+        }
+
+        return Ok(ApiResponse<List<ModelGroupForAppResponse>>.Ok(result));
+    }
+
+    /// <summary>
     /// 获取单个模型分组
     /// </summary>
     [HttpGet("{id}")]
@@ -287,4 +418,31 @@ public class UpdateModelGroupRequest
     public string? Description { get; set; }
     public List<ModelGroupItem>? Models { get; set; }
     public bool? IsDefaultForType { get; set; }
+}
+
+/// <summary>
+/// 按应用标识获取模型池的响应，包含来源标记
+/// </summary>
+public class ModelGroupForAppResponse
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public string ModelType { get; set; } = string.Empty;
+    public bool IsDefaultForType { get; set; }
+    public string? Description { get; set; }
+    public List<ModelGroupItem> Models { get; set; } = new();
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+
+    // 来源标记
+    /// <summary>解析类型：DedicatedPool(专属池)、DefaultPool(默认池)、DirectModel(传统配置)</summary>
+    public string ResolutionType { get; set; } = string.Empty;
+    /// <summary>是否为该应用的专属模型池</summary>
+    public bool IsDedicated { get; set; }
+    /// <summary>是否为该类型的默认模型池</summary>
+    public bool IsDefault { get; set; }
+    /// <summary>是否为传统配置模型（isImageGen 等标记）</summary>
+    public bool IsLegacy { get; set; }
 }
