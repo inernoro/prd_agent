@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0f">
+  <title>PRD-Publish</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+</head>
+<body>
+  <div id="app">
+    <!-- Login Page -->
+    <div id="login-page" class="page">
+      <div class="login-container">
+        <div class="logo">
+          <div class="logo-icon">◆</div>
+          <h1>PRD-Publish</h1>
+          <p class="subtitle">发布管理系统</p>
+        </div>
+        <form id="login-form" class="login-form">
+          <div class="form-group">
+            <input type="text" id="username" placeholder="用户名" autocomplete="username" required>
+            <div class="input-glow"></div>
+          </div>
+          <div class="form-group">
+            <input type="password" id="password" placeholder="密码" autocomplete="current-password" required>
+            <div class="input-glow"></div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-full">
+            <span class="btn-text">登 录</span>
+            <span class="btn-loading"></span>
+          </button>
+          <div id="login-error" class="error-message"></div>
+        </form>
+      </div>
+      <div class="background-effects">
+        <div class="grid-overlay"></div>
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+      </div>
+    </div>
+
+    <!-- Main Page -->
+    <div id="main-page" class="page hidden">
+      <header class="header">
+        <div class="header-left">
+          <div class="logo-small">◆</div>
+          <span class="header-title">PRD-Publish</span>
+        </div>
+        <div class="header-right">
+          <span id="current-user" class="user-badge"></span>
+          <button id="logout-btn" class="btn btn-ghost">登出</button>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <!-- Status Card -->
+        <div class="status-card glass-card">
+          <div class="status-row">
+            <div class="status-item">
+              <span class="status-label">当前版本</span>
+              <span id="current-version" class="status-value mono">--</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">上次发布</span>
+              <span id="last-deploy" class="status-value">--</span>
+            </div>
+          </div>
+          <div id="status-warning" class="status-warning hidden">
+            <span class="warning-icon">⚠️</span>
+            <span class="warning-text"></span>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+          <button class="tab active" data-tab="commits">提交</button>
+          <button class="tab" data-tab="tags">标签</button>
+          <button class="tab" data-tab="history">历史</button>
+        </div>
+
+        <!-- Search -->
+        <div class="search-bar">
+          <input type="text" id="search-input" placeholder="搜索提交...">
+          <button id="refresh-btn" class="btn btn-icon" title="刷新">↻</button>
+        </div>
+
+        <!-- Content Panels -->
+        <div id="commits-panel" class="panel">
+          <div id="commits-list" class="list"></div>
+          <button id="load-more-commits" class="btn btn-ghost btn-full hidden">加载更多</button>
+        </div>
+
+        <div id="tags-panel" class="panel hidden">
+          <div id="tags-list" class="list"></div>
+        </div>
+
+        <div id="history-panel" class="panel hidden">
+          <div class="history-stats" id="history-stats"></div>
+          <div id="history-list" class="list"></div>
+        </div>
+      </main>
+
+      <!-- Deploy Modal -->
+      <div id="deploy-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content glass-card">
+          <div class="modal-header">
+            <h2 id="modal-title">确认发布</h2>
+            <button class="modal-close" id="modal-close">×</button>
+          </div>
+          <div class="modal-body">
+            <div id="deploy-confirm" class="deploy-confirm">
+              <div class="deploy-info">
+                <div class="info-row">
+                  <span class="info-label">目标版本</span>
+                  <span id="deploy-hash" class="info-value mono"></span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">提交消息</span>
+                  <span id="deploy-message" class="info-value"></span>
+                </div>
+              </div>
+              <div class="deploy-warning">
+                <span class="warning-icon">⚠️</span>
+                <span>发布将执行部署脚本</span>
+              </div>
+              <div class="modal-actions">
+                <button id="cancel-deploy-btn" class="btn btn-ghost">取消</button>
+                <button id="confirm-deploy-btn" class="btn btn-primary">确认发布</button>
+              </div>
+            </div>
+
+            <div id="deploy-progress" class="deploy-progress hidden">
+              <div class="progress-header">
+                <div class="progress-status">
+                  <span id="progress-icon" class="progress-icon">🚀</span>
+                  <span id="progress-text">正在发布...</span>
+                </div>
+                <span id="progress-retry" class="progress-retry hidden"></span>
+              </div>
+              <div class="log-container">
+                <pre id="deploy-logs" class="deploy-logs"></pre>
+              </div>
+              <div class="modal-actions">
+                <button id="cancel-running-btn" class="btn btn-danger">取消发布</button>
+              </div>
+            </div>
+
+            <div id="deploy-result" class="deploy-result hidden">
+              <div id="result-icon" class="result-icon"></div>
+              <h3 id="result-title"></h3>
+              <p id="result-message"></p>
+              <div id="result-logs" class="log-container hidden">
+                <pre class="deploy-logs error-logs"></pre>
+              </div>
+              <div class="modal-actions">
+                <button id="retry-btn" class="btn btn-primary hidden">重试</button>
+                <button id="close-result-btn" class="btn btn-ghost">关闭</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="background-effects">
+        <div class="grid-overlay"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
