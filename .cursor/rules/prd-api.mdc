@@ -57,6 +57,19 @@ globs: prd-api/**
 - **必须写入 LlmRequestContext**：`RequestType`、`RequestPurpose`、`ModelResolutionType`、`ModelGroupId`、`ModelGroupName` 不得为空。
 - **默认策略**：业务调用点先获取 `scheduledResult`，再基于其信息开启 `BeginScope`，确保日志与调度一致。
 
+### appCallerCode 格式规范（详见 `doc/rule.app-feature-definition.md`）
+
+**格式**：`{app}.{feature}[.{subfeature}...]::modelType`
+
+**示例**：
+- `desktop.chat.sendmessage::chat`
+- `desktop.chat.sendmessage::intent`
+- `visual-agent.image::generation`
+- `literary-agent.content::chat`
+- `open-platform.proxy::chat`
+
+**常用 modelType**：`chat`、`intent`、`vision`、`generation`、`code`、`embedding`、`rerank`
+
 ## MongoDB 约束（强制）
 
 ### ID 规范（必须遵守）
