@@ -824,7 +824,7 @@ public class DefectAgentController : ControllerBase
         // 获取发送者信息
         var sender = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var senderName = sender?.DisplayName ?? sender?.Username ?? GetUsername() ?? "未知用户";
-        var avatarUrl = sender?.AvatarUrl;
+        var avatarFileName = sender?.AvatarFileName;
 
         // 获取当前最大 seq
         var maxSeq = await _db.DefectMessages
@@ -841,7 +841,7 @@ public class DefectAgentController : ControllerBase
             Role = DefectMessageRole.User,
             UserId = userId,
             UserName = senderName,
-            AvatarUrl = avatarUrl,
+            AvatarFileName = avatarFileName,
             Content = request.Content.Trim(),
             AttachmentIds = request.AttachmentIds,
             CreatedAt = DateTime.UtcNow

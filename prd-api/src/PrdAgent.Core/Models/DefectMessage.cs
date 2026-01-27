@@ -23,8 +23,8 @@ public class DefectMessage
     /// <summary>发送者用户名</summary>
     public string? UserName { get; set; }
 
-    /// <summary>发送者头像 URL</summary>
-    public string? AvatarUrl { get; set; }
+    /// <summary>发送者头像文件名（与 User.AvatarFileName 一致）</summary>
+    public string? AvatarFileName { get; set; }
 
     /// <summary>消息内容</summary>
     public string Content { get; set; } = string.Empty;

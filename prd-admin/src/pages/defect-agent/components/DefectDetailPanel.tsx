@@ -697,7 +697,7 @@ export function DefectDetailPanel() {
                   const isUser = msg.role === 'user';
                   const isAssistant = msg.role === 'assistant';
                   const msgSegments = parseContentToSegments(msg.content);
-                  const avatarSrc = msg.avatarUrl ? resolveAvatarUrl({ avatarUrl: msg.avatarUrl }) : null;
+                  const avatarSrc = msg.avatarFileName ? resolveAvatarUrl({ avatarFileName: msg.avatarFileName }) : null;
                   const displayName = msg.userName || (isAssistant ? 'AI 助手' : '用户');
 
                   return (

@@ -103,7 +103,7 @@ export interface DefectMessage {
   role: 'user' | 'assistant' | 'system';
   userId?: string;
   userName?: string;
-  avatarUrl?: string;
+  avatarFileName?: string;
   content: string;
   attachmentIds?: string[];
   extractedFields?: Record<string, string>;
