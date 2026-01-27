@@ -94,18 +94,11 @@ export function DefectDetailPanel() {
   const handleClose = () => setSelectedDefectId(null);
 
   const handleDelete = async () => {
-    const confirmed = await systemDialog.confirm({
-      title: '删除缺陷',
-      message: `确定要删除缺陷「${defect.defectNo}」吗？此操作不可恢复。`,
-      confirmText: '删除',
-      cancelText: '取消',
-    });
-    if (!confirmed) return;
-
     const res = await deleteDefect({ id: defect.id });
     if (res.success) {
       removeDefectFromList(defect.id);
-      toast.success('缺陷已删除');
+      setSelectedDefectId(null);
+      toast.success('已移入回收站');
       loadStats();
     } else {
       toast.error(res.error?.message || '删除失败');
