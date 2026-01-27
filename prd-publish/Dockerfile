@@ -3,16 +3,18 @@ FROM node:20-alpine
 LABEL maintainer="PRD-Publish"
 LABEL description="Lightweight release management system"
 
-# Install git for deployment operations
-RUN apk add --no-cache git bash
+# Install git and pnpm
+RUN apk add --no-cache git bash && \
+    corepack enable && \
+    corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies with pnpm
+RUN pnpm install --frozen-lockfile --prod
 
 # Copy source code
 COPY src/ ./src/
