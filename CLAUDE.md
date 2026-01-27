@@ -90,7 +90,7 @@ prd_agent/
 ├── prd-desktop/      # Tauri 2.0 桌面客户端 (Rust + React)
 │   ├── src-tauri/    # Rust: commands/, services/, models/
 │   └── src/          # React: components/, stores/, pages/
-├── doc/              # 编号文档 (0-18) + 维护计划
+├── doc/              # 编号文档 (0-5) + 专题文档 (design.*, agent.*, rule.*)
 └── scripts/          # 构建/部署脚本
 ```
 
