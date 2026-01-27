@@ -971,7 +971,7 @@ public class DefectAgentController : ControllerBase
                     systemPrompt.AppendLine("必填字段:");
                     foreach (var field in template.RequiredFields)
                     {
-                        systemPrompt.AppendLine($"- {field.Label}: {field.Description ?? ""}");
+                        systemPrompt.AppendLine($"- {field.Label}");
                     }
                 }
                 if (!string.IsNullOrWhiteSpace(template.AiSystemPrompt))
@@ -1001,7 +1001,7 @@ public class DefectAgentController : ControllerBase
                 else if (chunk.Type == "error")
                 {
                     _logger.LogWarning("[{AppKey}] AI polish error: {Error}", AppKey, chunk.ErrorMessage);
-                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.SERVER_ERROR, chunk.ErrorMessage ?? "AI 处理失败"));
+                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, chunk.ErrorMessage ?? "AI 处理失败"));
                 }
             }
 
@@ -1013,7 +1013,7 @@ public class DefectAgentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
-            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.SERVER_ERROR, "AI 润色失败，请稍后重试"));
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色失败，请稍后重试"));
         }
     }
 

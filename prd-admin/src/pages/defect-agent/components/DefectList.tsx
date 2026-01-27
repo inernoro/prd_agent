@@ -18,7 +18,7 @@ export function DefectList() {
 
   if (defects.length === 0) {
     return (
-      <GlassCard glow className="py-8 px-4">
+      <GlassCard glow className="h-full min-h-[300px] flex items-center justify-center">
         <div className="text-center">
           <Bug
             size={40}
