@@ -31,31 +31,29 @@
 | 3 | `3.prd.md` | 产品需求文档 | P0 |
 | 4 | `4.dev.md` | 开发指南 | P0 |
 | 5 | `5.step.md` | 步骤指南 | P1 |
-| 6 | `6.ops-auth-design.md` | 运维认证更新器 | P1 |
-| 7 | `7.data-dictionary-rule.md` | 数据字典 | P0 |
+| 6 | `design.ops-auth.md` | 运维认证更新器 | P1 |
+| 7 | `rule.data-dictionary.md` | 数据字典 | P0 |
 
 ### 2.2 功能专项文档（需评估和更新）
 
 | 序号 | 文件名 | 说明 | 状态评估 |
 |------|--------|------|----------|
 | 8 | `8.doc-code-diff.md` | 文档代码差异 | 待评估 |
-| 9 | `9.literary-agent-design.md` | 文学代理-文章配图 | 待评估 |
-| 10 | `10.admin-design.md` | 管理端设计系统 | 待评估 |
-| 11 | `11.open-platform-design.md` | 开放平台概述 | 待评估 |
-| 26 | `26.app-key-definition-rule.md` | 应用 key 定义 | 待评估 |
-| 13 | `13.init-strategy-rule.md` | 初始化策略实现 | 待评估 |
-| 14 | `14.toast-design.md` | Toast通知系统 | 待评估 |
-| 27 | `27.app-feature-definition-rule.md` | 应用子功能与 appCallerCode 定义 | 待评估 |
-| 17 | `17.left-right-layout-design.md` | 左右布局重设计 | 待评估 |
+| 9 | `agent.literary-agent.md` | 文学代理-文章配图 | 待评估 |
+| 10 | `design.admin.md` | 管理端设计系统 | 待评估 |
+| 11 | `design.open-platform.md` | 开放平台概述 | 待评估 |
+| 13 | `rule.init-strategy.md` | 初始化策略实现 | 待评估 |
+| 14 | `design.toast.md` | Toast通知系统 | 待评估 |
+| 17 | `design.left-right-layout.md` | 左右布局重设计 | 待评估 |
 
 ### 2.3 原非编号文档（已编号，待清理评估）
 
 | 文件名 | 说明 | 初步判断 |
 |--------|------|----------|
-| `26.app-key-definition-rule.md` | 应用 key 定义 | 待评估 |
-| `27.app-feature-definition-rule.md` | 应用子功能与 appCallerCode 定义 | 待评估 |
+| `design.network-diagnostics.md` | 网络诊断 | 待评估 |
+| `rule.app-key-definition.md` | 应用 key 定义 | 待评估 |
+| `rule.app-feature-definition.md` | 应用子功能与 appCallerCode 定义 | 待评估 |
 | `difftest.md` | 差异测试 | 可能过时 |
-| `24.network-diagnostics-design.md` | 网络诊断 | 待评估 |
 | `open-platform-complete-test.md` | 开放平台完整测试 | 可能过时 |
 | `open-platform-final-summary.md` | 开放平台最终总结 | 可能过时 |
 | `open-platform-implementation-summary.md` | 开放平台实现总结 | 可能过时 |
@@ -502,12 +500,12 @@
 - [ ] `2.srs.md` - 更新需求规格
 - [ ] `3.prd.md` - 更新产品需求
 - [ ] `4.dev.md` - 更新开发指南
-- [ ] `7.data-dictionary-rule.md` - 更新数据字典
+- [ ] `rule.data-dictionary.md` - 更新数据字典
 
 #### 功能文档更新
-- [ ] `9.literary-agent-design.md` - 文学代理
-- [ ] `10.admin-design.md` - 设计系统
-- [ ] `11.open-platform-design.md` - 开放平台
+- [ ] `agent.literary-agent.md` - 文学代理
+- [ ] `design.admin.md` - 设计系统
+- [ ] `design.open-platform.md` - 开放平台
 
 #### 新增文档（如需要）
 - [ ] 视觉代理功能文档
@@ -611,7 +609,7 @@
 |------|------------|--------|
 | 2.srs.md | Guide→PromptStages、Run/Worker、Platform+Model、新增功能 | P0 |
 | 3.prd.md | VisualAgent、水印系统、权限矩阵 | P0 |
-| 7.data-dictionary-rule.md | 新数据模型(91个)、新字段 | P0 |
+| rule.data-dictionary.md | 新数据模型(91个)、新字段 | P0 |
 | 4.dev.md | 架构变更、appKey规范 | P1 |
 
 ---
@@ -626,7 +624,7 @@
 6. ~~执行阶段六：文档更新~~ ✅
    - [x] 更新 2.srs.md（v3.0：废弃Guide、新增Run/Worker、Platform+Model、视觉代理、水印、权限矩阵、速率限制、应用身份隔离）
    - [x] 更新 3.prd.md（v2.0：提示词阶段替代引导讲解、新增管理后台模块清单）
-   - [x] 更新 7.data-dictionary-rule.md（新增16个MongoDB集合、桌面端新增store）
+   - [x] 更新 rule.data-dictionary.md（新增16个MongoDB集合、桌面端新增store）
    - [x] 清理过时文档（删除5个过时文件、保留3个有价值文件）
 
 ### 已删除的过时文档
@@ -643,9 +641,9 @@
 
 | 文件名 | 保留原因 |
 |--------|----------|
-| `24.network-diagnostics-design.md` | 桌面端网络诊断功能文档 |
-| `26.app-key-definition-rule.md` | 应用 key 定义 |
-| `27.app-feature-definition-rule.md` | 应用子功能与 appCallerCode 定义 |
+| `design.network-diagnostics.md` | 桌面端网络诊断功能文档 |
+| `rule.app-key-definition.md` | 应用 key 定义 |
+| `rule.app-feature-definition.md` | 应用子功能与 appCallerCode 定义 |
 
 ---
 
