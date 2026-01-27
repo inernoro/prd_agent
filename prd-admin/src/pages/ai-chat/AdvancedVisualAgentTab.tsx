@@ -1648,9 +1648,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       if (assetIds.length === 0) return;
       const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
-      const failed = results.find((r) => !r.success) ?? null;
-      if (failed) {
-        toast.error(failed.error?.message || '删除失败');
+      // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
+      const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
+      if (realFailed) {
+        toast.error(realFailed.error?.message || '删除失败');
         await reloadWorkspace();
       }
     },
@@ -3602,13 +3603,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 按创建时间排序（旧→新，左上→右下）
     const sorted = [...items].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 
-    const gap = 5; // 紧凑间距
-    const viewW = stageSize.w || 1200;
-    const currentCam = cameraRef.current;
-    const currentZoom = zoomRef.current;
+    const gap = 20; // 间距
 
-    // 计算可用宽度（视口宽度的80%）
-    const availableW = (viewW * 0.85) / currentZoom;
+    // 使用接近正方形的网格：列数 = ceil(sqrt(n))
+    // 例如：4张→2列, 6张→3列, 9张→3列, 12张→4列
+    const n = sorted.length;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+
+    // 计算图片的最大宽度
+    const maxW = Math.max(...sorted.map((it) => it.w ?? 320));
+
+    // 可用宽度 = 列数 × (最大宽度 + 间距)，确保每行能放下指定列数的图片
+    const availableW = cols * (maxW + gap);
 
     // 桌面图标式紧凑布局算法：
     // 1. 按行堆叠，每行高度取该行最高元素
@@ -3656,11 +3662,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     totalH -= gap; // 去掉最后一个gap
 
-    // 计算起点（以视口中心为基准）
-    const viewCenterX = (stageSize.w / 2 - currentCam.x) / currentZoom;
-    const viewCenterY = (stageSize.h / 2 - currentCam.y) / currentZoom;
-    const startX = viewCenterX - maxRowW / 2;
-    const startY = viewCenterY - totalH / 2;
+    // 固定起点：以世界坐标原点为中心，确保每次布局结果一致
+    const startX = -maxRowW / 2;
+    const startY = -totalH / 2;
 
     // 分配所有位置（一次性计算）
     const updates: Record<string, { x: number; y: number }> = {};
@@ -3682,11 +3686,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return next;
     });
 
-    // 适配视口
+    // 适配视口 - 直接使用计算好的新位置，避免异步状态问题
+    const updatedItems = sorted.map((it) => ({
+      ...it,
+      x: updates[it.key]?.x ?? it.x,
+      y: updates[it.key]?.y ?? it.y,
+    }));
     requestAnimationFrame(() => {
-      fitToAll();
+      fitItemsToViewport(updatedItems);
     });
-  }, [fitToAll, stageSize.w, stageSize.h]);
+  }, [fitItemsToViewport, stageSize.w, stageSize.h]);
 
   // 图层操作回调
   const layerMoveUp = useCallback(() => {
