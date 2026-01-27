@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
+import type { LlmLogsMetaUser } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { getFeatureDescriptionFromRequestPurpose, AppCallerKeyIcon } from '@/lib/appCallerUtils';
@@ -735,7 +736,6 @@ export default function LlmLogsPage() {
   const [jsonCheckPhase, setJsonCheckPhase] = useState<'idle' | 'scanning' | 'passed' | 'failed'>('idle');
   const jsonCheckLastRef = useRef<{ ok: boolean; reason?: string } | null>(null);
 
-  const [qProvider, setQProvider] = useState(() => searchParams.get('provider') ?? '');
   const [qModel, setQModel] = useState(() => searchParams.get('model') ?? '');
   const [qStatus, setQStatus] = useState(() => searchParams.get('status') ?? '');
   const [qRequestId, setQRequestId] = useState(() => searchParams.get('requestId') ?? '');
@@ -744,10 +744,10 @@ export default function LlmLogsPage() {
   const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
   const [qRequestPurpose, setQRequestPurpose] = useState(() => searchParams.get('requestPurpose') ?? '');
 
-  const [metaProviders, setMetaProviders] = useState<string[]>([]);
   const [metaModels, setMetaModels] = useState<string[]>([]);
   const [metaRequestPurposes, setMetaRequestPurposes] = useState<string[]>([]);
   const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
+  const [metaUsers, setMetaUsers] = useState<LlmLogsMetaUser[]>([]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -872,7 +872,7 @@ export default function LlmLogsPage() {
     setLoading(true);
     try {
       const sp = new URLSearchParams(searchParams);
-      sp.set('provider', qProvider || '');
+      sp.delete('provider');
       sp.set('model', qModel || '');
       sp.set('status', qStatus || '');
       sp.set('requestId', qRequestId || '');
@@ -881,7 +881,7 @@ export default function LlmLogsPage() {
       sp.set('userId', qUserId || '');
       sp.set('requestPurpose', qRequestPurpose || '');
       // 清理空参数（保持 URL 干净）
-      ['provider', 'model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'requestPurpose'].forEach((k) => {
+      ['model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'requestPurpose'].forEach((k) => {
         if (!String(sp.get(k) ?? '').trim()) sp.delete(k);
       });
       setSearchParams(sp, { replace: true });
@@ -889,7 +889,6 @@ export default function LlmLogsPage() {
       const res = await getLlmLogs({
         page: opts?.resetPage ? 1 : page,
         pageSize,
-        provider: qProvider || undefined,
         model: qModel || undefined,
         status: qStatus || undefined,
         requestId: qRequestId || undefined,
@@ -999,10 +998,10 @@ export default function LlmLogsPage() {
     (async () => {
       const res = await getLlmLogsMeta();
       if (res.success) {
-        setMetaProviders(res.data.providers ?? []);
         setMetaModels(res.data.models ?? []);
         setMetaRequestPurposes(res.data.requestPurposes ?? []);
         setMetaStatuses(res.data.statuses ?? ['running', 'succeeded', 'failed', 'cancelled']);
+        setMetaUsers(res.data.users ?? []);
       }
     })();
   }, []);
@@ -1128,7 +1127,6 @@ export default function LlmLogsPage() {
               variant="ghost"
               size="sm"
               onClick={() => {
-                setQProvider('');
                 setQModel('');
                 setQStatus('');
                 setQRequestId('');
@@ -1159,26 +1157,14 @@ export default function LlmLogsPage() {
 
       <GlassCard glow className="p-4">
         <div className="grid gap-3 grid-cols-4 md:grid-cols-8">
-          <Select
-            value={qProvider}
-            onChange={(e) => setQProvider(e.target.value)}
-            uiSize="sm"
-            style={inputStyle}
-            leftIcon={<Server size={16} />}
-          >
-            <option value="">provider（全部）</option>
-            {metaProviders.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </Select>
           <SearchableSelect
             value={qModel}
             onValueChange={setQModel}
             options={[
-              { value: '', label: 'model（全部）' },
+              { value: '', label: '模型' },
               ...metaModels.map((m) => ({ value: m, label: m })),
             ]}
-            placeholder="model（全部）"
+            placeholder="模型"
             leftIcon={<Database size={16} />}
             uiSize="sm"
             style={inputStyle}
@@ -1190,7 +1176,7 @@ export default function LlmLogsPage() {
             style={inputStyle}
             leftIcon={<CheckCircle size={16} />}
           >
-            <option value="">status（全部）</option>
+            <option value="">状态</option>
             {metaStatuses.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -1199,24 +1185,29 @@ export default function LlmLogsPage() {
             value={qRequestPurpose}
             onValueChange={setQRequestPurpose}
             options={[
-              { value: '', label: '应用（全部）' },
+              { value: '', label: '应用' },
               ...metaRequestPurposes.map((rp) => ({ value: rp, label: getFeatureDescriptionFromRequestPurpose(rp) })),
             ]}
-            placeholder="应用（全部）"
+            placeholder="应用"
             leftIcon={<Zap size={16} />}
             uiSize="sm"
             style={inputStyle}
           />
-          <div className="relative">
-            <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-            <input
-              value={qUserId}
-              onChange={(e) => setQUserId(e.target.value)}
-              className="h-9 w-full rounded-[12px] pl-9 pr-3 text-sm outline-none"
-              style={inputStyle}
-              placeholder="userId"
-            />
-          </div>
+          <SearchableSelect
+            value={qUserId}
+            onValueChange={setQUserId}
+            options={[
+              { value: '', label: '用户' },
+              ...metaUsers.map((u) => ({
+                value: u.userId,
+                label: u.username ? `${u.userId} / ${u.username}` : u.userId,
+              })),
+            ]}
+            placeholder="用户"
+            leftIcon={<Users size={16} />}
+            uiSize="sm"
+            style={inputStyle}
+          />
           <div className="relative">
             <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -1322,7 +1313,13 @@ export default function LlmLogsPage() {
                         {(() => {
                           const groupName = (it.modelGroupName || '').trim();
                           // modelResolutionType: 0=直连单模型, 1=默认模型池, 2=专属模型池
-                          const resolutionType = it.modelResolutionType ?? 0;
+                          // 后端使用 JsonStringEnumConverter，枚举会序列化为字符串名称（如 "DedicatedPool"）
+                          const raw = it.modelResolutionType as unknown;
+                          const resolutionType =
+                            raw === 'DirectModel' || raw === 0 ? 0 :
+                            raw === 'DefaultPool' || raw === 1 ? 1 :
+                            raw === 'DedicatedPool' || raw === 2 ? 2 :
+                            (raw == null ? 0 : -1); // null/undefined 默认为直连单模型，其他未知值为 -1
                           const b = requestTypeToBadge(it.requestType);
 
                           if (resolutionType === 0) {

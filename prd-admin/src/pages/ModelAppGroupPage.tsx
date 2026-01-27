@@ -2160,6 +2160,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                   type="checkbox"
                                   checked={isSelected}
                                   onChange={() => toggleBindingPool(g.id)}
+                                  onClick={(e) => e.stopPropagation()}
                                   className="h-4 w-4 rounded"
                                 />
                                 <div className="min-w-0 flex-1">
