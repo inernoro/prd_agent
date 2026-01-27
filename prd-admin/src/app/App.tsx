@@ -20,6 +20,7 @@ import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
 import AuthzPage from '@/pages/AuthzPage';
 import SettingsPage from '@/pages/SettingsPage';
+import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 
@@ -132,6 +133,9 @@ export default function App() {
       <ToastContainer />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+
+        {/* 开发试验场 - 无需权限 */}
+        <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
 
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route
