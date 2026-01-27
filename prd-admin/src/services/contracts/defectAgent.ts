@@ -62,9 +62,16 @@ export interface DefectReport {
   reporterName?: string;
   assigneeId?: string;
   assigneeName?: string;
+  reporterUnread?: boolean;
+  assigneeUnread?: boolean;
+  lastCommentBy?: 'reporter' | 'assignee' | null;
   missingFields?: string[];
   resolution?: string;
+  resolvedById?: string;
+  resolvedByName?: string;
   rejectReason?: string;
+  rejectedById?: string;
+  rejectedByName?: string;
   resolvedAt?: string;
   closedAt?: string;
   version: number;
@@ -207,7 +214,7 @@ export type ShareDefectTemplateContract = (input: {
 }) => Promise<ApiResponse<{ shared: boolean }>>;
 
 export type ListDefectsContract = (input?: {
-  filter?: 'submitted' | 'assigned' | 'all';
+  filter?: 'submitted' | 'assigned' | 'completed' | 'rejected' | 'all';
   status?: string;
   folderId?: string;
   limit?: number;
@@ -218,6 +225,7 @@ export type GetDefectContract = (input: { id: string }) => Promise<ApiResponse<{
 
 export type CreateDefectContract = (input: {
   templateId?: string;
+  title?: string;
   content: string;
   assigneeUserId: string;
   severity?: string;

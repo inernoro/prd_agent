@@ -50,6 +50,22 @@ public class DefectAgentController : ControllerBase
                || permissions.Contains(AdminPermissionCatalog.Super);
     }
 
+    private static string? GetUnreadRoleForUser(DefectReport defect, string userId)
+    {
+        if (defect.ReporterId == userId) return DefectUnreadBy.Reporter;
+        if (!string.IsNullOrEmpty(defect.AssigneeId) && defect.AssigneeId == userId) return DefectUnreadBy.Assignee;
+        return null;
+    }
+
+    private static string? GetOppositeUnreadRole(DefectReport defect, string userId)
+    {
+        if (defect.ReporterId == userId)
+            return string.IsNullOrEmpty(defect.AssigneeId) ? null : DefectUnreadBy.Assignee;
+        if (!string.IsNullOrEmpty(defect.AssigneeId) && defect.AssigneeId == userId)
+            return DefectUnreadBy.Reporter;
+        return null;
+    }
+
     #region 模板管理
 
     /// <summary>
@@ -580,6 +596,8 @@ public class DefectAgentController : ControllerBase
         // 简化处理：直接设为已提交（后续可改为异步 AI 审核）
         defect.Status = DefectStatus.Submitted;
         defect.SubmittedAt = DateTime.UtcNow;
+        defect.ReporterUnread = false;
+        defect.AssigneeUnread = !string.IsNullOrEmpty(defect.AssigneeId);
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
@@ -614,6 +632,8 @@ public class DefectAgentController : ControllerBase
         defect.AssigneeName = assignee.DisplayName ?? assignee.Username;
         defect.Status = DefectStatus.Assigned;
         defect.AssignedAt = DateTime.UtcNow;
+        defect.ReporterUnread = false;
+        defect.AssigneeUnread = true;
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
@@ -657,20 +677,24 @@ public class DefectAgentController : ControllerBase
     public async Task<IActionResult> ResolveDefect(string id, [FromBody] ResolveDefectRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
+        var isAdmin = HasManagePermission();
 
         var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        // 只有被指派人可以标记解决
-        if (defect.AssigneeId != userId)
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有被指派人可以标记解决"));
+        // 允许任何可见用户标记完成
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限标记完成"));
 
-        if (defect.Status != DefectStatus.Processing && defect.Status != DefectStatus.Assigned)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能解决处理中或已指派状态的缺陷"));
+        // 获取操作者信息
+        var resolver = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var resolverName = resolver?.DisplayName ?? resolver?.Username ?? GetUsername() ?? "未知用户";
 
         defect.Status = DefectStatus.Resolved;
         defect.Resolution = request.Resolution?.Trim();
+        defect.ResolvedById = userId;
+        defect.ResolvedByName = resolverName;
         defect.ResolvedAt = DateTime.UtcNow;
         defect.UpdatedAt = DateTime.UtcNow;
 
@@ -688,23 +712,26 @@ public class DefectAgentController : ControllerBase
     public async Task<IActionResult> RejectDefect(string id, [FromBody] RejectDefectRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
+        var isAdmin = HasManagePermission();
 
         var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        // 只有被指派人可以拒绝
-        if (defect.AssigneeId != userId)
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有被指派人可以拒绝"));
-
-        if (defect.Status != DefectStatus.Processing && defect.Status != DefectStatus.Assigned)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能拒绝处理中或已指派状态的缺陷"));
+        // 允许任何可见用户拒绝
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限拒绝"));
 
         if (string.IsNullOrWhiteSpace(request.Reason))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "拒绝原因不能为空"));
 
+        var rejector = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var rejectorName = rejector?.DisplayName ?? rejector?.Username ?? GetUsername() ?? "未知用户";
+
         defect.Status = DefectStatus.Rejected;
         defect.RejectReason = request.Reason.Trim();
+        defect.RejectedById = userId;
+        defect.RejectedByName = rejectorName;
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
@@ -718,18 +745,28 @@ public class DefectAgentController : ControllerBase
     [HttpPost("defects/{id}/close")]
     public async Task<IActionResult> CloseDefect(string id, CancellationToken ct)
     {
-        if (!HasManagePermission())
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限关闭缺陷"));
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
 
         var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        if (defect.Status != DefectStatus.Resolved && defect.Status != DefectStatus.Rejected)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能关闭已解决或已拒绝状态的缺陷"));
+        // 允许可见用户关闭
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限关闭缺陷"));
 
-        defect.Status = DefectStatus.Closed;
-        defect.ClosedAt = DateTime.UtcNow;
+        // 完成=关闭：统一进入结束态（resolved 或 rejected）
+        if (defect.Status != DefectStatus.Rejected)
+        {
+            var resolver = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+            var resolverName = resolver?.DisplayName ?? resolver?.Username ?? GetUsername() ?? "未知用户";
+            defect.Status = DefectStatus.Resolved;
+            defect.ResolvedById = userId;
+            defect.ResolvedByName = resolverName;
+            defect.ResolvedAt = DateTime.UtcNow;
+        }
+
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
@@ -754,15 +791,18 @@ public class DefectAgentController : ControllerBase
         if (!isAdmin && defect.ReporterId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限重新打开此缺陷"));
 
-        if (defect.Status != DefectStatus.Closed && defect.Status != DefectStatus.Rejected && defect.Status != DefectStatus.Resolved)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能重新打开已关闭、已拒绝或已解决状态的缺陷"));
+        if (defect.Status != DefectStatus.Rejected && defect.Status != DefectStatus.Resolved)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能重新打开已拒绝或已解决状态的缺陷"));
 
         // 如果有指派人，回到已指派状态；否则回到已提交状态
         defect.Status = string.IsNullOrEmpty(defect.AssigneeId) ? DefectStatus.Submitted : DefectStatus.Assigned;
         defect.Resolution = null;
         defect.RejectReason = null;
         defect.ResolvedAt = null;
-        defect.ClosedAt = null;
+        defect.ResolvedById = null;
+        defect.ResolvedByName = null;
+        defect.RejectedById = null;
+        defect.RejectedByName = null;
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
@@ -799,6 +839,23 @@ public class DefectAgentController : ControllerBase
             .SortBy(x => x.Seq)
             .ToListAsync(ct);
 
+        var shouldUpdateRead = false;
+        if (defect.ReporterId == userId && defect.ReporterUnread)
+        {
+            defect.ReporterUnread = false;
+            shouldUpdateRead = true;
+        }
+        else if (defect.AssigneeId == userId && defect.AssigneeUnread)
+        {
+            defect.AssigneeUnread = false;
+            shouldUpdateRead = true;
+        }
+        if (shouldUpdateRead)
+        {
+            defect.UpdatedAt = DateTime.UtcNow;
+            await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        }
+
         return Ok(ApiResponse<object>.Ok(new { messages }));
     }
 
@@ -818,7 +875,9 @@ public class DefectAgentController : ControllerBase
         if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限发送消息"));
 
-        if (string.IsNullOrWhiteSpace(request.Content))
+        var content = request.Content?.Trim() ?? string.Empty;
+        var hasAttachments = request.AttachmentIds != null && request.AttachmentIds.Count > 0;
+        if (string.IsNullOrWhiteSpace(content) && !hasAttachments)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息内容不能为空"));
 
         // 获取发送者信息
@@ -842,20 +901,44 @@ public class DefectAgentController : ControllerBase
             UserId = userId,
             UserName = senderName,
             AvatarFileName = avatarFileName,
-            Content = request.Content.Trim(),
+            Content = content,
             AttachmentIds = request.AttachmentIds,
             CreatedAt = DateTime.UtcNow
         };
 
         await _db.DefectMessages.InsertOneAsync(message, cancellationToken: ct);
 
-        // 更新缺陷的 rawContent（追加）
-        defect.RawContent = string.IsNullOrEmpty(defect.RawContent)
-            ? request.Content.Trim()
-            : defect.RawContent + "\n\n" + request.Content.Trim();
-        defect.UpdatedAt = DateTime.UtcNow;
+        var shouldUpdateDefect = false;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        // 更新缺陷的 rawContent（追加）
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            defect.RawContent = string.IsNullOrEmpty(defect.RawContent)
+                ? content
+                : defect.RawContent + "\n\n" + content;
+            shouldUpdateDefect = true;
+        }
+
+        if (defect.ReporterId == userId)
+        {
+            defect.ReporterUnread = false;
+            defect.AssigneeUnread = true;
+            defect.LastCommentBy = DefectUnreadBy.Reporter;
+            shouldUpdateDefect = true;
+        }
+        else if (!string.IsNullOrEmpty(defect.AssigneeId) && defect.AssigneeId == userId)
+        {
+            defect.AssigneeUnread = false;
+            defect.ReporterUnread = true;
+            defect.LastCommentBy = DefectUnreadBy.Assignee;
+            shouldUpdateDefect = true;
+        }
+
+        if (shouldUpdateDefect)
+        {
+            defect.UpdatedAt = DateTime.UtcNow;
+            await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        }
 
         return Ok(ApiResponse<object>.Ok(new { message, defect }));
     }
@@ -885,7 +968,8 @@ public class DefectAgentController : ControllerBase
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        if (defect.ReporterId != userId)
+        var isAdmin = HasManagePermission();
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限添加附件"));
 
         // 读取文件内容

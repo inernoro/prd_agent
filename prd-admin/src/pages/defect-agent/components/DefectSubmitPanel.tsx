@@ -9,6 +9,7 @@ import {
   polishDefect,
 } from '@/services';
 import { toast } from '@/lib/toast';
+import { DefectSeverity } from '@/services/contracts/defectAgent';
 import {
   X,
   Send,
@@ -21,6 +22,8 @@ import {
 
 const STORAGE_KEY_TEMPLATE = 'defect-agent-last-template';
 const STORAGE_KEY_ASSIGNEE = 'defect-agent-last-assignee';
+
+type DefectSeverityValue = (typeof DefectSeverity)[keyof typeof DefectSeverity];
 
 export function DefectSubmitPanel() {
   const {
@@ -38,7 +41,9 @@ export function DefectSubmitPanel() {
   const [assigneeUserId, setAssigneeUserId] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
   });
+  const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [polishing, setPolishing] = useState(false);
@@ -139,8 +144,10 @@ export function DefectSubmitPanel() {
       // Create defect
       const createRes = await createDefect({
         templateId: selectedTemplateId || undefined,
+        title: title.trim() || undefined,
         content: content.trim(),
         assigneeUserId,
+        severity,
       });
 
       if (!createRes.success || !createRes.data) {
@@ -178,6 +185,12 @@ export function DefectSubmitPanel() {
 
   const defaultTemplate = templates.find((t) => t.isDefault);
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
+  const severityOptions: Array<{ value: DefectSeverityValue; label: string }> = [
+    { value: DefectSeverity.Critical, label: '致命' },
+    { value: DefectSeverity.Major, label: '严重' },
+    { value: DefectSeverity.Minor, label: '一般' },
+    { value: DefectSeverity.Trivial, label: '轻微' },
+  ];
 
   return (
     <div
@@ -190,7 +203,7 @@ export function DefectSubmitPanel() {
       <GlassCard
         glow
         variant="default"
-        className="w-full max-w-[600px] max-h-[85vh] flex flex-col"
+        className="w-full max-w-[760px] max-h-[90vh] flex flex-col"
         overflow="hidden"
         padding="none"
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
@@ -307,12 +320,27 @@ export function DefectSubmitPanel() {
           onDragOver={handleDragOver}
         >
           <div
-            className="flex-1 min-h-[200px] flex flex-col rounded-xl overflow-hidden"
+            className="flex-1 min-h-[280px] flex flex-col rounded-xl overflow-hidden"
             style={{
               background: 'rgba(0,0,0,0.25)',
               border: '1px solid rgba(255,255,255,0.08)',
             }}
           >
+            {/* Title */}
+            <div
+              className="px-4 py-3 border-b"
+              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+            >
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="标题"
+                className="w-full bg-transparent outline-none text-[13px]"
+                style={{ color: 'var(--text-primary)' }}
+              />
+            </div>
+
             {/* Textarea */}
             <textarea
               ref={textareaRef}
@@ -397,6 +425,32 @@ export function DefectSubmitPanel() {
               >
                 <Paperclip size={16} style={{ color: 'var(--text-muted)' }} />
               </button>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  严重性
+                </span>
+                <div className="flex items-center gap-1">
+                  {severityOptions.map((opt) => {
+                    const active = severity === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setSeverity(opt.value)}
+                        className="px-2 py-1 rounded-md text-[11px] transition-colors"
+                        style={{
+                          background: active ? 'rgba(214, 178, 106, 0.2)' : 'rgba(255,255,255,0.06)',
+                          border: active ? '1px solid rgba(214, 178, 106, 0.4)' : '1px solid rgba(255,255,255,0.08)',
+                          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div className="flex-1" />
 

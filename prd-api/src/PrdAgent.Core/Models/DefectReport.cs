@@ -61,14 +61,38 @@ public class DefectReport
     /// <summary>被指派人用户名（冗余，便于展示）</summary>
     public string? AssigneeName { get; set; }
 
+    /// <summary>报告人未读</summary>
+    public bool ReporterUnread { get; set; }
+
+    /// <summary>被指派人未读</summary>
+    public bool AssigneeUnread { get; set; }
+
+    /// <summary>
+    /// 最近一次评论来自谁（用于“对方已评论”展示）：
+    /// - reporter | assignee
+    /// </summary>
+    public string? LastCommentBy { get; set; }
+
     /// <summary>指派时间</summary>
     public DateTime? AssignedAt { get; set; }
 
     /// <summary>解决说明</summary>
     public string? Resolution { get; set; }
 
+    /// <summary>解决人 UserId</summary>
+    public string? ResolvedById { get; set; }
+
+    /// <summary>解决人名称</summary>
+    public string? ResolvedByName { get; set; }
+
     /// <summary>拒绝原因</summary>
     public string? RejectReason { get; set; }
+
+    /// <summary>拒绝人 UserId</summary>
+    public string? RejectedById { get; set; }
+
+    /// <summary>拒绝人名称</summary>
+    public string? RejectedByName { get; set; }
 
     /// <summary>正式提交时间</summary>
     public DateTime? SubmittedAt { get; set; }
@@ -175,6 +199,16 @@ public static class DefectStatus
     public const string Closed = "closed";
 
     public static readonly string[] All = { Draft, Reviewing, Awaiting, Submitted, Assigned, Processing, Resolved, Rejected, Closed };
+}
+
+/// <summary>
+/// 未读标记
+/// </summary>
+public static class DefectUnreadBy
+{
+    public const string Reporter = "reporter";
+    public const string Assignee = "assignee";
+    public static readonly string[] All = { Reporter, Assignee };
 }
 
 /// <summary>

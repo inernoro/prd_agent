@@ -12,7 +12,7 @@ import type {
   DefectStats,
 } from '@/services/contracts/defectAgent';
 
-type FilterType = 'submitted' | 'assigned' | 'all';
+type FilterType = 'submitted' | 'assigned' | 'completed' | 'rejected' | 'all';
 
 interface DefectState {
   // Data
@@ -62,7 +62,7 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   stats: null,
   loading: false,
   error: '',
-  filter: 'submitted',
+  filter: 'assigned',
   statusFilter: '',
   selectedDefectId: null,
   showSubmitPanel: false,
