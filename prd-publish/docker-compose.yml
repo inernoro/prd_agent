@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  prd-publish:
+    build: .
+    container_name: prd-publish
+    restart: unless-stopped
+    ports:
+      - "${PUBLISH_PORT:-3939}:3939"
+    environment:
+      # Authentication
+      - PUBLISH_USERNAME=${PUBLISH_USERNAME:-admin}
+      - PUBLISH_PASSWORD=${PUBLISH_PASSWORD:?PUBLISH_PASSWORD is required}
+      - PUBLISH_JWT_SECRET=${PUBLISH_JWT_SECRET:?PUBLISH_JWT_SECRET is required}
+      # Git Configuration
+      - PUBLISH_REPO_PATH=/repo
+      - PUBLISH_BRANCH=${PUBLISH_BRANCH:-main}
+      # Execution
+      - PUBLISH_EXEC_SCRIPT=${PUBLISH_EXEC_SCRIPT:-/app/exec.sh}
+      - PUBLISH_EXEC_TIMEOUT=${PUBLISH_EXEC_TIMEOUT:-300000}
+      # Retry
+      - PUBLISH_AUTO_RETRY=${PUBLISH_AUTO_RETRY:-false}
+      - PUBLISH_RETRY_COUNT=${PUBLISH_RETRY_COUNT:-3}
+      - PUBLISH_RETRY_DELAY=${PUBLISH_RETRY_DELAY:-5000}
+    volumes:
+      # Mount target repository (read-write for checkout)
+      - ${HOST_REPO_PATH:?HOST_REPO_PATH is required}:/repo
+      # Mount custom exec script (optional)
+      - ${HOST_EXEC_SCRIPT:-./exec.sh}:/app/exec.sh:ro
+      # Persist history data
+      - prd-publish-data:/data
+      # Mount SSH keys for private repos (optional)
+      - ${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro
+    networks:
+      - prd-publish-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3939/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  prd-publish-data:
+    name: prd-publish-data
+
+networks:
+  prd-publish-net:
+    name: prd-publish-net
