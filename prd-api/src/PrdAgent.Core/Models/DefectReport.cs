@@ -149,8 +149,8 @@ public class DefectAttachment
     /// <summary>MIME 类型</summary>
     public string MimeType { get; set; } = string.Empty;
 
-    /// <summary>COS 存储 URL</summary>
-    public string CosUrl { get; set; } = string.Empty;
+    /// <summary>存储 URL（兼容旧字段 CosUrl）</summary>
+    public string Url { get; set; } = string.Empty;
 
     /// <summary>缩略图 URL（图片类型）</summary>
     public string? ThumbnailUrl { get; set; }

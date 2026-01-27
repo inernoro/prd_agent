@@ -38,8 +38,8 @@ export interface DefectAttachment {
   fileName: string;
   fileSize: number;
   mimeType: string;
-  cosKey: string;
-  url?: string;
+  url: string;
+  thumbnailUrl?: string;
   uploadedAt: string;
 }
 

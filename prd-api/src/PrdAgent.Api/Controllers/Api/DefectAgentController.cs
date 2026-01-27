@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using System.Text;
 
@@ -23,12 +24,14 @@ public class DefectAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ISmartModelScheduler _scheduler;
     private readonly ILogger<DefectAgentController> _logger;
+    private readonly IAssetStorage _assetStorage;
 
-    public DefectAgentController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<DefectAgentController> logger)
+    public DefectAgentController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<DefectAgentController> logger, IAssetStorage assetStorage)
     {
         _db = db;
         _scheduler = scheduler;
         _logger = logger;
+        _assetStorage = assetStorage;
     }
 
     private string GetUserId()
@@ -853,13 +856,22 @@ public class DefectAgentController : ControllerBase
 
     #region 附件上传
 
+    private const long MaxAttachmentBytes = 10 * 1024 * 1024; // 10MB
+
     /// <summary>
-    /// 添加附件到缺陷
+    /// 添加附件到缺陷（支持文件上传）
     /// </summary>
     [HttpPost("defects/{id}/attachments")]
-    public async Task<IActionResult> AddAttachment(string id, [FromBody] AddAttachmentRequest request, CancellationToken ct)
+    [RequestSizeLimit(MaxAttachmentBytes)]
+    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, CancellationToken ct)
     {
         var userId = GetUserId();
+
+        if (file == null || file.Length <= 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "文件不能为空"));
+
+        if (file.Length > MaxAttachmentBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.ATTACHMENT_TOO_LARGE, "文件过大，最大 10MB"));
 
         var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (defect == null)
@@ -868,14 +880,25 @@ public class DefectAgentController : ControllerBase
         if (defect.ReporterId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限添加附件"));
 
+        // 读取文件内容
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        // 上传到存储
+        var mime = file.ContentType ?? "application/octet-stream";
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "defect", type: "attachments");
+
         var attachment = new DefectAttachment
         {
             Id = Guid.NewGuid().ToString("N"),
-            FileName = request.FileName,
-            FileSize = request.FileSize,
-            MimeType = request.MimeType,
-            CosUrl = request.CosUrl,
-            ThumbnailUrl = request.ThumbnailUrl,
+            FileName = file.FileName ?? "unknown",
+            FileSize = file.Length,
+            MimeType = mime,
+            Url = stored.Url,
             UploadedAt = DateTime.UtcNow
         };
 
@@ -1415,15 +1438,6 @@ public class DefectSendMessageRequest
 {
     public string Content { get; set; } = string.Empty;
     public List<string>? AttachmentIds { get; set; }
-}
-
-public class AddAttachmentRequest
-{
-    public string FileName { get; set; } = string.Empty;
-    public long FileSize { get; set; }
-    public string MimeType { get; set; } = string.Empty;
-    public string CosUrl { get; set; } = string.Empty;
-    public string? ThumbnailUrl { get; set; }
 }
 
 public class CreateFolderRequest
