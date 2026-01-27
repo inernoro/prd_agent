@@ -121,6 +121,8 @@ export function GlassCard({
       // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
       transform: 'translateZ(0)',
       willChange: 'transform',
+      // 创建独立的堆叠上下文，防止与背景动画停止时的合成层重建产生光晕渲染异常
+      isolation: 'isolate',
       ...style,
     };
   };

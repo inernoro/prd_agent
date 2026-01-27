@@ -912,7 +912,7 @@ public class ImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
-            // 格式: {app}.{feature}::modelType（符合 doc/12.app-feature-naming-convention.md）
+            // 格式: {app}.{feature}::modelType（符合 doc/27.app-feature-definition-rule.md）
             AppCallerCode = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation",
             AppKey = appKey,
             CreatedAt = DateTime.UtcNow

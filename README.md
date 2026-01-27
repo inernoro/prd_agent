@@ -219,8 +219,8 @@ Sync helper:
 - `doc/2.srs.md`: system spec (API contracts, SSE, data model)
 - `doc/3.prd.md`: product requirements and acceptance criteria
 - `doc/4.dev.md`: developer guide (deeper details)
-- `doc/7.data-dictionary.md`: persistent storage dictionary (must keep updated)
-- `doc/11.open-platform-overview.md`: Open Platform API feature overview
+- `doc/7.data-dictionary-rule.md`: persistent storage dictionary (must keep updated)
+- `doc/11.open-platform-design.md`: Open Platform API feature overview
 - `doc/open-platform-complete-test.md`: comprehensive testing guide for Open Platform
 
 ---
