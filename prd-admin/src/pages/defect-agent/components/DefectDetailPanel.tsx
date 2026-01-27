@@ -83,6 +83,7 @@ export function DefectDetailPanel() {
   } = useDefectStore();
 
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const defect = useMemo(
     () => defects.find((d) => d.id === selectedDefectId),
@@ -93,7 +94,11 @@ export function DefectDetailPanel() {
 
   const handleClose = () => setSelectedDefectId(null);
 
-  const handleDelete = async () => {
+  const handleDeleteClick = () => {
+    setConfirmingDelete(true);
+  };
+
+  const handleDeleteConfirm = async () => {
     const res = await deleteDefect({ id: defect.id });
     if (res.success) {
       removeDefectFromList(defect.id);
@@ -103,6 +108,11 @@ export function DefectDetailPanel() {
     } else {
       toast.error(res.error?.message || '删除失败');
     }
+    setConfirmingDelete(false);
+  };
+
+  const handleDeleteCancel = () => {
+    setConfirmingDelete(false);
   };
 
   const handleProcess = async () => {
@@ -448,17 +458,36 @@ export function DefectDetailPanel() {
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
           {/* Left: Delete */}
-          <div>
-            {canDelete && (
+          <div className="flex items-center gap-2">
+            {canDelete && !confirmingDelete && (
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={handleDelete}
+                onClick={handleDeleteClick}
                 className="text-red-400 hover:text-red-300"
               >
                 <Trash2 size={14} />
                 删除
               </Button>
+            )}
+            {canDelete && confirmingDelete && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDeleteCancel}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDeleteConfirm}
+                  className="text-red-400 hover:text-red-300 border-red-500/30"
+                >
+                  确认删除
+                </Button>
+              </>
             )}
           </div>
 
