@@ -1,4 +1,3 @@
-import { GlassCard } from '@/components/design/GlassCard';
 import { useDefectStore } from '@/stores/defectStore';
 import { DefectCard } from './DefectCard';
 import { Bug } from 'lucide-react';
@@ -8,17 +7,17 @@ export function DefectList() {
 
   if (loading) {
     return (
-      <GlassCard glow className="py-2 px-3">
+      <div className="h-full flex items-center justify-center">
         <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
           加载中...
         </div>
-      </GlassCard>
+      </div>
     );
   }
 
   if (defects.length === 0) {
     return (
-      <GlassCard glow className="h-full min-h-[300px] flex items-center justify-center">
+      <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <Bug
             size={40}
@@ -39,7 +38,7 @@ export function DefectList() {
               : '等待他人提交缺陷给你'}
           </div>
         </div>
-      </GlassCard>
+      </div>
     );
   }
 

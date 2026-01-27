@@ -136,10 +136,12 @@ export default function DefectAgentPage() {
         </GlassCard>
       )}
 
-      {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto">
-        <DefectList />
-      </div>
+      {/* Content - 用 GlassCard 包裹整个列表区域 */}
+      <GlassCard variant="subtle" className="flex-1 min-h-0">
+        <div className="h-full min-h-0 overflow-auto">
+          <DefectList />
+        </div>
+      </GlassCard>
 
       {/* Detail Modal */}
       {selectedDefectId && <DefectDetailPanel />}
