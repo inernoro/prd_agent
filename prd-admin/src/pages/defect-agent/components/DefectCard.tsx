@@ -6,7 +6,7 @@ import { deleteDefect } from '@/services';
 import { toast } from '@/lib/toast';
 import type { DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
-import { Bug, ArrowRight, Clock, Eye, Trash2, Image as ImageIcon, X } from 'lucide-react';
+import { ArrowRight, Clock, Eye, Trash2, Image as ImageIcon, X, AlertTriangle, AlertCircle, Info, MinusCircle } from 'lucide-react';
 
 interface DefectCardProps {
   defect: DefectReport;
@@ -30,18 +30,31 @@ const statusColors: Record<string, string> = {
   [DefectStatus.Closed]: 'rgba(120,120,120,0.9)',
 };
 
-const severityLabels: Record<string, string> = {
-  [DefectSeverity.Critical]: '致命',
-  [DefectSeverity.Major]: '严重',
-  [DefectSeverity.Minor]: '一般',
-  [DefectSeverity.Trivial]: '轻微',
-};
-
-const severityColors: Record<string, string> = {
-  [DefectSeverity.Critical]: 'rgba(255,80,80,0.9)',
-  [DefectSeverity.Major]: 'rgba(255,140,60,0.9)',
-  [DefectSeverity.Minor]: 'rgba(255,200,80,0.9)',
-  [DefectSeverity.Trivial]: 'rgba(150,200,100,0.9)',
+const severityConfig: Record<string, { label: string; color: string; bgColor: string; icon: typeof AlertTriangle }> = {
+  [DefectSeverity.Critical]: {
+    label: '致命',
+    color: '#ef4444',
+    bgColor: 'rgba(239,68,68,0.15)',
+    icon: AlertTriangle,
+  },
+  [DefectSeverity.Major]: {
+    label: '严重',
+    color: '#f97316',
+    bgColor: 'rgba(249,115,22,0.15)',
+    icon: AlertCircle,
+  },
+  [DefectSeverity.Minor]: {
+    label: '一般',
+    color: '#eab308',
+    bgColor: 'rgba(234,179,8,0.15)',
+    icon: Info,
+  },
+  [DefectSeverity.Trivial]: {
+    label: '轻微',
+    color: '#22c55e',
+    bgColor: 'rgba(34,197,94,0.15)',
+    icon: MinusCircle,
+  },
 };
 
 function formatDate(iso: string | null | undefined) {
@@ -61,7 +74,7 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
-function getPreviewText(content: string | undefined | null, maxChars = 100) {
+function getPreviewText(content: string | undefined | null, maxChars = 80) {
   const raw = String(content ?? '').trim();
   if (!raw) return '(暂无描述)';
   if (raw.length <= maxChars) return raw;
@@ -81,8 +94,9 @@ export function DefectCard({ defect }: DefectCardProps) {
   const title = defect.title || '无标题';
   const statusLabel = statusLabels[defect.status] || defect.status;
   const statusColor = statusColors[defect.status] || 'var(--text-muted)';
-  const severityLabel = severityLabels[defect.severity] || defect.severity;
-  const severityColor = severityColors[defect.severity] || 'var(--text-muted)';
+
+  const severity = severityConfig[defect.severity] || severityConfig[DefectSeverity.Minor];
+  const SeverityIcon = severity.icon;
 
   // Get image attachments for thumbnails
   const imageAttachments = (defect.attachments || []).filter(isImageAttachment);
@@ -124,7 +138,7 @@ export function DefectCard({ defect }: DefectCardProps) {
             'group relative cursor-pointer select-none',
             'transition-colors',
             'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
-            'flex flex-col h-full',
+            'flex h-full',
           ].join(' ')}
           onClick={() => setSelectedDefectId(isSelected ? null : defect.id)}
           onKeyDown={(e) => {
@@ -134,167 +148,154 @@ export function DefectCard({ defect }: DefectCardProps) {
             }
           }}
         >
-          {/* Header: DefectNo + Title */}
-          <div className="p-3 pb-2 flex-shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <Bug size={14} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+          {/* 左侧严重性颜色条 */}
+          <div
+            className="w-1.5 flex-shrink-0"
+            style={{ background: severity.color }}
+          />
+
+          {/* 主内容区 */}
+          <div className="flex-1 min-w-0 flex flex-col">
+            {/* Header: 严重性 + 状态 + 编号 */}
+            <div className="px-3 pt-3 pb-2 flex items-center gap-2">
+              {/* 严重性标签 */}
+              <div
+                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium"
+                style={{ background: severity.bgColor, color: severity.color }}
+              >
+                <SeverityIcon size={12} />
+                {severity.label}
+              </div>
+
+              {/* 状态标签 */}
               <span
-                className="text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  color: 'var(--text-muted)',
-                }}
+                className="text-[10px] px-2 py-0.5 rounded"
+                style={{ background: `${statusColor}20`, color: statusColor }}
+              >
+                {statusLabel}
+              </span>
+
+              {/* 缺陷编号 */}
+              <span
+                className="text-[10px] font-mono ml-auto"
+                style={{ color: 'var(--text-muted)' }}
               >
                 {defect.defectNo}
               </span>
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
-                style={{ background: `${severityColor}20`, color: severityColor }}
-              >
-                {severityLabel}
-              </span>
-              {imageAttachments.length > 0 && (
-                <span
-                  className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 flex-shrink-0"
-                  style={{ background: 'rgba(100,180,255,0.15)', color: 'rgba(100,180,255,0.9)' }}
-                >
-                  <ImageIcon size={10} />
-                  {imageAttachments.length}
-                </span>
-              )}
             </div>
-            <div
-              className="font-medium text-[13px] truncate mt-2"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {title}
-            </div>
-          </div>
 
-          {/* Content Preview */}
-          <div className="px-3 pb-3 flex-1 min-h-0 overflow-hidden">
-            <div
-              className="h-full overflow-hidden border rounded-lg text-[11px] flex flex-col"
-              style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-            >
-              {/* Image Thumbnails (if any) */}
-              {imageAttachments.length > 0 && (
-                <div
-                  className="px-2 py-2 border-b flex gap-1.5 overflow-x-auto"
-                  style={{ borderColor: 'var(--border-subtle)' }}
-                >
-                  {imageAttachments.slice(0, 4).map((att) => (
-                    <div
-                      key={att.id}
-                      className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
-                      style={{
-                        background: 'rgba(0,0,0,0.3)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                      }}
-                      onClick={(e) => att.url && handleImageClick(e, att.url)}
-                      title="点击查看大图"
-                    >
-                      {att.url ? (
-                        <img
-                          src={att.url}
-                          alt={att.fileName}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <ImageIcon size={16} style={{ color: 'var(--text-muted)' }} />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {imageAttachments.length > 4 && (
-                    <div
-                      className="w-12 h-12 rounded-md flex-shrink-0 flex items-center justify-center text-[10px]"
-                      style={{
-                        background: 'rgba(255,255,255,0.06)',
-                        color: 'var(--text-muted)',
-                      }}
-                    >
-                      +{imageAttachments.length - 4}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Preview Text */}
+            {/* 标题 */}
+            <div className="px-3 pb-2">
               <div
-                className="p-2 flex-1 overflow-hidden line-clamp-2"
+                className="font-medium text-[14px] leading-snug line-clamp-2"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {title}
+              </div>
+            </div>
+
+            {/* 描述预览 */}
+            <div className="px-3 pb-2 flex-1 min-h-0">
+              <div
+                className="text-[12px] line-clamp-2"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 {getPreviewText(defect.rawContent)}
               </div>
+            </div>
 
-              {/* Footer: Reporter -> Assignee + Actions */}
-              <div
-                className="px-2 py-1.5 text-[10px] border-t flex items-center"
-                style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-              >
-                {/* Action buttons (visible on hover) */}
-                <div
-                  className={[
-                    'flex items-center gap-1',
-                    'opacity-0 pointer-events-none transition-opacity duration-100',
-                    'group-hover:opacity-100 group-hover:pointer-events-auto',
-                  ].join(' ')}
-                >
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    className="h-5 w-5 p-0 rounded-md gap-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedDefectId(defect.id);
+            {/* 图片缩略图 */}
+            {imageAttachments.length > 0 && (
+              <div className="px-3 pb-2 flex gap-1.5">
+                {imageAttachments.slice(0, 3).map((att) => (
+                  <div
+                    key={att.id}
+                    className="w-10 h-10 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
+                    style={{
+                      background: 'rgba(0,0,0,0.3)',
+                      border: '1px solid rgba(255,255,255,0.1)',
                     }}
-                    title="查看详情"
+                    onClick={(e) => att.url && handleImageClick(e, att.url)}
+                    title="点击查看大图"
                   >
-                    <Eye size={10} />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    className="h-5 w-5 p-0 rounded-md gap-0 hover:!bg-red-500/20"
-                    onClick={handleDelete}
-                    disabled={deleting}
-                    title="删除缺陷"
-                    style={{ color: 'rgba(255,100,100,0.9)' }}
+                    {att.url ? (
+                      <img
+                        src={att.url}
+                        alt={att.fileName}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ImageIcon size={14} style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {imageAttachments.length > 3 && (
+                  <div
+                    className="w-10 h-10 rounded flex-shrink-0 flex items-center justify-center text-[10px]"
+                    style={{
+                      background: 'rgba(255,255,255,0.06)',
+                      color: 'var(--text-muted)',
+                    }}
                   >
-                    <Trash2 size={10} />
-                  </Button>
-                </div>
+                    +{imageAttachments.length - 3}
+                  </div>
+                )}
+              </div>
+            )}
 
-                {/* Reporter -> Assignee */}
-                <div className="flex-1 text-right truncate flex items-center justify-end gap-1">
-                  <span className="truncate max-w-[60px]">{defect.reporterName || '未知'}</span>
-                  <ArrowRight size={10} className="flex-shrink-0" />
-                  <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
-                </div>
+            {/* 底部：人员 + 时间 + 操作 */}
+            <div
+              className="px-3 py-2 flex items-center border-t text-[11px]"
+              style={{ borderColor: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+            >
+              {/* 操作按钮（悬浮显示） */}
+              <div
+                className={[
+                  'flex items-center gap-1 mr-2',
+                  'opacity-0 pointer-events-none transition-opacity duration-100',
+                  'group-hover:opacity-100 group-hover:pointer-events-auto',
+                ].join(' ')}
+              >
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="h-5 w-5 p-0 rounded gap-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedDefectId(defect.id);
+                  }}
+                  title="查看详情"
+                >
+                  <Eye size={10} />
+                </Button>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="h-5 w-5 p-0 rounded gap-0 hover:!bg-red-500/20"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  title="删除缺陷"
+                  style={{ color: 'rgba(255,100,100,0.9)' }}
+                >
+                  <Trash2 size={10} />
+                </Button>
+              </div>
+
+              {/* 人员信息 */}
+              <div className="flex items-center gap-1 flex-1 min-w-0">
+                <span className="truncate max-w-[50px]">{defect.reporterName || '未知'}</span>
+                <ArrowRight size={10} className="flex-shrink-0 opacity-50" />
+                <span className="truncate max-w-[50px]">{defect.assigneeName || '未指派'}</span>
+              </div>
+
+              {/* 时间 */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <Clock size={10} />
+                {formatDate(defect.createdAt)}
               </div>
             </div>
-          </div>
-
-          {/* Bottom bar: Status + Time */}
-          <div
-            className="px-3 py-2 flex items-center justify-between border-t"
-            style={{ borderColor: 'rgba(255,255,255,0.06)' }}
-          >
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-md"
-              style={{ background: `${statusColor}20`, color: statusColor }}
-            >
-              {statusLabel}
-            </span>
-            <span
-              className="text-[10px] flex items-center gap-1"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <Clock size={10} />
-              {formatDate(defect.createdAt)}
-            </span>
           </div>
         </div>
       </GlassCard>
@@ -303,11 +304,7 @@ export function DefectCard({ defect }: DefectCardProps) {
       {lightboxImage && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center p-8"
-          style={{
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-          }}
+          style={{ background: 'rgba(0,0,0,0.85)' }}
           onClick={() => setLightboxImage(null)}
         >
           <button
@@ -320,9 +317,7 @@ export function DefectCard({ defect }: DefectCardProps) {
             src={lightboxImage}
             alt="放大图片"
             className="max-w-full max-h-full object-contain rounded-lg"
-            style={{
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            }}
+            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
             onClick={(e) => e.stopPropagation()}
           />
         </div>

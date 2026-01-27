@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -11,6 +11,7 @@ import {
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
+import type { DefectAttachment } from '@/services/contracts/defectAgent';
 import {
   X,
   ArrowRight,
@@ -23,6 +24,8 @@ import {
   ExternalLink,
   Trash2,
   Bug,
+  Image as ImageIcon,
+  FileText,
 } from 'lucide-react';
 
 const statusLabels: Record<string, string> = {
@@ -65,6 +68,10 @@ function formatDateTime(iso: string | null | undefined) {
   return d.toLocaleString();
 }
 
+function isImageAttachment(att: DefectAttachment): boolean {
+  return att.mimeType?.startsWith('image/') || false;
+}
+
 export function DefectDetailPanel() {
   const {
     defects,
@@ -74,6 +81,8 @@ export function DefectDetailPanel() {
     removeDefectFromList,
     loadStats,
   } = useDefectStore();
+
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   const defect = useMemo(
     () => defects.find((d) => d.id === selectedDefectId),
@@ -172,6 +181,10 @@ export function DefectDetailPanel() {
   const severityLabel = severityLabels[defect.severity] || defect.severity;
   const severityColor = severityColors[defect.severity] || 'var(--text-muted)';
 
+  // 分离图片和其他附件
+  const imageAttachments = (defect.attachments || []).filter(isImageAttachment);
+  const otherAttachments = (defect.attachments || []).filter((att) => !isImageAttachment(att));
+
   return (
     <>
       {/* 遮罩层 */}
@@ -183,7 +196,7 @@ export function DefectDetailPanel() {
 
       {/* 弹窗内容 - 液态玻璃样式 */}
       <div
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[560px] max-h-[85vh] overflow-hidden rounded-2xl flex flex-col"
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[600px] max-h-[85vh] overflow-hidden rounded-2xl flex flex-col"
         style={{
           background:
             'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
@@ -281,25 +294,64 @@ export function DefectDetailPanel() {
                 background: 'rgba(255,255,255,0.03)',
                 color: 'var(--text-secondary)',
                 border: '1px solid rgba(255,255,255,0.06)',
-                minHeight: '100px',
+                minHeight: '80px',
               }}
             >
               {defect.rawContent || '(无描述)'}
             </div>
           </div>
 
-          {/* Attachments */}
-          {defect.attachments && defect.attachments.length > 0 && (
+          {/* 截图/图片附件 */}
+          {imageAttachments.length > 0 && (
+            <div>
+              <div
+                className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <ImageIcon size={12} />
+                截图 ({imageAttachments.length})
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {imageAttachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="aspect-video rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
+                    style={{
+                      background: 'rgba(0,0,0,0.3)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                    }}
+                    onClick={() => att.url && setLightboxImage(att.url)}
+                    title="点击查看大图"
+                  >
+                    {att.url ? (
+                      <img
+                        src={att.url}
+                        alt={att.fileName}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ImageIcon size={24} style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 其他附件 */}
+          {otherAttachments.length > 0 && (
             <div>
               <div
                 className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
                 style={{ color: 'var(--text-muted)' }}
               >
                 <Paperclip size={12} />
-                附件 ({defect.attachments.length})
+                附件 ({otherAttachments.length})
               </div>
               <div className="flex flex-wrap gap-2">
-                {defect.attachments.map((att) => (
+                {otherAttachments.map((att) => (
                   <a
                     key={att.id}
                     href={att.url}
@@ -312,7 +364,7 @@ export function DefectDetailPanel() {
                       border: '1px solid rgba(255,255,255,0.08)',
                     }}
                   >
-                    <Paperclip size={12} />
+                    <FileText size={12} />
                     <span className="max-w-[150px] truncate">{att.fileName}</span>
                     <ExternalLink size={12} style={{ opacity: 0.6 }} />
                   </a>
@@ -440,6 +492,29 @@ export function DefectDetailPanel() {
           </div>
         </div>
       </div>
+
+      {/* Image Lightbox */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-8"
+          style={{ background: 'rgba(0,0,0,0.9)' }}
+          onClick={() => setLightboxImage(null)}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors"
+            onClick={() => setLightboxImage(null)}
+          >
+            <X size={24} style={{ color: '#fff' }} />
+          </button>
+          <img
+            src={lightboxImage}
+            alt="放大图片"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </>
   );
 }
