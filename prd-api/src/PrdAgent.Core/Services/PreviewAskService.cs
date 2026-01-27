@@ -14,7 +14,7 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class PreviewAskService : IPreviewAskService
 {
-    private readonly ILLMClient _llmClient;
+    private readonly ISmartModelScheduler _modelScheduler;
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
     private readonly IPromptManager _promptManager;
@@ -23,7 +23,7 @@ public class PreviewAskService : IPreviewAskService
     private readonly ISystemPromptService _systemPromptService;
 
     public PreviewAskService(
-        ILLMClient llmClient,
+        ISmartModelScheduler modelScheduler,
         ISessionService sessionService,
         IDocumentService documentService,
         IPromptManager promptManager,
@@ -31,7 +31,7 @@ public class PreviewAskService : IPreviewAskService
         IAppSettingsService settingsService,
         ISystemPromptService systemPromptService)
     {
-        _llmClient = llmClient;
+        _modelScheduler = modelScheduler;
         _sessionService = sessionService;
         _documentService = documentService;
         _promptManager = promptManager;
@@ -143,6 +143,8 @@ public class PreviewAskService : IPreviewAskService
         var docHash = Sha256Hex(raw);
 
         var requestId = Guid.NewGuid().ToString();
+        var appCallerCode = Desktop.PreviewAsk.SectionChat;
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: session.GroupId,
@@ -153,7 +155,10 @@ public class PreviewAskService : IPreviewAskService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: Desktop.PreviewAsk.SectionChat));
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName));
 
         yield return new PreviewAskStreamEvent { Type = "start", RequestId = requestId };
 
@@ -184,7 +189,7 @@ public class PreviewAskService : IPreviewAskService
             new() { Role = "user", Content = userPrompt }
         };
 
-        await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
+        await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {

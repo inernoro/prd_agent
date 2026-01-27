@@ -18,7 +18,7 @@ When making structural code changes (new modules, renames, deprecations), update
 
 1. `CLAUDE.md` → Codebase Skill section (feature registry, DB collections, deprecated concepts)
 2. `doc/2.srs.md` → Relevant functional requirements section
-3. `doc/7.data-dictionary.md` → If new MongoDB collections or localStorage entries added
+3. `doc/rule.data-dictionary.md` → If new MongoDB collections or localStorage entries added
 
 ### Cross-validation Checklist
 

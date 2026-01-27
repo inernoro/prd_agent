@@ -47,7 +47,8 @@ public class UserPreferencesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             navOrder = prefs?.NavOrder ?? new List<string>(),
-            themeConfig = prefs?.ThemeConfig
+            themeConfig = prefs?.ThemeConfig,
+            visualAgentPreferences = prefs?.VisualAgentPreferences
         }));
     }
 
@@ -100,6 +101,31 @@ public class UserPreferencesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { }));
     }
+
+    /// <summary>
+    /// 更新视觉代理偏好
+    /// </summary>
+    [HttpPut("visual-agent")]
+    public async Task<IActionResult> UpdateVisualAgentPreferences([FromBody] UpdateVisualAgentPreferencesRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        if (request.VisualAgentPreferences == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "visualAgentPreferences 不能为空"));
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.VisualAgentPreferences, request.VisualAgentPreferences)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
 }
 
 public class UpdateNavOrderRequest
@@ -110,4 +136,9 @@ public class UpdateNavOrderRequest
 public class UpdateThemeConfigRequest
 {
     public ThemeConfig? ThemeConfig { get; set; }
+}
+
+public class UpdateVisualAgentPreferencesRequest
+{
+    public VisualAgentPreferences? VisualAgentPreferences { get; set; }
 }

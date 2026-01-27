@@ -1,3 +1,5 @@
+using PrdAgent.Core.Interfaces;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -35,12 +37,14 @@ public class LlmRequestLog
     public string? PlatformName { get; set; }
 
     // 模型池信息（来自 ModelGroup）
+    /// <summary>
+    /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）
+    /// </summary>
+    public ModelResolutionType? ModelResolutionType { get; set; }
     /// <summary>使用的模型池ID</summary>
     public string? ModelGroupId { get; set; }
     /// <summary>使用的模型池名称</summary>
     public string? ModelGroupName { get; set; }
-    /// <summary>是否使用默认模型池（IsDefaultForType=true）</summary>
-    public bool? IsDefaultModelGroup { get; set; }
 
     // 请求（密钥已隐藏；正文按后端策略可能为摘要/占位符）
     public Dictionary<string, string>? RequestHeadersRedacted { get; set; }

@@ -15,14 +15,16 @@ import {
   getVisualAgentWorkspaceDetail,
   getAdapterInfoByModelName,
   getModels,
+  getUserPreferences,
   getWatermarkByApp,
   modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
+  updateVisualAgentPreferences,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
-import type { ModelGroup } from '@/types/modelGroup';
+import type { ModelGroupForApp } from '@/types/modelGroup';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -57,6 +59,7 @@ import {
   Maximize2,
   MousePointer2,
   Plus,
+  Send,
   Sparkles,
   Square,
   Type,
@@ -698,10 +701,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [imageGenPools, setImageGenPools] = useState<ModelGroup[]>([]);
+  const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
   // 将模型池转换为 Model 兼容对象，用于选择器展示
-  const poolModels = useMemo<Model[]>(() => {
+  // 扩展 Model 类型以包含来源标记
+  type ModelWithSource = Model & {
+    resolutionType?: 'DedicatedPool' | 'DefaultPool' | 'DirectModel';
+    isDedicated?: boolean;
+    isDefault?: boolean;
+    isLegacy?: boolean;
+  };
+  const poolModels = useMemo<ModelWithSource[]>(() => {
     if (imageGenPools.length === 0) return [];
     return imageGenPools
       .filter((g) => g.models && g.models.length > 0)
@@ -717,24 +727,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           isImageGen: true,
           enablePromptCache: false,
           priority: g.priority ?? 50,
-        } as Model;
+          // 来源标记
+          resolutionType: g.resolutionType,
+          isDedicated: g.isDedicated,
+          isDefault: g.isDefault,
+          isLegacy: g.isLegacy,
+        } as ModelWithSource;
       });
   }, [imageGenPools]);
 
   // 合并模型列表：优先使用模型池；如果没有池则回退到 llm_models
-  const allImageGenModels = useMemo<Model[]>(() => {
+  const allImageGenModels = useMemo<ModelWithSource[]>(() => {
     if (poolModels.length > 0) return poolModels;
-    return (models ?? []).filter((m) => m.isImageGen);
+    return (models ?? []).filter((m) => m.isImageGen) as ModelWithSource[];
   }, [poolModels, models]);
 
   const serverDefaultModel = useMemo(() => {
-    const list = allImageGenModels.filter((m) => m.enabled);
-    list.sort(
-      (a, b) =>
-        Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9) ||
-        String(a.name || a.modelName || '').localeCompare(String(b.name || b.modelName || ''), undefined, { numeric: true, sensitivity: 'base' })
-    );
-    return list[0] ?? null;
+    // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
+    return allImageGenModels.find((m) => m.enabled) ?? null;
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -747,11 +757,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 360;
 
-  // 模型偏好：按账号持久化（不写 DB）
-  const modelPrefKey = userId ? `prdAdmin.visualAgent.modelPref.${userId}` : '';
+  // 模型偏好：按账号持久化到数据库
   const [modelPrefOpen, setModelPrefOpen] = useState(false);
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
+  const [modelPrefReady, setModelPrefReady] = useState(false);
+  const modelPrefSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
   const sizeSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -1636,9 +1647,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       if (assetIds.length === 0) return;
       const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
-      const failed = results.find((r) => !r.success) ?? null;
-      if (failed) {
-        toast.error(failed.error?.message || '删除失败');
+      // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
+      const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
+      if (realFailed) {
+        toast.error(realFailed.error?.message || '删除失败');
         await reloadWorkspace();
       }
     },
@@ -1647,9 +1659,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
+    // 按优先级加载模型池：appCallerCode 绑定的专属池 > 默认池 > 传统 isImageGen 配置
+    const appCallerCode = 'visual-agent.image::generation';
     Promise.all([
       getModels(),
-      modelGroupsService.getModelGroups('generation').catch(() => ({ success: false, data: [] as ModelGroup[] })),
+      modelGroupsService.getModelGroupsForApp(appCallerCode, 'generation').catch(() => ({ success: false, data: [] as ModelGroupForApp[] })),
     ])
       .then(([modelsRes, poolsRes]) => {
         if (modelsRes.success) setModels(modelsRes.data ?? []);
@@ -1658,29 +1672,51 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .finally(() => setModelsLoading(false));
   }, []);
 
-  // 读取模型偏好（仅在有 userId 时）
+  // 读取模型偏好（从后端）
   useEffect(() => {
-    if (!modelPrefKey) return;
-    try {
-      const raw = localStorage.getItem(modelPrefKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { auto?: boolean; modelId?: string };
-      if (typeof parsed.auto === 'boolean') setModelPrefAuto(parsed.auto);
-      if (typeof parsed.modelId === 'string') setModelPrefModelId(parsed.modelId);
-    } catch {
-      // ignore
-    }
-  }, [modelPrefKey]);
+    if (!userId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getUserPreferences();
+        if (cancelled) return;
+        if (res.success && res.data.visualAgentPreferences) {
+          const prefs = res.data.visualAgentPreferences;
+          setModelPrefAuto(prefs.modelAuto ?? true);
+          setModelPrefModelId(prefs.modelId ?? '');
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setModelPrefReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
 
-  // 写入模型偏好
+  // 写入模型偏好（防抖保存到后端）
   useEffect(() => {
-    if (!modelPrefKey) return;
-    try {
-      localStorage.setItem(modelPrefKey, JSON.stringify({ auto: modelPrefAuto, modelId: modelPrefModelId }));
-    } catch {
-      // ignore
+    if (!userId) return;
+    // 必须等加载完成后才保存，避免初始值覆盖
+    if (!modelPrefReady) return;
+    // 防抖：避免快速切换导致频繁请求
+    if (modelPrefSaveRef.current) {
+      clearTimeout(modelPrefSaveRef.current);
     }
-  }, [modelPrefAuto, modelPrefKey, modelPrefModelId]);
+    modelPrefSaveRef.current = setTimeout(() => {
+      void updateVisualAgentPreferences({
+        modelAuto: modelPrefAuto,
+        modelId: modelPrefModelId || undefined,
+      }).catch(() => {
+        // 静默失败，不影响用户操作
+      });
+    }, 500);
+    return () => {
+      if (modelPrefSaveRef.current) {
+        clearTimeout(modelPrefSaveRef.current);
+      }
+    };
+  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId]);
 
   // 读取直连模式（仅在有 userId 时）
   useEffect(() => {
@@ -3588,13 +3624,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 按创建时间排序（旧→新，左上→右下）
     const sorted = [...items].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 
-    const gap = 5; // 紧凑间距
-    const viewW = stageSize.w || 1200;
-    const currentCam = cameraRef.current;
-    const currentZoom = zoomRef.current;
+    const gap = 20; // 间距
 
-    // 计算可用宽度（视口宽度的80%）
-    const availableW = (viewW * 0.85) / currentZoom;
+    // 使用接近正方形的网格：列数 = ceil(sqrt(n))
+    // 例如：4张→2列, 6张→3列, 9张→3列, 12张→4列
+    const n = sorted.length;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+
+    // 计算图片的最大宽度
+    const maxW = Math.max(...sorted.map((it) => it.w ?? 320));
+
+    // 可用宽度 = 列数 × (最大宽度 + 间距)，确保每行能放下指定列数的图片
+    const availableW = cols * (maxW + gap);
 
     // 桌面图标式紧凑布局算法：
     // 1. 按行堆叠，每行高度取该行最高元素
@@ -3642,11 +3683,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     totalH -= gap; // 去掉最后一个gap
 
-    // 计算起点（以视口中心为基准）
-    const viewCenterX = (stageSize.w / 2 - currentCam.x) / currentZoom;
-    const viewCenterY = (stageSize.h / 2 - currentCam.y) / currentZoom;
-    const startX = viewCenterX - maxRowW / 2;
-    const startY = viewCenterY - totalH / 2;
+    // 固定起点：以世界坐标原点为中心，确保每次布局结果一致
+    const startX = -maxRowW / 2;
+    const startY = -totalH / 2;
 
     // 分配所有位置（一次性计算）
     const updates: Record<string, { x: number; y: number }> = {};
@@ -3668,11 +3707,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return next;
     });
 
-    // 适配视口
+    // 适配视口 - 直接使用计算好的新位置，避免异步状态问题
+    const updatedItems = sorted.map((it) => ({
+      ...it,
+      x: updates[it.key]?.x ?? it.x,
+      y: updates[it.key]?.y ?? it.y,
+    }));
     requestAnimationFrame(() => {
-      fitToAll();
+      fitItemsToViewport(updatedItems);
     });
-  }, [fitToAll, stageSize.w, stageSize.h]);
+  }, [fitItemsToViewport, stageSize.w, stageSize.h]);
 
   // 图层操作回调
   const layerMoveUp = useCallback(() => {
@@ -4966,7 +5010,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           }}
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
-                            {poolModels.length > 0 ? '绘图模型（模型池）' : '绘图模型（isImageGen）'}
+                            {(() => {
+                              const first = allImageGenModels[0];
+                              if (first?.isDedicated) return '绘图模型（专属模型池）';
+                              if (first?.isDefault) return '绘图模型（默认模型池）';
+                              if (first?.isLegacy) return '绘图模型（默认生图）';
+                              return '绘图模型';
+                            })()}
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
                             {allImageGenModels
@@ -4981,6 +5031,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
                                 const isPool = m.id.startsWith('pool_');
+                                // 根据来源类型生成标签
+                                const getSourceLabel = () => {
+                                  if (m.isDedicated) return '专属池';
+                                  if (m.isDefault) return '默认池';
+                                  if (m.isLegacy) return '默认生图';
+                                  if (isPool) return '模型池';
+                                  return disabled ? '已禁用' : '已启用';
+                                };
+                                const sourceLabel = getSourceLabel();
                                 return (
                                   <button
                                     key={m.id}
@@ -4993,12 +5052,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     }}
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
-                                      <div className="min-w-0">
-                                        <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
-                                          {m.name || m.modelName}
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
+                                            {m.name || m.modelName}
+                                          </div>
+                                          {m.isDedicated && (
+                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.15)', color: 'rgb(147,51,234)' }}>
+                                              专属
+                                            </span>
+                                          )}
+                                          {m.isDefault && !m.isDedicated && (
+                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.15)', color: 'rgb(34,197,94)' }}>
+                                              默认
+                                            </span>
+                                          )}
+                                          {m.isLegacy && (
+                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.15)', color: 'rgb(180,140,20)' }}>
+                                              传统
+                                            </span>
+                                          )}
                                         </div>
                                         <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(0,0,0,0.40)' }}>
-                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : '已启用')}
+                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
                                         </div>
                                       </div>
                                       <div className="ml-auto shrink-0">{using ? <Check size={16} color="#0b0b0f" /> : null}</div>
@@ -6172,10 +6248,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   暂无启用的 isImageGen 模型（可在“模型管理”设置）
                                 </div>
                               ) : (
-                                imageModels
-                                  .slice()
-                                  .sort((a, b) => Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9))
-                                  .map((m) => (
+                                imageModels.map((m) => (
                                     <button
                                       key={m.id}
                                       type="button"
@@ -6395,10 +6468,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           color: 'rgba(129, 140, 248, 0.95)',
                         }}
                         aria-label="模型偏好"
-                        title={effectiveModel ? `${effectiveModel.modelName || effectiveModel.name || ''} - 点击切换模型` : '选择模型'}
+                        title={effectiveModel ? `${effectiveModel.name || effectiveModel.modelName || ''} - 点击切换模型` : '选择模型'}
                       >
                         <Sparkles size={10} className="shrink-0" />
-                        <span className="truncate">{effectiveModel?.modelName || effectiveModel?.name || '选择模型'}</span>
+                        <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
                         <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                       </button>
                     </DropdownMenu.Trigger>
@@ -6494,10 +6567,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           ) : (
                             <div className="space-y-2">
-                              {enabledImageModels
-                                .slice()
-                                .sort((a, b) => Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9))
-                                .map((m) => {
+                              {enabledImageModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
                                   return (
                                     <button
@@ -6518,9 +6588,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         <div className="min-w-0">
                                           <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                                             {m.name || m.modelName}
-                                          </div>
-                                          <div className="mt-0.5 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                            {m.modelName}
                                           </div>
                                         </div>
                                         <div className="shrink-0">
@@ -6578,6 +6645,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       {runningCount}/{pendingCount}
                     </div>
                   ) : null}
+
+                  {/* 发送按钮 */}
+                  <button
+                    type="button"
+                    className="h-7 w-7 rounded-full inline-flex items-center justify-center transition-all"
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.85)',
+                      border: '1px solid rgba(99, 102, 241, 0.65)',
+                      color: 'rgba(255, 255, 255, 0.95)',
+                      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                    }}
+                    aria-label="发送"
+                    title="发送（Enter）"
+                    onClick={() => void onSendRich()}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(99, 102, 241, 1)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(99, 102, 241, 0.85)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(99, 102, 241, 0.3)';
+                    }}
+                  >
+                    <Send size={14} />
+                  </button>
                 </div>
               </div>
             </div>

@@ -852,4 +852,4 @@ BsonClassMap.RegisterClassMap<ImageMasterWorkspace>(cm =>
 | `doc/3.prd.md` | 新增第 4.8 节"文学创作 Agent（文章配图）" |
 | `doc/2.srs.md` | 新增第 5.3 节"文学创作 Agent 接口"，第 7.2.10-7.2.11 节数据模型 |
 | `doc/8.doc-code-diff.md` | 更新第 2.2 节，标注"文学创作 Agent 已落地" |
-| `doc/9.literary-agent-article-illustration.md` | 新增本文档（完整设计说明） |
+| `doc/agent.literary-agent.md` | 新增本文档（完整设计说明） |

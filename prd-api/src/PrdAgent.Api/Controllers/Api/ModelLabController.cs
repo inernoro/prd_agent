@@ -593,6 +593,7 @@ public class ModelLabController : ControllerBase
         var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
 
         var requestType = effective.Suite == ModelLabSuite.Intent ? "intent" : "reasoning";
+        var appCallerCode = "prd-agent-web::model-lab.run";
         var repeatN = Math.Max(1, effective.Params.RepeatN);
 
         // repeatN > 1 时：每次请求都作为独立 item 回显（前端按 itemId 渲染为独立 block）
@@ -637,7 +638,8 @@ public class ModelLabController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
-                RequestPurpose: "prd-agent-web::model-lab.run"));
+                RequestPurpose: appCallerCode,
+                ModelResolutionType: ModelResolutionType.DirectModel));
 
             var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;

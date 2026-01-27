@@ -91,6 +91,7 @@ export const api = {
     modelGroups: {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
+      forApp: () => '/api/mds/model-groups/for-app',
     },
 
     // LLM 配置
@@ -228,6 +229,7 @@ export const api = {
       get: () => '/api/dashboard/user-preferences',
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
       theme: () => '/api/dashboard/user-preferences/theme',
+      visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',

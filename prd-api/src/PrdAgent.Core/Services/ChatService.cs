@@ -242,9 +242,9 @@ public class ChatService : IChatService
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
             RequestPurpose: AppCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
             ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName,
-            IsDefaultModelGroup: scheduledResult.IsDefaultModelGroup));
+            ModelGroupName: scheduledResult.ModelGroupName));
 
         // 检查用户消息是否已存在（CreateRun 可能已创建）
         Message userMessage;

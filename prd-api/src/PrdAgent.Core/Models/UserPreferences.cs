@@ -19,6 +19,11 @@ public class UserPreferences
     /// </summary>
     public ThemeConfig? ThemeConfig { get; set; }
 
+    /// <summary>
+    /// 视觉代理偏好设置
+    /// </summary>
+    public VisualAgentPreferences? VisualAgentPreferences { get; set; }
+
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -42,4 +47,16 @@ public class ThemeConfig
 
     /// <summary>侧边栏玻璃效果模式：auto | always | never</summary>
     public string SidebarGlass { get; set; } = "always";
+}
+
+/// <summary>
+/// 视觉代理偏好设置
+/// </summary>
+public class VisualAgentPreferences
+{
+    /// <summary>是否自动选择模型（true 时使用后端默认模型）</summary>
+    public bool ModelAuto { get; set; } = true;
+
+    /// <summary>用户手动选择的模型 ID（仅当 ModelAuto=false 时有效）</summary>
+    public string? ModelId { get; set; }
 }

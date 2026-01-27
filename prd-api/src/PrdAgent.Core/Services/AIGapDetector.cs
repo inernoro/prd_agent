@@ -1,7 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Core.Services;
 
@@ -10,12 +13,17 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class AIGapDetector
 {
-    private readonly ILLMClient _llmClient;
+    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IPromptManager _promptManager;
 
-    public AIGapDetector(ILLMClient llmClient, IPromptManager promptManager)
+    public AIGapDetector(
+        ISmartModelScheduler modelScheduler,
+        ILLMRequestContextAccessor llmRequestContext,
+        IPromptManager promptManager)
     {
-        _llmClient = llmClient;
+        _modelScheduler = modelScheduler;
+        _llmRequestContext = llmRequestContext;
         _promptManager = promptManager;
     }
 
@@ -26,6 +34,9 @@ public class AIGapDetector
         string prdContent,
         string question,
         string aiResponse,
+        string? groupId = null,
+        string? userId = null,
+        string? viewRole = null,
         CancellationToken cancellationToken = default)
     {
         var prompt = BuildAnalysisPrompt(prdContent, question, aiResponse);
@@ -36,8 +47,24 @@ public class AIGapDetector
         };
 
         var responseBuilder = new System.Text.StringBuilder();
+        var appCallerCode = Desktop.Gap.DetectionChat;
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: groupId,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: viewRole,
+            DocumentChars: prdContent?.Length ?? 0,
+            DocumentHash: Sha256Hex(prdContent ?? string.Empty),
+            SystemPromptRedacted: "你是一个专业的PRD分析助手，帮助识别文档中的内容缺口。",
+            RequestType: "reasoning",
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName));
         
-        await foreach (var chunk in _llmClient.StreamGenerateAsync(
+        await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(
             "你是一个专业的PRD分析助手，帮助识别文档中的内容缺口。",
             messages,
             cancellationToken))
@@ -57,6 +84,9 @@ public class AIGapDetector
     public async Task<string> GenerateSummaryReportAsync(
         string prdContent,
         List<ContentGap> gaps,
+        string? groupId = null,
+        string? userId = null,
+        string? viewRole = null,
         CancellationToken cancellationToken = default)
     {
         var gapsSummary = string.Join("\n", gaps.Select((g, i) => 
@@ -85,8 +115,24 @@ public class AIGapDetector
         };
 
         var reportBuilder = new System.Text.StringBuilder();
+        var appCallerCode = Desktop.Gap.SummarizationChat;
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: groupId,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: viewRole,
+            DocumentChars: prdContent?.Length ?? 0,
+            DocumentHash: Sha256Hex(prdContent ?? string.Empty),
+            SystemPromptRedacted: "你是一个专业的产品文档分析师。",
+            RequestType: "reasoning",
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName));
         
-        await foreach (var chunk in _llmClient.StreamGenerateAsync(
+        await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(
             "你是一个专业的产品文档分析师。",
             messages,
             cancellationToken))
@@ -150,6 +196,13 @@ public class AIGapDetector
         }
 
         return null;
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
 

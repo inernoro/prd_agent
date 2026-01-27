@@ -113,13 +113,17 @@ public class SmartModelScheduler : ISmartModelScheduler
         var client = await CreateClientForModelAsync(bestModel, group.Id, ct);
 
         // 返回客户端及模型池信息
-        // 对于 legacy（直连单模型）情况，ModelGroupId/ModelGroupName 应为 null
+        // 根据模型来源确定解析类型
         var isLegacy = group.Id.StartsWith("legacy-", StringComparison.OrdinalIgnoreCase);
+        var resolutionType = isLegacy
+            ? ModelResolutionType.DirectModel
+            : (group.IsDefaultForType ? ModelResolutionType.DefaultPool : ModelResolutionType.DedicatedPool);
+
         return new ScheduledClientResult(
             Client: client,
-            ModelGroupId: isLegacy ? null! : group.Id,
-            ModelGroupName: isLegacy ? null! : group.Name,
-            IsDefaultModelGroup: isLegacy ? null : group.IsDefaultForType);
+            ResolutionType: resolutionType,
+            ModelGroupId: isLegacy ? null : group.Id,
+            ModelGroupName: isLegacy ? null : group.Name);
     }
 
     public async Task<LLMAppCaller> GetOrCreateAppCallerAsync(string appCallerCode, CancellationToken ct = default)
@@ -942,11 +946,16 @@ public class SmartModelScheduler : ISmartModelScheduler
                     // 查询该 appCallerCode + model 组合的统计数据（近 7 天）
                     var stats = await GetModelStatsAsync(appCallerCode, bestModel.PlatformId, bestModel.ModelId, ct);
                     
+                    // 确定模型解析类型
+                    var isLegacy = group.Id.StartsWith("legacy-", StringComparison.OrdinalIgnoreCase);
+                    var resolutionType = isLegacy
+                        ? ModelResolutionType.DirectModel
+                        : (group.IsDefaultForType ? ModelResolutionType.DefaultPool : ModelResolutionType.DedicatedPool);
+
                     return new ResolvedModelInfo(
-                        Source: group.Id.StartsWith("legacy-") ? "legacy" : "pool",
-                        ModelGroupId: group.Id.StartsWith("legacy-") ? null : group.Id,
-                        ModelGroupName: group.Id.StartsWith("legacy-") ? null : group.Name,
-                        IsDefaultForType: group.IsDefaultForType,
+                        ResolutionType: resolutionType,
+                        ModelGroupId: isLegacy ? null : group.Id,
+                        ModelGroupName: isLegacy ? null : group.Name,
                         PlatformId: bestModel.PlatformId,
                         PlatformName: platform?.Name ?? bestModel.PlatformId,
                         ModelId: bestModel.ModelId,

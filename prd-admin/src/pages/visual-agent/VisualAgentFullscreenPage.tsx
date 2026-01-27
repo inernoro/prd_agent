@@ -39,7 +39,7 @@ export default function VisualAgentFullscreenPage() {
       <button
         type="button"
         onClick={onBack}
-        className="fixed top-5 left-5 z-50 flex items-center gap-2 px-4 py-2 rounded-[12px] transition-all duration-200"
+        className="fixed top-5 left-5 z-50 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200"
         style={{
           background: 'rgba(18, 18, 22, 0.8)',
           backdropFilter: 'blur(12px)',

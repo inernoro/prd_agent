@@ -17,13 +17,18 @@ alwaysApply: true
 
 | 主题 | 源文档 | 关联的 Rules | 关联的 Skills |
 |------|--------|--------------|---------------|
-| 创建 Agent | `doc/12.app-feature-naming-convention.md` | - | `create-agent` |
+| 创建 Agent | `doc/rule.app-feature-definition.md` | - | `create-agent` |
+| Agent 开发流程 | `doc/rule.agent-development.md` | `prd-api.mdc`, `prd-admin.mdc` | - |
+| appKey 定义 | `doc/rule.app-key-definition.md` | `api-contract.mdc` | - |
 | 技术栈 | 各子项目 `package.json` / `csproj` | `prd-admin.mdc`, `prd-api.mdc`, `prd-desktop.mdc` | - |
 | 模型标识 | `doc/2.srs.md` 4.17节 | `model-identity.mdc` | - |
 | API 契约 | `doc/2.srs.md` 第6章 | `api-contract.mdc` | `api-debug` |
 | 安全约束 | `doc/2.srs.md` 第8章 | `security.mdc` | - |
 | 版本发布 | `doc/5.step.md` | - | `release-version` |
-| 应用初始化 | `doc/13.init-strategy-implementation.md` | - | - |
+| 应用初始化 | `doc/rule.init-strategy.md` | - | - |
+| 数据字典 | `doc/rule.data-dictionary.md` | `prd-api.mdc` | - |
+| 测试组织 | `doc/rule.test-organization.md` | `prd-admin.mdc`, `prd-api.mdc` | - |
+| 文档命名 | `doc/rule.doc-naming.md` | `docs.mdc` | - |
 
 ## 同步更新规则
 

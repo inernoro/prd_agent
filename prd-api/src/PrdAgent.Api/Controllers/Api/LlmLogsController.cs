@@ -20,6 +20,12 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("logs", AdminPermissionCatalog.LogsRead)]
 public class LlmLogsController : ControllerBase
 {
+    private sealed class MetaUser
+    {
+        public string UserId { get; init; } = string.Empty;
+        public string? Username { get; init; }
+    }
+
     private readonly MongoDbContext _db;
 
     public LlmLogsController(MongoDbContext db)
@@ -145,7 +151,35 @@ public class LlmLogsController : ControllerBase
 
         var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
 
-        return Ok(ApiResponse<object>.Ok(new { providers, models, requestPurposes, statuses }));
+        var userIds = (await _db.LlmRequestLogs
+                .Distinct(x => x.UserId, Builders<LlmRequestLog>.Filter.Empty)
+                .ToListAsync())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var users = await _db.Users.Find(u => userIds.Contains(u.UserId))
+            .Project(u => new MetaUser { UserId = u.UserId, Username = u.Username })
+            .ToListAsync();
+
+        var metaUsers = users.ToList();
+
+        var knownUserIds = new HashSet<string>(metaUsers.Select(x => x.UserId), StringComparer.OrdinalIgnoreCase);
+        foreach (var userId in userIds)
+        {
+            if (!knownUserIds.Contains(userId))
+            {
+                metaUsers.Add(new MetaUser { UserId = userId });
+            }
+        }
+
+        metaUsers = metaUsers
+            .OrderBy(x => x.Username ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.UserId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { providers, models, requestPurposes, statuses, users = metaUsers }));
     }
 
     [HttpGet]
@@ -194,9 +228,9 @@ public class LlmLogsController : ControllerBase
                 x.HttpMethod,
                 x.PlatformId,
                 x.PlatformName,
+                x.ModelResolutionType,
                 x.ModelGroupId,
                 x.ModelGroupName,
-                x.IsDefaultModelGroup,
                 x.GroupId,
                 x.SessionId,
                 x.UserId,
@@ -230,9 +264,9 @@ public class LlmLogsController : ControllerBase
             x.HttpMethod,
             x.PlatformId,
             x.PlatformName,
+            x.ModelResolutionType,
             x.ModelGroupId,
             x.ModelGroupName,
-            x.IsDefaultModelGroup,
             x.GroupId,
             x.SessionId,
             x.UserId,

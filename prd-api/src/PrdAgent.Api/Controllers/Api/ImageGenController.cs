@@ -29,6 +29,7 @@ public class ImageGenController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly OpenAIImageClient _imageClient;
+    private readonly ISmartModelScheduler _modelScheduler;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<ImageGenController> _logger;
     private readonly IAppSettingsService _settingsService;
@@ -42,6 +43,7 @@ public class ImageGenController : ControllerBase
         MongoDbContext db,
         IModelDomainService modelDomain,
         OpenAIImageClient imageClient,
+        ISmartModelScheduler modelScheduler,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<ImageGenController> logger,
         IAppSettingsService settingsService,
@@ -52,6 +54,7 @@ public class ImageGenController : ControllerBase
         _db = db;
         _modelDomain = modelDomain;
         _imageClient = imageClient;
+        _modelScheduler = modelScheduler;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
         _settingsService = settingsService;
@@ -118,6 +121,8 @@ public class ImageGenController : ControllerBase
 
         try
         {
+            var appCallerCode = "prd-agent-web::image-gen.plan";
+            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "intent", ct);
             var requestContext = new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
@@ -128,14 +133,17 @@ public class ImageGenController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[IMAGE_GEN_PLAN]",
                 RequestType: "intent",
-                RequestPurpose: "prd-agent-web::image-gen.plan");
+                RequestPurpose: appCallerCode,
+                ModelResolutionType: scheduledResult.ResolutionType,
+                ModelGroupId: scheduledResult.ModelGroupId,
+                ModelGroupName: scheduledResult.ModelGroupName);
             
             _logger.LogInformation("ImageGen.Plan: BeginScope with RequestType={RequestType}, RequestPurpose={RequestPurpose}", 
                 requestContext.RequestType, requestContext.RequestPurpose);
             
             using var _ = _llmRequestContext.BeginScope(requestContext);
 
-            var client = await _modelDomain.GetClientAsync(ModelPurpose.Intent, ct);
+            var client = scheduledResult.Client;
             var messages = new List<LLMMessage> { new() { Role = "user", Content = text } };
 
             var raw = await CollectToTextAsync(client, systemPrompt, messages, ct);
@@ -224,6 +232,18 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
+        var appCallerCode = "prd-agent-web::image-gen.generate";
+        ResolvedModelInfo? resolved = null;
+        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        {
+            resolved = await _modelScheduler.ResolveModelAsync(appCallerCode, "generation", ct);
+            if (resolved != null)
+            {
+                platformId = resolved.PlatformId;
+                modelId = resolved.ModelId;
+                if (string.IsNullOrWhiteSpace(modelName)) modelName = resolved.ModelDisplayName;
+            }
+        }
 
         // 单次允许一个提示词生成多张（上限 20；与“批量生图总上限”一致）
         var n = request?.N ?? 1;
@@ -333,7 +353,10 @@ public class ImageGenController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[IMAGE_GEN_GENERATE]",
             RequestType: "imageGen",
-            RequestPurpose: "prd-agent-web::image-gen.generate"));
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: resolved?.ResolutionType ?? ModelResolutionType.DirectModel,
+            ModelGroupId: resolved?.ModelGroupId,
+            ModelGroupName: resolved?.ModelGroupName));
 
         var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName, initImageBase64, initImageProvided);
         if (!res.Success)
@@ -471,7 +494,23 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var client = await _modelDomain.GetClientAsync(ModelPurpose.Vision, ct);
+            var appCallerCode = "prd-agent-web::image-gen.extract-style";
+            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "vision", ct);
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null,
+                SessionId: null,
+                UserId: GetAdminId(),
+                ViewRole: "ADMIN",
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[IMAGE_GEN_EXTRACT_STYLE]",
+                RequestType: "vision",
+                RequestPurpose: appCallerCode,
+                ModelResolutionType: scheduledResult.ResolutionType,
+                ModelGroupId: scheduledResult.ModelGroupId,
+                ModelGroupName: scheduledResult.ModelGroupName));
+            var client = scheduledResult.Client;
 
             var systemPrompt =
                 "你是“图片风格提取器”。你的任务：根据输入图片，提取可直接用于生图模型的风格描述。\n" +
@@ -556,6 +595,18 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
+        var appCallerCode = "prd-agent-web::image-gen.batch-generate";
+        ResolvedModelInfo? resolved = null;
+        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        {
+            resolved = await _modelScheduler.ResolveModelAsync(appCallerCode, "generation", cancellationToken);
+            if (resolved != null)
+            {
+                platformId = resolved.PlatformId;
+                modelId = resolved.ModelId;
+                if (string.IsNullOrWhiteSpace(modelName)) modelName = resolved.ModelDisplayName;
+            }
+        }
         var items = request?.Items ?? new List<ImageGenPlanItem>();
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
@@ -642,7 +693,10 @@ public class ImageGenController : ControllerBase
                                 DocumentHash: null,
                                 SystemPromptRedacted: "[IMAGE_GEN_BATCH_GENERATE]",
                                 RequestType: "imageGen",
-                                RequestPurpose: "prd-agent-web::image-gen.batch-generate"));
+                                RequestPurpose: appCallerCode,
+                                ModelResolutionType: resolved?.ResolutionType ?? ModelResolutionType.DirectModel,
+                                ModelGroupId: resolved?.ModelGroupId,
+                                ModelGroupName: resolved?.ModelGroupName));
 
                             var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, currentSize, responseFormat, cancellationToken, modelId, platformId, modelName);
                             
@@ -858,7 +912,7 @@ public class ImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
-            // 格式: {app}.{feature}::modelType（符合 doc/12.app-feature-naming-convention.md）
+            // 格式: {app}.{feature}::modelType（符合 doc/rule.app-feature-definition.md）
             AppCallerCode = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation",
             AppKey = appKey,
             CreatedAt = DateTime.UtcNow

@@ -38,6 +38,8 @@ export const Button = React.forwardRef<
       ? { 
           background: 'var(--gold-gradient)', 
           boxShadow: '0 4px 16px -2px rgba(214, 178, 106, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
+          // 隔离阴影效果，防止与 GlassCard 的 backdrop-filter 产生异常渲染
+          isolation: 'isolate',
         }
       : variant === 'secondary'
         ? { 

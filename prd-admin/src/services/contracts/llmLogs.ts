@@ -28,6 +28,12 @@ export type LlmLogsMetaData = {
   models: string[];
   requestPurposes: string[];
   statuses: string[];
+  users?: LlmLogsMetaUser[];
+};
+
+export type LlmLogsMetaUser = {
+  userId: string;
+  username?: string | null;
 };
 
 export type GetLlmLogsContract = (params?: GetLlmLogsParams) => Promise<ApiResponse<LlmLogsListData>>;

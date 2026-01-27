@@ -1758,8 +1758,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
       {/* 右侧：工作台 */}
       <div className="w-96 flex flex-col gap-4">
-        {/* 顶部操作按钮 */}
-        <GlassCard glow>
+        {/* 顶部操作按钮 - 使用普通 div 避免 backdrop-filter 与按钮阴影的渲染冲突 */}
+        <div
+          className="rounded-[16px] p-4"
+          style={{
+            background: 'linear-gradient(180deg, rgba(18, 18, 22, 0.85) 0%, rgba(12, 12, 15, 0.92) 100%)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.35), 0 4px 16px -2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+          }}
+        >
           <WorkflowProgressBar
             steps={phaseSteps}
             currentStep={phase}
@@ -1782,11 +1789,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {isBusy ? '生成中...' : activeButton.label}
             </Button>
           )}
-        </GlassCard>
+        </div>
 
-        {/* 配图标记列表（含生图结果/重生成） */}
+        {/* 配图标记列表（含生图结果/重生成） - 使用普通 div 避免 backdrop-filter 渲染冲突 */}
         {phase === 2 && ( // MarkersGenerated
-          <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+          <div
+            className="flex-1 min-h-0 flex flex-col rounded-[16px] p-4"
+            style={{
+              background: 'linear-gradient(180deg, rgba(18, 18, 22, 0.85) 0%, rgba(12, 12, 15, 0.92) 100%)',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.35), 0 4px 16px -2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+            }}
+          >
             <div className="mb-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2162,7 +2176,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
               点击“一键生图”将按顺序逐条解析 JSON 并生成图片；也可在单条卡片内编辑后重生成
             </div>
-          </GlassCard>
+          </div>
         )}
       </div>
 

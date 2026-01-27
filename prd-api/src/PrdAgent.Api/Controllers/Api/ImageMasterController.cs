@@ -38,6 +38,8 @@ public class ImageMasterController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly ILogger<ImageMasterController> _logger;
     private readonly IModelDomainService _modelDomain;
+    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
 
     private static readonly TimeSpan IdemExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -62,7 +64,9 @@ public class ImageMasterController : ControllerBase
         IHttpClientFactory httpClientFactory,
         ICacheManager cache,
         ILogger<ImageMasterController> logger,
-        IModelDomainService modelDomain)
+        IModelDomainService modelDomain,
+        ISmartModelScheduler modelScheduler,
+        ILLMRequestContextAccessor llmRequestContext)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -70,6 +74,8 @@ public class ImageMasterController : ControllerBase
         _cache = cache;
         _logger = logger;
         _modelDomain = modelDomain;
+        _modelScheduler = modelScheduler;
+        _llmRequestContext = llmRequestContext;
     }
 
     private string GetAdminId() =>
@@ -1837,8 +1843,26 @@ public class ImageMasterController : ControllerBase
 
         try
         {
+            var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
+            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", ct);
+            var requestId = Guid.NewGuid().ToString("N");
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: null,
+                SessionId: wid,
+                UserId: adminId,
+                ViewRole: "ADMIN",
+                DocumentChars: articleContent.Length,
+                DocumentHash: Sha256Hex(articleContent),
+                SystemPromptRedacted: "[LITERARY_ARTICLE_MARKERS]",
+                RequestType: "chat",
+                RequestPurpose: appCallerCode,
+                ModelResolutionType: scheduledResult.ResolutionType,
+                ModelGroupId: scheduledResult.ModelGroupId,
+                ModelGroupName: scheduledResult.ModelGroupName));
+
             // 调用主模型 LLM
-            var client = await _modelDomain.GetClientAsync(ModelPurpose.MainChat, ct);
+            var client = scheduledResult.Client;
             var systemPrompt = userInstruction;
             var userPrompt = articleContent;
 

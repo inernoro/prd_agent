@@ -90,8 +90,8 @@ prd_agent/
 │       └── lib/          # themeApplier, themeComputed
 ├── prd-desktop/      # Tauri 2.0 桌面客户端 (Rust + React)
 │   ├── src-tauri/    # Rust: commands/, services/, models/
-│   └── src/          # React: components/, stores/, pages/
-├── doc/              # 编号文档 (0-20) + 维护计划
+│   └── src/          # React: components/, stores/, pages/  
+├── doc/              # 编号文档 (0-5) + 专题文档 (design.*, agent.*, rule.*) 
 └── scripts/          # 构建/部署脚本
 ```
 
@@ -173,6 +173,6 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 1. **代码→文档**：Controller/Service 存在 → SRS 功能模块有描述
 2. **文档→代码**：SRS 描述的功能 → 代码中存在对应实现
 3. **Git log→文档**：近期 commit 的功能变更 → 已反映到文档
-4. **DB→数据字典**：MongoDbContext 集合 → 7.data-dictionary.md 有记录
+4. **DB→数据字典**：MongoDbContext 集合 → rule.data-dictionary.md 有记录
 5. **目录结构→文档**：实际目录 → SRS 目录结构图一致
 6. **未实现标注**：文档中描述但代码不存在的功能 → 必须标注 ⚠️ 状态

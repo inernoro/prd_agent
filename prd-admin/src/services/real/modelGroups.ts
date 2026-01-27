@@ -1,6 +1,7 @@
 import type { ApiResponse } from '@/types/api';
 import type {
   ModelGroup,
+  ModelGroupForApp,
   CreateModelGroupRequest,
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
@@ -41,6 +42,17 @@ function mapGroupFromApi(g: any): ModelGroup {
   } as ModelGroup;
 }
 
+function mapGroupForAppFromApi(g: any): ModelGroupForApp {
+  const base = mapGroupFromApi(g);
+  return {
+    ...base,
+    resolutionType: g?.resolutionType ?? 'DefaultPool',
+    isDedicated: !!g?.isDedicated,
+    isDefault: !!g?.isDefault,
+    isLegacy: !!g?.isLegacy,
+  } as ModelGroupForApp;
+}
+
 export class ModelGroupsService implements IModelGroupsService {
   async getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>> {
     const base = api.mds.modelGroups.list();
@@ -55,6 +67,24 @@ export class ModelGroupsService implements IModelGroupsService {
       throw new Error(json.error?.message || `获取模型分组失败: ${res.status}`);
     }
     return { ...json, data: (json.data ?? []).map((g: any) => mapGroupFromApi(g)) };
+  }
+
+  async getModelGroupsForApp(appCallerCode: string | null, modelType: string): Promise<ApiResponse<ModelGroupForApp[]>> {
+    const params = new URLSearchParams({ modelType });
+    if (appCallerCode) {
+      params.set('appCallerCode', appCallerCode);
+    }
+    const url = `${api.mds.modelGroups.forApp()}?${params.toString()}`;
+
+    const res = await fetch(url, {
+      headers: getAuthHeaders(),
+    });
+
+    const json = await readApiJson<ModelGroupForApp[]>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `获取应用模型分组失败: ${res.status}`);
+    }
+    return { ...json, data: (json.data ?? []).map((g: any) => mapGroupForAppFromApi(g)) };
   }
 
   async getModelGroup(id: string): Promise<ApiResponse<ModelGroup>> {

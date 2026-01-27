@@ -6,6 +6,15 @@ using Xunit.Abstractions;
 
 namespace PrdAgent.Api.Tests.Services;
 
+/// <summary>
+/// 腾讯云 COS 存储集成测试
+/// 需要配置以下环境变量才能运行：
+/// - TENCENT_COS_BUCKET
+/// - TENCENT_COS_REGION
+/// - TENCENT_COS_SECRET_ID
+/// - TENCENT_COS_SECRET_KEY
+/// </summary>
+[Trait("Category", TestCategories.Integration)]
 public class TencentCosStorageTests
 {
     private readonly ITestOutputHelper _output;

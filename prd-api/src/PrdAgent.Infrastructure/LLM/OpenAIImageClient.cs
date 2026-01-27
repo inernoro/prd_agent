@@ -451,9 +451,9 @@ public class OpenAIImageClient
                     RequestPurpose: (ctx?.RequestPurpose ?? "prd-agent-web::image-gen.generate"),
                     PlatformId: platformIdForLog,
                     PlatformName: platformNameForLog,
+                    ModelResolutionType: ctx?.ModelResolutionType,
                     ModelGroupId: ctx?.ModelGroupId,
-                    ModelGroupName: ctx?.ModelGroupName,
-                    IsDefaultModelGroup: ctx?.IsDefaultModelGroup),
+                    ModelGroupName: ctx?.ModelGroupName),
                 ct);
         }
 

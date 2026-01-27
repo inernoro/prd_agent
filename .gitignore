@@ -62,3 +62,11 @@ prd-desktop/src-tauri/icons/
 
 # Tauri updater signing key (private key - never commit)
 prd-desktop/src-tauri/tauri-updater.key
+
+# Local Development / Setup
+mongodb/
+mongo_data/
+setup_*.sh
+start_mongo.sh
+**/output/
+
