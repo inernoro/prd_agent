@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -36,13 +35,6 @@ export function createApp() {
     credentials: true,
   }));
 
-  // Rate limiting for login
-  const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 20, // 20 requests per window
-    message: { success: false, error: '请求过于频繁，请稍后再试' },
-  });
-
   // Body parsing
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -60,7 +52,7 @@ export function createApp() {
   });
 
   // API routes
-  app.use('/api', loginLimiter, authRoutes);
+  app.use('/api', authRoutes);
   app.use('/api', gitRoutes);
   app.use('/api/deploy', deployRoutes);
   app.use('/api/history', historyRoutes);
