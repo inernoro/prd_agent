@@ -4,15 +4,20 @@
 
 ## Quick Start (3 步启动)
 
+### Linux / macOS
+
 ```bash
-# 1. 安装依赖
-pnpm install
+pnpm install                          # 1. 安装依赖
+cp .env.example .env && nano .env     # 2. 配置密码
+pnpm start                            # 3. 启动服务
+```
 
-# 2. 配置密码 (复制示例并修改)
-cp .env.example .env && nano .env
+### Windows (PowerShell)
 
-# 3. 启动服务
-pnpm start
+```powershell
+pnpm install                          # 1. 安装依赖
+copy .env.example .env; notepad .env  # 2. 配置密码
+pnpm start                            # 3. 启动服务
 ```
 
 打开浏览器访问 `http://localhost:3939`
@@ -25,7 +30,7 @@ pnpm start
 | 认证 | JWT (jsonwebtoken) |
 | 前端 | 原生 JS + CSS (零框架) |
 | 存储 | JSON 文件 (零数据库) |
-| 部署 | Shell 脚本 + 子进程 |
+| 部署 | Shell / PowerShell 脚本 |
 
 ## 架构设计
 
@@ -73,6 +78,7 @@ git log --oneline -n 50    # 从目标仓库读取最近 50 条提交
 
 部署脚本接收以下参数和环境变量：
 
+**Linux / macOS (Bash)**
 ```bash
 # 位置参数
 $1 = commit_hash    # 完整 hash (40位)
@@ -84,6 +90,20 @@ $4 = project_id     # 项目 ID
 PROJECT_ID          # 项目 ID
 PROJECT_NAME        # 项目名称
 REPO_PATH           # 仓库路径
+```
+
+**Windows (PowerShell)**
+```powershell
+# 位置参数
+$args[0] = commit_hash    # 完整 hash (40位)
+$args[1] = short_hash     # 短 hash (7位)
+$args[2] = branch         # 分支名
+$args[3] = project_id     # 项目 ID
+
+# 环境变量
+$env:PROJECT_ID           # 项目 ID
+$env:PROJECT_NAME         # 项目名称
+$env:REPO_PATH            # 仓库路径
 ```
 
 ## 多项目配置
@@ -98,6 +118,7 @@ REPO_PATH           # 仓库路径
 nano data/projects.json
 ```
 
+**Linux / macOS:**
 ```json
 {
   "projects": [
@@ -107,13 +128,21 @@ nano data/projects.json
       "repoPath": "/var/www/frontend",
       "script": "./scripts/deploy-frontend.sh",
       "branch": "main"
-    },
+    }
+  ]
+}
+```
+
+**Windows:**
+```json
+{
+  "projects": [
     {
-      "id": "backend",
-      "name": "后端服务",
-      "repoPath": "/var/www/backend",
-      "script": "./scripts/deploy-backend.sh",
-      "branch": "master"
+      "id": "frontend",
+      "name": "前端项目",
+      "repoPath": "C:\\Projects\\frontend",
+      "script": "./scripts/deploy-frontend.ps1",
+      "branch": "main"
     }
   ]
 }
@@ -121,13 +150,15 @@ nano data/projects.json
 
 ## 编写部署脚本
 
+### Linux / macOS
+
 ```bash
 # 复制模板
 cp scripts/_template.sh scripts/deploy-myproject.sh
 chmod +x scripts/deploy-myproject.sh
 ```
 
-示例脚本：
+示例脚本 (`deploy-myproject.sh`)：
 
 ```bash
 #!/bin/bash
@@ -138,16 +169,37 @@ echo "版本: $2"
 
 cd "$REPO_PATH"
 
-# 安装依赖
 pnpm install --frozen-lockfile
-
-# 构建
 pnpm build
-
-# 重启服务 (根据实际情况修改)
 pm2 restart $PROJECT_ID || pm2 start ecosystem.config.js
 
 echo "=== 部署完成 ==="
+```
+
+### Windows
+
+```powershell
+# 复制模板
+copy scripts\_template.ps1 scripts\deploy-myproject.ps1
+```
+
+示例脚本 (`deploy-myproject.ps1`)：
+
+```powershell
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== 部署 $env:PROJECT_NAME ==="
+Write-Host "版本: $($args[1])"
+
+Set-Location $env:REPO_PATH
+
+pnpm install --frozen-lockfile
+pnpm build
+
+# 重启服务 (根据实际情况修改)
+pm2 restart $env:PROJECT_ID
+
+Write-Host "=== 部署完成 ==="
 ```
 
 ## 环境变量
@@ -169,8 +221,9 @@ prd-publish/
 │   ├── projects.json   # 项目配置
 │   └── history.json    # 部署历史
 ├── scripts/            # 部署脚本目录
-│   ├── _template.sh    # 脚本模板
-│   └── deploy-*.sh     # 用户脚本
+│   ├── _template.sh    # Bash 模板 (Linux/macOS)
+│   ├── _template.ps1   # PowerShell 模板 (Windows)
+│   └── deploy-*.*      # 用户脚本
 ├── public/             # 前端静态文件
 ├── src/
 │   ├── routes/         # API 路由
