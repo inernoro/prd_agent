@@ -183,20 +183,18 @@ export function DefectSubmitPanel() {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{
-        background: 'rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
+        background: 'rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
       }}
       onClick={() => setShowSubmitPanel(false)}
     >
       <GlassCard
         glow
-        className="w-full max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden"
-        style={{
-          background: 'rgba(30, 32, 40, 0.85)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.5), 0 0 40px rgba(100,120,255,0.08)',
-        }}
+        variant="default"
+        className="w-full max-w-[600px] max-h-[85vh] flex flex-col"
+        overflow="hidden"
+        padding="none"
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
         {/* Header */}
