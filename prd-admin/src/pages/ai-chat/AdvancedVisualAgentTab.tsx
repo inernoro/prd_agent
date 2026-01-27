@@ -1648,9 +1648,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       if (assetIds.length === 0) return;
       const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
-      const failed = results.find((r) => !r.success) ?? null;
-      if (failed) {
-        toast.error(failed.error?.message || '删除失败');
+      // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
+      const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
+      if (realFailed) {
+        toast.error(realFailed.error?.message || '删除失败');
         await reloadWorkspace();
       }
     },
