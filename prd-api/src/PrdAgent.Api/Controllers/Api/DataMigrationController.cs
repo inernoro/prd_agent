@@ -217,7 +217,7 @@ public class DataMigrationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get collection data: {CollectionName}", collectionName);
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.UNKNOWN, $"获取集合数据失败: {ex.Message}"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"获取集合数据失败: {ex.Message}"));
         }
     }
 
@@ -276,7 +276,7 @@ public class DataMigrationController : ControllerBase
                 var issues = ValidateDocument(doc, entityFields);
                 if (issues.Count > 0)
                 {
-                    var docId = doc.Contains("_id") ? doc["_id"].ToString() : "unknown";
+                    var docId = doc.Contains("_id") ? doc["_id"].ToString() ?? "unknown" : "unknown";
                     invalidItems.Add(new InvalidDocumentItem
                     {
                         DocumentId = docId,
@@ -308,7 +308,7 @@ public class DataMigrationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to validate collection: {CollectionName}", collectionName);
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.UNKNOWN, $"验证集合数据失败: {ex.Message}"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"验证集合数据失败: {ex.Message}"));
         }
     }
 
@@ -356,7 +356,7 @@ public class DataMigrationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete collection: {CollectionName}", collectionName);
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.UNKNOWN, $"删除集合失败: {ex.Message}"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"删除集合失败: {ex.Message}"));
         }
     }
 
@@ -408,7 +408,7 @@ public class DataMigrationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete document: {CollectionName}/{DocumentId}", collectionName, documentId);
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.UNKNOWN, $"删除文档失败: {ex.Message}"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"删除文档失败: {ex.Message}"));
         }
     }
 
@@ -483,7 +483,7 @@ public class DataMigrationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete app data: {AppName}", appName);
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.UNKNOWN, $"删除应用数据失败: {ex.Message}"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"删除应用数据失败: {ex.Message}"));
         }
     }
 
