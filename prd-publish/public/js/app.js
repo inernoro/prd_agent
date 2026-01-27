@@ -1,5 +1,6 @@
 /**
  * PRD-Publish Frontend Application
+ * Multi-project support version
  */
 
 // State
@@ -13,6 +14,10 @@ const state = {
   commitsOffset: 0,
   isDeploying: false,
   selectedCommit: null,
+  // Project support
+  projects: [],
+  currentProject: null,
+  currentProjectId: localStorage.getItem('prd-publish-project') || 'default',
 };
 
 // DOM Elements
@@ -59,6 +64,10 @@ const elements = {
   resultTitle: document.getElementById('result-title'),
   resultMessage: document.getElementById('result-message'),
   resultLogs: document.getElementById('result-logs'),
+  // Project elements
+  projectSelector: document.getElementById('project-selector'),
+  projectName: document.getElementById('project-name'),
+  addProjectBtn: document.getElementById('add-project-btn'),
 };
 
 // API Helper
@@ -89,6 +98,11 @@ async function api(endpoint, options = {}) {
   }
 
   return data;
+}
+
+// Get current project ID for API calls
+function getProjectParam() {
+  return state.currentProjectId ? `projectId=${state.currentProjectId}` : '';
 }
 
 // Format relative time
@@ -148,7 +162,74 @@ function showMainPage() {
   elements.loginPage.classList.add('hidden');
   elements.mainPage.classList.remove('hidden');
   elements.currentUser.textContent = state.user;
+  loadProjects().then(() => loadData());
+}
+
+// Project Management
+async function loadProjects() {
+  try {
+    const { data } = await api('/projects');
+    state.projects = data;
+
+    // Find current project
+    state.currentProject = data.find(p => p.id === state.currentProjectId) || data[0];
+    if (state.currentProject) {
+      state.currentProjectId = state.currentProject.id;
+      localStorage.setItem('prd-publish-project', state.currentProjectId);
+    }
+
+    renderProjectSelector();
+  } catch (error) {
+    console.error('Failed to load projects:', error);
+  }
+}
+
+function renderProjectSelector() {
+  if (!elements.projectSelector) return;
+
+  const currentName = state.currentProject?.name || 'Default Project';
+  elements.projectName.textContent = currentName;
+
+  // Build dropdown if it exists
+  const dropdown = elements.projectSelector.querySelector('.project-dropdown');
+  if (dropdown) {
+    dropdown.innerHTML = state.projects.map(p => `
+      <div class="project-option ${p.id === state.currentProjectId ? 'active' : ''}" data-id="${p.id}">
+        ${escapeHtml(p.name)}
+      </div>
+    `).join('') + `
+      <div class="project-option add-project" data-action="add">
+        [+] 添加项目
+      </div>
+    `;
+
+    dropdown.querySelectorAll('.project-option').forEach(opt => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (opt.dataset.action === 'add') {
+          showAddProjectModal();
+        } else {
+          selectProject(opt.dataset.id);
+        }
+        dropdown.classList.add('hidden');
+      });
+    });
+  }
+}
+
+function selectProject(projectId) {
+  state.currentProjectId = projectId;
+  state.currentProject = state.projects.find(p => p.id === projectId);
+  localStorage.setItem('prd-publish-project', projectId);
+  renderProjectSelector();
   loadData();
+}
+
+function toggleProjectDropdown() {
+  const dropdown = elements.projectSelector?.querySelector('.project-dropdown');
+  if (dropdown) {
+    dropdown.classList.toggle('hidden');
+  }
 }
 
 // Data Loading
@@ -162,19 +243,21 @@ async function loadData() {
 
 async function loadStatus() {
   try {
-    const { data } = await api('/status');
+    const { data } = await api(`/status?${getProjectParam()}`);
     state.currentCommit = data.currentCommit;
 
     elements.currentVersion.textContent = data.currentCommit.shortHash;
     elements.currentVersion.title = data.currentCommit.message;
 
     // Load last deploy
-    const historyData = await api('/history?limit=1');
+    const historyData = await api(`/history?limit=1&${getProjectParam()}`);
     if (historyData.data.length > 0) {
       const last = historyData.data[0];
       const statusIcon = last.status === 'success' ? '[OK]' : last.status === 'failed' ? '[X]' : '[-]';
       const statusClass = last.status === 'success' ? 'success' : last.status === 'failed' ? 'error' : '';
       elements.lastDeploy.innerHTML = `${formatRelativeTime(last.endTime)} <span class="${statusClass}">${statusIcon}</span>`;
+    } else {
+      elements.lastDeploy.textContent = '--';
     }
 
     // Check for version mismatch warning
@@ -187,6 +270,8 @@ async function loadStatus() {
     }
   } catch (error) {
     console.error('Failed to load status:', error);
+    elements.currentVersion.textContent = '--';
+    elements.lastDeploy.textContent = '--';
   }
 }
 
@@ -198,7 +283,7 @@ async function loadCommits(reset = true) {
     }
 
     const search = elements.searchInput.value;
-    const { data, pagination } = await api(`/commits?limit=20&offset=${state.commitsOffset}&search=${encodeURIComponent(search)}`);
+    const { data, pagination } = await api(`/commits?limit=20&offset=${state.commitsOffset}&search=${encodeURIComponent(search)}&${getProjectParam()}`);
 
     if (reset) {
       state.commits = data;
@@ -224,7 +309,7 @@ async function loadCommits(reset = true) {
 async function loadTags() {
   try {
     elements.tagsList.innerHTML = '<div class="loading">加载中...</div>';
-    const { data } = await api('/tags');
+    const { data } = await api(`/tags?${getProjectParam()}`);
     state.tags = data;
     renderTags(data);
   } catch (error) {
@@ -235,7 +320,7 @@ async function loadTags() {
 async function loadHistory() {
   try {
     elements.historyList.innerHTML = '<div class="loading">加载中...</div>';
-    const { data, stats } = await api('/history');
+    const { data, stats } = await api(`/history?${getProjectParam()}`);
     state.history = data;
     renderHistory(data);
     renderHistoryStats(stats);
@@ -343,6 +428,7 @@ function renderHistory(history) {
             <span class="commit-hash">${record.shortHash}</span>
             <span class="history-status ${statusClass}">${statusIcon} ${statusText}</span>
             ${record.retryCount > 0 ? `<span class="commit-tag">重试 ${record.retryCount} 次</span>` : ''}
+            ${record.projectName ? `<span class="commit-tag">${escapeHtml(record.projectName)}</span>` : ''}
           </div>
           <div class="commit-message">${escapeHtml(record.message)}</div>
           <div class="commit-meta">
@@ -438,10 +524,13 @@ async function startDeploy() {
       eventSource.close();
     };
 
-    // Start deployment
+    // Start deployment with project
     const result = await api('/deploy', {
       method: 'POST',
-      body: JSON.stringify({ commitHash: state.selectedCommit.hash }),
+      body: JSON.stringify({
+        commitHash: state.selectedCommit.hash,
+        projectId: state.currentProjectId,
+      }),
     });
 
     if (!result.success) {
@@ -524,6 +613,38 @@ async function retryFromHistory(id) {
   }
 }
 
+// Project Modal (Add/Edit)
+function showAddProjectModal() {
+  // Simple prompt for now - can be enhanced to a proper modal
+  const id = prompt('项目 ID (英文/数字/下划线):');
+  if (!id) return;
+
+  const name = prompt('项目名称:');
+  if (!name) return;
+
+  const repoPath = prompt('仓库路径 (绝对路径):');
+  if (!repoPath) return;
+
+  const script = prompt('部署脚本 (如 ./scripts/deploy-xxx.sh):', './scripts/deploy-example.sh');
+  if (!script) return;
+
+  createProject({ id, name, repoPath, script });
+}
+
+async function createProject(projectData) {
+  try {
+    await api('/projects', {
+      method: 'POST',
+      body: JSON.stringify(projectData),
+    });
+    await loadProjects();
+    selectProject(projectData.id);
+    alert('项目创建成功');
+  } catch (error) {
+    alert('创建失败: ' + error.message);
+  }
+}
+
 // Utility
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -579,6 +700,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logout
   elements.logoutBtn.addEventListener('click', logout);
+
+  // Project selector
+  if (elements.projectSelector) {
+    elements.projectSelector.addEventListener('click', toggleProjectDropdown);
+  }
+
+  // Close dropdown on outside click
+  document.addEventListener('click', (e) => {
+    if (!elements.projectSelector?.contains(e.target)) {
+      const dropdown = elements.projectSelector?.querySelector('.project-dropdown');
+      if (dropdown) dropdown.classList.add('hidden');
+    }
+  });
 
   // Tabs
   elements.tabs.forEach(tab => {

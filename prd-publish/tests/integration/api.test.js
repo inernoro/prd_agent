@@ -11,6 +11,7 @@ const testRepoPath = resolve(__dirname, '../fixtures/api-test-repo');
 const testScript = resolve(testRepoPath, 'exec.sh');
 const testHistoryFile = resolve(__dirname, '../fixtures/api-history.json');
 const testPublicDir = resolve(__dirname, '../fixtures/public');
+const testDataDir = resolve(__dirname, '../fixtures/data');
 
 // Get current branch name
 function getCurrentBranch(repoPath) {
@@ -47,6 +48,9 @@ exit 0
   mkdirSync(testPublicDir, { recursive: true });
   writeFileSync(resolve(testPublicDir, 'index.html'), '<html><body>Test</body></html>');
 
+  // Create data dir for projects.json
+  mkdirSync(testDataDir, { recursive: true });
+
   return execSync('git rev-parse HEAD', { cwd: testRepoPath }).toString().trim();
 }
 
@@ -77,6 +81,8 @@ jest.unstable_mockModule('../../src/config.js', () => ({
       delay: 100,
     },
     paths: {
+      baseDir: resolve(__dirname, '../fixtures'),
+      dataDir: resolve(__dirname, '../fixtures/data'),
       historyFile: testHistoryFile,
       publicDir: testPublicDir,
     },
@@ -117,6 +123,9 @@ describe('API Integration Tests', () => {
     }
     if (existsSync(testPublicDir)) {
       rmSync(testPublicDir, { recursive: true });
+    }
+    if (existsSync(testDataDir)) {
+      rmSync(testDataDir, { recursive: true });
     }
   });
 

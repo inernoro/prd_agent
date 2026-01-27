@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as historyService from '../services/historyService.js';
 import * as deployService from '../services/deployService.js';
+import { getProject } from '../services/projectService.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 
 const router = Router();
@@ -9,20 +10,36 @@ const router = Router();
 router.use(authMiddleware);
 
 /**
+ * Get project config from ID or use default
+ */
+async function getProjectConfig(projectId) {
+  if (!projectId || projectId === 'default') {
+    const project = await getProject('default');
+    return project;
+  }
+  const project = await getProject(projectId);
+  if (!project) {
+    throw new Error(`Project "${projectId}" not found`);
+  }
+  return project;
+}
+
+/**
  * GET /api/history
  * Get deployment history
  */
 router.get('/', async (req, res) => {
   try {
-    const { limit = 20, offset = 0, status } = req.query;
+    const { limit = 20, offset = 0, status, projectId } = req.query;
 
     const history = await historyService.getHistory({
       limit: parseInt(limit, 10),
       offset: parseInt(offset, 10),
       status,
+      projectId,
     });
 
-    const stats = await historyService.getStats();
+    const stats = await historyService.getStats(projectId);
 
     res.json({
       success: true,
@@ -78,9 +95,21 @@ router.post('/:id/retry', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Get the record first to find the project
+    const record = await historyService.getRecord(id);
+    if (!record) {
+      return res.status(404).json({
+        success: false,
+        error: '未找到该记录',
+      });
+    }
+
+    const project = await getProjectConfig(record.projectId);
+
     const result = await deployService.retryFromHistory(
       id,
-      req.user.username
+      req.user.username,
+      project
     );
 
     res.json({
@@ -101,7 +130,8 @@ router.post('/:id/retry', async (req, res) => {
  */
 router.get('/last/successful', async (req, res) => {
   try {
-    const record = await historyService.getLastSuccessful();
+    const { projectId } = req.query;
+    const record = await historyService.getLastSuccessful(projectId);
 
     res.json({
       success: true,

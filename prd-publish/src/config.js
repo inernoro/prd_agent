@@ -31,7 +31,7 @@ export const config = {
 
   // Execution
   exec: {
-    script: process.env.PUBLISH_EXEC_SCRIPT || './exec.sh',
+    script: process.env.PUBLISH_EXEC_SCRIPT || './scripts/deploy-example.sh',
     timeout: parseInt(process.env.PUBLISH_EXEC_TIMEOUT || '300000', 10),
   },
 
@@ -44,7 +44,9 @@ export const config = {
 
   // Paths
   paths: {
-    historyFile: resolve(__dirname, '../publish-history.json'),
+    baseDir: resolve(__dirname, '..'),
+    dataDir: resolve(__dirname, '../data'),
+    historyFile: resolve(__dirname, '../data/history.json'),
     publicDir: resolve(__dirname, '../public'),
   },
 };

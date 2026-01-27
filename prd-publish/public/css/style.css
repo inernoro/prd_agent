@@ -932,3 +932,84 @@ body {
   color: var(--text-tertiary);
   font-size: 14px;
 }
+
+/* Project Selector */
+.project-selector {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.project-selector:hover {
+  border-color: var(--primary);
+}
+
+.project-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-arrow {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.project-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--spacing-xs);
+  min-width: 180px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.project-option {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.project-option:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.project-option.active {
+  background: rgba(var(--primary-rgb), 0.15);
+  color: var(--primary);
+}
+
+.project-option.add-project {
+  border-top: 1px solid var(--border-color);
+  color: var(--primary);
+}
+
+@media (max-width: 640px) {
+  .project-selector {
+    padding: var(--spacing-xs);
+  }
+
+  .project-name {
+    max-width: 80px;
+    font-size: 12px;
+  }
+}

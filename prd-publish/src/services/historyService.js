@@ -61,11 +61,17 @@ export async function addRecord(record) {
  * @param {number} [options.limit] - Limit number of records
  * @param {number} [options.offset] - Offset for pagination
  * @param {string} [options.status] - Filter by status
+ * @param {string} [options.projectId] - Filter by project ID
  * @returns {Promise<Array>} History records
  */
 export async function getHistory(options = {}) {
-  const { limit = 20, offset = 0, status } = options;
+  const { limit = 20, offset = 0, status, projectId } = options;
   let history = await readHistory();
+
+  // Filter by project
+  if (projectId) {
+    history = history.filter((r) => r.projectId === projectId);
+  }
 
   // Filter by status
   if (status) {
@@ -88,28 +94,45 @@ export async function getRecord(id) {
 
 /**
  * Get the last successful deployment
+ * @param {string} [projectId] - Project ID to filter by
  * @returns {Promise<object|null>} Last successful record or null
  */
-export async function getLastSuccessful() {
-  const history = await readHistory();
+export async function getLastSuccessful(projectId) {
+  let history = await readHistory();
+
+  if (projectId) {
+    history = history.filter((r) => r.projectId === projectId);
+  }
+
   return history.find((r) => r.status === 'success') || null;
 }
 
 /**
  * Get the last deployment (any status)
+ * @param {string} [projectId] - Project ID to filter by
  * @returns {Promise<object|null>} Last record or null
  */
-export async function getLastDeploy() {
-  const history = await readHistory();
+export async function getLastDeploy(projectId) {
+  let history = await readHistory();
+
+  if (projectId) {
+    history = history.filter((r) => r.projectId === projectId);
+  }
+
   return history[0] || null;
 }
 
 /**
  * Get deployment statistics
+ * @param {string} [projectId] - Project ID to filter by
  * @returns {Promise<object>} Statistics
  */
-export async function getStats() {
-  const history = await readHistory();
+export async function getStats(projectId) {
+  let history = await readHistory();
+
+  if (projectId) {
+    history = history.filter((r) => r.projectId === projectId);
+  }
 
   const total = history.length;
   const successful = history.filter((r) => r.status === 'success').length;
@@ -133,8 +156,16 @@ export async function getStats() {
 
 /**
  * Clear all history
+ * @param {string} [projectId] - Project ID to clear (if not provided, clears all)
  * @returns {Promise<void>}
  */
-export async function clearHistory() {
-  await writeHistory([]);
+export async function clearHistory(projectId) {
+  if (!projectId) {
+    await writeHistory([]);
+    return;
+  }
+
+  const history = await readHistory();
+  const filtered = history.filter((r) => r.projectId !== projectId);
+  await writeHistory(filtered);
 }

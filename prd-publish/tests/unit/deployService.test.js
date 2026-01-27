@@ -87,6 +87,7 @@ const historyService = await import('../../src/services/historyService.js');
 
 describe('DeployService', () => {
   let testCommitHash;
+  let testProject;
 
   beforeAll(() => {
     testCommitHash = setupTestRepo();
@@ -96,6 +97,14 @@ describe('DeployService', () => {
     _internal.resetState();
     jest.clearAllMocks();
     createTestScript(0, 0);
+    // Create test project object for multi-project architecture
+    testProject = {
+      id: 'test-project',
+      name: 'Test Project',
+      repoPath: testRepoPath,
+      script: testScript,
+      branch: 'master',
+    };
   });
 
   afterAll(() => {
@@ -166,6 +175,7 @@ describe('DeployService', () => {
         shortHash: testCommitHash.slice(0, 7),
         branch: 'main',
         operator: 'test',
+        project: testProject,
       });
 
       expect(result.success).toBe(true);
@@ -181,6 +191,7 @@ describe('DeployService', () => {
         shortHash: testCommitHash.slice(0, 7),
         branch: 'main',
         operator: 'test',
+        project: testProject,
       });
 
       expect(result.success).toBe(false);
@@ -197,6 +208,7 @@ describe('DeployService', () => {
         shortHash: testCommitHash.slice(0, 7),
         branch: 'main',
         operator: 'test',
+        project: testProject,
         onOutput: (data) => outputs.push(data),
       });
 
@@ -211,6 +223,7 @@ describe('DeployService', () => {
       const result = await deploy({
         commitHash: testCommitHash,
         operator: 'testuser',
+        project: testProject,
       });
 
       expect(result.success).toBe(true);
@@ -222,6 +235,7 @@ describe('DeployService', () => {
       await expect(deploy({
         commitHash: 'invalid!hash',
         operator: 'testuser',
+        project: testProject,
       })).rejects.toThrow();
     });
 
@@ -231,6 +245,7 @@ describe('DeployService', () => {
       const result = await deploy({
         commitHash: testCommitHash,
         operator: 'testuser',
+        project: testProject,
       });
 
       expect(result.success).toBe(false);
@@ -244,6 +259,7 @@ describe('DeployService', () => {
       const firstDeploy = deploy({
         commitHash: testCommitHash,
         operator: 'testuser',
+        project: testProject,
       });
 
       // Small delay to ensure first deploy starts
@@ -253,6 +269,7 @@ describe('DeployService', () => {
       await expect(deploy({
         commitHash: testCommitHash,
         operator: 'testuser2',
+        project: testProject,
       })).rejects.toThrow('另一个部署正在进行中');
 
       // Wait for first to complete
@@ -266,6 +283,7 @@ describe('DeployService', () => {
       await deploy({
         commitHash: testCommitHash,
         operator: 'testuser',
+        project: testProject,
         onStatus: (status) => statuses.push(status),
       });
 

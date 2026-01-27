@@ -8,6 +8,7 @@ import authRoutes from './routes/authRoutes.js';
 import gitRoutes from './routes/gitRoutes.js';
 import deployRoutes from './routes/deployRoutes.js';
 import historyRoutes from './routes/historyRoutes.js';
+import projectRoutes from './routes/projectRoutes.js';
 import { config } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -53,6 +54,7 @@ export function createApp() {
 
   // API routes
   app.use('/api', authRoutes);
+  app.use('/api', projectRoutes);
   app.use('/api', gitRoutes);
   app.use('/api/deploy', deployRoutes);
   app.use('/api/history', historyRoutes);

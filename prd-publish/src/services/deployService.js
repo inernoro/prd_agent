@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import { join } from 'path';
 import { config } from '../config.js';
 import * as gitService from './gitService.js';
 import * as historyService from './historyService.js';
@@ -51,26 +52,39 @@ export function getCurrentDeploy() {
 }
 
 /**
+ * Resolve script path (relative to prd-publish base dir)
+ * @param {string} scriptPath - Script path from config
+ * @returns {string} Resolved absolute path
+ */
+function resolveScriptPath(scriptPath) {
+  if (scriptPath.startsWith('/')) {
+    return scriptPath;
+  }
+  return join(config.paths.baseDir, scriptPath);
+}
+
+/**
  * Execute deployment script
  * @param {object} options - Deploy options
  * @param {string} options.commitHash - Commit hash to deploy
  * @param {string} options.shortHash - Short commit hash
  * @param {string} options.branch - Branch name
  * @param {string} options.operator - Operator username
+ * @param {object} options.project - Project configuration
  * @param {Function} [options.onOutput] - Callback for script output
  * @returns {Promise<object>} Deployment result
  */
 export async function executeScript(options) {
-  const { commitHash, shortHash, branch, operator, onOutput } = options;
-  const scriptPath = config.exec.script;
-  const repoPath = config.git.repoPath;
+  const { commitHash, shortHash, branch, operator, project, onOutput } = options;
+  const scriptPath = resolveScriptPath(project.script);
+  const repoPath = project.repoPath;
 
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     const logs = [];
 
     // Spawn process
-    const process = spawn(scriptPath, [commitHash, shortHash, branch], {
+    const process = spawn(scriptPath, [commitHash, shortHash, branch, project.id], {
       cwd: repoPath,
       shell: true,
       env: {
@@ -78,6 +92,8 @@ export async function executeScript(options) {
         COMMIT_HASH: commitHash,
         SHORT_HASH: shortHash,
         BRANCH: branch,
+        PROJECT_ID: project.id,
+        PROJECT_NAME: project.name,
         REPO_PATH: repoPath,
       },
     });
@@ -176,12 +192,13 @@ export function shouldAutoRetry(errorType) {
  * @param {object} options - Deploy options
  * @param {string} options.commitHash - Commit hash
  * @param {string} options.operator - Operator username
+ * @param {object} options.project - Project configuration
  * @param {Function} [options.onOutput] - Output callback
  * @param {Function} [options.onStatus] - Status change callback
  * @returns {Promise<object>} Deployment result
  */
 export async function deploy(options) {
-  const { commitHash, operator, onOutput, onStatus } = options;
+  const { commitHash, operator, project, onOutput, onStatus } = options;
 
   // Check lock
   if (deployLock) {
@@ -189,7 +206,7 @@ export async function deploy(options) {
   }
 
   // Validate commit
-  const commitInfo = await gitService.getCommitInfo(commitHash);
+  const commitInfo = await gitService.getCommitInfo(commitHash, project.repoPath);
   if (!commitInfo) {
     throw new Error('无效的 commit hash');
   }
@@ -200,6 +217,8 @@ export async function deploy(options) {
 
   currentDeploy = {
     id: deployId,
+    projectId: project.id,
+    projectName: project.name,
     commitHash: commitInfo.hash,
     shortHash: commitInfo.shortHash,
     message: commitInfo.message,
@@ -215,7 +234,7 @@ export async function deploy(options) {
 
   try {
     // Fetch latest (optional, may fail if no remote)
-    const fetched = await gitService.fetchRemote();
+    const fetched = await gitService.fetchRemote(project.repoPath);
     if (fetched) {
       if (onOutput) onOutput({ stream: 'system', text: '已获取最新代码\n' });
     } else {
@@ -223,8 +242,12 @@ export async function deploy(options) {
     }
 
     // Get branch info
-    const repoStatus = await gitService.getRepoStatus();
-    const branch = repoStatus.branch;
+    const repoStatus = await gitService.getRepoStatus(project.repoPath);
+    const branch = repoStatus.branch || project.branch;
+
+    // Checkout the commit
+    if (onOutput) onOutput({ stream: 'system', text: `切换到版本 ${commitInfo.shortHash}...\n` });
+    await gitService.checkout(commitInfo.hash, project.repoPath);
 
     // Execute deployment with retry
     let result;
@@ -253,6 +276,7 @@ export async function deploy(options) {
         shortHash: commitInfo.shortHash,
         branch,
         operator,
+        project,
         onOutput,
       });
 
@@ -274,6 +298,8 @@ export async function deploy(options) {
     // Save to history
     await historyService.addRecord({
       id: deployId,
+      projectId: project.id,
+      projectName: project.name,
       commitHash: commitInfo.hash,
       shortHash: commitInfo.shortHash,
       message: commitInfo.message,
@@ -328,11 +354,12 @@ export function cancelDeploy() {
  * Retry deployment from history
  * @param {string} historyId - History record ID
  * @param {string} operator - Operator username
+ * @param {object} project - Project configuration
  * @param {Function} [onOutput] - Output callback
  * @param {Function} [onStatus] - Status callback
  * @returns {Promise<object>} Deployment result
  */
-export async function retryFromHistory(historyId, operator, onOutput, onStatus) {
+export async function retryFromHistory(historyId, operator, project, onOutput, onStatus) {
   const record = await historyService.getRecord(historyId);
   if (!record) {
     throw new Error('未找到历史记录');
@@ -341,6 +368,7 @@ export async function retryFromHistory(historyId, operator, onOutput, onStatus) 
   return deploy({
     commitHash: record.commitHash,
     operator,
+    project,
     onOutput,
     onStatus,
   });

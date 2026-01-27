@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as deployService from '../services/deployService.js';
 import * as historyService from '../services/historyService.js';
+import { getProject } from '../services/projectService.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 
 const router = Router();
@@ -9,11 +10,26 @@ const router = Router();
 router.use(authMiddleware);
 
 /**
+ * Get project config from ID or use default
+ */
+async function getProjectConfig(projectId) {
+  if (!projectId || projectId === 'default') {
+    const project = await getProject('default');
+    return project;
+  }
+  const project = await getProject(projectId);
+  if (!project) {
+    throw new Error(`Project "${projectId}" not found`);
+  }
+  return project;
+}
+
+/**
  * POST /api/deploy
  * Start deployment to specific commit
  */
 router.post('/', async (req, res) => {
-  const { commitHash } = req.body;
+  const { commitHash, projectId } = req.body;
 
   if (!commitHash) {
     return res.status(400).json({
@@ -39,11 +55,13 @@ router.post('/', async (req, res) => {
     });
   }
 
-  // Start deployment (don't await, return immediately)
   try {
+    const project = await getProjectConfig(projectId);
+
     const result = await deployService.deploy({
       commitHash,
       operator: req.user.username,
+      project,
     });
 
     res.json({
@@ -140,7 +158,10 @@ router.post('/cancel', (req, res) => {
  */
 router.post('/retry', async (req, res) => {
   try {
-    const lastDeploy = await historyService.getLastDeploy();
+    const { projectId } = req.body;
+    const project = await getProjectConfig(projectId);
+
+    const lastDeploy = await historyService.getLastDeploy(projectId);
 
     if (!lastDeploy) {
       return res.status(404).json({
@@ -159,6 +180,7 @@ router.post('/retry', async (req, res) => {
     const result = await deployService.deploy({
       commitHash: lastDeploy.commitHash,
       operator: req.user.username,
+      project,
     });
 
     res.json({
