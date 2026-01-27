@@ -3603,13 +3603,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 按创建时间排序（旧→新，左上→右下）
     const sorted = [...items].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 
-    const gap = 5; // 紧凑间距
-    const currentCam = cameraRef.current;
-    const currentZoom = zoomRef.current;
+    const gap = 20; // 间距
 
-    // 根据图片数量动态计算列数（2-5列），确保网格布局合理
+    // 使用接近正方形的网格：列数 = ceil(sqrt(n))
+    // 例如：4张→2列, 6张→3列, 9张→3列, 12张→4列
     const n = sorted.length;
-    const cols = n <= 2 ? n : n <= 4 ? 2 : n <= 9 ? 3 : n <= 16 ? 4 : 5;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
 
     // 计算图片的最大宽度
     const maxW = Math.max(...sorted.map((it) => it.w ?? 320));
@@ -3663,11 +3662,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     totalH -= gap; // 去掉最后一个gap
 
-    // 计算起点（以视口中心为基准）
-    const viewCenterX = (stageSize.w / 2 - currentCam.x) / currentZoom;
-    const viewCenterY = (stageSize.h / 2 - currentCam.y) / currentZoom;
-    const startX = viewCenterX - maxRowW / 2;
-    const startY = viewCenterY - totalH / 2;
+    // 固定起点：以世界坐标原点为中心，确保每次布局结果一致
+    const startX = -maxRowW / 2;
+    const startY = -totalH / 2;
 
     // 分配所有位置（一次性计算）
     const updates: Record<string, { x: number; y: number }> = {};
