@@ -156,18 +156,9 @@ export function DefectCard({ defect }: DefectCardProps) {
 
           {/* 主内容区 */}
           <div className="flex-1 min-w-0 flex flex-col">
-            {/* Header: 严重性 + 状态 + 标题 + 编号 */}
+            {/* Header: 标题 + 编号 */}
             <div className="px-3 pt-3 pb-2 flex items-center gap-2">
-              {/* 严重性标签 */}
-              <div
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium flex-shrink-0"
-                style={{ background: severity.bgColor, color: severity.color }}
-              >
-                <SeverityIcon size={12} />
-                {severity.label}
-              </div>
-
-              {/* 标题 - 在状态后面，超出省略 */}
+              {/* 标题 */}
               <span
                 className="text-[13px] font-medium truncate flex-1 min-w-0"
                 style={{ color: 'var(--text-primary)' }}
@@ -236,15 +227,45 @@ export function DefectCard({ defect }: DefectCardProps) {
               </div>
             )}
 
-            {/* 底部：人员 + 时间 + 操作 */}
+            {/* 底部：严重性 + 状态 + 人员 + 时间 + 操作 */}
             <div
               className="px-3 py-2 flex items-center border-t text-[11px]"
               style={{ borderColor: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
             >
+              {/* 严重性标签 - 左下角 */}
+              <div
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 mr-2"
+                style={{ background: severity.bgColor, color: severity.color }}
+              >
+                <SeverityIcon size={10} />
+                {severity.label}
+              </div>
+
+              {/* 状态标签 */}
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded mr-2 flex-shrink-0"
+                style={{ background: `${statusColor}20`, color: statusColor }}
+              >
+                {statusLabel}
+              </span>
+
+              {/* 人员信息 */}
+              <div className="flex items-center gap-1 flex-1 min-w-0">
+                <span className="truncate max-w-[50px]">{defect.reporterName || '未知'}</span>
+                <ArrowRight size={10} className="flex-shrink-0 opacity-50" />
+                <span className="truncate max-w-[50px]">{defect.assigneeName || '未指派'}</span>
+              </div>
+
+              {/* 时间 */}
+              <div className="flex items-center gap-1 flex-shrink-0 mr-2">
+                <Clock size={10} />
+                {formatDate(defect.createdAt)}
+              </div>
+
               {/* 操作按钮（悬浮显示） */}
               <div
                 className={[
-                  'flex items-center gap-1 mr-2',
+                  'flex items-center gap-1',
                   'opacity-0 pointer-events-none transition-opacity duration-100',
                   'group-hover:opacity-100 group-hover:pointer-events-auto',
                 ].join(' ')}
@@ -272,27 +293,6 @@ export function DefectCard({ defect }: DefectCardProps) {
                 >
                   <Trash2 size={10} />
                 </Button>
-              </div>
-
-              {/* 状态标签 */}
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded mr-2 flex-shrink-0"
-                style={{ background: `${statusColor}20`, color: statusColor }}
-              >
-                {statusLabel}
-              </span>
-
-              {/* 人员信息 */}
-              <div className="flex items-center gap-1 flex-1 min-w-0">
-                <span className="truncate max-w-[50px]">{defect.reporterName || '未知'}</span>
-                <ArrowRight size={10} className="flex-shrink-0 opacity-50" />
-                <span className="truncate max-w-[50px]">{defect.assigneeName || '未指派'}</span>
-              </div>
-
-              {/* 时间 */}
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <Clock size={10} />
-                {formatDate(defect.createdAt)}
               </div>
             </div>
           </div>

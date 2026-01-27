@@ -193,7 +193,7 @@ export const getDefectMessagesReal: GetDefectMessagesContract = async (input) =>
   const qs = new URLSearchParams();
   if (input.afterSeq !== undefined) qs.set('afterSeq', String(input.afterSeq));
   const q = qs.toString();
-  return await apiRequest<{ items: DefectMessage[] }>(
+  return await apiRequest<{ messages: DefectMessage[] }>(
     `${api.defectAgent.defects.messages(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );

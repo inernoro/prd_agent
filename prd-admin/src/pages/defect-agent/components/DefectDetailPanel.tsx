@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -14,6 +14,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import type { DefectAttachment, DefectMessage } from '@/services/contracts/defectAgent';
+import { parseContentToSegments } from '@/lib/defectContentUtils';
 import {
   X,
   ArrowRight,
@@ -30,6 +31,7 @@ import {
   FileText,
   Send,
   User,
+  MessageCircle,
 } from 'lucide-react';
 
 const statusLabels: Record<string, string> = {
@@ -72,6 +74,21 @@ function formatDateTime(iso: string | null | undefined) {
   return d.toLocaleString();
 }
 
+function formatMsgTimestamp(ts: string | null | undefined) {
+  const s = String(ts ?? '').trim();
+  if (!s) return '';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const y = d.getFullYear();
+  const mo = pad2(d.getMonth() + 1);
+  const day = pad2(d.getDate());
+  const h = pad2(d.getHours());
+  const mi = pad2(d.getMinutes());
+  const sec = pad2(d.getSeconds());
+  return `${y}.${mo}.${day} ${h}:${mi}:${sec}`;
+}
+
 function isImageAttachment(att: DefectAttachment): boolean {
   return att.mimeType?.startsWith('image/') || false;
 }
@@ -91,6 +108,7 @@ export function DefectDetailPanel() {
   const [comment, setComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
   const [messages, setMessages] = useState<DefectMessage[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const defect = useMemo(
     () => defects.find((d) => d.id === selectedDefectId),
@@ -101,7 +119,7 @@ export function DefectDetailPanel() {
     if (!selectedDefectId) return;
     const res = await getDefectMessages({ id: selectedDefectId });
     if (res.success && res.data) {
-      setMessages(res.data.items || []);
+      setMessages(res.data.messages || []);
     }
   }, [selectedDefectId]);
 
@@ -112,6 +130,13 @@ export function DefectDetailPanel() {
       setMessages([]);
     }
   }, [selectedDefectId, loadMessages]);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   if (!defect) return null;
 
@@ -145,7 +170,7 @@ export function DefectDetailPanel() {
       const res = await sendDefectMessage({ id: defect.id, content: comment.trim() });
       if (res.success) {
         setComment('');
-        loadMessages(); // 刷新评论列表
+        loadMessages();
         toast.success('评论已发送');
       } else {
         toast.error(res.error?.message || '发送失败');
@@ -230,6 +255,12 @@ export function DefectDetailPanel() {
   const imageAttachments = (defect.attachments || []).filter(isImageAttachment);
   const otherAttachments = (defect.attachments || []).filter((att) => !isImageAttachment(att));
 
+  // 解析内容中的 [IMG] 标签
+  const contentSegments = parseContentToSegments(defect.rawContent || '');
+
+  // 是否显示聊天面板（非草稿状态）
+  const showChat = defect.status !== DefectStatus.Draft;
+
   return (
     <>
       {/* 遮罩层 */}
@@ -241,8 +272,11 @@ export function DefectDetailPanel() {
 
       {/* 弹窗内容 - 液态玻璃样式 */}
       <div
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[600px] max-h-[85vh] overflow-hidden rounded-2xl flex flex-col"
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 overflow-hidden rounded-2xl flex"
         style={{
+          width: showChat ? '900px' : '600px',
+          maxWidth: '95vw',
+          maxHeight: '85vh',
           background:
             'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
           backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
@@ -253,417 +287,501 @@ export function DefectDetailPanel() {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
-        >
-          <div className="flex items-center gap-3">
-            <Bug size={18} style={{ color: 'var(--accent-primary)' }} />
-            <span
-              className="text-[12px] font-mono px-2 py-1 rounded"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                color: 'var(--text-muted)',
-              }}
-            >
-              {defect.defectNo}
-            </span>
-            <span
-              className="text-[11px] px-2 py-1 rounded"
-              style={{ background: `${statusColor}20`, color: statusColor }}
-            >
-              {statusLabel}
-            </span>
-            <div
-              className="w-px h-4 mx-1"
-              style={{ background: 'rgba(255,255,255,0.1)' }}
-            />
-            {/* 提交人 → 被指派人 */}
-            <div className="flex items-center gap-2">
-              <div
-                className="w-5 h-5 rounded-full flex items-center justify-center"
-                style={{ background: 'rgba(100,180,255,0.2)' }}
-              >
-                <User size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
-              </div>
-              <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                {defect.reporterName || '未知'}
-              </span>
-              <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />
-              <div
-                className="w-5 h-5 rounded-full flex items-center justify-center"
-                style={{ background: 'rgba(255,180,70,0.2)' }}
-              >
-                <User size={12} style={{ color: 'rgba(255,180,70,0.9)' }} />
-              </div>
-              <span className="text-[12px]" style={{ color: 'var(--text-primary)' }}>
-                {defect.assigneeName || '未指派'}
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={handleClose}
-            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-          >
-            <X size={16} style={{ color: 'var(--text-muted)' }} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          {/* Title */}
-          <div>
-            <div
-              className="text-[16px] font-semibold leading-relaxed"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {defect.title || '无标题'}
-            </div>
-          </div>
-
-          {/* Meta Info */}
+        {/* 左侧：缺陷信息 */}
+        <div className={`flex flex-col ${showChat ? 'w-[55%]' : 'w-full'}`}>
+          {/* Header */}
           <div
-            className="flex flex-wrap items-center gap-4 text-[12px] p-3 rounded-xl"
-            style={{ background: 'rgba(255,255,255,0.03)' }}
+            className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+            style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
-            <div className="flex items-center gap-2">
-              <span style={{ color: 'var(--text-muted)' }}>严重程度</span>
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <Bug size={18} style={{ color: 'var(--accent-primary)' }} className="flex-shrink-0" />
               <span
-                className="px-2 py-0.5 rounded"
-                style={{ background: `${severityColor}20`, color: severityColor }}
+                className="text-[12px] font-mono px-2 py-1 rounded flex-shrink-0"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'var(--text-muted)',
+                }}
               >
-                {severityLabel}
+                {defect.defectNo}
               </span>
-            </div>
-            <div
-              className="w-px h-4"
-              style={{ background: 'rgba(255,255,255,0.1)' }}
-            />
-            <div className="flex items-center gap-2">
-              <span style={{ color: 'var(--text-muted)' }}>提交人</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {defect.reporterName || '未知'}
+              <span
+                className="text-[11px] px-2 py-1 rounded flex-shrink-0"
+                style={{ background: `${statusColor}20`, color: statusColor }}
+              >
+                {statusLabel}
               </span>
+              <div
+                className="w-px h-4 mx-1 flex-shrink-0"
+                style={{ background: 'rgba(255,255,255,0.1)' }}
+              />
+              {/* 提交人 → 被指派人 */}
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(100,180,255,0.2)' }}
+                >
+                  <User size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
+                </div>
+                <span className="text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                  {defect.reporterName || '未知'}
+                </span>
+                <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} className="flex-shrink-0" />
+                <div
+                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(255,180,70,0.2)' }}
+                >
+                  <User size={12} style={{ color: 'rgba(255,180,70,0.9)' }} />
+                </div>
+                <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {defect.assigneeName || '未指派'}
+                </span>
+              </div>
             </div>
+            <button
+              onClick={handleClose}
+              className="p-1.5 rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
+            >
+              <X size={16} style={{ color: 'var(--text-muted)' }} />
+            </button>
           </div>
 
-          {/* Description */}
-          <div>
+          {/* Content */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+            {/* Title */}
+            <div>
+              <div
+                className="text-[16px] font-semibold leading-relaxed"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {defect.title || '无标题'}
+              </div>
+            </div>
+
+            {/* Meta Info */}
             <div
-              className="text-[11px] mb-2 font-medium"
+              className="flex flex-wrap items-center gap-4 text-[12px] p-3 rounded-xl"
+              style={{ background: 'rgba(255,255,255,0.03)' }}
+            >
+              <div className="flex items-center gap-2">
+                <span style={{ color: 'var(--text-muted)' }}>严重程度</span>
+                <span
+                  className="px-2 py-0.5 rounded"
+                  style={{ background: `${severityColor}20`, color: severityColor }}
+                >
+                  {severityLabel}
+                </span>
+              </div>
+              <div
+                className="w-px h-4"
+                style={{ background: 'rgba(255,255,255,0.1)' }}
+              />
+              <div className="flex items-center gap-2">
+                <Clock size={12} style={{ color: 'var(--text-muted)' }} />
+                <span style={{ color: 'var(--text-muted)' }}>
+                  {formatDateTime(defect.createdAt)}
+                </span>
+              </div>
+            </div>
+
+            {/* Description with [IMG] support */}
+            <div>
+              <div
+                className="text-[11px] mb-2 font-medium"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                问题描述
+              </div>
+              <div
+                className="text-[13px] leading-relaxed p-4 rounded-xl overflow-y-auto"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  minHeight: '80px',
+                  maxHeight: '200px',
+                }}
+              >
+                {contentSegments.length > 0 ? (
+                  contentSegments.map((seg, idx) =>
+                    seg.type === 'text' ? (
+                      <span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg.content}</span>
+                    ) : (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="inline-block align-middle mx-1 rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
+                        style={{
+                          width: '100px',
+                          height: '70px',
+                          background: 'rgba(0,0,0,0.3)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                        }}
+                        onClick={() => setLightboxImage(seg.content)}
+                        title={seg.name || '点击查看大图'}
+                      >
+                        <img
+                          src={seg.content}
+                          alt={seg.name || '图片'}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    )
+                  )
+                ) : (
+                  <span>(无描述)</span>
+                )}
+              </div>
+            </div>
+
+            {/* 截图/图片附件 - 横向滚动列表 */}
+            {imageAttachments.length > 0 && (
+              <div>
+                <div
+                  className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <ImageIcon size={12} />
+                  截图 ({imageAttachments.length})
+                </div>
+                <div
+                  className="flex gap-2 overflow-x-auto pb-2"
+                  style={{
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(255,255,255,0.2) transparent',
+                  }}
+                >
+                  {imageAttachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="flex-shrink-0 w-[100px] h-[70px] rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
+                      style={{
+                        background: 'rgba(0,0,0,0.3)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                      }}
+                      onClick={() => att.url && setLightboxImage(att.url)}
+                      title="点击查看大图"
+                    >
+                      {att.url ? (
+                        <img
+                          src={att.url}
+                          alt={att.fileName}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <ImageIcon size={24} style={{ color: 'var(--text-muted)' }} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 其他附件 */}
+            {otherAttachments.length > 0 && (
+              <div>
+                <div
+                  className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <Paperclip size={12} />
+                  附件 ({otherAttachments.length})
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {otherAttachments.map((att) => (
+                    <a
+                      key={att.id}
+                      href={att.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:bg-white/10 transition-colors"
+                      style={{
+                        background: 'rgba(255,255,255,0.05)',
+                        color: 'var(--text-secondary)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <FileText size={12} />
+                      <span className="max-w-[150px] truncate">{att.fileName}</span>
+                      <ExternalLink size={12} style={{ opacity: 0.6 }} />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Resolution / Reject Reason */}
+            {defect.resolution && (
+              <div>
+                <div
+                  className="text-[11px] mb-2 font-medium"
+                  style={{ color: 'rgba(100,200,120,0.9)' }}
+                >
+                  解决说明
+                </div>
+                <div
+                  className="text-[12px] p-3 rounded-lg"
+                  style={{
+                    background: 'rgba(100,200,120,0.1)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  {defect.resolution}
+                </div>
+              </div>
+            )}
+
+            {defect.rejectReason && (
+              <div>
+                <div
+                  className="text-[11px] mb-2 font-medium"
+                  style={{ color: 'rgba(255,100,100,0.9)' }}
+                >
+                  驳回原因
+                </div>
+                <div
+                  className="text-[12px] p-3 rounded-lg"
+                  style={{
+                    background: 'rgba(255,100,100,0.1)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  {defect.rejectReason}
+                </div>
+              </div>
+            )}
+
+            {/* Timestamps */}
+            <div
+              className="text-[11px] space-y-1.5 pt-2"
               style={{ color: 'var(--text-muted)' }}
             >
-              问题描述
-            </div>
-            <div
-              className="text-[13px] leading-relaxed whitespace-pre-wrap p-4 rounded-xl overflow-y-auto"
-              style={{
-                background: 'rgba(255,255,255,0.03)',
-                color: 'var(--text-secondary)',
-                border: '1px solid rgba(255,255,255,0.06)',
-                minHeight: '120px',
-                maxHeight: '200px',
-              }}
-            >
-              {defect.rawContent || '(无描述)'}
+              {defect.resolvedAt && (
+                <div className="flex items-center gap-2">
+                  <CheckCircle size={12} style={{ color: 'rgba(100,200,120,0.9)' }} />
+                  <span>解决于 {formatDateTime(defect.resolvedAt)}</span>
+                </div>
+              )}
+              {defect.closedAt && (
+                <div className="flex items-center gap-2">
+                  <Archive size={12} />
+                  <span>关闭于 {formatDateTime(defect.closedAt)}</span>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* 截图/图片附件 - 横向滚动列表 */}
-          {imageAttachments.length > 0 && (
-            <div>
-              <div
-                className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                <ImageIcon size={12} />
-                截图 ({imageAttachments.length})
-              </div>
-              <div
-                className="flex gap-2 overflow-x-auto pb-2"
-                style={{
-                  scrollbarWidth: 'thin',
-                  scrollbarColor: 'rgba(255,255,255,0.2) transparent',
-                }}
-              >
-                {imageAttachments.map((att) => (
-                  <div
-                    key={att.id}
-                    className="flex-shrink-0 w-[120px] h-[80px] rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
-                    style={{
-                      background: 'rgba(0,0,0,0.3)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                    }}
-                    onClick={() => att.url && setLightboxImage(att.url)}
-                    title="点击查看大图"
-                  >
-                    {att.url ? (
-                      <img
-                        src={att.url}
-                        alt={att.fileName}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <ImageIcon size={24} style={{ color: 'var(--text-muted)' }} />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 其他附件 */}
-          {otherAttachments.length > 0 && (
-            <div>
-              <div
-                className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                <Paperclip size={12} />
-                附件 ({otherAttachments.length})
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {otherAttachments.map((att) => (
-                  <a
-                    key={att.id}
-                    href={att.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:bg-white/10 transition-colors"
-                    style={{
-                      background: 'rgba(255,255,255,0.05)',
-                      color: 'var(--text-secondary)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                    }}
-                  >
-                    <FileText size={12} />
-                    <span className="max-w-[150px] truncate">{att.fileName}</span>
-                    <ExternalLink size={12} style={{ opacity: 0.6 }} />
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Resolution / Reject Reason */}
-          {defect.resolution && (
-            <div>
-              <div
-                className="text-[11px] mb-2 font-medium"
-                style={{ color: 'rgba(100,200,120,0.9)' }}
-              >
-                解决说明
-              </div>
-              <div
-                className="text-[12px] p-3 rounded-lg"
-                style={{
-                  background: 'rgba(100,200,120,0.1)',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                {defect.resolution}
-              </div>
-            </div>
-          )}
-
-          {defect.rejectReason && (
-            <div>
-              <div
-                className="text-[11px] mb-2 font-medium"
-                style={{ color: 'rgba(255,100,100,0.9)' }}
-              >
-                驳回原因
-              </div>
-              <div
-                className="text-[12px] p-3 rounded-lg"
-                style={{
-                  background: 'rgba(255,100,100,0.1)',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                {defect.rejectReason}
-              </div>
-            </div>
-          )}
-
-          {/* Timestamps */}
+          {/* Actions */}
           <div
-            className="text-[11px] space-y-1.5 pt-2"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            <div className="flex items-center gap-2">
-              <Clock size={12} />
-              <span>创建于 {formatDateTime(defect.createdAt)}</span>
-            </div>
-            {defect.resolvedAt && (
-              <div className="flex items-center gap-2">
-                <CheckCircle size={12} style={{ color: 'rgba(100,200,120,0.9)' }} />
-                <span>解决于 {formatDateTime(defect.resolvedAt)}</span>
-              </div>
-            )}
-            {defect.closedAt && (
-              <div className="flex items-center gap-2">
-                <Archive size={12} />
-                <span>关闭于 {formatDateTime(defect.closedAt)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* 评论列表 */}
-          {messages.length > 0 && (
-            <div className="pt-2">
-              <div
-                className="text-[11px] mb-2 font-medium"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                评论 ({messages.length})
-              </div>
-              <div className="space-y-2">
-                {messages.filter(m => m.role === 'user').map((msg) => (
-                  <div
-                    key={msg.id}
-                    className="p-3 rounded-lg text-[12px]"
-                    style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.06)',
-                    }}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-5 h-5 rounded-full flex items-center justify-center"
-                          style={{ background: 'rgba(100,180,255,0.2)' }}
-                        >
-                          <User size={10} style={{ color: 'rgba(100,180,255,0.9)' }} />
-                        </div>
-                        <span style={{ color: 'var(--text-secondary)' }}>评论</span>
-                      </div>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-                        {formatDateTime(msg.createdAt)}
-                      </span>
-                    </div>
-                    <div style={{ color: 'var(--text-primary)' }}>{msg.content}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Comment Input - 非草稿状态显示 */}
-        {defect.status !== DefectStatus.Draft && (
-          <div
-            className="px-5 py-3 flex-shrink-0"
+            className="px-5 py-4 flex items-center justify-between flex-shrink-0"
             style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
+            {/* Left: Delete */}
+            <div className="flex items-center gap-2">
+              {canDelete && !confirmingDelete && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDeleteClick}
+                  className="text-red-400 hover:text-red-300"
+                >
+                  <Trash2 size={14} />
+                  删除
+                </Button>
+              )}
+              {canDelete && confirmingDelete && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDeleteCancel}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDeleteConfirm}
+                    className="text-red-400 hover:text-red-300 border-red-500/30"
+                  >
+                    确认删除
+                  </Button>
+                </>
+              )}
+            </div>
+
+            {/* Right: Status Actions */}
+            <div className="flex items-center gap-2">
+              {canProcess && (
+                <Button variant="primary" size="sm" onClick={handleProcess}>
+                  <Play size={14} />
+                  开始处理
+                </Button>
+              )}
+              {canResolve && (
+                <Button variant="primary" size="sm" onClick={handleResolve}>
+                  <CheckCircle size={14} />
+                  标记解决
+                </Button>
+              )}
+              {canReject && (
+                <Button variant="secondary" size="sm" onClick={handleReject}>
+                  <XCircle size={14} />
+                  驳回
+                </Button>
+              )}
+              {canCloseDefect && (
+                <Button variant="secondary" size="sm" onClick={handleCloseDefect}>
+                  <Archive size={14} />
+                  关闭
+                </Button>
+              )}
+              {!canProcess && !canResolve && !canReject && !canCloseDefect && !canDelete && (
+                <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  无可用操作
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 右侧：聊天面板 */}
+        {showChat && (
+          <div
+            className="w-[45%] flex flex-col"
+            style={{ borderLeft: '1px solid rgba(255, 255, 255, 0.06)' }}
+          >
+            {/* Chat Header */}
             <div
-              className="flex items-center gap-2 rounded-lg px-3 py-2"
+              className="px-4 py-3 flex items-center gap-2 flex-shrink-0"
+              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+            >
+              <MessageCircle size={14} style={{ color: 'var(--text-muted)' }} />
+              <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                评论
+              </span>
+              {messages.length > 0 && (
+                <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                  {messages.filter(m => m.role === 'user').length}
+                </span>
+              )}
+            </div>
+
+            {/* Chat Messages */}
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(255,255,255,0.2) transparent',
               }}
             >
-              <input
-                type="text"
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && comment.trim()) {
-                    e.preventDefault();
-                    handleSendComment();
-                  }
+              {messages.length === 0 ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <MessageCircle size={32} style={{ color: 'rgba(255,255,255,0.15)' }} className="mx-auto mb-2" />
+                    <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                      暂无评论
+                    </div>
+                    <div className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                      发送评论参与讨论
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                messages.map((msg) => {
+                  const isUser = msg.role === 'user';
+                  const msgSegments = parseContentToSegments(msg.content);
+
+                  return (
+                    <div key={msg.id} className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
+                      <div
+                        className="group relative max-w-[90%] rounded-[10px] px-3 py-2 text-[12px] leading-relaxed"
+                        style={{
+                          background: isUser ? 'rgb(50, 45, 35)' : 'rgb(35, 35, 40)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        {/* 渲染内容，支持 [IMG] */}
+                        {msgSegments.map((seg, idx) =>
+                          seg.type === 'text' ? (
+                            <span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg.content}</span>
+                          ) : (
+                            <button
+                              key={idx}
+                              type="button"
+                              className="block w-full mt-2 rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
+                              style={{
+                                maxWidth: '180px',
+                                background: 'rgba(0,0,0,0.3)',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                              }}
+                              onClick={() => setLightboxImage(seg.content)}
+                              title={seg.name || '点击查看大图'}
+                            >
+                              <img
+                                src={seg.content}
+                                alt={seg.name || '图片'}
+                                className="w-full object-contain"
+                                style={{ maxHeight: '120px' }}
+                              />
+                            </button>
+                          )
+                        )}
+                      </div>
+                      <span
+                        className="text-[9px] tabular-nums select-none px-1"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        {formatMsgTimestamp(msg.createdAt)}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Chat Input */}
+            <div
+              className="px-4 py-3 flex-shrink-0"
+              style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+            >
+              <div
+                className="flex items-center gap-2 rounded-lg px-3 py-2"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
                 }}
-                placeholder="添加评论..."
-                className="flex-1 bg-transparent outline-none text-[13px]"
-                style={{ color: 'var(--text-primary)' }}
-                disabled={sendingComment}
-              />
-              <button
-                onClick={handleSendComment}
-                disabled={!comment.trim() || sendingComment}
-                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
               >
-                <Send size={14} style={{ color: 'var(--accent-primary)' }} />
-              </button>
+                <input
+                  type="text"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && comment.trim()) {
+                      e.preventDefault();
+                      handleSendComment();
+                    }
+                  }}
+                  placeholder="添加评论..."
+                  className="flex-1 bg-transparent outline-none text-[13px]"
+                  style={{ color: 'var(--text-primary)' }}
+                  disabled={sendingComment}
+                />
+                <button
+                  onClick={handleSendComment}
+                  disabled={!comment.trim() || sendingComment}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
+                >
+                  <Send size={14} style={{ color: 'var(--accent-primary)' }} />
+                </button>
+              </div>
             </div>
           </div>
         )}
-
-        {/* Actions */}
-        <div
-          className="px-5 py-4 flex items-center justify-between flex-shrink-0"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
-        >
-          {/* Left: Delete */}
-          <div className="flex items-center gap-2">
-            {canDelete && !confirmingDelete && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDeleteClick}
-                className="text-red-400 hover:text-red-300"
-              >
-                <Trash2 size={14} />
-                删除
-              </Button>
-            )}
-            {canDelete && confirmingDelete && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleDeleteCancel}
-                >
-                  取消
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleDeleteConfirm}
-                  className="text-red-400 hover:text-red-300 border-red-500/30"
-                >
-                  确认删除
-                </Button>
-              </>
-            )}
-          </div>
-
-          {/* Right: Status Actions */}
-          <div className="flex items-center gap-2">
-            {canProcess && (
-              <Button variant="primary" size="sm" onClick={handleProcess}>
-                <Play size={14} />
-                开始处理
-              </Button>
-            )}
-            {canResolve && (
-              <Button variant="primary" size="sm" onClick={handleResolve}>
-                <CheckCircle size={14} />
-                标记解决
-              </Button>
-            )}
-            {canReject && (
-              <Button variant="secondary" size="sm" onClick={handleReject}>
-                <XCircle size={14} />
-                驳回
-              </Button>
-            )}
-            {canCloseDefect && (
-              <Button variant="secondary" size="sm" onClick={handleCloseDefect}>
-                <Archive size={14} />
-                关闭
-              </Button>
-            )}
-            {!canProcess && !canResolve && !canReject && !canCloseDefect && !canDelete && (
-              <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                无可用操作
-              </span>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Image Lightbox */}

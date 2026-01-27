@@ -57,9 +57,10 @@ export interface DefectReport {
   status: string;
   severity: string;
   priority: string;
-  reporterUserId: string;
+  // 后端返回 reporterId/assigneeId (非 reporterUserId/assigneeUserId)
+  reporterId: string;
   reporterName?: string;
-  assigneeUserId?: string;
+  assigneeId?: string;
   assigneeName?: string;
   missingFields?: string[];
   resolution?: string;
@@ -253,7 +254,7 @@ export type ReopenDefectContract = (input: { id: string }) => Promise<ApiRespons
 export type GetDefectMessagesContract = (input: {
   id: string;
   afterSeq?: number;
-}) => Promise<ApiResponse<{ items: DefectMessage[] }>>;
+}) => Promise<ApiResponse<{ messages: DefectMessage[] }>>;
 
 export type SendDefectMessageContract = (input: {
   id: string;
