@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 模型分组 - 按模型类型组织的模型列表
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class ModelGroup
 {
     /// <summary>分组ID（UUID，唯一标识）</summary>

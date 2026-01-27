@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 独立的水印配置文档，每条记录是一个完整的水印配置
 /// </summary>
+[AppOwnership(AppNames.Watermark, AppNames.WatermarkDisplay, IsPrimary = true)]
 public class WatermarkConfig
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

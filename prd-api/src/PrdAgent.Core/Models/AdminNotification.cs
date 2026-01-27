@@ -1,5 +1,8 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class AdminNotification
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

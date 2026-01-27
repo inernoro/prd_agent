@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 解析后的PRD文档
 /// </summary>
+[AppOwnership(AppNames.PrdAgent, AppNames.PrdAgentDisplay, IsPrimary = true)]
 public class ParsedPrd
 {
     /// <summary>文档唯一标识</summary>

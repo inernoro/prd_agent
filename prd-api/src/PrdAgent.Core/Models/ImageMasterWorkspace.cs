@@ -1,12 +1,14 @@
+using System.Text.Json.Serialization;
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
-using System.Text.Json.Serialization;
-
 /// <summary>
-/// 视觉创作 Workspace（用于“视觉创作 Agent”项目列表）。
+/// 视觉创作 Workspace（用于"视觉创作 Agent"项目列表）。
 /// - workspaceId 是该业务域稳定主键，用于替代易漂移的 sessionId。
 /// - 支持最小共享：owner 或 member 可访问。
 /// </summary>
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 public class ImageMasterWorkspace
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 大模型实验室 - 实验定义（Admin 侧）
 /// </summary>
+[AppOwnership(AppNames.ModelLab, AppNames.ModelLabDisplay, IsPrimary = true)]
 public class ModelLabExperiment
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();

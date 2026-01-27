@@ -1,3 +1,5 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -5,6 +7,7 @@ namespace PrdAgent.Core.Models;
 /// - 仅用于 PRD 问答的 system prompt（非 JSON 输出任务）
 /// - 按角色（PM/DEV/QA）分别配置
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class SystemPromptSettings
 {
     /// <summary>固定为 global</summary>

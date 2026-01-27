@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 全局应用配置（单例文档）
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class AppSettings
 {
     /// <summary>固定为 global</summary>

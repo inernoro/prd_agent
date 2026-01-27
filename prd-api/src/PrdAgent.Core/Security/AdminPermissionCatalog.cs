@@ -59,6 +59,16 @@ public static class AdminPermissionCatalog
     public const string LiteraryAgentUse = "literary-agent.use";
 
     /// <summary>
+    /// 数据迁移 Agent 权限（读）：查看实体与集合映射、数据预览
+    /// </summary>
+    public const string DataMigrationAgentUse = "data-migration-agent.use";
+
+    /// <summary>
+    /// 数据迁移 Agent 权限（写）：删除集合、删除文档、修复数据
+    /// </summary>
+    public const string DataMigrationAgentWrite = "data-migration-agent.write";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -70,6 +80,8 @@ public static class AdminPermissionCatalog
         new(PrdAgentUse, "PRD Agent", "PRD 智能解读与问答"),
         new(VisualAgentUse, "视觉创作 Agent", "高级视觉创作工作区"),
         new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
+        new(DataMigrationAgentUse, "数据迁移 Agent-读", "查看实体与集合映射、数据预览"),
+        new(DataMigrationAgentWrite, "数据迁移 Agent-写", "删除集合、删除文档、修复数据"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),

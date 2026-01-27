@@ -1,9 +1,12 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 管理后台的“系统角色”（RBAC-lite）：用于分配权限点（permission strings）。
+/// 管理后台的"系统角色"（RBAC-lite）：用于分配权限点（permission strings）。
 /// 注意：它与 <see cref="UserRole"/>（PM/DEV/QA/ADMIN 的业务语义）解耦。
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class SystemRole
 {
     /// <summary>主键（MongoDB _id）</summary>

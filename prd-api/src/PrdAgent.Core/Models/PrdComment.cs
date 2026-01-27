@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// PRD 章节评论（与群组无关，但写入/读取权限由 groupId 预览校验决定）
 /// </summary>
+[AppOwnership(AppNames.PrdAgent, AppNames.PrdAgentDisplay, IsPrimary = true)]
 public class PrdComment
 {
     /// <summary>评论 ID（MongoDB _id：string，写入为 Guid("N")）</summary>

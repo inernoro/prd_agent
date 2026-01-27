@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 管理员提示词覆盖（按管理员账号隔离）
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class AdminPromptOverride
 {
     /// <summary>主键（Guid 字符串）</summary>

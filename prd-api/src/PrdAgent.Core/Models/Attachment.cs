@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 附件实体
 /// </summary>
+[AppOwnership(AppNames.PrdAgent, AppNames.PrdAgentDisplay, IsPrimary = true)]
 public class Attachment
 {
     /// <summary>附件唯一标识</summary>

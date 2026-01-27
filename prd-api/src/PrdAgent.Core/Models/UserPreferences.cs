@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 用户偏好设置（每个用户一条记录，userId 作为主键）
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class UserPreferences
 {
     /// <summary>用户 ID（作为 MongoDB _id）</summary>

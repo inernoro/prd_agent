@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 模型测试桩配置 - 用于模拟各种故障场景
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class ModelTestStub
 {
     public string Id { get; set; } = string.Empty;

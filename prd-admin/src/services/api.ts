@@ -198,6 +198,20 @@ export const api = {
     },
   },
 
+  // ============ Data Migration 数据迁移 ============
+  dataMigration: {
+    mappings: () => '/api/data-migration/mappings',
+    collections: {
+      data: (collectionName: string) => `/api/data-migration/collections/${collectionName}/data`,
+      validation: (collectionName: string) => `/api/data-migration/collections/${collectionName}/validation`,
+      delete: (collectionName: string) => `/api/data-migration/collections/${collectionName}`,
+      document: (collectionName: string, documentId: string) => `/api/data-migration/collections/${collectionName}/documents/${documentId}`,
+    },
+    apps: {
+      delete: (appName: string) => `/api/data-migration/apps/${appName}`,
+    },
+  },
+
   // ============ Assets 资源管理 ============
   assets: {
     desktop: {

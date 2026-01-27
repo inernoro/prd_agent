@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// LLM配置实体
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class LLMConfig
 {
     /// <summary>配置ID（通过 IIdGenerator 生成）</summary>

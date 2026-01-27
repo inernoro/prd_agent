@@ -1,9 +1,12 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 提示词设置（单例文档：Id 固定为 global）
-/// - 每条配置项对应一个角色下的“提示词条目”：title + promptTemplate + order + promptKey
+/// - 每条配置项对应一个角色下的"提示词条目"：title + promptTemplate + order + promptKey
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class PromptSettings
 {
     /// <summary>固定为 global</summary>

@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 生图任务 - 事件日志（用于 SSE 断线续传）
 /// </summary>
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 public class ImageGenRunEvent
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 系统 API 请求日志（面向用户发起的请求，不记录提示词信息）
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class ApiRequestLog
 {
     public string Id { get; set; } = string.Empty;

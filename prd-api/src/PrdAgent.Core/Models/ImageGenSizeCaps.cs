@@ -1,10 +1,13 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 生图 size 能力缓存（用于解决上游“allowed size 白名单”导致的参数不兼容问题）
+/// 生图 size 能力缓存（用于解决上游"allowed size 白名单"导致的参数不兼容问题）
 /// - 按 modelId（已配置模型）或 platformId+modelName（平台回退调用）进行缓存
 /// - allowedSizes 为上游报错中给出的允许尺寸列表（如 1664x928,1328x1328）
 /// </summary>
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 public class ImageGenSizeCaps
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

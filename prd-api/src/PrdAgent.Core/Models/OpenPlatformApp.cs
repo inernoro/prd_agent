@@ -1,3 +1,5 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -15,6 +17,7 @@ public enum OpenPlatformProxyMode
 /// <summary>
 /// 开放平台应用实体
 /// </summary>
+[AppOwnership(AppNames.OpenPlatform, AppNames.OpenPlatformDisplay, IsPrimary = true)]
 public class OpenPlatformApp
 {
     /// <summary>应用唯一标识（Guid 字符串）</summary>
