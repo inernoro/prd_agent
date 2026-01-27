@@ -686,4 +686,290 @@ public class DefectAgentTests
     }
 
     #endregion
+
+    #region Space Isolation Tests (防止空间泄漏)
+
+    [Fact]
+    public void DefectFolder_DefaultValues_ShouldBeCorrect()
+    {
+        // Arrange & Act
+        var folder = new DefectFolder();
+
+        // Assert
+        Assert.NotNull(folder.Id);
+        Assert.Equal(32, folder.Id.Length);
+        Assert.Empty(folder.Name);
+        Assert.Null(folder.Description);
+        Assert.Null(folder.Color);
+        Assert.Null(folder.Icon);
+        Assert.Equal(0, folder.SortOrder);
+        Assert.Null(folder.SpaceId); // 默认共享空间
+        Assert.Empty(folder.CreatedBy);
+    }
+
+    [Fact]
+    public void DefectFolder_SetProperties_ShouldWork()
+    {
+        // Arrange & Act
+        var folder = new DefectFolder
+        {
+            Name = "紧急缺陷",
+            Description = "需要紧急处理的缺陷",
+            Color = "#FF5500",
+            Icon = "alert-triangle",
+            SortOrder = 100,
+            SpaceId = "team-a",
+            CreatedBy = "user123"
+        };
+
+        // Assert
+        Assert.Equal("紧急缺陷", folder.Name);
+        Assert.Equal("#FF5500", folder.Color);
+        Assert.Equal("team-a", folder.SpaceId);
+        Assert.Equal("user123", folder.CreatedBy);
+    }
+
+    [Fact]
+    public void SpaceIsolation_FoldersWithDifferentSpaces_ShouldNotBeMixed()
+    {
+        // Arrange - 创建不同空间的文件夹
+        var folderA = new DefectFolder { Name = "A团队文件夹", SpaceId = "space-a" };
+        var folderB = new DefectFolder { Name = "B团队文件夹", SpaceId = "space-b" };
+        var folderDefault = new DefectFolder { Name = "共享文件夹", SpaceId = null }; // 默认共享空间
+
+        var allFolders = new List<DefectFolder> { folderA, folderB, folderDefault };
+
+        // Act - 模拟查询特定空间的文件夹
+        var spaceAFolders = allFolders.Where(f => f.SpaceId == "space-a").ToList();
+        var spaceBFolders = allFolders.Where(f => f.SpaceId == "space-b").ToList();
+        var defaultFolders = allFolders.Where(f => f.SpaceId == null || f.SpaceId == "default").ToList();
+
+        // Assert - 确保空间隔离
+        Assert.Single(spaceAFolders);
+        Assert.Equal("A团队文件夹", spaceAFolders[0].Name);
+
+        Assert.Single(spaceBFolders);
+        Assert.Equal("B团队文件夹", spaceBFolders[0].Name);
+
+        Assert.Single(defaultFolders);
+        Assert.Equal("共享文件夹", defaultFolders[0].Name);
+
+        // 确保 space-a 用户看不到 space-b 的文件夹
+        Assert.DoesNotContain(allFolders.Where(f => f.SpaceId == "space-a"), f => f.SpaceId == "space-b");
+    }
+
+    [Fact]
+    public void SpaceIsolation_DefectsWithFolderId_ShouldBeIsolated()
+    {
+        // Arrange - 创建不同空间的文件夹和缺陷
+        var folderA = new DefectFolder { Id = "folder-a", SpaceId = "space-a" };
+        var folderB = new DefectFolder { Id = "folder-b", SpaceId = "space-b" };
+
+        var defectInFolderA = new DefectReport
+        {
+            DefectNo = "DEF-2025-0001",
+            FolderId = "folder-a",
+            ReporterId = "user-a"
+        };
+
+        var defectInFolderB = new DefectReport
+        {
+            DefectNo = "DEF-2025-0002",
+            FolderId = "folder-b",
+            ReporterId = "user-b"
+        };
+
+        var allDefects = new List<DefectReport> { defectInFolderA, defectInFolderB };
+        var folders = new Dictionary<string, DefectFolder>
+        {
+            { "folder-a", folderA },
+            { "folder-b", folderB }
+        };
+
+        // Act - 模拟根据空间筛选缺陷
+        Func<DefectReport, string, bool> belongsToSpace = (defect, spaceId) =>
+        {
+            if (defect.FolderId == null) return spaceId == null || spaceId == "default";
+            return folders.TryGetValue(defect.FolderId, out var folder) && folder.SpaceId == spaceId;
+        };
+
+        var spaceADefects = allDefects.Where(d => belongsToSpace(d, "space-a")).ToList();
+        var spaceBDefects = allDefects.Where(d => belongsToSpace(d, "space-b")).ToList();
+
+        // Assert - 确保缺陷在空间间隔离
+        Assert.Single(spaceADefects);
+        Assert.Equal("DEF-2025-0001", spaceADefects[0].DefectNo);
+
+        Assert.Single(spaceBDefects);
+        Assert.Equal("DEF-2025-0002", spaceBDefects[0].DefectNo);
+    }
+
+    [Fact]
+    public void SpaceIsolation_UserCannotAccessOtherSpace_ShouldReturnEmpty()
+    {
+        // Arrange
+        var folders = new List<DefectFolder>
+        {
+            new() { Id = "f1", Name = "私有文件夹", SpaceId = "space-owner-only", CreatedBy = "owner" }
+        };
+
+        // Act - 模拟其他用户尝试访问
+        var otherUserAccessibleFolders = folders
+            .Where(f => f.SpaceId == "space-attacker-space") // 攻击者尝试用自己的 spaceId 查询
+            .ToList();
+
+        var ownerAccessibleFolders = folders
+            .Where(f => f.SpaceId == "space-owner-only")
+            .ToList();
+
+        // Assert
+        Assert.Empty(otherUserAccessibleFolders); // 攻击者看不到任何内容
+        Assert.Single(ownerAccessibleFolders); // 所有者可以看到
+    }
+
+    [Fact]
+    public void SpaceIsolation_MoveDefectAcrossSpaces_ShouldRequireValidation()
+    {
+        // Arrange
+        var sourceFolder = new DefectFolder { Id = "source", SpaceId = "space-a" };
+        var targetFolder = new DefectFolder { Id = "target", SpaceId = "space-b" }; // 不同空间
+
+        var defect = new DefectReport
+        {
+            FolderId = "source",
+            ReporterId = "user-a"
+        };
+
+        // Act - 模拟跨空间移动验证逻辑
+        bool isCrossSpaceMove = sourceFolder.SpaceId != targetFolder.SpaceId;
+
+        // Assert - 跨空间移动应该被检测到
+        Assert.True(isCrossSpaceMove);
+
+        // 实际控制器应该拒绝这种操作或进行额外的权限检查
+    }
+
+    [Fact]
+    public void SpaceIsolation_DefaultSpaceIsShared_ShouldBeAccessibleToAll()
+    {
+        // Arrange
+        var sharedFolder = new DefectFolder
+        {
+            Name = "共享文件夹",
+            SpaceId = null // 或 "default"
+        };
+
+        // Act - 模拟不同用户查询共享空间
+        Func<DefectFolder, bool> isAccessibleInDefaultSpace = folder =>
+            folder.SpaceId == null || folder.SpaceId == "default";
+
+        // Assert
+        Assert.True(isAccessibleInDefaultSpace(sharedFolder));
+    }
+
+    [Theory]
+    [InlineData("space-a", "space-a", true)]  // 同空间，允许访问
+    [InlineData("space-a", "space-b", false)] // 不同空间，拒绝访问
+    [InlineData(null, null, true)]            // 默认空间，允许访问
+    [InlineData("default", "default", true)]  // 明确的默认空间，允许访问
+    [InlineData(null, "default", true)]       // null 和 "default" 等效
+    public void SpaceIsolation_AccessCheck_ShouldRespectBoundaries(
+        string? userSpaceId,
+        string? resourceSpaceId,
+        bool expectedAccess)
+    {
+        // Arrange
+        var folder = new DefectFolder { SpaceId = resourceSpaceId };
+
+        // Act - 模拟访问检查逻辑
+        bool hasAccess = (userSpaceId == resourceSpaceId) ||
+                         (userSpaceId == null && (resourceSpaceId == null || resourceSpaceId == "default")) ||
+                         (resourceSpaceId == null && (userSpaceId == null || userSpaceId == "default")) ||
+                         ((userSpaceId == null || userSpaceId == "default") && (resourceSpaceId == null || resourceSpaceId == "default"));
+
+        // Assert
+        Assert.Equal(expectedAccess, hasAccess);
+    }
+
+    [Fact]
+    public void DefectReport_FolderId_ShouldBeNullByDefault()
+    {
+        // Arrange & Act
+        var defect = new DefectReport();
+
+        // Assert
+        Assert.Null(defect.FolderId);
+    }
+
+    [Fact]
+    public void DefectReport_SetFolderId_ShouldWork()
+    {
+        // Arrange
+        var defect = new DefectReport();
+
+        // Act
+        defect.FolderId = "folder123";
+
+        // Assert
+        Assert.Equal("folder123", defect.FolderId);
+    }
+
+    [Fact]
+    public void DefectReport_SoftDelete_ShouldWork()
+    {
+        // Arrange
+        var defect = new DefectReport
+        {
+            DefectNo = "DEF-2025-0001",
+            Status = DefectStatus.Draft
+        };
+
+        // Act - 软删除
+        defect.IsDeleted = true;
+        defect.DeletedAt = DateTime.UtcNow;
+        defect.DeletedBy = "user123";
+
+        // Assert
+        Assert.True(defect.IsDeleted);
+        Assert.NotNull(defect.DeletedAt);
+        Assert.Equal("user123", defect.DeletedBy);
+        // 状态保持不变
+        Assert.Equal(DefectStatus.Draft, defect.Status);
+    }
+
+    [Fact]
+    public void DefectReport_SoftDelete_DefaultValues()
+    {
+        // Arrange & Act
+        var defect = new DefectReport();
+
+        // Assert - 默认未删除
+        Assert.False(defect.IsDeleted);
+        Assert.Null(defect.DeletedAt);
+        Assert.Null(defect.DeletedBy);
+    }
+
+    [Fact]
+    public void DefectReport_RestoreFromTrash_ShouldClearDeleteFields()
+    {
+        // Arrange
+        var defect = new DefectReport
+        {
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow.AddDays(-1),
+            DeletedBy = "user123"
+        };
+
+        // Act - 恢复
+        defect.IsDeleted = false;
+        defect.DeletedAt = null;
+        defect.DeletedBy = null;
+
+        // Assert
+        Assert.False(defect.IsDeleted);
+        Assert.Null(defect.DeletedAt);
+        Assert.Null(defect.DeletedBy);
+    }
+
+    #endregion
 }
